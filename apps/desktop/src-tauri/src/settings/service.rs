@@ -460,7 +460,7 @@ impl SettingsService {
             }
             bytes
         };
-        let value = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        let value = match serde_json::from_slice::<serde_json::Value>(fsio::strip_bom(&bytes)) {
             Ok(v) if v.is_object() => v,
             _ => {
                 log::warn!("{} is not valid JSON; keeping the previous values", file.file_name());
@@ -1082,7 +1082,7 @@ fn load_settings(path: &std::path::Path) -> LoadedSettings {
         }
     };
     let hash = Some(fsio::content_hash(&bytes));
-    let parsed = serde_json::from_slice::<serde_json::Value>(&bytes)
+    let parsed = serde_json::from_slice::<serde_json::Value>(fsio::strip_bom(&bytes))
         .ok()
         .filter(serde_json::Value::is_object)
         .map(|v| migrate::run(v, SETTINGS_SCHEMA_VERSION, migrate::SETTINGS_STEPS))
@@ -1639,6 +1639,41 @@ pub(crate) mod tests {
         assert_eq!(std::fs::read(&backup).expect("backup"), b"{ \"general\": ");
         // 默认值已写回，文件现在是合法 JSON
         assert_eq!(read_json(&paths.settings_file())["schema_version"], 1);
+    }
+
+    #[test]
+    fn settings_with_utf8_bom_are_loaded_not_reset() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let paths = test_paths(dir.path());
+        std::fs::create_dir_all(&paths.config_dir).expect("mkdir");
+        let mut text = b"\xEF\xBB\xBF".to_vec();
+        text.extend_from_slice(br#"{"schema_version": 1, "appearance": {"font_size": 16}}"#);
+        std::fs::write(paths.settings_file(), &text).expect("write");
+        let svc = SettingsService::load_for_tests(&paths);
+        assert_eq!(svc.get().appearance.font_size, 16, "保留用户的设置");
+        assert!(svc.file_issue().is_none(), "不报告损坏");
+        assert!(
+            !std::fs::read_dir(&paths.config_dir).expect("read_dir").any(|e| e
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .contains(".bak-")),
+            "不产生损坏备份"
+        );
+    }
+
+    #[test]
+    fn hot_reload_accepts_external_edits_saved_with_utf8_bom() {
+        let (_dir, svc) = test_service();
+        let path = svc.paths().settings_file();
+        let mut v = read_json(&path);
+        v["appearance"]["font_size"] = json!(18);
+        let mut text = b"\xEF\xBB\xBF".to_vec();
+        text.extend_from_slice(&serde_json::to_vec_pretty(&v).expect("json"));
+        std::fs::write(&path, &text).expect("write");
+        assert_eq!(svc.reload(ConfigFile::Settings), ReloadOutcome::Applied);
+        assert_eq!(svc.get().appearance.font_size, 18);
+        assert!(svc.file_issue().is_none());
     }
 
     #[test]

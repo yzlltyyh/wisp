@@ -96,6 +96,12 @@ pub fn tmp_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// 去掉开头的 UTF-8 BOM。Windows 记事本等编辑器保存 JSON 时可能加上它，`serde_json` 会因此判为非法 JSON；
+/// 只用于解析，内容哈希仍按读到的原始字节计算
+pub fn strip_bom(bytes: &[u8]) -> &[u8] {
+    bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes)
+}
+
 /// 读取文件；不存在时返回 `Ok(None)`
 pub fn read_optional(path: &Path) -> io::Result<Option<Vec<u8>>> {
     match fs::read(path) {
@@ -189,7 +195,7 @@ where
         });
     };
     let hash = content_hash(&bytes);
-    let parsed = serde_json::from_slice::<serde_json::Value>(&bytes)
+    let parsed = serde_json::from_slice::<serde_json::Value>(strip_bom(&bytes))
         .ok()
         .filter(serde_json::Value::is_object)
         .map(migrate)
@@ -301,6 +307,28 @@ mod tests {
         );
         assert_eq!(fs::read(&backup).expect("read backup"), b"{ not json");
         assert!(!path.exists(), "损坏的原文件已改名为备份");
+    }
+
+    #[test]
+    fn utf8_bom_is_ignored_when_loading() {
+        // Windows 记事本等编辑器保存时可能在开头加 UTF-8 BOM，不能因此把文件当成损坏
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("styles.json");
+        fs::write(&path, b"\xEF\xBB\xBF{\"ok\":true}").expect("write");
+        let loaded: Loaded<serde_json::Map<String, serde_json::Value>> =
+            load_document(&path, |v| (v, crate::settings::migrate::Outcome::Current)).expect("load");
+        assert!(loaded.backup.is_none(), "带 BOM 的合法文件不应被备份重置");
+        assert_eq!(loaded.value.get("ok"), Some(&serde_json::Value::Bool(true)));
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn strip_bom_only_removes_a_leading_utf8_bom() {
+        assert_eq!(strip_bom(b"\xEF\xBB\xBF{}"), b"{}");
+        assert_eq!(strip_bom(b"{}"), b"{}");
+        assert_eq!(strip_bom(b""), b"");
+        assert_eq!(strip_bom(b"\xEF\xBB"), b"\xEF\xBB", "不完整的 BOM 原样保留");
+        assert_eq!(strip_bom(b"{}\xEF\xBB\xBF"), b"{}\xEF\xBB\xBF", "只处理开头");
     }
 
     #[test]
