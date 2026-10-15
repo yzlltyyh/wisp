@@ -49,6 +49,8 @@ lenient_struct! {
         pub clipboard: ClipboardSettings,
         pub appearance: Appearance,
         pub advanced: Advanced,
+        /// 多设备同步（只属于本机，不参与同步）
+        pub sync: SyncSettings,
     }
 }
 
@@ -65,6 +67,7 @@ impl Default for Settings {
             clipboard: ClipboardSettings::default(),
             appearance: Appearance::default(),
             advanced: Advanced::default(),
+            sync: SyncSettings::default(),
         }
     }
 }
@@ -529,6 +532,79 @@ impl Default for Advanced {
             log_level: LogLevel::Info,
             webview_low_memory_when_hidden: true,
             unload_panel_after_idle_min: None,
+        }
+    }
+}
+
+lenient_struct! {
+    /// 多设备同步。整组只属于本机（不参与同步本身）：地址与账号指向这台设备自己的 WebDAV 凭据，开关可以每台设备不同。
+    /// `enabled` / `server_url` / `username` 只由连接、断开与清除服务器数据的命令写入；`auto` 与 `content` 由设置页修改。
+    /// `Debug` 手写：地址与账号不进日志
+    #[derive(Clone, PartialEq, Eq, Serialize)]
+    pub struct SyncSettings {
+        /// false
+        pub enabled: bool,
+        /// ""：用户填写的 WebDAV 地址（http / https）
+        pub server_url: String,
+        /// ""
+        pub username: String,
+        /// true：改动后自动上传、使用 Wisp 时取回其他设备的改动；false 时只在「立即同步」时同步
+        pub auto: bool,
+        pub content: SyncContent,
+    }
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server_url: String::new(),
+            username: String::new(),
+            auto: true,
+            content: SyncContent::default(),
+        }
+    }
+}
+
+impl std::fmt::Debug for SyncSettings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 地址与账号只说明有没有填写，不输出内容
+        let filled = |v: &str| if v.is_empty() { "" } else { "***" };
+        f.debug_struct("SyncSettings")
+            .field("enabled", &self.enabled)
+            .field("server_url", &filled(&self.server_url))
+            .field("username", &filled(&self.username))
+            .field("auto", &self.auto)
+            .field("content", &self.content)
+            .finish()
+    }
+}
+
+lenient_struct! {
+    /// 同步哪些内容（也是 `sync_connect` 的参数：连接前可以先调整）
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+    pub struct SyncContent {
+        /// true：设置、模型服务、风格与术语表
+        pub settings: bool,
+        /// true：API Key（`settings` 关闭时无效——Key 按模型服务存放，脱离模型服务同步没有意义）
+        pub api_keys: bool,
+        /// true：剪贴板历史
+        pub clipboard: bool,
+        /// true：剪贴板图片与识别截图（单张不超过 `defaults::SYNC_MAX_IMAGE_BYTES`）
+        pub images: bool,
+        /// true：识别历史（只在本机开启了识别历史时生效）
+        pub ocr_history: bool,
+    }
+}
+
+impl Default for SyncContent {
+    fn default() -> Self {
+        Self {
+            settings: true,
+            api_keys: true,
+            clipboard: true,
+            images: true,
+            ocr_history: true,
         }
     }
 }

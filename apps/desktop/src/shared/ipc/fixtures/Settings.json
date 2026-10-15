@@ -158,5 +158,18 @@
     "log_level": "info",
     "webview_low_memory_when_hidden": true,
     "unload_panel_after_idle_min": null
+  },
+  "sync": {
+    "enabled": false,
+    "server_url": "",
+    "username": "",
+    "auto": true,
+    "content": {
+      "settings": true,
+      "api_keys": true,
+      "clipboard": true,
+      "images": true,
+      "ocr_history": true
+    }
   }
 }

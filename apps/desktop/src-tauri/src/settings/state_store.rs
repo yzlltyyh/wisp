@@ -85,6 +85,9 @@ pub struct StateFile {
     pub orphan_keys: BTreeSet<String>,
     /// 重启续接：`app_relaunch(resume)` 写入，下次启动时取走一次（`app::relaunch`）
     pub resume: Option<crate::app::relaunch::ResumeRequest>,
+    /// 同步用的本机设备 id（16 位小写十六进制）：只属于这台机器，断开同步后再连接时沿用；发现数据目录被复制到另一台
+    /// 机器时由同步模块换新（见 [`StateStore::sync_device_id`]）
+    pub sync_device_id: Option<String>,
 }
 
 impl Default for StateFile {
@@ -105,6 +108,7 @@ impl Default for StateFile {
             stored_keys: BTreeSet::new(),
             orphan_keys: BTreeSet::new(),
             resume: None,
+            sync_device_id: None,
         }
     }
 }
@@ -261,6 +265,27 @@ impl StateStore {
     pub fn clear_usage(&self) -> Result<(), IpcError> {
         self.update(&mut |s| s.usage.clear())
     }
+
+    /// 同步用的本机设备 id。state.json 里的值不是 16 位小写十六进制（被手改坏）时视为没有，由同步模块重新生成
+    pub fn sync_device_id(&self) -> Option<String> {
+        self.read(|s| s.sync_device_id.clone())
+            .filter(|id| is_sync_device_id(id))
+    }
+
+    /// 记下（`Some`）或清除（`None`）本机设备 id 并立即写盘（**阻塞**）。形状不对时 `invalid_argument`
+    pub fn set_sync_device_id(&self, id: Option<&str>) -> Result<(), IpcError> {
+        if id.is_some_and(|id| !is_sync_device_id(id)) {
+            return Err(IpcError::invalid_argument(
+                "sync_device_id must be 16 lowercase hexadecimal digits",
+            ));
+        }
+        self.update(&mut |s| s.sync_device_id = id.map(str::to_owned))
+    }
+}
+
+/// 设备 id 的形状：16 位小写十六进制
+pub fn is_sync_device_id(id: &str) -> bool {
+    id.len() == 16 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Unix 毫秒 → UTC 日期 `yyyy-mm-dd`（Howard Hinnant 的 civil_from_days）
@@ -356,6 +381,38 @@ mod tests {
         );
         store.clear_usage().expect("clear");
         assert!(store.get().usage.is_empty());
+    }
+
+    #[test]
+    fn sync_device_id_persists_and_rejects_bad_shapes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("state.json");
+        let store = StateStore::load(path.clone());
+        assert_eq!(store.sync_device_id(), None);
+        store.set_sync_device_id(Some("0123456789abcdef")).expect("set");
+        assert_eq!(
+            StateStore::load(path.clone()).sync_device_id().as_deref(),
+            Some("0123456789abcdef"),
+            "重启后沿用"
+        );
+        for bad in [
+            "0123456789ABCDEF",
+            "0123456789abcde",
+            "0123456789abcdefg",
+            "g123456789abcdef",
+            "",
+        ] {
+            assert_eq!(
+                store.set_sync_device_id(Some(bad)).expect_err("bad").code,
+                crate::error::IpcErrorCode::InvalidArgument,
+                "{bad}"
+            );
+        }
+        // 手改坏的值读成「没有」
+        std::fs::write(&path, br#"{"sync_device_id": "not-an-id"}"#).expect("write");
+        assert_eq!(StateStore::load(path.clone()).sync_device_id(), None);
+        store.set_sync_device_id(None).expect("clear");
+        assert_eq!(store.sync_device_id(), None);
     }
 
     #[test]

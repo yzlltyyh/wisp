@@ -9,7 +9,7 @@
 //! 隔行扫描（Adam7）的 PNG 必须整帧解码（剪贴板里极少见），单独限制为 [`MAX_INTERLACED_PIXELS`]（整帧 ≤ 32 MB，
 //! 与一张 4K 截图的 RGBA 相当）；一张压缩后不到 1 MB 的大尺寸纯色隔行图因此不会让常驻进程瞬间分配数百 MB。
 
-use std::io::Cursor;
+use std::io::{BufRead, Cursor, Seek};
 
 use png::{BitDepth, ColorType, Transformations};
 
@@ -63,9 +63,15 @@ pub(crate) struct EncodedThumb {
 
 /// 解析 PNG：尺寸 + 像素 hash
 pub(crate) fn inspect_png(bytes: &[u8]) -> Result<PngInfo, ImageError> {
+    inspect_png_from(Cursor::new(bytes))
+}
+
+/// 同 [`inspect_png`]，从任意可回退的读取端解码（例如同步下载到本地的原图文件）：逐行读、逐行 hash，
+/// 不把整个文件读进内存
+pub(crate) fn inspect_png_from<R: BufRead + Seek>(reader: R) -> Result<PngInfo, ImageError> {
     let mut hasher = blake3::Hasher::new();
     let mut header_done = false;
-    let (width, height, _) = for_each_rgba_row(bytes, |w, h, _y, row| {
+    let (width, height, _) = for_each_rgba_row_in(reader, |w, h, _y, row| {
         if !header_done {
             hasher.update(b"wisp:image\0");
             hasher.update(&w.to_le_bytes());
@@ -190,8 +196,16 @@ pub(crate) fn encode_png(data: &[u8], width: u32, height: u32, color: ColorType)
 }
 
 /// 逐行解码并把每行规范化为 RGBA8 交给 `f(width, height, y, row)`；返回（宽，高，源图是否带 alpha 通道 / tRNS）
-fn for_each_rgba_row(bytes: &[u8], mut f: impl FnMut(u32, u32, u32, &[u8])) -> Result<(u32, u32, bool), ImageError> {
-    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+fn for_each_rgba_row(bytes: &[u8], f: impl FnMut(u32, u32, u32, &[u8])) -> Result<(u32, u32, bool), ImageError> {
+    for_each_rgba_row_in(Cursor::new(bytes), f)
+}
+
+/// [`for_each_rgba_row`] 的实现：读取端可以是内存，也可以是文件
+fn for_each_rgba_row_in<R: BufRead + Seek>(
+    reader: R,
+    mut f: impl FnMut(u32, u32, u32, &[u8]),
+) -> Result<(u32, u32, bool), ImageError> {
+    let mut decoder = png::Decoder::new(reader);
     decoder.set_transformations(Transformations::normalize_to_color8());
     // 剪贴板 PNG 由系统编码，CRC / Adler 校验只会拖慢解码；结构错误仍会报错
     decoder.ignore_checksums(true);

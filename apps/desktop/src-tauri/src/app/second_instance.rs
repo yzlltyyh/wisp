@@ -85,8 +85,12 @@ pub fn on_reopen(app: &tauri::AppHandle) {
     bring_to_front(app);
 }
 
-/// 用户再次「打开」Wisp：引导窗口开着或引导还没完成时把引导带到前台，否则打开 / 聚焦设置窗口
+/// 用户再次「打开」Wisp：引导窗口开着或引导还没完成时把引导带到前台，否则打开 / 聚焦设置窗口；同时发起一轮同步
+/// （不节流：再次打开应用是明确的「我要用了」）
 pub fn bring_to_front(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<AppState>() {
+        state.sync.trigger(crate::sync_svc::CycleReason::Relaunch);
+    }
     let onboarding = app
         .get_webview_window(crate::windows::settings_window::ONBOARDING_LABEL)
         .is_some()

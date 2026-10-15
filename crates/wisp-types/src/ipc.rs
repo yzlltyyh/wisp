@@ -13,6 +13,7 @@ use crate::llm::{ModelRef, RequestId, TruncateReason, Usage};
 use crate::perm::{PermissionKind, PermissionSet};
 use crate::settings::Settings;
 use crate::style::{DictMode, OcrMode, Style, TaskKind};
+use crate::sync::SyncStatus;
 
 /// 面板视图
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -523,6 +524,8 @@ pub struct RuntimeInfo {
     /// 没有问题时省略（TS：`autostart_issue?: string | null`）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub autostart_issue: Option<String>,
+    /// 多设备同步的状态（不含地址、账号与设备名）；未开启时 `phase = off`
+    pub sync: SyncStatus,
 }
 
 /// 配置文件问题的种类
@@ -782,9 +785,13 @@ pub mod event {
     pub const OVERLAY_END: &str = "overlay:end";
     /// `OcrHistoryChanged` → settings：OCR 历史新增 / 删除 / 裁剪 / 清空
     pub const OCR_HISTORY_CHANGED: &str = "ocr_history:changed";
+    /// `SyncStatus` → 全部：同步状态变化（阶段、进度、错误）
+    pub const SYNC_STATUS: &str = "sync:status";
+    /// `()`（null）→ settings：术语表在设置窗口之外被改动（同步、手改文件）。术语编辑器没有未保存的编辑时重新读取
+    pub const GLOSSARY_CHANGED: &str = "glossary:changed";
 
     /// 全部事件名（顺序与 events.ts 的 `EVENT_NAMES` 一致）
-    pub const ALL: [&str; 17] = [
+    pub const ALL: [&str; 19] = [
         PANEL_PREPARE,
         PANEL_HIDE_REQUEST,
         PANEL_FOCUS_CHANGED,
@@ -802,5 +809,7 @@ pub mod event {
         WINDOW_CLOSE_REQUESTED,
         OVERLAY_END,
         OCR_HISTORY_CHANGED,
+        SYNC_STATUS,
+        GLOSSARY_CHANGED,
     ];
 }

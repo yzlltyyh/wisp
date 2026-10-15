@@ -74,6 +74,7 @@ const LOADERS: Record<SettingsSection, () => Promise<PageModule>> = {
   ocr: () => import('./pages/OcrPage'),
   clipboard: () => import('./pages/ClipboardPage'),
   appearance: () => import('./pages/AppearancePage'),
+  sync: () => import('./pages/SyncPage'),
   about: () => import('./pages/AboutPage'),
 }
 

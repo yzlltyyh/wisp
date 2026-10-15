@@ -129,6 +129,7 @@
     "delete_pinned": "再按一次 {key} 删除置顶项",
     "delete": "删除",
     "clear": "清空剪贴板历史？",
+    "clear_synced": "清空剪贴板历史？其他设备上的记录也会一并清除。",
     "keep_pinned": "保留置顶项",
     "clear_action": "清空"
   },

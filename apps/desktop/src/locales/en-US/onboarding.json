@@ -49,7 +49,8 @@
     "key_hint": "Saved to the system credential store when you continue.",
     "save": "Save and continue",
     "configured": "Connected: {names}",
-    "add_another": "Add another service"
+    "add_another": "Add another service",
+    "sync_link": "Already use Wisp on another device? Connect sync"
   },
   "try": {
     "title": "Try it",

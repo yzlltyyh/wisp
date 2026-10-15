@@ -41,6 +41,7 @@ pub mod llm;
 pub mod perm;
 pub mod settings;
 pub mod style;
+pub mod sync;
 
 pub use app::*;
 pub use clip::*;
@@ -53,3 +54,4 @@ pub use llm::*;
 pub use perm::*;
 pub use settings::*;
 pub use style::*;
+pub use sync::*;

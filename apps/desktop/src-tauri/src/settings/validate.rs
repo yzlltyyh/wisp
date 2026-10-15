@@ -82,6 +82,7 @@ pub fn check(s: &mut Settings) -> Vec<Fix> {
     check_ocr(s, &mut fixes);
     check_clipboard(s, &mut fixes);
     check_appearance(s, &mut fixes);
+    check_sync(s, &mut fixes);
     if let Some(v) = s.advanced.unload_panel_after_idle_min.as_mut() {
         clamp_u32(
             v,
@@ -311,6 +312,24 @@ fn check_appearance(s: &mut Settings, fixes: &mut Vec<Fix>) {
     }
 }
 
+/// 同步的地址与账号：只有连接命令会写（写之前已按同样的上限校验），这里拦住手改出的超长或带控制字符的值。
+/// 退回空串之后与凭据存储里的条目对不上，同步会提示重新连接，而不是拿着一个坏地址去发请求。开关都是 bool，无需校验
+fn check_sync(s: &mut Settings, fixes: &mut Vec<Fix>) {
+    let sync = &mut s.sync;
+    if !sync_text_is_valid(&sync.server_url, defaults::SYNC_MAX_URL_BYTES) {
+        sync.server_url.clear();
+        fixes.push(Fix::new("sync.server_url", FixKind::Reset));
+    }
+    if !sync_text_is_valid(&sync.username, defaults::SYNC_MAX_USERNAME_BYTES) {
+        sync.username.clear();
+        fixes.push(Fix::new("sync.username", FixKind::Reset));
+    }
+}
+
+fn sync_text_is_valid(v: &str, max_bytes: usize) -> bool {
+    v.len() <= max_bytes && !v.chars().any(char::is_control)
+}
+
 /// 强调色：`system`、预设名（blue/purple/…）或 `#RRGGBB`
 pub fn accent_is_valid(accent: &str) -> bool {
     accent == defaults::ACCENT_SYSTEM || defaults::ACCENT_PRESETS.contains(&accent) || is_hex_color(accent)
@@ -354,6 +373,27 @@ mod tests {
             timeouts: Timeouts::default(),
             template_id: None,
         }
+    }
+
+    #[test]
+    fn sync_address_and_account_are_bounded() {
+        let mut s = Settings::default();
+        s.sync.enabled = true;
+        s.sync.server_url = format!("https://dav.example.com/{}", "a".repeat(defaults::SYNC_MAX_URL_BYTES));
+        s.sync.username = "someone\nelse".to_owned();
+        let fixes = check(&mut s);
+        assert_eq!(s.sync.server_url, "");
+        assert_eq!(s.sync.username, "");
+        assert!(s.sync.enabled, "开关不受影响");
+        let paths: Vec<&str> = fixes.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["sync.server_url", "sync.username"]);
+        assert!(fixes.iter().all(Fix::is_lossy));
+
+        let mut s = Settings::default();
+        s.sync.server_url = "https://dav.example.com/dav".to_owned();
+        s.sync.username = "someone@example.com".to_owned();
+        assert!(check(&mut s).is_empty());
+        assert_eq!(s.sync.server_url, "https://dav.example.com/dav");
     }
 
     #[test]

@@ -187,3 +187,26 @@ fn styles_and_glossary_files_are_lenient() {
     assert_eq!(glossary.entries.len(), 1);
     assert_eq!(paths(&issues), ["entries[1]"]);
 }
+
+#[test]
+fn sync_section_is_lenient_and_issues_hold_no_values() {
+    let (s, issues) = parse_lenient::<Settings>(
+        r#"{ "sync": { "enabled": true, "server_url": 42, "username": "someone", "auto": "yes",
+            "content": { "images": false, "clipboard": "off" } } }"#,
+    )
+    .expect("parse");
+    assert!(s.sync.enabled);
+    assert_eq!(s.sync.server_url, "", "类型不对 → 默认空串");
+    assert_eq!(s.sync.username, "someone");
+    assert!(s.sync.auto, "非法值退回默认 true");
+    assert!(!s.sync.content.images);
+    assert!(s.sync.content.clipboard);
+    assert_eq!(
+        paths(&issues),
+        ["sync.auto", "sync.content.clipboard", "sync.server_url"]
+    );
+    let text = format!("{issues:?}");
+    assert!(!text.contains("someone"), "{text}");
+    // Debug 不输出地址与账号
+    assert!(!format!("{:?}", s.sync).contains("someone"));
+}

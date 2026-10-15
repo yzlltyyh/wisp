@@ -91,6 +91,8 @@ export default function OcrPage() {
     setAskClear(!v && history.items.length > 0)
   }
   const count = history.items.length
+  /** 识别历史随同步发到其他设备（同步已开启、勾选了「识别历史」）：说明文字不再说只保存在本机 */
+  const synced = settings.sync.enabled && settings.sync.content.ocr_history
 
   return (
     <Page title={t('settings.nav.ocr')} description={t('settings.ocr.description')}>
@@ -256,13 +258,23 @@ export default function OcrPage() {
               </m.div>
             ) : null}
           </AnimatePresence>
-          <OcrHistoryList enabled={o.history} limit={o.history_limit} history={history} />
+          <OcrHistoryList
+            enabled={o.history}
+            limit={o.history_limit}
+            synced={synced}
+            history={history}
+          />
           {count > 0 ? (
             <DangerRow
               label={t('settings.ocr.history_clear')}
               description={t('settings.ocr.history_clear_desc')}
               action={t('settings.ocr.history_clear_action')}
-              confirm={t('settings.ocr.history_clear_confirm')}
+              confirm={
+                // 本机正在记录并同步识别历史时，清空会同步到其他设备；没在记录时清空只影响本机
+                synced && o.history
+                  ? t('settings.ocr.history_clear_confirm_synced')
+                  : t('settings.ocr.history_clear_confirm')
+              }
               confirmLabel={t('settings.ocr.history_clear_ok')}
               icon={Trash2}
               onConfirm={() => void clearHistory()}

@@ -10,7 +10,8 @@
 //!    往返，放到阻塞线程池；能力缓存写回、钥匙串索引、权限、更新器状态等运行时信息的变化不碰它），结果变化才广播
 //!    `appearance:changed`；
 //! 5. 托盘（状态行、语言、快捷键显示）；
-//! 6. 向所有窗口 emit `settings:changed`（完整的 `SettingsSnapshot`）。
+//! 6. 向所有窗口 emit `settings:changed`（完整的 `SettingsSnapshot`）；术语表变了（任何来源：设置页、导入、手改文件、
+//!    同步）时另外 emit `glossary:changed`——术语表不在快照里，打开着的术语表编辑器据此重新读取。
 //!
 //! 同一时刻的多次变化合并成一次处理（watch 通道天然合并，处理前再让出一次调度）。快捷键的重新注册、剪贴板设置的应用
 //! 由 HotkeyService / ClipboardService 各自订阅 `SettingsService::subscribe` 完成，这里不重复。
@@ -19,7 +20,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 use tauri::{Emitter, Manager};
-use wisp_types::{AppKeymap, Settings, event};
+use wisp_types::{AppKeymap, GlossaryEntry, Settings, event};
 
 use crate::state::AppState;
 
@@ -34,6 +35,7 @@ pub fn spawn(app: &tauri::AppHandle, keymaps: Arc<RwLock<Vec<AppKeymap>>>) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         let mut previous = settings.get();
+        let mut previous_glossary = settings.glossary_entries();
         while rx.changed().await.is_ok() {
             // 合并同一时刻的多次变化（例如删除 Provider 时的钥匙串 + 设置 + 风格三次通知）
             tokio::task::yield_now().await;
@@ -50,6 +52,13 @@ pub fn spawn(app: &tauri::AppHandle, keymaps: Arc<RwLock<Vec<AppKeymap>>>) {
             }
             crate::tray::refresh(&handle);
             broadcast(&handle);
+            let glossary = settings.glossary_entries();
+            if glossary_changed(&previous_glossary, &glossary) {
+                if let Err(e) = handle.emit(event::GLOSSARY_CHANGED, ()) {
+                    log::warn!("emit glossary:changed failed: {e}");
+                }
+                previous_glossary = glossary;
+            }
             previous = current;
         }
     });
@@ -85,6 +94,11 @@ pub fn broadcast(app: &tauri::AppHandle) {
     }
 }
 
+/// 术语表是否变了：每次替换都换一个新的 `Arc`，指针相同就一定没变，不必逐条比较
+fn glossary_changed(prev: &Arc<Vec<GlossaryEntry>>, cur: &Arc<Vec<GlossaryEntry>>) -> bool {
+    !Arc::ptr_eq(prev, cur) && prev != cur
+}
+
 /// 两份设置之间、需要额外处理的差异
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Changes {
@@ -114,6 +128,23 @@ mod tests {
     use wisp_types::{LogLevel, UpdatePolicy};
 
     use super::*;
+
+    #[test]
+    fn glossary_changes_are_detected_by_content() {
+        let entry = |s: &str| GlossaryEntry {
+            source: s.to_owned(),
+            target: s.to_owned(),
+            note: None,
+        };
+        let a = Arc::new(vec![entry("token")]);
+        assert!(!glossary_changed(&a, &Arc::clone(&a)));
+        assert!(
+            !glossary_changed(&a, &Arc::new(vec![entry("token")])),
+            "内容相同不算变化"
+        );
+        assert!(glossary_changed(&a, &Arc::new(vec![entry("token"), entry("GPU")])));
+        assert!(glossary_changed(&a, &Arc::new(Vec::new())));
+    }
 
     #[test]
     fn detects_only_relevant_changes() {

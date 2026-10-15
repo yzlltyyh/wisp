@@ -49,7 +49,8 @@
     "key_hint": "保存并继续时一并写入系统凭据存储",
     "save": "保存并继续",
     "configured": "已接入：{names}",
-    "add_another": "再添加一个服务"
+    "add_another": "再添加一个服务",
+    "sync_link": "已在其他设备上使用 Wisp？连接同步"
   },
   "try": {
     "title": "试一试",

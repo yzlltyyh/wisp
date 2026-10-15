@@ -20,8 +20,8 @@ pub const BUILTIN_EXCLUDED: [&str; 1] = ["com.apple.Passwords"];
 impl PrivacyRules {
     /// 来源应用是否在排除名单中：按 `AppRef.id`（mac bundle id / Win exe / X11 WM_CLASS class）与
     /// `alt_id`（X11 WM_CLASS instance）比较，忽略 ASCII 大小写。名单里三端条目都在，id 形态互不相同，因此不按 os 过滤。
-    /// [`BUILTIN_EXCLUDED`] 始终生效
-    pub(crate) fn excludes(&self, source: Option<&AppRef>) -> bool {
+    /// 内置的排除项（系统自带的密码管理器）始终生效。同步来的条目同样按它判断（来源应用标识随条目一起同步）
+    pub fn excludes(&self, source: Option<&AppRef>) -> bool {
         let Some(app) = source else { return false };
         if BUILTIN_EXCLUDED.iter().any(|id| app.id.eq_ignore_ascii_case(id)) {
             return true;

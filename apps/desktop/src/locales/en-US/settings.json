@@ -21,6 +21,7 @@
     "ocr": "OCR",
     "clipboard": "Clipboard",
     "appearance": "Appearance",
+    "sync": "Sync",
     "about": "About"
   },
   "unit": {
@@ -324,6 +325,7 @@
     "delete_action": "Delete service",
     "delete_confirm": "Delete “{name}”? This can’t be undone.",
     "deleted": "Deleted “{name}”",
+    "deleted_elsewhere": "“{name}” was deleted on another device or in the settings file, so your latest change wasn’t saved.",
     "discard_confirm": "Discard this new service? Nothing you entered will be saved.",
     "keep_editing": "Keep editing",
     "discard": "Discard",
@@ -546,12 +548,15 @@
     "history_clear_desc": "Delete all saved results and thumbnails",
     "history_clear_action": "Clear history",
     "history_clear_confirm": "Clear all recognition history?",
+    "history_clear_confirm_synced": "Clear all recognition history? It will be cleared on your other devices too.",
     "history_clear_ok": "Clear",
     "history_cleared": "Recognition history cleared",
     "history_empty_on": "No recognitions yet",
     "history_empty_on_desc": "Screenshot results will show up here. They stay on this computer.",
+    "history_empty_on_desc_synced": "Screenshot results will show up here, encrypted and synced to your other devices.",
     "history_empty_off": "Recognition history is off",
     "history_empty_off_desc": "Turn it on to keep your last {n} results to look back at, copy, or translate again. Text and screenshots stay on this computer.",
+    "history_empty_off_desc_synced": "Turn it on to keep your last {n} results to look back at, copy, or translate again. Text and screenshots are encrypted and synced to your other devices.",
     "history_count_one": "{n} item",
     "history_count_other": "{n} items",
     "history_more": "Show more",
@@ -644,6 +649,7 @@
     "clear_desc": "Delete all items (pinned items are kept)",
     "clear_button": "Clear history",
     "clear_confirm": "Clear clipboard history? Pinned items are kept.",
+    "clear_confirm_synced": "Clear clipboard history? Pinned items are kept. Items on your other devices will be cleared too.",
     "clear_ok": "Clear",
     "cleared_one": "Removed {n} item",
     "cleared_other": "Removed {n} items"
@@ -690,6 +696,224 @@
     "reduce_system": "System",
     "reduce_on": "On",
     "reduce_off": "Off"
+  },
+  "sync": {
+    "description": "Keep your settings and history in step across your devices. Everything is encrypted on this device before it’s uploaded.",
+    "intro": {
+      "label": "WebDAV storage you own",
+      "detail": "Nutstore, Nextcloud, a NAS and more. No Wisp account, no relay server.",
+      "connect": "Connect a server…"
+    },
+    "connect": {
+      "title": "Connect a server",
+      "title_update": "Update passwords",
+      "subtitle": "Everything is encrypted on this device before it’s uploaded",
+      "back": "Back",
+      "server": "Server",
+      "preset": "Service",
+      "preset_placeholder": "Choose a service (optional)",
+      "preset_option": {
+        "nutstore": "Nutstore",
+        "pan123": "123pan",
+        "nextcloud": "Nextcloud",
+        "synology": "Synology NAS",
+        "custom": "Custom"
+      },
+      "preset_hint": {
+        "nutstore": "Nutstore web › Account info › Security › Third-party apps: add an app to get an app password",
+        "pan123": "123pan web › WebDAV: turn it on, then use the account and password shown there",
+        "nextcloud": "Personal settings › Security › Devices & sessions: create an app password",
+        "synology": "Install {package} from the package center and turn on HTTPS. A separate account for Wisp is safer — use its password here.",
+        "custom": "If your service offers app passwords, create one just for Wisp"
+      },
+      "url": "Server address",
+      "url_placeholder": {
+        "nextcloud": "https://your-cloud/remote.php/dav/files/your-name/",
+        "synology": "https://your-nas:5006/",
+        "custom": "https://"
+      },
+      "url_https": "Only local network addresses can use http. Use an https:// address instead.",
+      "url_invalid": "That address doesn’t look right. It should start with https:// and have no “?”, “#” or account name.",
+      "username": "Account",
+      "username_placeholder": "Email or user name",
+      "password": "App password",
+      "password_placeholder": "Enter the app password",
+      "password_keep": "Leave empty to keep the saved password",
+      "password_saved": {
+        "macos": "Once connected, it’s kept only in Keychain",
+        "windows": "Once connected, it’s kept only in Credential Manager",
+        "linux": "Once connected, it’s kept only in the keyring"
+      },
+      "test_desc": "Checks sign-in and read/write access, and whether there’s already sync data on the server",
+      "test_stale": "Address, account or password changed — these results are from before.",
+      "test_needed": "Test the connection first",
+      "step": {
+        "connect": "Sign in",
+        "write": "Read and write",
+        "data": "Data on the server"
+      },
+      "step_ok": {
+        "connect": "Signed in",
+        "write": "Can read and write"
+      },
+      "advice": {
+        "auth": "Check the account and app password, then test again",
+        "credentials_missing": "Enter the app password above, then test again",
+        "https_required": "Only local network addresses can use http. Use an https:// address instead.",
+        "keychain": "Test again, and choose “Allow” if the system asks"
+      },
+      "data": {
+        "none": "No sync data yet",
+        "devices_one": "Sync data from {count} device",
+        "devices_other": "Sync data from {count} devices",
+        "updated": "updated {time}",
+        "restorable": "This device was already syncing this data",
+        "unsupported": "Created by a newer Wisp"
+      },
+      "content_desc": "You can change this any time after connecting",
+      "pass": {
+        "create_title": "Set a sync password",
+        "create_desc": "It encrypts your data on this device. Enter the same password on your other devices.",
+        "join_title": "Enter your sync password",
+        "join_desc": "Your data will be merged with what’s on the server. Settings already there take priority; model services, glossary terms and history that only this device has are kept. If this device synced this data before, anything deleted or cleared on your other devices while it was away is removed here too.",
+        "restore_title": "Reconnect",
+        "restore_desc": "Enter your sync password to continue. Changes this device hasn’t uploaded yet will still sync.",
+        "field": "Sync password",
+        "confirm": "Enter it again",
+        "generate": "Generate one",
+        "show": "Show sync password",
+        "hide": "Hide sync password",
+        "rules": "At least 12 characters, different from your app password and account",
+        "forget": "If you forget it, the data on the server can’t be read. Keep it in a password manager.",
+        "generated": "Generated and filled in — save it in your password manager first",
+        "short": "Use at least 12 characters",
+        "mismatch": "The two entries don’t match",
+        "required": "Enter your sync password",
+        "reused": "Can’t be the same as your app password, account or server address",
+        "forgot": "Forgot it?",
+        "forgot_desc": "Clear the data on the server and start over",
+        "forgot_action": "Clear and start over",
+        "forgot_confirm": "Clear the sync data on the server? Every other device stops syncing until it reconnects with the new sync password.",
+        "unsupported": "The data on the server was created by a newer Wisp. Update Wisp on this device first.",
+        "keychain_hint": "macOS may ask for access to Keychain — choose “Allow”"
+      },
+      "connect": "Connect",
+      "reconnect": "Reconnect",
+      "discard_confirm": "Discard this setup? Nothing you entered will be saved."
+    },
+    "server": {
+      "title": "Server",
+      "sync_now": "Sync now",
+      "update_label": "Passwords",
+      "update_desc": "Changed your app password, or need to enter your sync password again? Do it here.",
+      "update": "Update passwords…",
+      "reconnect": "Reconnect…"
+    },
+    "status": {
+      "syncing": "Syncing…",
+      "progress": "Syncing · {done} / {total}",
+      "synced": "Synced · {time}",
+      "never": "Not synced yet",
+      "pending": "Changes waiting to sync",
+      "transient": "Can’t reach the server right now — will retry automatically"
+    },
+    "error": {
+      "network": {
+        "reason": "Can’t reach the server",
+        "advice": "Check your network or proxy. Sync retries automatically."
+      },
+      "auth": {
+        "reason": "The account or app password was rejected",
+        "advice": "Enter your app password again in “Update passwords…”"
+      },
+      "forbidden": {
+        "reason": "The server refused access",
+        "advice": "Make sure this account can read and write there. Some services need it turned on first."
+      },
+      "not_found": {
+        "reason": "The server address wasn’t found",
+        "advice": "Check that the address is complete — for example, the /dav at the end"
+      },
+      "quota": {
+        "reason": "The server is out of space",
+        "advice": "Free up space on the server, or turn off “Clipboard images”"
+      },
+      "server": {
+        "reason": "The server had a problem",
+        "advice": "Sync retries automatically. If it keeps happening, check the service’s status."
+      },
+      "https_required": {
+        "reason": "This address needs https",
+        "advice": "Only local network addresses can use http. Disconnect, then reconnect with an https:// address."
+      },
+      "passphrase": {
+        "reason": "The sync password doesn’t match",
+        "advice": "Enter it again in “Update passwords…”"
+      },
+      "vault_reset": {
+        "reason": "The sync data on the server was cleared",
+        "advice": "Reconnect, then set a new sync password or enter the one set on your other device"
+      },
+      "format_too_new": {
+        "reason": "The data on the server is from a newer Wisp",
+        "advice": "Update Wisp on this device, then sync again"
+      },
+      "credentials_missing": {
+        "reason": "The saved passwords are missing",
+        "advice": "Enter your app password and sync password again in “Update passwords…”"
+      },
+      "keychain": {
+        "reason": "Couldn’t read the system credential store",
+        "advice": "Click “Sync now” to retry, and choose “Allow” if the system asks"
+      },
+      "corrupt": {
+        "reason": "Data from one device couldn’t be read",
+        "advice": "Other devices aren’t affected. Syncing again on that device usually fixes it."
+      },
+      "internal": {
+        "reason": "Something went wrong",
+        "advice": "Try again. If it keeps happening, export diagnostics from “About”."
+      }
+    },
+    "auto": {
+      "label": "Sync automatically",
+      "desc": "Uploads your changes as you make them and picks up changes from your other devices while you use Wisp"
+    },
+    "content": {
+      "title": "What to sync",
+      "settings": "Settings and model services",
+      "settings_desc": "Including styles and the glossary",
+      "api_keys": "API keys",
+      "api_keys_desc": "Encrypted, along with model services",
+      "api_keys_off": "Needs settings and model services",
+      "clipboard": "Clipboard history",
+      "clipboard_desc": "Text and formatting, not files",
+      "images": "Clipboard images",
+      "images_desc": "Including recognition screenshots; up to 10 MB each",
+      "ocr_history": "Recognition history",
+      "ocr_history_desc": "Only while recognition history is on for this device",
+      "ocr_history_local_off": "Recognition history is off on this device, so nothing is synced yet",
+      "removed": "Off: what this device uploaded will be removed from the server. Copies already on other devices stay.",
+      "local_note": "Shortcuts sync only between devices on the same system. Launch at login, clipboard recording, secret detection, the recognition history switch, logging and performance options stay on this device."
+    },
+    "devices": {
+      "title": "Devices",
+      "this_device": "This device",
+      "seen": "{os} · last synced {time}",
+      "failed": "Couldn’t load the device list",
+      "empty": "No devices have synced yet"
+    },
+    "danger": {
+      "disconnect": "Disconnect sync",
+      "disconnect_desc": "Stop syncing on this device. Data on the server stays, so you can reconnect later.",
+      "disconnect_action": "Disconnect",
+      "disconnect_confirm": "Disconnect sync? Data on the server is kept.",
+      "disconnect_confirm_pending": "Disconnect sync? Some changes on this device haven’t been uploaded and won’t be.",
+      "reset": "Clear data on the server",
+      "reset_desc": "Deletes all sync data on the server. Every device stops syncing.",
+      "reset_action": "Clear",
+      "reset_confirm": "Clear the sync data on the server? Every device will stop syncing. This can’t be undone."
+    }
   },
   "about": {
     "version": "Version {version}",

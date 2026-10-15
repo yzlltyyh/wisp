@@ -407,6 +407,29 @@ fn runtime_info() -> RuntimeInfo {
         settings_issue: Some(settings_issue()),
         orphan_keys: 1,
         autostart_issue: None,
+        sync: SyncStatus::off(),
+    }
+}
+
+fn sync_status_syncing() -> SyncStatus {
+    SyncStatus {
+        phase: SyncPhase::Syncing,
+        last_ok_ms: Some(1_760_000_000_000),
+        pending: true,
+        error: None,
+        transient: false,
+        error_detail: None,
+        progress: Some(SyncProgress { done: 120, total: 1000 }),
+        device_count: 2,
+    }
+}
+
+fn sync_vault_info() -> SyncVaultInfo {
+    SyncVaultInfo {
+        supported: true,
+        device_count: 2,
+        last_modified_ms: Some(1_759_740_000_000),
+        restorable: false,
     }
 }
 
@@ -852,6 +875,7 @@ fn all_samples() -> Samples {
     );
     x.add("ClipboardChanged.paused", ClipboardChanged::Paused { paused: true });
     x.add("ClipboardChanged.secret_skipped", ClipboardChanged::SecretSkipped);
+    x.add("ClipboardChanged.reloaded", ClipboardChanged::Reloaded);
     x.add(
         "OcrHistoryItem",
         OcrHistoryItem {
@@ -1227,6 +1251,124 @@ fn all_samples() -> Samples {
         },
     );
     x.add("UpdateStatus", update_status());
+
+    // ===== ipc：同步 =====
+    x.add("SyncStatus", sync_status_syncing());
+    x.add(
+        "SyncStatus.transient_error",
+        SyncStatus {
+            phase: SyncPhase::Error,
+            last_ok_ms: Some(1_760_000_000_000),
+            pending: true,
+            error: Some(SyncErrorKind::Network),
+            transient: true,
+            error_detail: Some(s("timeout")),
+            progress: None,
+            device_count: 2,
+        },
+    );
+    x.add(
+        "SyncStatus.needs_attention",
+        SyncStatus {
+            phase: SyncPhase::Error,
+            last_ok_ms: None,
+            pending: false,
+            error: Some(SyncErrorKind::Auth),
+            transient: false,
+            error_detail: Some(s("http 401")),
+            progress: None,
+            device_count: 0,
+        },
+    );
+    x.add("SyncProgress", SyncProgress { done: 3, total: 8 });
+    x.add(
+        "SyncDevice",
+        SyncDevice {
+            id: s("3f9a0c1d2e4b5a69"),
+            name: s("MacBook Air"),
+            os: OsKind::Macos,
+            app_version: s("0.2.0"),
+            last_seen_ms: 1_760_000_000_000,
+            this_device: true,
+        },
+    );
+    x.add(
+        "SyncAccount",
+        SyncAccount {
+            server_url: s("https://dav.example.com/dav"),
+            username: s("someone@example.com"),
+        },
+    );
+    x.add(
+        "SyncProbe",
+        SyncProbe {
+            ok: true,
+            error: None,
+            error_detail: None,
+            vault: Some(sync_vault_info()),
+        },
+    );
+    x.add(
+        "SyncProbe.empty_server",
+        SyncProbe {
+            ok: true,
+            error: None,
+            error_detail: None,
+            vault: None,
+        },
+    );
+    x.add(
+        "SyncProbe.failed",
+        SyncProbe {
+            ok: false,
+            error: Some(SyncErrorKind::HttpsRequired),
+            error_detail: Some(s("redirect")),
+            vault: None,
+        },
+    );
+    x.add("SyncVaultInfo", sync_vault_info());
+    x.add(
+        "SyncVaultInfo.restorable",
+        SyncVaultInfo {
+            supported: true,
+            device_count: 3,
+            last_modified_ms: None,
+            restorable: true,
+        },
+    );
+    x.add(
+        "SyncConnectResult",
+        SyncConnectResult {
+            outcome: SyncConnectOutcome::Joined,
+            status: sync_status_syncing(),
+        },
+    );
+    x.add(
+        "SyncConnectResult.created",
+        SyncConnectResult {
+            outcome: SyncConnectOutcome::Created,
+            status: SyncStatus {
+                phase: SyncPhase::Idle,
+                last_ok_ms: Some(1_760_000_000_000),
+                device_count: 1,
+                ..SyncStatus::off()
+            },
+        },
+    );
+    x.add(
+        "SyncConnectResult.restored",
+        SyncConnectResult {
+            outcome: SyncConnectOutcome::Restored,
+            status: SyncStatus {
+                phase: SyncPhase::Idle,
+                last_ok_ms: Some(1_760_000_000_000),
+                pending: true,
+                device_count: 2,
+                ..SyncStatus::off()
+            },
+        },
+    );
+
     x.add_as(
         "OnboardingHotkey",
         "T.EventMap['onboarding:hotkey']",
@@ -1350,6 +1492,32 @@ fn all_samples() -> Samples {
             log_level: LogLevel::Debug,
             webview_low_memory_when_hidden: false,
             unload_panel_after_idle_min: Some(60),
+        },
+    );
+    x.add_as(
+        "SyncSettings",
+        "T.Settings['sync']",
+        SyncSettings {
+            enabled: true,
+            server_url: s("https://dav.example.com/dav"),
+            username: s("someone@example.com"),
+            auto: false,
+            content: SyncContent {
+                api_keys: false,
+                images: false,
+                ..SyncContent::default()
+            },
+        },
+    );
+    x.add_as(
+        "SyncContent",
+        "T.Settings['sync']['content']",
+        SyncContent {
+            settings: false,
+            api_keys: false,
+            clipboard: true,
+            images: true,
+            ocr_history: false,
         },
     );
 
@@ -1547,7 +1715,9 @@ fn settings_default_matches_contract_example() {
       "ocr": { "default_mode": "lines", "max_edge_px": 2048, "auto_copy": true, "history": false, "history_limit": 50, "window_detect": true, "fly_animation": true, "direct_translate_transcribe": false, "image_detail": "high" },
       "clipboard": { "enabled": true, "record_text": true, "record_rich_text": true, "record_images": true, "record_files": true, "max_items": 1000, "max_age_days": null, "max_text_bytes": 1048576, "max_image_bytes": 20971520, "excluded_apps": [], "secret_detection": true, "secret_tray_flash": true, "panel_position": "center", "paste_on": "single_click", "show_hint_bar": true },
       "appearance": { "theme": "system", "accent": "system", "font_size": 14, "translate_min_width": 360, "translate_max_width": 520, "clipboard_width": 420, "max_height_ratio": 0.6, "material": "system", "reduce_motion": "system" },
-      "advanced": { "log_level": "info", "webview_low_memory_when_hidden": true, "unload_panel_after_idle_min": null } });
+      "advanced": { "log_level": "info", "webview_low_memory_when_hidden": true, "unload_panel_after_idle_min": null },
+      "sync": { "enabled": false, "server_url": "", "username": "", "auto": true,
+        "content": { "settings": true, "api_keys": true, "clipboard": true, "images": true, "ocr_history": true } } });
     example["clipboard"]["excluded_apps"] =
         serde_json::to_value(wisp_types::defaults::default_excluded_apps()).expect("序列化失败");
     // 注意：f32 经 `serde_json::to_value` 会被拓宽成 0.6000000238418579；落盘与 IPC 都走 `to_string`（输出 0.6），

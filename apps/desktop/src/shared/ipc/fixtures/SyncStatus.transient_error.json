@@ -1,0 +1,10 @@
+{
+  "phase": "error",
+  "last_ok_ms": 1760000000000,
+  "pending": true,
+  "error": "network",
+  "transient": true,
+  "error_detail": "timeout",
+  "progress": null,
+  "device_count": 2
+}

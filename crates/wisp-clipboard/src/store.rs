@@ -60,20 +60,20 @@ const RETAIN_COND: &str = "pinned = 0 AND (last_used_at < ?1 OR id IN (
 
 /// 剪贴板历史存储（调用方应在 spawn_blocking 中使用）
 pub struct ClipStore {
-    inner: Mutex<Inner>,
+    pub(crate) inner: Mutex<Inner>,
     root: PathBuf,
     /// 本次运行已留下恢复标记
     recovery_marked: AtomicBool,
 }
 
-struct Inner {
-    conn: Connection,
+pub(crate) struct Inner {
+    pub(crate) conn: Connection,
     /// 已落盘的应用图标（key，不含扩展名）
-    icons: HashSet<String>,
+    pub(crate) icons: HashSet<String>,
 }
 
 /// 待插入的一行
-enum NewRow<'a> {
+pub(crate) enum NewRow<'a> {
     Text(&'a TextRecord),
     /// 文件记录、完整文件列表 JSON、前 5 项的 JSON
     Files(&'a FilesRecord, String, String),
@@ -740,25 +740,62 @@ impl ClipStore {
     }
 
     /// 在一个事务里删除若干条 OCR 历史，删掉不再被引用的图片；返回实际删除的 id
-    fn ocr_history_delete_ids(&self, ids: &[i64]) -> Result<Vec<i64>, StoreError> {
+    pub(crate) fn ocr_history_delete_ids(&self, ids: &[i64]) -> Result<Vec<i64>, StoreError> {
+        Ok(self
+            .ocr_history_delete_rows(ids, false)?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect())
+    }
+
+    /// 同 [`Self::ocr_history_delete_ids`]；`with_keys` 时同时给出每条被删记录的同步键（在删除的同一个事务里读取，
+    /// 不会与并发的改动交错）
+    pub(crate) fn ocr_history_delete_rows(
+        &self,
+        ids: &[i64],
+        with_keys: bool,
+    ) -> Result<Vec<(i64, Option<String>)>, StoreError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
         let mut inner = self.inner.lock();
+        self.ocr_history_delete_locked(&mut inner, ids, with_keys)
+    }
+
+    /// [`Self::ocr_history_delete_rows`] 的实现（调用方持锁：按键查找与删除在同一次持锁里完成）
+    pub(crate) fn ocr_history_delete_locked(
+        &self,
+        inner: &mut Inner,
+        ids: &[i64],
+        with_keys: bool,
+    ) -> Result<Vec<(i64, Option<String>)>, StoreError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
         let (removed, orphaned) = with_secure_delete(&mut inner.conn, |conn| {
             let tx = conn.transaction()?;
             let mut removed = Vec::new();
             let mut names = Vec::new();
             {
-                let mut sel = tx.prepare("SELECT thumb_blob, image_blob FROM ocr_history WHERE id = ?1")?;
+                let mut sel = tx.prepare(
+                    "SELECT thumb_blob, image_blob, created_at, mode, CASE WHEN ?2 THEN text END
+                     FROM ocr_history WHERE id = ?1",
+                )?;
                 let mut del = tx.prepare("DELETE FROM ocr_history WHERE id = ?1")?;
                 for &id in ids {
-                    let blobs: Option<(Option<String>, Option<String>)> =
-                        sel.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+                    type Sel = (Option<String>, Option<String>, i64, String, Option<String>);
+                    let row: Option<Sel> = sel
+                        .query_row(params![id, with_keys], |r| {
+                            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+                        })
+                        .optional()?;
                     if del.execute([id])? > 0 {
-                        removed.push(id);
+                        let key = row.as_ref().and_then(|(_, _, at, mode, text)| {
+                            Some(crate::sync::ocr_key_raw(*at, mode, text.as_deref()?))
+                        });
+                        removed.push((id, key));
                     }
-                    if let Some((thumb, image)) = blobs {
+                    if let Some((thumb, image, ..)) = row {
                         names.extend([thumb, image].into_iter().flatten());
                     }
                 }
@@ -792,7 +829,7 @@ impl ClipStore {
 
     /// 统一处理运行中的损坏：FTS 索引结构损坏 → 重建索引后重试一次；数据库文件损坏 → 留下恢复标记，
     /// 下次 [`Self::open`] 做深度检查（`quick_check` + FTS `integrity-check`），失败则备份重建
-    fn guard<T>(&self, mut op: impl FnMut() -> Result<T, StoreError>) -> Result<T, StoreError> {
+    pub(crate) fn guard<T>(&self, mut op: impl FnMut() -> Result<T, StoreError>) -> Result<T, StoreError> {
         let result = match op() {
             Err(e) if e.is_fts_corruption() => {
                 log::warn!("clipboard fts index corrupt ({e}); rebuilding");
@@ -814,7 +851,7 @@ impl ClipStore {
         result
     }
 
-    fn blob_dir(&self, kind: BlobKind) -> PathBuf {
+    pub(crate) fn blob_dir(&self, kind: BlobKind) -> PathBuf {
         self.root.join("blobs").join(kind.dir())
     }
 
@@ -833,7 +870,7 @@ impl ClipStore {
             tx.commit()?;
             return Ok(IngestOutcome::Touched(meta));
         }
-        let id = insert_row(&tx, hash, &row, source, icon_key.as_deref(), now_ms)?;
+        let id = insert_row(&tx, hash, &row, source, icon_key.as_deref(), RowTimes::now(now_ms))?;
         let meta = read_meta(&tx, id)?;
         tx.commit()?;
         Ok(IngestOutcome::Inserted(meta))
@@ -901,7 +938,7 @@ impl ClipStore {
             info,
             bytes: png.len() as u64,
         };
-        let committed = insert_row(&tx, hash, &row, source, icon_key.as_deref(), now_ms)
+        let committed = insert_row(&tx, hash, &row, source, icon_key.as_deref(), RowTimes::now(now_ms))
             .and_then(|id| read_meta(&tx, id))
             .and_then(|meta| tx.commit().map(|()| meta).map_err(StoreError::from));
         match committed {
@@ -916,7 +953,7 @@ impl ClipStore {
     }
 
     /// 删除条目对应的原图与缩略图，返回实际删除的文件数
-    fn remove_item_blobs(&self, blobs: &[(BlobKind, String)]) -> u32 {
+    pub(crate) fn remove_item_blobs(&self, blobs: &[(BlobKind, String)]) -> u32 {
         let removed = blobs
             .iter()
             .filter(|(kind, key)| blobs::remove_quietly(&self.blob_path(*kind, key)))
@@ -1060,7 +1097,7 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
 }
 
 /// 应用 id → 图标 key（blake3 前 16 字节的十六进制）
-fn icon_key_for(app_id: &str) -> String {
+pub(crate) fn icon_key_for(app_id: &str) -> String {
     let mut h = blake3::Hasher::new();
     h.update(b"wisp:icon\0");
     h.update(app_id.as_bytes());
@@ -1068,14 +1105,14 @@ fn icon_key_for(app_id: &str) -> String {
 }
 
 /// OCR 历史图片的文件名：内容 hash + 按魔数识别的扩展名
-fn ocr_blob_name(bytes: &[u8]) -> Result<String, StoreError> {
+pub(crate) fn ocr_blob_name(bytes: &[u8]) -> Result<String, StoreError> {
     let ext =
         imaging::sniff_ext(bytes).ok_or_else(|| StoreError::InvalidInput("ocr image must be png or jpeg".into()))?;
     Ok(format!("{}.{ext}", hash_stem(blake3::hash(bytes).as_bytes())))
 }
 
 /// `ocr_history` 的一行 → DTO（列顺序：id, created_at, mode, model, text, thumb_blob, image_blob）
-fn ocr_history_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OcrHistoryItem> {
+pub(crate) fn ocr_history_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OcrHistoryItem> {
     Ok(OcrHistoryItem {
         id: r.get(0)?,
         created_at: r.get(1)?,
@@ -1088,14 +1125,14 @@ fn ocr_history_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<OcrHistoryItem> {
 }
 
 /// 按 hash 找到的已有图片条目（自愈检查用）
-struct ExistingImage {
-    id: i64,
-    image_blob: Option<String>,
-    image_bytes: Option<i64>,
-    thumb_blob: Option<String>,
+pub(crate) struct ExistingImage {
+    pub(crate) id: i64,
+    pub(crate) image_blob: Option<String>,
+    pub(crate) image_bytes: Option<i64>,
+    pub(crate) thumb_blob: Option<String>,
 }
 
-fn find_image(tx: &Transaction<'_>, hash: &[u8; 32]) -> Result<Option<ExistingImage>, StoreError> {
+pub(crate) fn find_image(tx: &Transaction<'_>, hash: &[u8; 32]) -> Result<Option<ExistingImage>, StoreError> {
     let row = tx
         .prepare_cached("SELECT id, image_blob, image_bytes, thumb_blob FROM items WHERE hash = ?1")?
         .query_row([&hash[..]], |r| {
@@ -1111,7 +1148,7 @@ fn find_image(tx: &Transaction<'_>, hash: &[u8; 32]) -> Result<Option<ExistingIm
 }
 
 /// 原图文件完好：存在、大小与入库时一致、以 PNG 签名开头
-fn blob_intact(path: &Path, expected_len: Option<i64>) -> bool {
+pub(crate) fn blob_intact(path: &Path, expected_len: Option<i64>) -> bool {
     use std::io::Read as _;
     let Ok(mut f) = fs::File::open(path) else { return false };
     let len_ok = f
@@ -1138,27 +1175,50 @@ fn touch_row(tx: &Transaction<'_>, id: i64, now_ms: i64) -> Result<ClipItemMeta,
     read_meta(tx, id)
 }
 
-fn insert_row(
+/// 新行的时间与置顶：本机记录时两个时间都是「现在」、不置顶；同步来的条目沿用它在别的设备上的时间与置顶状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RowTimes {
+    pub(crate) created_at: i64,
+    pub(crate) last_used_at: i64,
+    pub(crate) pinned: bool,
+}
+
+impl RowTimes {
+    pub(crate) fn now(now_ms: i64) -> Self {
+        Self {
+            created_at: now_ms,
+            last_used_at: now_ms,
+            pinned: false,
+        }
+    }
+}
+
+pub(crate) fn insert_row(
     tx: &Transaction<'_>,
     hash: &[u8; 32],
     row: &NewRow<'_>,
     source: Option<&AppRef>,
     icon_key: Option<&str>,
-    now_ms: i64,
+    times: RowTimes,
 ) -> Result<i64, StoreError> {
     let (src_id, src_name) = source.map_or((None, None), |s| (Some(s.id.as_str()), Some(s.name.as_str())));
     let mut stmt = tx.prepare_cached(
         "INSERT INTO items(kind, created_at, last_used_at, use_count, pinned, source_app_id, source_app_name, hash,
                            text, text_preview, html, rtf, image_blob, image_w, image_h, image_bytes, files_json,
                            meta_json, truncated, icon_key, files_head_json)
-         VALUES (?1, ?2, ?2, 1, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+         VALUES (?1, ?2, ?19, 1, ?20, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
     )?;
+    let RowTimes {
+        created_at,
+        last_used_at,
+        pinned,
+    } = times;
     match row {
         NewRow::Text(t) => {
             let meta = format!("{{\"char_count\":{},\"line_count\":{}}}", t.char_count, t.line_count);
             stmt.execute(params![
                 kind_to_str(t.kind),
-                now_ms,
+                created_at,
                 src_id,
                 src_name,
                 &hash[..],
@@ -1175,12 +1235,14 @@ fn insert_row(
                 t.truncated,
                 icon_key,
                 None::<String>,
+                last_used_at,
+                pinned,
             ])?;
         }
         NewRow::Files(f, json, head) => {
             stmt.execute(params![
                 kind_to_str(ClipKind::Files),
-                now_ms,
+                created_at,
                 src_id,
                 src_name,
                 &hash[..],
@@ -1197,12 +1259,14 @@ fn insert_row(
                 f.truncated,
                 icon_key,
                 head,
+                last_used_at,
+                pinned,
             ])?;
         }
         NewRow::Image { key, info, bytes } => {
             stmt.execute(params![
                 kind_to_str(ClipKind::Image),
-                now_ms,
+                created_at,
                 src_id,
                 src_name,
                 &hash[..],
@@ -1219,6 +1283,8 @@ fn insert_row(
                 false,
                 icon_key,
                 None::<String>,
+                last_used_at,
+                pinned,
             ])?;
         }
     }
@@ -1235,7 +1301,7 @@ fn thumb_candidate(conn: &Connection, id: i64) -> Result<Option<String>, StoreEr
 }
 
 /// 按 id 读元数据（files 的 exists 未检查）
-fn read_meta(conn: &Connection, id: i64) -> Result<ClipItemMeta, StoreError> {
+pub(crate) fn read_meta(conn: &Connection, id: i64) -> Result<ClipItemMeta, StoreError> {
     let sql = format!("SELECT {META_COLS} FROM items WHERE id = ?1");
     conn.prepare_cached(&sql)?
         .query_row([id], meta_from_row)
@@ -1358,7 +1424,7 @@ struct TextVolume {
 
 /// 在一个事务里删除满足 `cond` 的条目（`secure_delete = ON`），按 [`FtsPurge::choose`] 抹掉 FTS 索引中的对应条目。
 /// 返回（删除条数，这些条目引用的原图与缩略图）
-fn delete_items(
+pub(crate) fn delete_items(
     conn: &mut Connection,
     cond: &str,
     p: &[&dyn rusqlite::ToSql],
@@ -1440,7 +1506,7 @@ fn text_volume(tx: &Transaction<'_>, cond: &str, p: &[&dyn rusqlite::ToSql]) -> 
 
 /// 在 `secure_delete = ON` 下执行一次删除：被删内容所在的页（包括整页释放进 freelist 的页、长文本的溢出页）全部清零。
 /// 平时保持 FAST（只清零 b-tree 页内的内容）：ON 会让日常写入（FTS 段合并等释放页的操作）多写一倍的页
-fn with_secure_delete<T>(
+pub(crate) fn with_secure_delete<T>(
     conn: &mut Connection,
     f: impl FnOnce(&mut Connection) -> Result<T, StoreError>,
 ) -> Result<T, StoreError> {
@@ -1454,7 +1520,7 @@ fn with_secure_delete<T>(
 
 /// 截断 WAL：把（已清零的）新页写回库文件并把 WAL 截成 0 字节，WAL 里更早的帧（含被删内容）随之消失。
 /// 失败或被读者阻塞时只记日志（下次删除 / 清空时再截断）
-fn checkpoint_truncate(conn: &Connection) {
+pub(crate) fn checkpoint_truncate(conn: &Connection) {
     match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0)) {
         Ok(0) => {}
         Ok(_) => log::warn!("clipboard wal checkpoint blocked by a reader"),

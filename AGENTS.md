@@ -15,6 +15,7 @@ crates/wisp-prompts        提示词模板（templates/）、风格、语言检�
 crates/wisp-clipboard      剪贴板历史存储（SQLite + FTS5）
 crates/wisp-capture        屏幕捕获、裁剪、编码
 crates/wisp-platform       操作系统集成层（macOS / Windows / Linux 实现）
+crates/wisp-sync           多设备同步：端到端加密、WebDAV 远端、本机副本与合并
 vendor/                    打了补丁的上游 crate（wry、tao、tray-icon、notify）
 scripts/                   检查、版本号、性能、截图、发布脚本
 ```

@@ -3,6 +3,7 @@
  */
 import {
   ClipboardList,
+  Cloud,
   Info,
   Keyboard,
   Languages,
@@ -22,6 +23,7 @@ export const SECTION_ICONS: Record<SettingsSection, LucideIcon> = {
   ocr: ScanText,
   clipboard: ClipboardList,
   appearance: Palette,
+  sync: Cloud,
   about: Info,
 }
 

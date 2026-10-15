@@ -1,0 +1,159 @@
+/*
+ * 设置 → 同步的样式（随同步页的 chunk 加载）。沿用设置窗口的版式与组件：状态行照搬「关于 → 更新」（.st-update-*），
+ * 测试报告照搬模型服务（.st-test / .st-step），这里只补同步独有的几处。颜色只取令牌；时长只取 --dur-* / --ease-*。
+ */
+@layer components {
+  /* ------------------------------------------------ 服务器：主机 · 账号 + 状态行 */
+  .st-sync-account {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    font-size: var(--text-ui);
+    line-height: var(--lh-ui);
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .st-sync-host,
+  .st-sync-user {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* 主机比账号更能说明「连的是哪里」：空间不够时先截断账号。按比例一起收缩的话差几个像素两边都会被截断，
+     所以主机不参与收缩，只在极长时限制在行宽的七成以内 */
+  .st-sync-host {
+    flex: none;
+    max-width: 70%;
+  }
+  .st-sync-user {
+    flex: 0 1 auto;
+    font-weight: 400;
+    color: var(--fg-2);
+  }
+  .st-sync-sep {
+    flex: none;
+    color: var(--fg-2);
+  }
+  .st-sync-status {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  /* 状态行是安静的一行：文字用次要色，只有图标按语气着色；需要处理的错误文字恢复正文色 */
+  .st-sync-server .st-update-line {
+    color: var(--fg-2);
+  }
+  .st-sync-server .st-update-line[data-tone='danger'] {
+    color: var(--fg);
+  }
+  .st-sync-server .st-update-line[data-tone='warning'] .ui-icon {
+    color: var(--warning-text);
+  }
+  .st-sync-icon {
+    display: inline-grid;
+    place-items: center;
+  }
+  /* 状态块与 API Key 子行之后的普通行：照常用 hairline 分隔（组件库只在两个相邻的行之间画线） */
+  .st-sync-server + .ui-fieldrow,
+  .st-subrows + .ui-fieldrow {
+    box-shadow: inset 0 1px 0 var(--hairline);
+  }
+
+  /* ------------------------------------------------ 卡片底部的说明（只属于本机的设置、忘记同步密码的后果、钥匙串提示） */
+  .st-sync-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 0;
+    padding: 10px 12px;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+    box-shadow: inset 0 1px 0 var(--hairline);
+  }
+  .st-sync-note:first-child {
+    box-shadow: none;
+  }
+  .st-sync-note > .ui-icon {
+    flex: none;
+    margin-top: calc((var(--lh-meta) - 14px) / 2);
+  }
+  .st-sync-note[data-tone='warning'] {
+    color: var(--warning-text);
+    background: var(--warning-soft);
+  }
+  .ui-section-card > .st-sync-note:last-child {
+    border-bottom-left-radius: var(--r-card);
+    border-bottom-right-radius: var(--r-card);
+  }
+  .ui-section-card > .st-sync-note:first-child {
+    border-top-left-radius: var(--r-card);
+    border-top-right-radius: var(--r-card);
+  }
+
+  /* ------------------------------------------------ 连接子视图 */
+  /* 测试报告每一步的第二行：结论（尚无同步数据 / 已有 2 台设备…）或失败原因，不是 URL，所以不用等宽字体 */
+  .st-sync-step-detail {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+  /* 运行中的占位条按这一行的行高居中 */
+  .st-sync-step-detail > .st-step-url-pending {
+    margin-top: calc((var(--lh-meta) - 8px) / 2);
+  }
+  .st-step[data-state='failed'] .st-sync-step-detail {
+    color: var(--danger-text);
+  }
+  .st-sync-advice {
+    margin: 6px 0 0;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+  /* 「更新密码」时只读的地址与账号 */
+  .st-sync-readonly {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg-2);
+    user-select: text;
+  }
+  /* 滚入视野时让出顶部的紧凑标题条与底部的粘性底栏 */
+  .st-sync-pass .ui-fieldrow {
+    scroll-margin: 48px 0 80px;
+  }
+  /* 同步密码一节随测试结果展开：外层裁剪容器参与高度动画，分组间距放在里面（不会在高度为 0 时露出一截空白） */
+  .st-sync-pass-clip > .ui-section {
+    margin-top: 24px;
+  }
+  /* 底栏左侧：为什么还不能连接 / 连接失败的原因 */
+  .st-sync-foot-note {
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+    text-align: right;
+  }
+  .st-sync-foot-note[data-tone='danger'] {
+    color: var(--danger-text);
+  }
+
+  /* ------------------------------------------------ 设备 */
+  .st-sync-device-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .st-sync-device-version {
+    font-size: var(--text-meta);
+    color: var(--fg-2);
+  }
+}

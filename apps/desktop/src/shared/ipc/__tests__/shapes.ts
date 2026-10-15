@@ -298,6 +298,28 @@ const KeychainState = enumOf<T.KeychainState>()('KeychainState', {
 const ResolvedTheme = enumOf<T.ResolvedTheme>()('ResolvedTheme', { light: 1, dark: 1 })
 const ResolvedMaterial = enumOf<T.ResolvedMaterial>()('ResolvedMaterial', { native: 1, solid: 1 })
 const PathKind = enumOf<T.PathKind>()('PathKind', { config: 1, data: 1, log: 1 })
+const SyncPhase = enumOf<T.SyncPhase>()('SyncPhase', { off: 1, idle: 1, syncing: 1, error: 1 })
+const SyncErrorKind = enumOf<T.SyncErrorKind>()('SyncErrorKind', {
+  network: 1,
+  auth: 1,
+  forbidden: 1,
+  not_found: 1,
+  quota: 1,
+  server: 1,
+  https_required: 1,
+  passphrase: 1,
+  vault_reset: 1,
+  format_too_new: 1,
+  credentials_missing: 1,
+  keychain: 1,
+  corrupt: 1,
+  internal: 1,
+})
+const SyncConnectOutcome = enumOf<T.SyncConnectOutcome>()('SyncConnectOutcome', {
+  created: 1,
+  joined: 1,
+  restored: 1,
+})
 const UpdateState = enumOf<T.UpdateState>()('UpdateState', {
   idle: 1,
   checking: 1,
@@ -701,6 +723,7 @@ export const registry = {
     cleared: { keep_pinned: bool },
     paused: { paused: bool },
     secret_skipped: {},
+    reloaded: {},
   }),
   RawClipboard: obj<T.RawClipboard>()('RawClipboard', {
     change_id: num,
@@ -974,6 +997,7 @@ export const registry = {
     settings_issue: nul(ref('SettingsFileIssue')),
     orphan_keys: num,
     autostart_issue: opt(nul(str)),
+    sync: ref('SyncStatus'),
   }),
   SettingsIssueKind,
   SettingsFileIssue: obj<T.SettingsFileIssue>()('SettingsFileIssue', {
@@ -1153,6 +1177,61 @@ export const registry = {
     clipboard: ref('ClipboardSettings'),
     appearance: ref('Appearance'),
     advanced: ref('Advanced'),
+    sync: ref('SyncSettings'),
+  }),
+  SyncContent: obj<T.SyncContent>()('SyncContent', {
+    settings: bool,
+    api_keys: bool,
+    clipboard: bool,
+    images: bool,
+    ocr_history: bool,
+  }),
+  SyncSettings: obj<T.SyncSettings>()('SyncSettings', {
+    enabled: bool,
+    server_url: str,
+    username: str,
+    auto: bool,
+    content: ref('SyncContent'),
+  }),
+  // ----- 同步
+  SyncPhase,
+  SyncErrorKind,
+  SyncProgress: obj<T.SyncProgress>()('SyncProgress', { done: num, total: num }),
+  SyncStatus: obj<T.SyncStatus>()('SyncStatus', {
+    phase: SyncPhase,
+    last_ok_ms: nul(num),
+    pending: bool,
+    error: nul(SyncErrorKind),
+    transient: bool,
+    error_detail: nul(str),
+    progress: nul(ref('SyncProgress')),
+    device_count: num,
+  }),
+  SyncDevice: obj<T.SyncDevice>()('SyncDevice', {
+    id: str,
+    name: str,
+    os: OsKind,
+    app_version: str,
+    last_seen_ms: num,
+    this_device: bool,
+  }),
+  SyncAccount: obj<T.SyncAccount>()('SyncAccount', { server_url: str, username: str }),
+  SyncVaultInfo: obj<T.SyncVaultInfo>()('SyncVaultInfo', {
+    supported: bool,
+    device_count: num,
+    last_modified_ms: nul(num),
+    restorable: bool,
+  }),
+  SyncProbe: obj<T.SyncProbe>()('SyncProbe', {
+    ok: bool,
+    error: nul(SyncErrorKind),
+    error_detail: nul(str),
+    vault: nul(ref('SyncVaultInfo')),
+  }),
+  SyncConnectOutcome,
+  SyncConnectResult: obj<T.SyncConnectResult>()('SyncConnectResult', {
+    outcome: SyncConnectOutcome,
+    status: ref('SyncStatus'),
   }),
 } as const satisfies Record<string, Spec>
 

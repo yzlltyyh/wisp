@@ -13,7 +13,10 @@
  * - 后台路径不读文件内容、不列目录：列表只用元数据，详情（`clipboard_get`）只在用户悬停 / 预览 /
  *   送翻译时请求；悬停只取正文开头（`textHead`），长正文不常驻；
  * - 剪贴板条目 → 翻译：优先 `clipboard_send_to(translate)`（正文留在 Rust 里取），命令未实现时退回交接里的
- *   `trigger_action(translate_selection, text, origin: clipboard)`；两条路径都由 Rust 发起交叉淡入的 prepare。
+ *   `trigger_action(translate_selection, text, origin: clipboard)`；两条路径都由 Rust 发起交叉淡入的 prepare；
+ * - `reloaded`（一大批改动，例如其他设备同步来的条目）：Rust 在视图显示期间改发逐条事件，`reloaded` 只在视图还没
+ *   显示时发出；它到达时（通常在打开的过程中，偶尔与显示交错）立即重新拉首页——列表不能停在过时的内容上，点到已经
+ *   不存在的条目。位置刚变过的行由列表的防误点保护；只有退出动画期间收到的暂存到隐藏之后、或下一次打开时再拉。
  */
 import { useEffect, useState } from 'react'
 import { api, getTransport, onMany, resolveAssetUrl, WispIpcError } from '../../shared/ipc'
@@ -27,6 +30,8 @@ import type {
   PanelPayload,
   PasteMode,
 } from '../../shared/ipc/types'
+import type { PanelPhase } from '../../panel/types'
+import { useHidden } from '../../shared/hooks/useHidden'
 import { t } from '../../shared/i18n/i18n'
 import { formatHotkey } from '../../shared/keys/formatHotkey'
 import { duration, ms, timing } from '../../shared/motion/tokens'
@@ -68,6 +73,12 @@ const DETAIL_CACHE = 8
 const HEAD_CACHE = 32
 
 /**
+ * 清空剪贴板历史会不会同步到其他设备（同步已开启且同步剪贴板历史），决定清空确认的文案。打开面板时不读设置：在打开含
+ * 「清空历史…」的菜单与发起清空时才读；面板 WebView 常驻，读到的结果留给之后的确认先用。null = 还没读过
+ */
+let clearSyncs: boolean | null = null
+
+/**
  * 本 WebView 已确认剪贴板要由前端写（KDE Wayland）。面板 WebView 常驻，记在模块里：之后的粘贴在按键的
  * 同一个任务里直接写（WebKit 只在用户手势里放行 `navigator.clipboard.write`），不再先绕一次 Rust
  */
@@ -101,6 +112,8 @@ export interface ClipActions {
   togglePin(id?: number): void
   remove(force: boolean, id?: number): void
   cancelConfirm(): void
+  /** 打开含「清空历史…」的菜单时：先读一次清空会不会同步到其他设备，确认条出现时文案就是对的 */
+  prepareClear(): void
   askClear(): void
   setKeepPinned(keep: boolean): void
   clear(): void
@@ -128,6 +141,23 @@ export interface ClipboardHost {
 }
 
 /**
+ * 视图此刻对用户的可见程度（决定 `reloaded` 什么时候处理）：
+ * - `opening`：准备中 / 进入动画——还没开始操作，整页换掉无妨；
+ * - `shown`：显示中——用户可能正看着、指着某一行（位置刚变的行单击不粘贴）；
+ * - `leaving`：退出动画——马上就看不见了，不必再拉；
+ * - `hidden`：窗口已隐藏（视图通常随之卸载）
+ */
+export type ClipVisibility = 'opening' | 'shown' | 'leaving' | 'hidden'
+
+/** 面板阶段 + 窗口是否隐藏 → 可见程度 */
+export function clipVisibility(phase: PanelPhase, windowHidden: boolean): ClipVisibility {
+  if (windowHidden || phase === 'hidden') return 'hidden'
+  if (phase === 'shown') return 'shown'
+  if (phase === 'exiting') return 'leaving'
+  return 'opening'
+}
+
+/**
  * 面板轻提示的停留（毫秒）：
  * - `ok`：一眼就懂的确认（「已保存图片」）toastHold（1.5 s）；
  * - `info`：带说明的信息（「已跳过一条疑似密码或密钥的内容」）按字数计时——toastHold + 每字 toastViewPerChar，夹在
@@ -151,15 +181,22 @@ const isTextual = (item: ClipItemMeta) =>
   item.kind === 'color'
 
 /** 视图里用：每个会话（store）一份操作对象；挂载时订阅实时变化，卸载时释放 */
-export function useClipboard(store: ClipStore, host: ClipboardHost): ClipActions {
+export function useClipboard(
+  store: ClipStore,
+  host: ClipboardHost,
+  phase: PanelPhase = 'shown',
+): ClipActions {
   const [actions] = useState(() => createClipActions(store, host))
   // JIT 预热渲染（ClipboardView 末尾）不订阅推送
   const prewarm = usePrewarm()
+  const windowHidden = useHidden()
+  const visibility = clipVisibility(phase, windowHidden)
   // 宿主回调（switchView 等）每次渲染可能是新的函数：执行操作时用最新的
   useEffect(() => {
     actions.setHost(host)
   })
   useEffect(() => (prewarm ? undefined : actions.attach()), [actions, prewarm])
+  useEffect(() => actions.setVisibility(visibility), [actions, visibility])
   return actions
 }
 
@@ -190,7 +227,11 @@ export function installClipboardEvents(): void {
 export function createClipActions(
   store: ClipStore,
   initialHost: ClipboardHost,
-): ClipActions & { attach(): () => void; setHost(host: ClipboardHost): void } {
+): ClipActions & {
+  attach(): () => void
+  setHost(host: ClipboardHost): void
+  setVisibility(visibility: ClipVisibility): void
+} {
   const timers = new Set<ReturnType<typeof setTimeout>>()
   let currentHost = initialHost
   const host = () => currentHost
@@ -206,6 +247,10 @@ export function createClipActions(
   const settled = new Map<number, ClipItemDetail | null>()
   const heads = new Map<number, string | null>()
   let disposed = false
+  /** 视图的可见程度（见 `ClipVisibility`；单独构造时按显示中处理） */
+  let visibility: ClipVisibility = 'shown'
+  /** 退出动画期间收到、暂存着的 `reloaded` */
+  let reloadHeld = false
 
   const later = (delay: number, fn: () => void) => {
     const id = setTimeout(() => {
@@ -627,11 +672,35 @@ export function createClipActions(
   }
 
   const cancelConfirm = () => set({ confirm: null })
-  const askClear = () => set({ confirm: { kind: 'clear', keepPinned: true }, preview: false })
+  /** 读设置，更新「清空会不会同步到其他设备」；确认条已经打开时随之更新文案 */
+  const prepareClear = () => {
+    void api
+      .settingsGet()
+      .then((snap) => snap.settings.sync.enabled && snap.settings.sync.content.clipboard)
+      .then(
+        (synced) => {
+          clearSyncs = synced
+          if (disposed) return
+          set((s) =>
+            s.confirm?.kind === 'clear' && s.confirm.synced !== synced
+              ? { confirm: { ...s.confirm, synced } }
+              : {},
+          )
+        },
+        // 读不到时沿用上一次的结果
+        () => {},
+      )
+  }
+  // 确认条立即出现（之后的按键立即是模态的），文案先用已知的结果，读到最新的设置后更新
+  const askClear = () => {
+    set({
+      confirm: { kind: 'clear', keepPinned: true, synced: clearSyncs ?? false },
+      preview: false,
+    })
+    prepareClear()
+  }
   const setKeepPinned = (keep: boolean) =>
-    set((s) =>
-      s.confirm?.kind === 'clear' ? { confirm: { kind: 'clear', keepPinned: keep } } : {},
-    )
+    set((s) => (s.confirm?.kind === 'clear' ? { confirm: { ...s.confirm, keepPinned: keep } } : {}))
 
   const clear = () => {
     const c = get().confirm
@@ -737,11 +806,42 @@ export function createClipActions(
 
   // ----- 实时事件
 
+  /** 一批改动（同步带来的大量新增 / 删除）之后：重新拉取首页；当前的过滤列表与检索结果一并刷新 */
+  const reloadFirstPage = () => {
+    api.clipboardRecent(0, PAGE_SIZE, 'all').then(
+      (page) => {
+        if (disposed) return
+        set((s) => {
+          const all = {
+            filter: 'all' as const,
+            hits: page.items,
+            nextOffset: page.next_offset,
+            loaded: true,
+          }
+          const visible = visibleHits({ ...s, all })
+          const keep = visible.some((h) => h.item.id === s.selectedId)
+          return { all, selectedId: keep ? s.selectedId : (visible[0]?.item.id ?? null) }
+        })
+      },
+      (error: unknown) => failed('clipboard_recent', error, { action: 'load' }),
+    )
+    const s = get()
+    if (s.filter !== 'all') loadFiltered(s.filter)
+    if (isSearching(s)) scheduleSearch(0)
+  }
+
   const onChanged = (change: ClipboardChanged) => {
     if (change.change === 'updated' || change.change === 'touched') invalidate(change.item.id)
     if (change.change === 'removed') invalidate(change.id)
     if (change.change === 'secret_skipped') {
       showStatus(t('clipboard.status.secret_skipped'), 'info')
+      return
+    }
+    if (change.change === 'reloaded') {
+      // 显示期间 Rust 改发逐条事件；这里收到的多半是打开前积下的一批，与显示交错时也不能把过时的行留到下次打开。
+      // 只有退出动画期间不必再拉：暂存到隐藏 / 下一次打开
+      if (visibility === 'leaving') reloadHeld = true
+      else reloadFirstPage()
       return
     }
     const before = get().fresh
@@ -771,6 +871,7 @@ export function createClipActions(
     togglePin,
     remove,
     cancelConfirm,
+    prepareClear,
     askClear,
     setKeepPinned,
     clear,
@@ -789,6 +890,15 @@ export function createClipActions(
     holdStatus,
     setHost: (next) => {
       currentHost = next
+    },
+    setVisibility: (next) => {
+      if (next === visibility) return
+      visibility = next
+      // 隐藏之后（视图还在时）、或下一次打开时处理暂存的 reloaded：此刻没有人看着列表
+      if (reloadHeld && (next === 'hidden' || next === 'opening')) {
+        reloadHeld = false
+        reloadFirstPage()
+      }
     },
     attach: () => {
       disposed = false
@@ -852,7 +962,8 @@ async function writeViaWebView(
   }
 }
 
-/** 测试用：重置「本 WebView 要由前端写剪贴板」的记忆 */
+/** 测试用：重置「本 WebView 要由前端写剪贴板」与「清空会不会同步」的记忆 */
 export function resetWebviewClipboardForTest(): void {
   webviewClipboard = false
+  clearSyncs = null
 }

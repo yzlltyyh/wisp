@@ -1,0 +1,13 @@
+{
+  "outcome": "restored",
+  "status": {
+    "phase": "idle",
+    "last_ok_ms": 1760000000000,
+    "pending": true,
+    "error": null,
+    "transient": false,
+    "error_detail": null,
+    "progress": null,
+    "device_count": 2
+  }
+}

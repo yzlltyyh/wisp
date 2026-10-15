@@ -12,6 +12,7 @@ import type {
   GlossaryEntry,
   HotkeyStatus,
   HotkeyTarget,
+  OsKind,
   OverlayInit,
   PermissionSet,
   Provider,
@@ -26,6 +27,7 @@ import type { MockDesktop } from './desktop'
 import { HOTKEY_ACTIONS, SAMPLE, type MockFixtures } from './fixtures'
 import type { MockRouter } from './router'
 import { textStream, type MockStreams } from './streams'
+import { createSyncState, installSyncDefaults, type MockSync } from './sync'
 import { mockError } from './types'
 import type { MockPanelWindow } from './window'
 
@@ -40,6 +42,8 @@ export interface MockState {
   glossary: GlossaryEntry[]
   update: UpdateStatus
   onboardingDone: boolean
+  /** 同步：状态与一台假的 WebDAV 服务器（sync.ts） */
+  sync: MockSync
 }
 
 export function createState(f: MockFixtures): MockState {
@@ -54,6 +58,7 @@ export function createState(f: MockFixtures): MockState {
     glossary: [],
     update: f.update(),
     onboardingDone: false,
+    sync: createSyncState(f),
   }
 }
 
@@ -83,6 +88,7 @@ export function installDefaults(d: DefaultsDeps): void {
       clipboard_paused: state.clipboardPaused,
       update: state.update,
       glossary_count: state.glossary.length,
+      sync: state.sync.status,
     },
   })
   const settingsChanged = () => {
@@ -271,6 +277,37 @@ export function installDefaults(d: DefaultsDeps): void {
     state.settings = mergePatch(state.settings, patch) as SettingsSnapshot['settings']
     return settingsChanged()
   })
+  // 排除名单 / 按键映射逐项写入：与 Rust 同一规则（按系统与应用 id；已有的原位替换，没有就追加；移除不存在的也算成功）
+  r.handle('excluded_app_upsert', ({ entry }) => {
+    const app_id = entry.app_id.trim()
+    if (!app_id) throw mockError('invalid_argument', 'mock: entry.app_id must not be empty')
+    state.settings.clipboard.excluded_apps = upsertByApp(state.settings.clipboard.excluded_apps, {
+      ...entry,
+      app_id,
+    })
+    return settingsChanged()
+  })
+  r.handle('excluded_app_remove', ({ os, app_id }) => {
+    state.settings.clipboard.excluded_apps = state.settings.clipboard.excluded_apps.filter(
+      (a) => !(a.os === os && a.app_id === app_id.trim()),
+    )
+    return settingsChanged()
+  })
+  r.handle('app_keymap_upsert', ({ entry }) => {
+    const app_id = entry.app_id.trim()
+    if (!app_id) throw mockError('invalid_argument', 'mock: entry.app_id must not be empty')
+    state.settings.hotkeys.app_keymaps = upsertByApp(state.settings.hotkeys.app_keymaps, {
+      ...entry,
+      app_id,
+    })
+    return settingsChanged()
+  })
+  r.handle('app_keymap_remove', ({ os, app_id }) => {
+    state.settings.hotkeys.app_keymaps = state.settings.hotkeys.app_keymaps.filter(
+      (k) => !(k.os === os && k.app_id === app_id.trim()),
+    )
+    return settingsChanged()
+  })
   r.handle('styles_list', () => state.styles)
   r.handle('style_save', ({ style }) => {
     const i = state.styles.findIndex((s) => s.id === style.id)
@@ -306,6 +343,35 @@ export function installDefaults(d: DefaultsDeps): void {
   r.handle('glossary_set', ({ entries }) => {
     state.glossary = entries
   })
+  // 逐条写入：与 Rust 同一规则（改了原文时占原条目的位置；同原文合并为一条；都没有就追加），并广播 glossary:changed
+  r.handle('glossary_upsert', ({ entry, previous_source }) => {
+    const source = entry.source.trim()
+    if (!source) throw mockError('invalid_argument', 'mock: entry.source must not be empty')
+    const next: GlossaryEntry = {
+      source,
+      target: entry.target.trim(),
+      note: entry.note?.trim() || null,
+    }
+    const previous = previous_source?.trim() || null
+    const out: GlossaryEntry[] = []
+    let placed = false
+    for (const e of state.glossary) {
+      if (e.source === source || e.source === previous) {
+        if (!placed) out.push(next)
+        placed = true
+        continue
+      }
+      out.push(e)
+    }
+    if (!placed) out.push(next)
+    state.glossary = out
+    bus.emit('glossary:changed', null)
+  })
+  r.handle('glossary_remove', ({ source }) => {
+    const before = state.glossary.length
+    state.glossary = state.glossary.filter((e) => e.source !== source.trim())
+    if (state.glossary.length !== before) bus.emit('glossary:changed', null)
+  })
   r.handle('glossary_import', () => 0)
   r.handle('glossary_export', () => null)
 
@@ -320,6 +386,31 @@ export function installDefaults(d: DefaultsDeps): void {
   r.handle('provider_delete', ({ provider_id }) => {
     state.settings.providers = state.settings.providers.filter((p) => p.id !== provider_id)
     delete state.hasKey[provider_id]
+    return settingsChanged()
+  })
+  // 按 id 写入单个服务：已被删除时 not_found（设置页提示「已在别处删除」），不把它加回来
+  r.handle('provider_save', ({ provider }) => {
+    if (!state.settings.providers.some((p) => p.id === provider.id))
+      throw mockError('not_found', 'mock: provider')
+    state.settings.providers = state.settings.providers.map((p) =>
+      p.id === provider.id ? provider : p,
+    )
+    return settingsChanged()
+  })
+  r.handle('provider_add', ({ provider }) => {
+    const exists = state.settings.providers.some((p) => p.id === provider.id)
+    state.settings.providers = exists
+      ? state.settings.providers.map((p) => (p.id === provider.id ? provider : p))
+      : [...state.settings.providers, provider]
+    return settingsChanged()
+  })
+  r.handle('providers_reorder', ({ ids }) => {
+    const rest = [...state.settings.providers]
+    const ordered = ids.flatMap((id) => {
+      const i = rest.findIndex((p) => p.id === id)
+      return i < 0 ? [] : rest.splice(i, 1)
+    })
+    state.settings.providers = [...ordered, ...rest]
     return settingsChanged()
   })
   r.handle('provider_test', async ({ provider }) => {
@@ -448,6 +539,9 @@ export function installDefaults(d: DefaultsDeps): void {
   r.handle('hotkey_test_end', () => undefined)
   r.handle('neighbor_apps', () => [])
   r.handle('keyboard_advice', () => f.keyboardAdvice())
+
+  // ----- 同步
+  installSyncDefaults(d)
 }
 
 // ---------------------------------------------------------------------------
@@ -596,6 +690,13 @@ function byAction(a: HotkeyStatus, b: HotkeyStatus): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 按（系统，应用 id）写入一项：已有的原位替换，没有就追加 */
+function upsertByApp<T extends { os: OsKind; app_id: string }>(list: readonly T[], next: T): T[] {
+  return list.some((x) => x.os === next.os && x.app_id === next.app_id)
+    ? list.map((x) => (x.os === next.os && x.app_id === next.app_id ? next : x))
+    : [...list, next]
 }
 
 export { windowKindOf }

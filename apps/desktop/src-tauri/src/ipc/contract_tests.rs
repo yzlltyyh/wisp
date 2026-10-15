@@ -23,6 +23,7 @@ const RUST_SOURCES: &[(&str, &str)] = &[
     ("cmd_provider.rs", include_str!("cmd_provider.rs")),
     ("cmd_settings.rs", include_str!("cmd_settings.rs")),
     ("cmd_stream.rs", include_str!("cmd_stream.rs")),
+    ("cmd_sync.rs", include_str!("cmd_sync.rs")),
     ("cmd_update.rs", include_str!("cmd_update.rs")),
     ("cmd_window.rs", include_str!("cmd_window.rs")),
 ];
@@ -44,7 +45,7 @@ const INJECTED: &[&str] = &[
     "tauri::AppHandle",
 ];
 
-/// 不需要在 ipc 层校验的参数类型（可包一层 `Option<…>`）：整数、bool 与无字段枚举——反序列化成功即合法、有界。
+/// 不需要在 ipc 层校验的参数类型（可包一层 `Option<…>`）：整数、bool、无字段枚举与只有 bool 字段的结构——反序列化成功即合法、有界。
 /// 其余类型（`String`、`f64`、`Vec`、`serde_json::Value`、含字符串 / 浮点数 / 集合字段的 DTO）都必须校验
 const BOUNDED: &[&str] = &[
     "u8",
@@ -64,6 +65,9 @@ const BOUNDED: &[&str] = &[
     "SendTarget",
     "Protocol",
     "ResizeSpring",
+    "OsKind",
+    // 全是 bool 字段的结构
+    "SyncContent",
 ];
 
 /// 解析出的一条 Rust 命令

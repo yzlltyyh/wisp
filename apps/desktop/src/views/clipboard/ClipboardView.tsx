@@ -241,7 +241,8 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
   const hidden = useHidden()
   const reduced = useReducedMotionPref()
   const [store] = useState(() => createClipStore(payload))
-  const actions = useClipboard(store, { os, switchView })
+  // 阶段决定实时的 `reloaded` 什么时候处理（显示中暂存，见 useClipboard）
+  const actions = useClipboard(store, { os, switchView }, phase)
 
   // 订阅列表的各个来源（任一变化都重新取行）；行本身由 rowsOf 按 store 缓存
   const all = useStore(store, (s) => s.all)
@@ -380,6 +381,11 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
   const [moreMenuUsed, setMoreMenuUsed] = useState(false)
   if (filterMenu !== null && !filterMenuUsed) setFilterMenuUsed(true)
   if (moreMenu !== null && !moreMenuUsed) setMoreMenuUsed(true)
+  // ⋯ 菜单里有「清空历史…」：打开菜单时先读清空会不会同步到其他设备（打开面板时不读设置）
+  const moreOpen = moreMenu !== null
+  useEffect(() => {
+    if (moreOpen) actions.prepareClear()
+  }, [moreOpen, actions])
 
   // ----- 预览
   const previewScroll = useRef<HTMLDivElement>(null)
@@ -906,7 +912,9 @@ function ConfirmDock({
         timeoutMs={null}
         message={
           <span className="clip-clear-message">
-            <span>{t('clipboard.confirm.clear')}</span>
+            <span>
+              {clear?.synced ? t('clipboard.confirm.clear_synced') : t('clipboard.confirm.clear')}
+            </span>
             <span className="clip-keep">
               <Checkbox
                 checked={clear?.keepPinned ?? true}

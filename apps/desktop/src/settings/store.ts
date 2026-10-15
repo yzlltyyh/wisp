@@ -3,9 +3,11 @@
  *
  * - 唯一数据源是 Rust 的 `SettingsSnapshot`：启动时 `settings_get`，之后随 `settings:changed`（含外部手改 settings.json 的
  *   热加载）整体替换；`hotkeys:changed` / `permissions:changed` / `update:status` 只更新对应的运行时字段。
- * - 写入一律经 `patchSettings`：先在本地乐观合并（界面即时响应，没有「保存」按钮），再发 `settings_patch`；
- *   最后一个在途补丁返回时以 Rust 的快照为准（夹紧、校验后的值），失败时回到服务器状态并提示。
- *   在途期间到达的 `settings:changed` 只取运行时与风格，不覆盖乐观值，避免输入框回跳。
+ * - 写入经 `patchSettings`（JSON Merge Patch → `settings_patch`）或 `writeSettings`（按 id 写单个元素的命令，例如
+ *   `provider_save`）：先在本地乐观改动（界面即时响应，没有「保存」按钮），再发命令；返回时以 Rust 的快照为准（夹紧、
+ *   校验后的值），失败时回到服务器状态并提示。
+ * - 写入进行中（在途或排队）收到的 `settings:changed`（例如其他设备同步来的改动）**以新快照为底、重放本地还没确认的
+ *   改动**：别处的改动照常出现，正在编辑的值也不会回跳；命令返回的快照同样如此。
  * - 不保存流式文本与大列表。
  */
 import { create } from 'zustand'
@@ -16,6 +18,7 @@ import type {
   Settings,
   SettingsSnapshot,
   Style,
+  SyncStatus,
   UpdateStatus,
 } from '../shared/ipc/types'
 import { timing, ms } from '../shared/motion/tokens'
@@ -126,27 +129,55 @@ export function dismissIssue(atMs: number): void {
 export async function loadSettings(): Promise<void> {
   try {
     const snap = await api.settingsGet()
-    set({ snap, loadError: null })
+    set({ loadError: null })
+    applySnapshot(snap)
   } catch (error) {
     set({ loadError: WispIpcError.from('settings_get', error) })
   }
 }
 
-/** 直接替换快照（命令返回了新快照时，例如 provider_delete） */
-export function applySnapshot(snap: SettingsSnapshot): void {
-  if (get().pending > 0) {
-    const current = get().snap
-    set({ snap: current ? { ...snap, settings: current.settings } : snap })
-  } else {
-    set({ snap })
+/** 本地的一次设置改动（乐观更新，并在新快照上重放） */
+export type LocalChange = (settings: Settings) => Settings
+
+/**
+ * 合并写入的队列：同一个 key 的写入在停顿后只发最后一个（例如连续编辑同一个 Provider）。
+ * - 补丁（`queuePatch`）：`local` 是乐观合并的补丁；`build` 在发出时才计算补丁（返回 null 表示不用发了）；
+ * - 其他写入（`queueWrite`）：`change` 是乐观改动，`send` 在停顿后发出。
+ */
+interface Queued {
+  local: Patch | null
+  build: (() => Patch | null) | null
+  change: LocalChange | null
+  send: (() => void) | null
+  timer: ReturnType<typeof setTimeout>
+}
+const queued = new Map<string, Queued>()
+
+/** 在途写入的本地改动（按发出的顺序）：写入返回之前，新到的快照都要在它们之上重放 */
+const inflight = new Map<number, LocalChange>()
+let writeSeq = 0
+
+/** 以 Rust 的设置为底，依次重放还没被确认的本地改动：先在途的（按发出顺序），再排队的 */
+function rebase(settings: Settings): Settings {
+  let out = settings
+  for (const change of inflight.values()) out = change(out)
+  for (const item of queued.values()) {
+    if (item.local) out = mergePatch<Settings>(out, item.local)
+    else if (item.change) out = item.change(out)
   }
+  return out
 }
 
-/** 本地改写设置的某一部分（不发命令；测试与乐观更新用） */
-function applyLocal(patch: Patch): void {
+/** 换上 Rust 的快照（`settings:changed`、命令返回的快照，例如 provider_delete）；本地还没确认的改动在它之上重放 */
+export function applySnapshot(snap: SettingsSnapshot): void {
+  set({ snap: { ...snap, settings: rebase(snap.settings) } })
+}
+
+/** 本地改写设置（不发命令；乐观更新用） */
+function applyLocal(change: LocalChange): void {
   const snap = get().snap
   if (!snap) return
-  set({ snap: { ...snap, settings: mergePatch<Settings>(snap.settings, patch) } })
+  set({ snap: { ...snap, settings: change(snap.settings) } })
 }
 
 /** 保存失败的回调（由界面层提供本地化文案；store 不依赖 i18n） */
@@ -157,37 +188,56 @@ export function setSaveErrorHandler(handler: (error: WispIpcError) => void): voi
 }
 
 /**
- * 写入设置（JSON Merge Patch）。乐观更新 → `settings_patch` → 以最后一个返回的快照为准。
+ * 写入设置（JSON Merge Patch）。乐观更新 → `settings_patch` → 以返回的快照为准。
  * 返回是否成功（调用方通常不需要关心，失败已经提示并回滚）。
  */
 export async function patchSettings(patch: Patch): Promise<boolean> {
   dropOverlapping(patch)
-  applyLocal(patch)
+  return writeSettings(
+    (s) => mergePatch<Settings>(s, patch),
+    () => api.settingsPatch(patch),
+    {
+      command: 'settings_patch',
+    },
+  )
+}
+
+export interface WriteOptions {
+  /** 命令名（错误归一用） */
+  command: string
+  /** 失败时的提示（默认走 `setSaveErrorHandler` 登记的通用提示） */
+  onError?: (error: WispIpcError) => void
+}
+
+/**
+ * 写入设置的通用形式：`change` 是本地的乐观改动（也用于在新快照上重放），`send` 发出命令并返回新快照
+ * （`provider_save` / `provider_add` 等按 id 写单个元素的命令）。返回是否成功；失败时提示并回到服务器状态
+ */
+export async function writeSettings(
+  change: LocalChange,
+  send: () => Promise<SettingsSnapshot>,
+  options: WriteOptions,
+): Promise<boolean> {
+  applyLocal(change)
+  const id = ++writeSeq
+  inflight.set(id, change)
   set((s) => ({ pending: s.pending + 1 }))
   try {
-    const snap = await trackWrite(api.settingsPatch(patch))
-    const last = get().pending === 1
-    set((s) => ({ pending: s.pending - 1, ...(last ? { snap } : null) }))
+    const snap = await trackWrite(send())
+    inflight.delete(id)
+    set((s) => ({ pending: s.pending - 1, snap: { ...snap, settings: rebase(snap.settings) } }))
     return true
   } catch (error) {
+    inflight.delete(id)
     set((s) => ({ pending: s.pending - 1 }))
-    onSaveError(WispIpcError.from('settings_patch', error))
-    // 回到服务器状态（只在没有其他在途补丁时；否则等最后一个补丁的结果）
+    const e = WispIpcError.from(options.command, error)
+    if (options.onError) options.onError(e)
+    else onSaveError(e)
+    // 回到服务器状态（只在没有其他在途写入时；否则等它们返回的快照）
     if (get().pending === 0) await loadSettings()
     return false
   }
 }
-
-/**
- * 合并写入的队列：同一个 key 的补丁在停顿后只发最后一个（例如连续编辑同一个 Provider）。
- * `build`：发出时才计算补丁（整体替换的数组按发出那一刻的本地快照计算，期间被删除的条目不会被写回）；返回 null 表示不用发了
- */
-interface Queued {
-  local: Patch
-  build: (() => Patch | null) | null
-  timer: ReturnType<typeof setTimeout>
-}
-const queued = new Map<string, Queued>()
 
 /** 合并写入的停顿（不是动效时长） */
 export const QUEUE_DELAY_MS = 300
@@ -208,12 +258,32 @@ export function queuePatch(
   build: (() => Patch | null) | null = null,
   delayMs = queueDelay,
 ): void {
-  applyLocal(local)
+  applyLocal((s) => mergePatch<Settings>(s, local))
+  enqueue(key, { local, build, change: null, send: null }, delayMs)
+}
+
+/**
+ * 立即乐观更新（`change`），停顿 `delayMs` 后调用 `send`（通常是 `writeSettings`）；同一 key 只发最后一个。
+ * 排队期间计入 pending，期间到达的快照上会重放 `change`
+ */
+export function queueWrite(
+  key: string,
+  change: LocalChange,
+  send: () => void,
+  delayMs = queueDelay,
+): void {
+  applyLocal(change)
+  enqueue(key, { local: null, build: null, change, send }, delayMs)
+}
+
+function enqueue(key: string, item: Omit<Queued, 'timer'>, delayMs: number): void {
   const prev = queued.get(key)
   if (prev) clearTimeout(prev.timer)
   else set((s) => ({ pending: s.pending + 1 }))
   const timer = setTimeout(() => sendQueued(key), delayMs)
-  queued.set(key, { local, build, timer })
+  // 同一 key 的新写入排到队尾：重放顺序与本地改动的先后一致
+  queued.delete(key)
+  queued.set(key, { ...item, timer })
 }
 
 function sendQueued(key: string): void {
@@ -222,6 +292,10 @@ function sendQueued(key: string): void {
   clearTimeout(item.timer)
   queued.delete(key)
   set((s) => ({ pending: s.pending - 1 }))
+  if (item.send) {
+    item.send()
+    return
+  }
   const patch = item.build ? item.build() : item.local
   if (patch) void patchSettings(patch)
 }
@@ -232,14 +306,14 @@ function sendQueued(key: string): void {
  */
 function dropOverlapping(patch: Patch): void {
   for (const [key, item] of queued) {
-    if (item.build) continue
+    if (item.build || !item.local) continue
     const rest = subtractPatch(item.local, patch)
     if (rest) queued.set(key, { ...item, local: rest })
     else dropQueued(key)
   }
 }
 
-/** 丢掉某个 key 还没发出的补丁（例如删除这个 Provider 之前：不能再把它写回来） */
+/** 丢掉某个 key 还没发出的写入（例如删除这个 Provider 之前：不能再把它写回来） */
 export function dropQueued(key: string): void {
   const item = queued.get(key)
   if (!item) return
@@ -248,7 +322,7 @@ export function dropQueued(key: string): void {
   set((s) => ({ pending: s.pending - 1 }))
 }
 
-/** 立即发出所有排队的补丁（窗口关闭前、测试） */
+/** 立即发出所有排队的写入（窗口关闭前、测试） */
 export function flushQueuedPatches(): void {
   // Map 在遍历中删除当前条目是安全的（已删除的不会再被访问）
   for (const key of queued.keys()) sendQueued(key)
@@ -282,6 +356,12 @@ export function setUpdate(update: UpdateStatus): void {
   if (snap) set({ snap: { ...snap, runtime: { ...snap.runtime, update } } })
 }
 
+/** 同步状态（`sync:status` 推送，或 sync_now / sync_connect 的返回值）：只换运行时里的这一项 */
+export function setSync(sync: SyncStatus): void {
+  const snap = get().snap
+  if (snap) set({ snap: { ...snap, runtime: { ...snap.runtime, sync } } })
+}
+
 /** 本地记一下某个 Provider 是否已有 Key（secret_set / delete 成功后，等不及下一次 settings:changed） */
 export function setHasKey(providerId: string, has: boolean): void {
   const snap = get().snap
@@ -304,6 +384,7 @@ export function startSettingsSync(): () => void {
     'hotkeys:changed': (hotkeys) => setHotkeys(hotkeys),
     'permissions:changed': (p) => setPermissions(p),
     'update:status': (u) => setUpdate(u),
+    'sync:status': (s) => setSync(s),
     // 原生关闭按钮（交通灯 / 标题栏 ×）：与 ⌘W 同一条收尾——提交延迟写入、等在途命令返回、放弃草稿 Key，再关窗
     // （Rust 已拦下这次关闭，1.5 s 内没关会照样关闭）
     'window:close_requested': () => void closeWindowSafely().catch(() => undefined),
@@ -322,6 +403,7 @@ export function resetSettingsStore(): void {
   noticePaused = false
   for (const item of queued.values()) clearTimeout(item.timer)
   queued.clear()
+  inflight.clear()
   set(initial, true)
 }
 

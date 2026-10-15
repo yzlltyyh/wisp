@@ -335,6 +335,71 @@ impl ClipboardService {
         }
     }
 
+    // ---------- 多设备同步（见 `sync.rs`） ----------
+
+    /// 安装 / 卸载本机改动的同步通知（同步开启 / 关闭时调用）。不阻塞
+    pub fn set_sync_sink(&self, sink: Option<Arc<dyn super::sync::ClipSyncSink>>) {
+        self.engine.set_sync_sink(sink);
+    }
+
+    /// 已打开的数据库，供同步只读地导出（`sync_rows` / `sync_export` / `ocr_sync_rows` / `ocr_sync_export*`）。
+    /// **不触发打开**：数据库还没打开时为 None，同步应稍后再试，而不是为自己打开数据库
+    pub fn sync_store(&self) -> Option<Arc<wisp_clipboard::ClipStore>> {
+        self.engine.ready_store()
+    }
+
+    /// 应用一批远端剪贴板改动，结果与输入一一对应。**会阻塞**（图片解码、数据库），只在阻塞线程上调用
+    /// （同步引擎的 `LocalStore` 实现就在阻塞线程上）
+    pub fn apply_remote_batch_blocking(
+        &self,
+        changes: Vec<super::sync::ClipRemoteChange>,
+        superseded: Option<&super::sync::Superseded>,
+    ) -> Vec<super::sync::RemoteOutcome> {
+        self.engine.apply_remote_batch(changes, superseded)
+    }
+
+    /// [`Self::apply_remote_batch_blocking`] 的异步包装（在阻塞线程池里执行）
+    pub async fn apply_remote_batch(
+        &self,
+        changes: Vec<super::sync::ClipRemoteChange>,
+        superseded: Option<super::sync::Superseded>,
+    ) -> Result<Vec<super::sync::RemoteOutcome>, IpcError> {
+        self.blocking(move |e| e.apply_remote_batch(changes, superseded.as_ref()))
+            .await
+    }
+
+    /// 应用远端的「清空」（同步层没有记录的条目按时间判断）。**会阻塞**
+    pub fn apply_remote_clear_blocking(&self, clear: &super::sync::ClipRemoteClear) -> super::sync::RemoteOutcome {
+        self.engine.apply_remote_clear(clear)
+    }
+
+    /// [`Self::apply_remote_clear_blocking`] 的异步包装
+    pub async fn apply_remote_clear(
+        &self,
+        clear: super::sync::ClipRemoteClear,
+    ) -> Result<super::sync::RemoteOutcome, IpcError> {
+        self.blocking(move |e| e.apply_remote_clear(&clear)).await
+    }
+
+    /// 应用一批远端识别历史改动，结果与输入一一对应。**会阻塞**
+    pub fn apply_remote_ocr_blocking(
+        &self,
+        changes: Vec<super::sync::OcrRemoteChange>,
+        superseded: Option<&super::sync::OcrSuperseded>,
+    ) -> Vec<super::sync::RemoteOutcome> {
+        self.engine.apply_remote_ocr(changes, superseded)
+    }
+
+    /// [`Self::apply_remote_ocr_blocking`] 的异步包装
+    pub async fn apply_remote_ocr(
+        &self,
+        changes: Vec<super::sync::OcrRemoteChange>,
+        superseded: Option<super::sync::OcrSuperseded>,
+    ) -> Result<Vec<super::sync::RemoteOutcome>, IpcError> {
+        self.blocking(move |e| e.apply_remote_ocr(changes, superseded.as_ref()))
+            .await
+    }
+
     /// 正在运行的应用（`apps_running` 命令）：平台
     /// `AppInfo::user_apps` → 去掉 Wisp 自己、按 id 去重 → 补图标（没缓存的向平台取一次并落盘）→ 按名称排序（`running.rs`）
     pub async fn apps_running(&self) -> Result<Vec<SourceApp>, IpcError> {

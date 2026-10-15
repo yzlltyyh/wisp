@@ -2,7 +2,8 @@
  * 服务编辑器：名称、协议、区域、base_url（实时最终 URL）、Key（只进钥匙串）、测试连接（分步结果）、
  * 模型列表（拉取 / 合并 / 手动添加）、高级（自定义请求头、quirks、超时）、删除（原地二次确认）。
  *
- * - 已保存的服务：每次改动直接写入 settings（文本框停顿后提交，开关与下拉立即提交），没有「保存」按钮；
+ * - 已保存的服务：每次改动直接写入（文本框停顿后提交，开关与下拉立即提交；按 id 只写这一个服务，见 persist.ts），
+ *   没有「保存」按钮；
  * - 新建的服务（模板生成的草稿）：改动只在草稿里，Key 也是草稿的一部分（keyEntry.ts）；「添加服务」时先写 Key、
  *   再写入 settings 并补上缺失的默认模型。添加后同一个编辑器原地变成「已保存」（不重新挂载、不播切换动画）；
  * - 测试连接 / 拉取模型：已保存的服务先写入输入框里还没保存的 Key（不需要先按回车）；草稿把 Key 直接交给 Rust
@@ -47,6 +48,7 @@ import { useModelFetch, useProviderTest } from './hooks'
 import { KeyField } from './KeyField'
 import { useKeyEntry } from './keyEntry'
 import { ModelTable } from './ModelTable'
+import { providerQueueKey } from './persist'
 import {
   hostOf,
   monogram,
@@ -63,7 +65,7 @@ export interface ProviderEditorProps {
   provider: Provider
   template: ProviderTemplate | null
   isNew: boolean
-  /** 写入改动：已保存的服务直接 patch，草稿只改本地 */
+  /** 写入改动：已保存的服务按 id 保存（provider_save），草稿只改本地 */
   onChange: (next: Provider) => void
   /** 新建：添加到设置；返回是否成功 */
   onAdd?: () => Promise<boolean>
@@ -171,8 +173,8 @@ export function ProviderEditor({
   }
 
   const remove = async () => {
-    // 先丢掉这个服务还没发出的改动（否则它们会带着整个数组把服务写回来），再等其他在途写入落盘
-    dropQueued(`provider:${provider.id}`)
+    // 先丢掉这个服务还没发出的改动（删除之后再发只会得到「已删除」的报错），再等其他在途写入落盘
+    dropQueued(providerQueueKey(provider.id))
     await settleWrites()
     try {
       applySnapshot(await api.providerDelete(provider.id))

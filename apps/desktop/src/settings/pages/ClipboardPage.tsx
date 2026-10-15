@@ -13,6 +13,7 @@ import type {
   AppKeymap,
   ClipPanelPosition,
   ExcludedApp,
+  OsKind,
   PasteOn,
   SourceApp,
 } from '../../shared/ipc/types'
@@ -39,7 +40,7 @@ import { KeyCapture } from '../components/KeyCapture'
 import { Page, SegmentRow, SelectRow, SwitchRow } from '../components/Page'
 import { ipcErrorText } from '../lib/errors'
 import { at } from '../lib/patch'
-import { notify, patchSettings, useRuntime, useSettings } from '../store'
+import { notify, patchSettings, useRuntime, useSettings, writeSettings } from '../store'
 
 const KB = 1024
 const MB = KB * KB
@@ -253,7 +254,12 @@ export default function ClipboardPage() {
           label={t('settings.clipboard.clear')}
           description={t('settings.clipboard.clear_desc')}
           action={t('settings.clipboard.clear_button')}
-          confirm={t('settings.clipboard.clear_confirm')}
+          confirm={t(
+            // 同步剪贴板历史时，清空会作为一次改动同步到其他设备
+            settings.sync.enabled && settings.sync.content.clipboard
+              ? 'settings.clipboard.clear_confirm_synced'
+              : 'settings.clipboard.clear_confirm',
+          )}
           confirmLabel={t('settings.clipboard.clear_ok')}
           icon={Trash2}
           onConfirm={() => void clear()}
@@ -320,13 +326,82 @@ export function mergeAppCandidates(
   return { recent: r, running: (running ?? []).filter(keep) }
 }
 
+/** 排除名单与按键映射里的一项：按（系统，应用 id）区分 */
+interface AppEntry {
+  os: OsKind
+  app_id: string
+}
+
+/** 按（系统，应用 id）写入一项：已有的原位替换，没有就追加（与 Rust 的 `*_upsert` 同一规则） */
+function upsertApp<T extends AppEntry>(list: readonly T[], next: T): T[] {
+  const same = (x: T) => x.os === next.os && x.app_id === next.app_id
+  return list.some(same) ? list.map((x) => (same(x) ? next : x)) : [...list, next]
+}
+
+function withoutApp<T extends AppEntry>(list: readonly T[], os: OsKind, appId: string): T[] {
+  return list.filter((x) => !(x.os === os && x.app_id === appId))
+}
+
+/*
+ * 排除应用与按键映射的写入：按（系统，应用 id）只写这一项，不把整个数组发回去——设置窗口里的旧数组会把别处刚加进来的
+ * 应用（例如另一台设备排除的密码管理器）当作删除写回去，那个应用里复制的内容就又开始被记录。本地乐观地做同样的改动，
+ * 新到的快照上也会重放它
+ */
+function saveExcludedApp(entry: ExcludedApp) {
+  return writeSettings(
+    (s) => ({
+      ...s,
+      clipboard: { ...s.clipboard, excluded_apps: upsertApp(s.clipboard.excluded_apps, entry) },
+    }),
+    () => api.excludedAppUpsert(entry),
+    { command: 'excluded_app_upsert' },
+  )
+}
+
+function removeExcludedApp(os: OsKind, appId: string) {
+  return writeSettings(
+    (s) => ({
+      ...s,
+      clipboard: {
+        ...s.clipboard,
+        excluded_apps: withoutApp(s.clipboard.excluded_apps, os, appId),
+      },
+    }),
+    () => api.excludedAppRemove(os, appId),
+    { command: 'excluded_app_remove' },
+  )
+}
+
+function saveKeymap(entry: AppKeymap) {
+  return writeSettings(
+    (s) => ({
+      ...s,
+      hotkeys: { ...s.hotkeys, app_keymaps: upsertApp(s.hotkeys.app_keymaps, entry) },
+    }),
+    () => api.appKeymapUpsert(entry),
+    { command: 'app_keymap_upsert' },
+  )
+}
+
+function removeKeymap(os: OsKind, appId: string) {
+  return writeSettings(
+    (s) => ({
+      ...s,
+      hotkeys: { ...s.hotkeys, app_keymaps: withoutApp(s.hotkeys.app_keymaps, os, appId) },
+    }),
+    () => api.appKeymapRemove(os, appId),
+    { command: 'app_keymap_remove' },
+  )
+}
+
 /** 「正在运行」读取中的占位行数：没有上一次的结果时按这么多行占位 */
 const RUNNING_PLACEHOLDER = 3
 /** 占位行数的上限（列表本身最多显示约 8 行，再多也看不见） */
 const RUNNING_PLACEHOLDER_MAX = 6
 
 /**
- * 排除应用：只显示当前平台的条目；写回时保留其他平台的条目（同一份 settings.json 可能在多台机器上用）。
+ * 排除应用：只显示当前平台的条目；按项写入（`excluded_app_upsert` / `excluded_app_remove`），其他平台的条目与别处刚加进来的
+ * 应用都不受影响。
  *
  * 应用选择器：
  * - 数据：最近来源整个窗口只读一次（第一次打开时）；正在运行的应用每次打开读一次（`apps_running`，只依赖 picker，不会
@@ -399,11 +474,10 @@ function ExcludedApps({ apps }: { apps: readonly ExcludedApp[] }) {
     setRunning(null)
     setPicker(true)
   }
-  const write = (next: ExcludedApp[]) => void patchSettings(at('clipboard.excluded_apps', next))
   const add = (appId: string, appName: string) => {
     const trimmed = appId.trim()
     if (!trimmed || mine.some((a) => a.app_id === trimmed)) return
-    write([...apps, { os, app_id: trimmed, name: appName.trim() || trimmed }])
+    void saveExcludedApp({ os, app_id: trimmed, name: appName.trim() || trimmed })
   }
   const groups = mergeAppCandidates(
     recent ?? [],
@@ -472,7 +546,7 @@ function ExcludedApps({ apps }: { apps: readonly ExcludedApp[] }) {
               type="button"
               className="st-app-chip-remove"
               aria-label={t('settings.clipboard.excluded_remove', { name: a.name })}
-              onClick={() => write(apps.filter((x) => !(x.os === os && x.app_id === a.app_id)))}
+              onClick={() => void removeExcludedApp(os, a.app_id)}
             >
               <Icon icon={X} size={12} />
             </button>
@@ -648,14 +722,10 @@ function Keymaps({ keymaps }: { keymaps: readonly AppKeymap[] }) {
   const [paste, setPaste] = useState<string | null>(null)
   const expand = usePreset('sectionExpand')
   const mine = keymaps.filter((k) => k.os === os)
-  const write = (next: AppKeymap[]) => void patchSettings(at('hotkeys.app_keymaps', next))
   const submit = () => {
     const id = appId.trim()
     if (!id || !paste) return
-    write([
-      ...keymaps.filter((k) => !(k.os === os && k.app_id === id)),
-      { os, app_id: id, copy: null, paste },
-    ])
+    void saveKeymap({ os, app_id: id, copy: null, paste })
     setAppId('')
     setPaste(null)
     setAdding(false)
@@ -685,9 +755,7 @@ function Keymaps({ keymaps }: { keymaps: readonly AppKeymap[] }) {
                 icon={X}
                 size="sm"
                 label={t('common.action.remove')}
-                onClick={() =>
-                  write(keymaps.filter((x) => !(x.os === os && x.app_id === k.app_id)))
-                }
+                onClick={() => void removeKeymap(os, k.app_id)}
               />
             </div>
           ))}

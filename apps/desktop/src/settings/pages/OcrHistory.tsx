@@ -221,10 +221,13 @@ const SHOT_FALLBACK_RATIO = 4 / 3
 export function OcrHistoryList({
   enabled,
   limit,
+  synced = false,
   history,
 }: {
   enabled: boolean
   limit: number
+  /** 识别历史随同步发到其他设备：空状态的说明不说「只保存在这台电脑上」 */
+  synced?: boolean
   history: OcrHistoryData
 }) {
   const t = useT()
@@ -283,8 +286,12 @@ export function OcrHistoryList({
               </b>
               <span>
                 {enabled
-                  ? t('settings.ocr.history_empty_on_desc')
-                  : t('settings.ocr.history_empty_off_desc', { n: limit })}
+                  ? synced
+                    ? t('settings.ocr.history_empty_on_desc_synced')
+                    : t('settings.ocr.history_empty_on_desc')
+                  : synced
+                    ? t('settings.ocr.history_empty_off_desc_synced', { n: limit })
+                    : t('settings.ocr.history_empty_off_desc', { n: limit })}
               </span>
             </span>
           </m.div>

@@ -7,8 +7,8 @@
 //! wisp-types 的 DTO 新增字段时，同步在这里补上对应的校验，并补测试。
 
 use wisp_types::{
-    GlossaryEntry, HotkeyTarget, ModelEntry, ModelRef, OcrReq, OverlayCommit, PinState, Provider, Rect, Style,
-    TranslateReq, WindowTarget,
+    AppKeymap, ExcludedApp, GlossaryEntry, HotkeyTarget, ModelEntry, ModelRef, OcrReq, OverlayCommit, PinState,
+    Provider, Rect, Style, SyncAccount, TranslateReq, WindowTarget,
 };
 
 use super::{MAX_KEY_BYTES, MAX_LIST_LEN, MAX_QUERY_BYTES, MAX_TEXT_BYTES, check_id, check_len, check_list_len};
@@ -164,6 +164,19 @@ pub fn validate_glossary(entries: &[GlossaryEntry]) -> Result<(), IpcError> {
     })
 }
 
+/// `excluded_app_upsert` 的应用：应用 id（bundle id、可执行文件名或 WM_CLASS）按 id 校验，名称按短文本
+pub fn validate_excluded_app(a: &ExcludedApp) -> Result<(), IpcError> {
+    check_id("entry.app_id", &a.app_id)?;
+    check_len("entry.name", &a.name, MAX_LABEL_BYTES)
+}
+
+/// `app_keymap_upsert` 的按键映射：应用 id 按 id 校验，两个组合键按短文本
+pub fn validate_app_keymap(k: &AppKeymap) -> Result<(), IpcError> {
+    check_id("entry.app_id", &k.app_id)?;
+    check_opt_len("entry.copy", k.copy.as_deref(), MAX_LABEL_BYTES)?;
+    check_opt_len("entry.paste", k.paste.as_deref(), MAX_LABEL_BYTES)
+}
+
 fn validate_model_entry(m: &ModelEntry) -> Result<(), IpcError> {
     check_id("provider.models[].id", &m.id)?;
     check_opt_len("provider.models[].label", m.label.as_deref(), MAX_LABEL_BYTES)?;
@@ -189,6 +202,26 @@ pub fn validate_provider(p: &Provider) -> Result<(), IpcError> {
     check_list_len("provider.models", p.models.len(), MAX_LIST_LEN)?;
     p.models.iter().try_for_each(validate_model_entry)?;
     check_opt_id("provider.template_id", p.template_id.as_deref())
+}
+
+/// 同步账号：地址按 WebDAV 地址的规则检查（≤ 1 KB；只允许 http / https；不带账号密码、查询与片段；`http://` 只允许
+/// 局域网地址）。地址的错误直接给出界面文案的 key（`errors.sync.https_required` / `errors.sync.invalid_url`），
+/// 设置页把它显示在地址输入框下面；账号只检查长度与控制字符（是否为空、能否用于 Basic 认证由服务判断）
+pub fn validate_sync_account(a: &SyncAccount) -> Result<(), IpcError> {
+    wisp_sync::validate_server_url(&a.server_url)
+        .map_err(|e| IpcError::invalid_argument(format!("errors.sync.{}", e.reason())))?;
+    check_len("account.username", &a.username, MAX_LABEL_BYTES)?;
+    if a.username.chars().any(char::is_control) {
+        return Err(IpcError::invalid_argument(
+            "account.username must not contain control characters",
+        ));
+    }
+    Ok(())
+}
+
+/// 可选的同步账号（`sync_reset_remote` 不传时用设置里的账号）
+pub fn validate_opt_sync_account(a: Option<&SyncAccount>) -> Result<(), IpcError> {
+    a.map_or(Ok(()), validate_sync_account)
 }
 
 /// 统计序列化字节数，不分配缓冲区
@@ -335,6 +368,55 @@ mod tests {
             &"t".repeat(MAX_LABEL_BYTES + 1)
         )])));
         assert!(is_invalid(validate_glossary(&vec![entry("t"); MAX_LIST_LEN + 1])));
+    }
+
+    #[test]
+    fn app_list_entries() {
+        let app = ExcludedApp {
+            os: wisp_types::OsKind::Macos,
+            app_id: "com.example.vault".to_owned(),
+            name: "Vault".to_owned(),
+        };
+        assert!(validate_excluded_app(&app).is_ok());
+        for bad in [
+            ExcludedApp {
+                app_id: "a".repeat(MAX_ID_BYTES + 1),
+                ..app.clone()
+            },
+            ExcludedApp {
+                app_id: "com.example\nvault".to_owned(),
+                ..app.clone()
+            },
+            ExcludedApp {
+                name: "n".repeat(MAX_LABEL_BYTES + 1),
+                ..app.clone()
+            },
+        ] {
+            assert!(is_invalid(validate_excluded_app(&bad)), "{bad:?}");
+        }
+        let keymap = AppKeymap {
+            os: wisp_types::OsKind::Linux,
+            app_id: "kitty".to_owned(),
+            copy: None,
+            paste: Some("Control+Shift+KeyV".to_owned()),
+        };
+        assert!(validate_app_keymap(&keymap).is_ok());
+        for bad in [
+            AppKeymap {
+                app_id: "k\u{0}".to_owned(),
+                ..keymap.clone()
+            },
+            AppKeymap {
+                copy: Some("c".repeat(MAX_LABEL_BYTES + 1)),
+                ..keymap.clone()
+            },
+            AppKeymap {
+                paste: Some("p".repeat(MAX_LABEL_BYTES + 1)),
+                ..keymap.clone()
+            },
+        ] {
+            assert!(is_invalid(validate_app_keymap(&bad)), "{bad:?}");
+        }
     }
 
     #[test]
@@ -539,6 +621,57 @@ mod tests {
             };
             assert!(is_invalid(validate_window_target(&t)), "{section:?} / {anchor}");
         }
+    }
+
+    #[test]
+    fn sync_account_rules() {
+        let account = |url: &str, user: &str| SyncAccount {
+            server_url: url.to_owned(),
+            username: user.to_owned(),
+        };
+        let message = |r: Result<(), IpcError>| r.expect_err("invalid").message;
+        assert!(validate_sync_account(&account("https://dav.example.com/dav", "me")).is_ok());
+        // 局域网地址可以用 http
+        assert!(validate_sync_account(&account("http://192.168.1.2:5005/", "me")).is_ok());
+        assert!(validate_sync_account(&account("http://nas.local/dav/", "me")).is_ok());
+        assert_eq!(
+            message(validate_sync_account(&account("http://dav.example.com/", "me"))),
+            "errors.sync.https_required"
+        );
+        for bad in [
+            "",
+            "dav.example.com",
+            "ftp://dav.example.com/",
+            "https://u:p@dav.example.com/",
+            "https://dav.example.com/?a=1",
+            "https://dav.example.com/#x",
+        ] {
+            assert_eq!(
+                message(validate_sync_account(&account(bad, "me"))),
+                "errors.sync.invalid_url",
+                "{bad}"
+            );
+        }
+        let long = format!("https://dav.example.com/{}", "a".repeat(1024));
+        assert_eq!(
+            message(validate_sync_account(&account(&long, "me"))),
+            "errors.sync.invalid_url"
+        );
+        // 账号：长度与控制字符；错误信息不带值本身
+        let err = message(validate_sync_account(&account(
+            "https://dav.example.com/",
+            &"a".repeat(MAX_LABEL_BYTES + 1),
+        )));
+        assert!(err.starts_with("account.username exceeds"), "{err}");
+        assert!(is_invalid(validate_sync_account(&account(
+            "https://dav.example.com/",
+            "me\nyou"
+        ))));
+        assert!(validate_opt_sync_account(None).is_ok());
+        assert!(is_invalid(validate_opt_sync_account(Some(&account(
+            "http://dav.example.com/",
+            "me"
+        )))));
     }
 
     #[test]

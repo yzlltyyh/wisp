@@ -1,0 +1,6 @@
+{
+  "ok": false,
+  "error": "https_required",
+  "error_detail": "redirect",
+  "vault": null
+}

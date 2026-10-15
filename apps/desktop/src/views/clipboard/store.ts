@@ -48,7 +48,9 @@ export interface SearchResult {
 }
 
 /** 行内二次确认：删除置顶项 / 清空历史 */
-export type Confirm = { kind: 'delete'; id: number } | { kind: 'clear'; keepPinned: boolean }
+/** 清空确认的 `synced`：清空会同步到其他设备（同步已开启且同步剪贴板历史），确认文案要注明 */
+export type Confirm =
+  { kind: 'delete'; id: number } | { kind: 'clear'; keepPinned: boolean; synced: boolean }
 
 /** 轻提示的语气：完成 / 出错 / 说明（例如跳过了疑似密钥） */
 export type StatusTone = 'ok' | 'error' | 'info'
@@ -264,9 +266,11 @@ export function restoreHit(
  * `clipboard:changed` → 新状态（纯函数）。
  * - inserted / touched：最近列表里放到「最近」组的顶部（置顶项在「置顶」组顶部），选中项按 id 保持不变
  *   （高亮不跳动）；检索模式下由调用方重新检索；
- * - updated：按 id 原地替换，不改顺序（缩略图生成完成、文件存在性刷新）；
+ * - updated：按 id 原地替换，不改顺序（缩略图生成完成、文件存在性刷新）；排序键（置顶、最近使用）与列表里的不同时
+ *   （例如另一台设备改了置顶）改为挪到新位置，不让一条置顶项留在「最近」组中间；
  * - removed / cleared：从各列表移除，选中项落到相邻条目；
- * - paused：横幅；secret_skipped：底部轻提示（由调用方给出文案）。
+ * - paused：横幅；secret_skipped：底部轻提示（由调用方给出文案）；
+ * - reloaded：列表不在这里改，由调用方重新拉取首页。
  */
 export function applyChange(s: ClipState, change: ClipboardChanged): Partial<ClipState> {
   switch (change.change) {
@@ -287,8 +291,19 @@ export function applyChange(s: ClipState, change: ClipboardChanged): Partial<Cli
         selectedId: s.selectedId ?? after[0]?.item.id ?? null,
       }
     }
-    case 'updated':
-      return mapLists(s, (hits) => replaceItem(hits, change.item))
+    case 'updated': {
+      const item = change.item
+      const cur = findHit(visibleHits(s), item.id)?.item ?? findHit(s.all.hits, item.id)?.item
+      if (cur && (cur.pinned !== item.pinned || cur.last_used_at !== item.last_used_at)) {
+        // 只挪已经在列表里的：不在的条目由翻页或重新检索带进来
+        return mapLists(
+          s,
+          (hits) => (hits.some((h) => h.item.id === item.id) ? upsertHit(hits, item) : hits),
+          item.id,
+        )
+      }
+      return mapLists(s, (hits) => replaceItem(hits, item))
+    }
     case 'removed':
       return removeFromLists(s, change.id)
     case 'cleared': {
@@ -310,6 +325,7 @@ export function applyChange(s: ClipState, change: ClipboardChanged): Partial<Cli
     case 'paused':
       return { paused: change.paused }
     case 'secret_skipped':
+    case 'reloaded':
       return {}
   }
 }

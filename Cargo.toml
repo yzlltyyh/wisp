@@ -20,6 +20,7 @@ wisp-prompts = { path = "crates/wisp-prompts" }
 wisp-clipboard = { path = "crates/wisp-clipboard" }
 wisp-capture = { path = "crates/wisp-capture" }
 wisp-platform = { path = "crates/wisp-platform", default-features = false }
+wisp-sync = { path = "crates/wisp-sync" }
 
 # ---- Tauri 族（精确版本，全部锁在 2.x，不跟进 3.0 alpha）----
 tauri = { version = "=2.12.2", features = ["tray-icon", "image-png"] }
@@ -93,6 +94,14 @@ uuid = { version = "1.28.0", features = ["v4"] }
 parking_lot = "0.12.5"
 zip = { version = "9.0.0", default-features = false, features = ["deflate"] }
 dirs = "7.0.0"
+
+# ---- 同步（加密、压缩、WebDAV 响应解析；版本与锁文件中已有的一致）----
+ring = "=0.17.14"
+flate2 = "=1.1.10"
+quick-xml = "=0.42.0"
+percent-encoding = "=2.3.2"
+# 同步密码做 NFC 规范化；默认特性会引入锁文件之外的 utf16_iter / write16，只开 compiled_data
+icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
 
 # ---- 测试 / 基准 ----
 insta = { version = "1.49.0", features = ["json"] }

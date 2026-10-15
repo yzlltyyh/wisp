@@ -1,8 +1,9 @@
 //! 诊断导出：把日志、脱敏后的 settings.json、styles.json、state.json 与 `app_info` 打包成 zip，
 //! 输出到用户在保存对话框里选择的位置。
 //!
-//! 诊断包**不含** Key（Key 只在钥匙串里，本来就读不到）、请求头的值、URL 的 query、正文（剪贴板、OCR、译文从不写日志，
-//! 术语表不打包）。日志逐行再过一遍 `logging::redact`；日志总量上限 [`MAX_LOG_BYTES`]（取最新的）。
+//! 诊断包**不含** Key（Key 只在钥匙串里，本来就读不到）、请求头的值、URL 的 query、同步服务器的地址与账号、同步用的
+//! 设备编号（它是服务器上文件名的一部分）、正文（剪贴板、
+//! OCR、译文从不写日志，术语表与同步的本机数据库不打包）。日志逐行再过一遍 `logging::redact`；日志总量上限 [`MAX_LOG_BYTES`]（取最新的）。
 //! 打包在阻塞线程池里完成，不占 tokio worker。
 
 use std::io::Write;
@@ -50,7 +51,7 @@ pub async fn export(app: &tauri::AppHandle) -> Result<Option<String>, IpcError> 
         .unwrap_or(Value::Null),
         settings: redacted_settings(&state.settings.get()),
         styles: read_json(&state.settings.paths().styles_file()),
-        state: read_json(&state.settings.paths().state_file()),
+        state: redacted_state(read_json(&state.settings.paths().state_file())),
         selection_stats: state.perf.selection_stats(),
         log_dir: state.settings.paths().log_dir.clone(),
     };
@@ -80,9 +81,31 @@ fn read_json(path: &Path) -> Value {
         .unwrap_or(Value::Null)
 }
 
-/// 去掉请求头的值、URL 里的凭据（userinfo）与 query 的 settings
+/// 去掉同步设备编号的 state.json：编号是服务器上本设备的文件名与目录名的一部分，拿着诊断包就能在服务器上对出这台设备的
+/// 文件。没有编号时保持为空，看得出是否已经生成过
+fn redacted_state(mut state: Value) -> Value {
+    if let Some(id) = state.get_mut("sync_device_id")
+        && !id.is_null()
+    {
+        *id = Value::String(MASK.to_owned());
+    }
+    state
+}
+
+/// 去掉请求头的值、URL 里的凭据（userinfo）与 query、同步服务器的地址与账号的 settings
 pub fn redacted_settings(settings: &Settings) -> Value {
     let mut v = serde_json::to_value(settings).unwrap_or(Value::Null);
+    if let Some(sync) = v.get_mut("sync").and_then(Value::as_object_mut) {
+        // 地址只留 scheme（排查「http 地址被拒绝」需要它），主机、路径与账号都换成 ***；空值保持为空，看得出是否填写过
+        if let Some(Value::String(url)) = sync.get_mut("server_url") {
+            *url = redact_sync_url(url);
+        }
+        if let Some(Value::String(user)) = sync.get_mut("username")
+            && !user.is_empty()
+        {
+            *user = MASK.to_owned();
+        }
+    }
     if let Some(providers) = v.get_mut("providers").and_then(Value::as_array_mut) {
         for p in providers {
             if let Some(headers) = p.get_mut("headers").and_then(Value::as_object_mut) {
@@ -118,6 +141,20 @@ pub fn redact_url(url: &str) -> String {
         out.push_str(MASK);
     }
     crate::app::logging::redact(&out).into_owned()
+}
+
+/// 同步服务器地址脱敏：只保留 http / https 的 scheme（`https://***`）；其他写法整体换成 `***`（手改出的奇怪 scheme
+/// 本身也可能是主机名）；空串保持为空
+fn redact_sync_url(url: &str) -> String {
+    if url.is_empty() {
+        return String::new();
+    }
+    match url.split_once("://") {
+        Some((scheme, _)) if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") => {
+            format!("{}://{MASK}", scheme.to_ascii_lowercase())
+        }
+        _ => MASK.to_owned(),
+    }
 }
 
 fn write_zip(path: &Path, bundle: &Bundle) -> Result<(), IpcError> {
@@ -205,9 +242,9 @@ fn collect_logs(dir: &Path) -> Vec<(String, Vec<u8>)> {
 const README: &str = "Wisp diagnostics bundle\n\
 \n\
 app_info.json  version, platform, runtime state and startup timings\n\
-settings.json  settings with request header values, URL credentials and URL queries replaced by ***\n\
+settings.json  settings with request header values, URL credentials, URL queries and the sync server address and account replaced by ***\n\
 styles.json    translation styles\n\
-state.json     runtime state (window positions, onboarding, update checks)\n\
+state.json     runtime state (window positions, onboarding, update checks; the sync device id replaced by ***)\n\
 selection-stats.json  text selection per app since launch: method counts, outcomes, average time (no text)\n\
 logs/          recent logs (no source text, translations, clipboard content or keys)\n\
 \n\
@@ -268,6 +305,48 @@ mod tests {
         s.providers.push(p);
         let text = redacted_settings(&s).to_string();
         assert!(!text.contains("hunter2") && !text.contains("gwuser42"), "{text}");
+    }
+
+    #[test]
+    fn sync_server_and_account_are_redacted() {
+        let mut s = Settings::default();
+        s.sync.enabled = true;
+        s.sync.server_url = "https://dav.example.com/remote.php/dav/files/someone".to_owned();
+        s.sync.username = "someone@example.com".to_owned();
+        let v = redacted_settings(&s);
+        let text = v.to_string();
+        assert!(!text.contains("example") && !text.contains("someone"), "{text}");
+        assert_eq!(v["sync"]["server_url"], "https://***");
+        assert_eq!(v["sync"]["username"], "***");
+        assert_eq!(v["sync"]["enabled"], true, "其余同步设置保留");
+        assert_eq!(v["sync"]["content"]["clipboard"], true);
+
+        s.sync.server_url = "HTTP://nas.local:5005/webdav".to_owned();
+        assert_eq!(redacted_settings(&s)["sync"]["server_url"], "http://***");
+        // 不是 http / https 的写法（可能本身就是主机名）整体遮住
+        s.sync.server_url = "secret-host.example.org/dav".to_owned();
+        assert_eq!(redacted_settings(&s)["sync"]["server_url"], "***");
+        s.sync.server_url = "secret-host://x".to_owned();
+        assert_eq!(redacted_settings(&s)["sync"]["server_url"], "***");
+        // 没填写过：保持为空
+        let v = redacted_settings(&Settings::default());
+        assert_eq!(v["sync"]["server_url"], "");
+        assert_eq!(v["sync"]["username"], "");
+    }
+
+    #[test]
+    fn sync_device_id_is_redacted_from_state() {
+        let state = json!({"onboarding_done": true, "sync_device_id": "0123456789abcdef"});
+        let v = redacted_state(state);
+        assert!(!v.to_string().contains("0123456789abcdef"), "{v}");
+        assert_eq!(v["sync_device_id"], "***");
+        assert_eq!(v["onboarding_done"], true, "其余内容保留");
+        // 还没有编号：保持为空；读不到 state.json：原样
+        assert_eq!(
+            redacted_state(json!({"sync_device_id": null}))["sync_device_id"],
+            Value::Null
+        );
+        assert_eq!(redacted_state(Value::Null), Value::Null);
     }
 
     #[test]

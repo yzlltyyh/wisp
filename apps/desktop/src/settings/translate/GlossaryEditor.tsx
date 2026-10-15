@@ -2,8 +2,14 @@
  * 术语表：表格编辑 source / target / note；source 与 target 相同表示保持不译；
  * note 只在这里显示、不发给模型；导入（JSON / CSV / TSV，Rust 弹系统对话框）/ 导出；条目多时可搜索。
  *
- * - 写入：停顿后整体 `glossary_set`（空 source 的行不写入）；**串行**——在途时只记住最新一份，返回后再发，
- *   旧内容不会后到覆盖新内容；挂载期间登记到 writes.ts（关窗前提交并等待）；
+ * - 写入：**逐条**——停顿后只把改过的行写出去（`glossary_upsert`，带上这一行改动前的原文；原文清空或删除行 =
+ *   `glossary_remove`），不再整表 `glossary_set`：编辑器打开之后别处（其他设备同步、手改文件、导入）加进来的术语
+ *   不会被窗口里的旧列表删掉。写入**串行**（同一时刻只有一条在途，按改动的先后发出）；挂载期间登记到 writes.ts
+ *   （关窗前提交并等待）。两行原文相同时（例如新加一行来替换旧的那行）术语表里只有一条：其中一行删除、清空或改了
+ *   原文，这一条改写成另一行的内容，而不是被删掉；
+ * - 外部变化：收到 `glossary:changed`（任何来源的改动都会发）时重新读取；有没写出的改动、写入在途或焦点在某一行里
+ *   时先记下，等这些都结束再读，不打断输入。读回的条目按原文对上已有的行（沿用行的 key，不重新挂载、不丢焦点），
+ *   内容就是这一行自己写进去的那份时保持原样；
  * - 跟手：行组件 memo、按 key 更新，打字只重渲染当前行；条目超过 VIRTUAL_AFTER 时表格改为内部滚动的虚拟列表；
  * - 搜索时正在编辑的行即使不再匹配也保持可见（不会在输入中途消失、丢焦点）；
  * - 「添加术语」的新行只在第一次出现时滚过去、自动聚焦一次（获得焦点后就清掉标记）：之后删行、过滤、虚拟列表把它
@@ -15,7 +21,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { Download, Plus, Search, Upload, X } from 'lucide-react'
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '../../shared/i18n/useT'
-import { api } from '../../shared/ipc'
+import { api, on } from '../../shared/ipc'
 import type { GlossaryEntry } from '../../shared/ipc/types'
 import {
   Badge,
@@ -40,49 +46,104 @@ const VIRTUAL_AFTER = 60
 const ROW_HEIGHT = 40
 const VISIBLE_ROWS = 10
 
-interface Row extends GlossaryEntry {
+export interface Row extends GlossaryEntry {
   /** 本地行 id（React key；新增的空行还没有 source） */
   key: number
 }
 
 let rowSeq = 0
-const toRows = (entries: readonly GlossaryEntry[]): Row[] =>
-  entries.map((e) => ({ ...e, key: ++rowSeq }))
 
-function toEntries(rows: readonly Row[]): GlossaryEntry[] {
-  return rows
-    .filter((r) => r.source.trim())
-    .map((r) => ({
-      source: r.source.trim(),
-      // 译文留空 = 与原文相同 = 保持不译
-      target: r.target.trim() || r.source.trim(),
-      note: r.note?.trim() || null,
-    }))
+/** 一行要写进术语表的样子；原文为空时为 null（不写入） */
+export function toEntry(row: GlossaryEntry): GlossaryEntry | null {
+  const source = row.source.trim()
+  if (!source) return null
+  return {
+    source,
+    // 译文留空 = 与原文相同 = 保持不译
+    target: row.target.trim() || source,
+    note: row.note?.trim() || null,
+  }
 }
 
-/** 串行写入：同一时刻只有一份 glossary_set 在途，期间的改动只保留最新的一份 */
-let writing: Promise<void> | null = null
-let nextEntries: GlossaryEntry[] | null = null
+function sameEntry(a: GlossaryEntry, b: GlossaryEntry): boolean {
+  return a.source === b.source && a.target === b.target && (a.note ?? null) === (b.note ?? null)
+}
 
-function writeGlossary(entries: GlossaryEntry[]): void {
-  nextEntries = entries
+/**
+ * 把读回的条目对上已有的行：按原文找到原来的行沿用它的 key（不重新挂载、焦点与虚拟列表的位置不变）；内容就是这一行
+ * 写进去的那份（`saved`）时保留行的原样（例如译文留空的写法）；还没写过的新行（原文为空）留在末尾。
+ * `saved` 随之改为读回的内容。没有任何变化时返回 `prev` 本身
+ */
+export function reconcileRows(
+  prev: Row[] | null,
+  entries: readonly GlossaryEntry[],
+  saved: Map<number, GlossaryEntry>,
+): Row[] {
+  const pool = new Map<string, Row[]>()
+  for (const r of prev ?? []) {
+    const source = r.source.trim()
+    if (source) pool.set(source, [...(pool.get(source) ?? []), r])
+  }
+  const next: Row[] = entries.map((e) => {
+    const reuse = pool.get(e.source)?.shift()
+    if (!reuse) return { ...e, key: ++rowSeq }
+    const mine = saved.get(reuse.key)
+    return mine && sameEntry(mine, e) ? reuse : { ...e, key: reuse.key }
+  })
+  for (const r of prev ?? []) if (!r.source.trim()) next.push(r)
+  saved.clear()
+  for (const [i, e] of entries.entries()) {
+    const row = next[i]
+    if (row) saved.set(row.key, e)
+  }
+  if (prev && prev.length === next.length && prev.every((r, i) => r === next[i])) return prev
+  return next
+}
+
+type Op =
+  | { kind: 'upsert'; entry: GlossaryEntry; previous: string | null }
+  | { kind: 'remove'; source: string }
+
+/** 串行写入：按改动的先后逐条发出，同一时刻只有一条在途 */
+const ops: Op[] = []
+let writing: Promise<void> | null = null
+/** 写入全部结束时通知（`failed`：其间有写入失败，本地记下的「已写入」不可信，需要重新读取） */
+const idleListeners = new Set<(failed: boolean) => void>()
+
+function enqueue(op: Op): void {
+  ops.push(op)
   if (writing) return
+  let failed = false
   writing = trackWrite(
     (async () => {
-      while (nextEntries) {
-        const batch = nextEntries
-        nextEntries = null
+      while (ops.length > 0) {
+        const next = ops.shift() as Op
         try {
           // oxlint-disable-next-line no-await-in-loop -- 有意串行
-          await api.glossarySet(batch)
+          await (next.kind === 'upsert'
+            ? api.glossaryUpsert(next.entry, next.previous)
+            : api.glossaryRemove(next.source))
         } catch (error) {
-          notify(ipcErrorText(error, 'glossary_set'), 'danger')
+          failed = true
+          notify(
+            ipcErrorText(error, next.kind === 'upsert' ? 'glossary_upsert' : 'glossary_remove'),
+            'danger',
+          )
         }
       }
     })().finally(() => {
       writing = null
+      for (const l of idleListeners) l(failed)
     }),
   )
+}
+
+/** 等待串行写入全部结束（导出前、测试） */
+export async function settleGlossaryWrites(): Promise<void> {
+  for (let current = writing; current; current = writing) {
+    // oxlint-disable-next-line no-await-in-loop -- 有意串行：等完这一批再看有没有接着排进来的
+    await current
+  }
 }
 
 export function GlossaryEditor() {
@@ -94,41 +155,106 @@ export function GlossaryEditor() {
   /** 正在编辑（焦点在其中）的行：搜索过滤时保留 */
   const [editingKey, setEditingKey] = useState<number | null>(null)
   const rowsRef = useRef<Row[] | null>(null)
+  const editingRef = useRef<number | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const dirty = useRef(false)
+  /** 改过、还没写出去的行 */
+  const dirty = useRef(new Set<number>())
+  /** 每一行在术语表里的样子（最近一次读回或写出的内容）：决定写 upsert 还是 remove、带哪个原来的原文 */
+  const saved = useRef(new Map<number, GlossaryEntry>())
+  /** 收到了外部变化、但当时不便重新读取（有未写出的改动 / 写入在途 / 正在编辑某一行） */
+  const stale = useRef(false)
   useLayoutEffect(() => {
     rowsRef.current = rows
+    editingRef.current = editingKey
   })
 
-  /** 立即写出未写的改动（失焦、删除行、导入导出前、关窗前） */
+  /**
+   * 一行放弃了它写过的原文（删除、清空或改了原文），而另一行此刻的原文也是它：术语表里同一原文只有一条，Rust 已经把
+   * 那一行合并进了这一条。改为写成那一行的内容，而不是删掉这一条或随改名带走——否则用户刚加的那一行会跟着消失
+   */
+  const handOver = useCallback((key: number, source: string): boolean => {
+    const other = (rowsRef.current ?? []).find(
+      (r) => r.key !== key && toEntry(r)?.source === source,
+    )
+    const entry = other ? toEntry(other) : null
+    if (!other || !entry) return false
+    enqueue({ kind: 'upsert', entry, previous: null })
+    saved.current.set(other.key, entry)
+    return true
+  }, [])
+
+  /** 立即写出改过的行（失焦、删除行、导入导出前、关窗前） */
   const flush = useCallback(() => {
     if (timer.current !== null) clearTimeout(timer.current)
     timer.current = null
-    if (!dirty.current || !rowsRef.current) return
-    dirty.current = false
-    writeGlossary(toEntries(rowsRef.current))
-  }, [])
+    const current = rowsRef.current
+    if (dirty.current.size === 0 || !current) return
+    for (const row of current) {
+      if (!dirty.current.has(row.key)) continue
+      const entry = toEntry(row)
+      const before = saved.current.get(row.key) ?? null
+      if (!entry) {
+        // 原文清空：等同于删掉这一条
+        if (before && !handOver(row.key, before.source))
+          enqueue({ kind: 'remove', source: before.source })
+        saved.current.delete(row.key)
+      } else if (!before || !sameEntry(before, entry)) {
+        // 改了原文、而原来的原文此刻属于另一行：那一条交给那一行，这一行作为新条目写入（不带原来的原文，
+        // 否则 Rust 会把那一条改名带走）
+        const handed =
+          before !== null && before.source !== entry.source && handOver(row.key, before.source)
+        enqueue({ kind: 'upsert', entry, previous: handed ? null : (before?.source ?? null) })
+        saved.current.set(row.key, entry)
+      }
+    }
+    dirty.current.clear()
+  }, [handOver])
 
-  const schedule = useCallback(() => {
-    dirty.current = true
-    if (timer.current !== null) clearTimeout(timer.current)
-    timer.current = setTimeout(flush, COMMIT_DELAY_MS)
-  }, [flush])
+  const schedule = useCallback(
+    (key: number) => {
+      dirty.current.add(key)
+      if (timer.current !== null) clearTimeout(timer.current)
+      timer.current = setTimeout(flush, COMMIT_DELAY_MS)
+    },
+    [flush],
+  )
 
-  const reload = () =>
-    api
+  /** 现在能不能用读回的内容替换行：没有未写出的改动、没有在途写入、焦点不在某一行里 */
+  const quiet = useCallback(
+    () =>
+      dirty.current.size === 0 &&
+      timer.current === null &&
+      writing === null &&
+      editingRef.current === null,
+    [],
+  )
+
+  /** 重新读取（外部变化、导入之后）；不便替换时记下，等安静下来再读 */
+  const refresh = useCallback(() => {
+    if (!quiet()) {
+      stale.current = true
+      return
+    }
+    stale.current = false
+    void api
       .glossaryGet()
-      .then((entries) => setRows(toRows(entries)))
-      .catch((error: unknown) => {
-        setRows([])
-        notify(ipcErrorText(error, 'glossary_get'), 'danger')
+      .then((entries) => {
+        if (!quiet()) {
+          stale.current = true
+          return
+        }
+        setRows(reconcileRows(rowsRef.current, entries, saved.current))
       })
+      .catch((error: unknown) => notify(ipcErrorText(error, 'glossary_get'), 'danger'))
+  }, [quiet])
 
   useEffect(() => {
     let alive = true
     api
       .glossaryGet()
-      .then((entries) => alive && setRows(toRows(entries)))
+      .then((entries) => {
+        if (alive) setRows(reconcileRows(rowsRef.current, entries, saved.current))
+      })
       .catch((error: unknown) => {
         if (!alive) return
         setRows([])
@@ -138,6 +264,25 @@ export function GlossaryEditor() {
       alive = false
     }
   }, [])
+
+  // 别处改了术语表（其他设备同步、手改文件、导入）：重新读取；自己的写入全部结束后补上之前记下的那次
+  useEffect(() => {
+    const onIdle = (failed: boolean) => {
+      if (failed || stale.current) refresh()
+    }
+    idleListeners.add(onIdle)
+    let unlisten: (() => void) | null = null
+    let disposed = false
+    void on('glossary:changed', () => refresh()).then((un) => {
+      if (disposed) un()
+      else unlisten = un
+    })
+    return () => {
+      disposed = true
+      idleListeners.delete(onIdle)
+      unlisten?.()
+    }
+  }, [refresh])
 
   // 卸载（切换分组 / 关闭编辑）时把未写的改动写出去；挂载期间可被统一提交（关窗前）
   useEffect(() => {
@@ -152,20 +297,25 @@ export function GlossaryEditor() {
   const edit = useCallback(
     (key: number, patch: Partial<GlossaryEntry>) => {
       setRows((prev) => prev && prev.map((r) => (r.key === key ? { ...r, ...patch } : r)))
-      schedule()
+      schedule(key)
     },
     [schedule],
   )
-  const remove = useCallback((key: number) => {
-    const next = (rowsRef.current ?? []).filter((r) => r.key !== key)
-    rowsRef.current = next
-    setRows(next)
-    // 删除立即写出（连同之前还没写的改动）
-    if (timer.current !== null) clearTimeout(timer.current)
-    timer.current = null
-    dirty.current = false
-    writeGlossary(toEntries(next))
-  }, [])
+  const remove = useCallback(
+    (key: number) => {
+      const next = (rowsRef.current ?? []).filter((r) => r.key !== key)
+      rowsRef.current = next
+      setRows(next)
+      dirty.current.delete(key)
+      // 删除立即写出（连同之前还没写的改动）
+      flush()
+      const before = saved.current.get(key)
+      saved.current.delete(key)
+      if (before && !handOver(key, before.source))
+        enqueue({ kind: 'remove', source: before.source })
+    },
+    [flush, handOver],
+  )
   const add = () => {
     const row: Row = { source: '', target: '', note: null, key: ++rowSeq }
     setFocusKey(row.key)
@@ -173,16 +323,20 @@ export function GlossaryEditor() {
     setRows((prev) => (prev ? [...prev, row] : [row]))
   }
   const onRowFocus = useCallback((key: number) => {
+    editingRef.current = key
     setEditingKey(key)
     // 新行已经拿到焦点：清掉「自动聚焦」标记，它之后重新挂载（过滤、虚拟列表滚出滚回）时不再抢焦点
     setFocusKey((k) => (k === key ? null : k))
   }, [])
   const onRowBlur = useCallback(
     (key: number) => {
+      if (editingRef.current === key) editingRef.current = null
       setEditingKey((k) => (k === key ? null : k))
       flush()
+      // 编辑期间错过的外部变化：没有写入要发时现在补上（有写入时等它们结束）
+      if (stale.current) refresh()
     },
-    [flush],
+    [flush, refresh],
   )
 
   const importFile = async () => {
@@ -191,7 +345,7 @@ export function GlossaryEditor() {
     try {
       const count = await api.glossaryImport()
       if (count > 0) {
-        await reload()
+        refresh()
         notify(t('settings.glossary.imported', { count, n: count }), 'success')
       }
     } catch (error) {
@@ -204,7 +358,7 @@ export function GlossaryEditor() {
     setBusy('export')
     flush()
     try {
-      if (writing) await writing
+      await settleGlossaryWrites()
       const path = await api.glossaryExport()
       if (path) notify(t('settings.glossary.exported', { path }), 'success', { sticky: true })
     } catch (error) {

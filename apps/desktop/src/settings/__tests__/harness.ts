@@ -6,12 +6,15 @@ import { vi } from 'vitest'
 import { setTransport, WispIpcError, type Transport } from '../../shared/ipc'
 import { RuntimeInfo as GoldenRuntime, Settings as GoldenSettings } from '../../shared/ipc/fixtures'
 import type {
+  AppKeymap,
   EventMap,
   EventName,
+  ExcludedApp,
   HotkeyAction,
   HotkeyStatus,
   IpcErrorCode,
   ModelEntry,
+  OsKind,
   Provider,
   RuntimeInfo,
   Settings,
@@ -148,7 +151,11 @@ export function snapshot(
   }
 }
 
-/** 安装替身传输层；`settings_get` / `settings_patch` 默认按内存快照工作 */
+/**
+ * 安装替身传输层；`settings_get` / `settings_patch`、按 id 写服务的 `provider_save` / `provider_add`、按（系统，应用 id）
+ * 写排除名单与按键映射的 `excluded_app_*` / `app_keymap_*` 默认按内存快照工作（`provider_save` 找不到这个服务时与 Rust
+ * 一样报 not_found）
+ */
 export function installHarness(initial: SettingsSnapshot = snapshot()): Harness {
   const handlers = new Map<string, Handler>()
   const listeners = new Map<string, Set<(p: unknown) => void>>()
@@ -160,6 +167,77 @@ export function installHarness(initial: SettingsSnapshot = snapshot()): Harness 
     state.snap = { ...state.snap, settings: mergePatch(state.snap.settings, patch) }
     return structuredClone(state.snap)
   })
+  handlers.set('provider_save', ({ provider: saved }) => {
+    const p = saved as Provider
+    const providers = state.snap.settings.providers
+    if (!providers.some((x) => x.id === p.id))
+      throw { code: 'not_found', message: 'provider', llm: null }
+    state.snap = {
+      ...state.snap,
+      settings: {
+        ...state.snap.settings,
+        providers: providers.map((x) => (x.id === p.id ? p : x)),
+      },
+    }
+    return structuredClone(state.snap)
+  })
+  handlers.set('provider_add', ({ provider: added }) => {
+    const p = added as Provider
+    const providers = state.snap.settings.providers
+    state.snap = {
+      ...state.snap,
+      settings: {
+        ...state.snap.settings,
+        providers: providers.some((x) => x.id === p.id)
+          ? providers.map((x) => (x.id === p.id ? p : x))
+          : [...providers, p],
+      },
+    }
+    return structuredClone(state.snap)
+  })
+  type AppEntry = { os: OsKind; app_id: string }
+  const sameApp = (a: AppEntry, os: unknown, appId: unknown) => a.os === os && a.app_id === appId
+  const upsertApp = <T extends AppEntry>(list: T[], next: T): T[] =>
+    list.some((x) => sameApp(x, next.os, next.app_id))
+      ? list.map((x) => (sameApp(x, next.os, next.app_id) ? next : x))
+      : [...list, next]
+  const writeLists = (change: (s: Settings) => Settings) => {
+    state.snap = { ...state.snap, settings: change(state.snap.settings) }
+    return structuredClone(state.snap)
+  }
+  handlers.set('excluded_app_upsert', ({ entry: app }) =>
+    writeLists((s) => ({
+      ...s,
+      clipboard: {
+        ...s.clipboard,
+        excluded_apps: upsertApp(s.clipboard.excluded_apps, app as ExcludedApp),
+      },
+    })),
+  )
+  handlers.set('excluded_app_remove', ({ os, app_id }) =>
+    writeLists((s) => ({
+      ...s,
+      clipboard: {
+        ...s.clipboard,
+        excluded_apps: s.clipboard.excluded_apps.filter((a) => !sameApp(a, os, app_id)),
+      },
+    })),
+  )
+  handlers.set('app_keymap_upsert', ({ entry: keymap }) =>
+    writeLists((s) => ({
+      ...s,
+      hotkeys: { ...s.hotkeys, app_keymaps: upsertApp(s.hotkeys.app_keymaps, keymap as AppKeymap) },
+    })),
+  )
+  handlers.set('app_keymap_remove', ({ os, app_id }) =>
+    writeLists((s) => ({
+      ...s,
+      hotkeys: {
+        ...s.hotkeys,
+        app_keymaps: s.hotkeys.app_keymaps.filter((k) => !sameApp(k, os, app_id)),
+      },
+    })),
+  )
   handlers.set('ocr_history_list', () => [])
   const transport: Transport = {
     kind: 'mock',

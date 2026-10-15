@@ -30,6 +30,7 @@ import type {
   Settings,
   SourceApp,
   Style,
+  SyncStatus,
   UpdateStatus,
 } from '../types'
 
@@ -210,6 +211,19 @@ export function createFixtures(boot: Boot) {
         webview_low_memory_when_hidden: true,
         unload_panel_after_idle_min: null,
       },
+      sync: {
+        enabled: false,
+        server_url: '',
+        username: '',
+        auto: true,
+        content: {
+          settings: true,
+          api_keys: true,
+          clipboard: true,
+          images: true,
+          ocr_history: true,
+        },
+      },
     }
   }
 
@@ -252,6 +266,19 @@ export function createFixtures(boot: Boot) {
     return { state: 'idle', version: null, notes: null, progress: null, error: null }
   }
 
+  function syncOff(): SyncStatus {
+    return {
+      phase: 'off',
+      last_ok_ms: null,
+      pending: false,
+      error: null,
+      transient: false,
+      error_detail: null,
+      progress: null,
+      device_count: 0,
+    }
+  }
+
   function runtime(): RuntimeInfo {
     return {
       version: '0.1.0',
@@ -266,6 +293,7 @@ export function createFixtures(boot: Boot) {
       glossary_count: 0,
       settings_issue: null,
       orphan_keys: 0,
+      sync: syncOff(),
     }
   }
 
@@ -720,6 +748,7 @@ export function createFixtures(boot: Boot) {
     hotkeyStatuses,
     permissions,
     update,
+    syncOff,
     runtime,
     appearance,
     appMeta,

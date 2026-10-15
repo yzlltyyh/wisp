@@ -26,6 +26,7 @@ pub mod cmd_overlay;
 pub mod cmd_provider;
 pub mod cmd_settings;
 pub mod cmd_stream;
+pub mod cmd_sync;
 pub mod cmd_update;
 pub mod cmd_window;
 #[cfg(test)]
@@ -148,6 +149,10 @@ commands![
     // ---- 设置----
     cmd_settings::settings_get,
     cmd_settings::settings_patch,
+    cmd_settings::excluded_app_upsert,
+    cmd_settings::excluded_app_remove,
+    cmd_settings::app_keymap_upsert,
+    cmd_settings::app_keymap_remove,
     cmd_settings::styles_list,
     cmd_settings::style_save,
     cmd_settings::style_delete,
@@ -156,12 +161,17 @@ commands![
     cmd_settings::style_preview,
     cmd_settings::glossary_get,
     cmd_settings::glossary_set,
+    cmd_settings::glossary_upsert,
+    cmd_settings::glossary_remove,
     cmd_settings::glossary_import,
     cmd_settings::glossary_export,
     // ---- Provider----
     cmd_provider::provider_templates,
     cmd_provider::provider_new,
     cmd_provider::provider_delete,
+    cmd_provider::provider_save,
+    cmd_provider::provider_add,
+    cmd_provider::providers_reorder,
     cmd_provider::provider_test,
     cmd_provider::provider_models,
     cmd_provider::llm_preview_url,
@@ -185,6 +195,15 @@ commands![
     cmd_update::update_check,
     cmd_update::update_install,
     cmd_update::update_status,
+    // ---- 同步----
+    cmd_sync::sync_status,
+    cmd_sync::sync_devices,
+    cmd_sync::sync_probe,
+    cmd_sync::sync_connect,
+    cmd_sync::sync_now,
+    cmd_sync::sync_disconnect,
+    cmd_sync::sync_reset_remote,
+    cmd_sync::sync_generate_passphrase,
     // ---- 快捷键----
     cmd_hotkeys::hotkey_status,
     cmd_hotkeys::hotkey_record_begin,

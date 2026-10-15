@@ -332,6 +332,10 @@ fn on_opened(app: &tauri::AppHandle) {
     crate::app::permissions::refresh(app);
     crate::updater::maybe_check(app);
     crate::updater::note_activity();
+    // 同步：用户在看 Wisp，顺带取回其他设备的改动（节流与退避在服务里判断，这里只是一次原子读）
+    if let Some(state) = app.try_state::<AppState>() {
+        state.sync.trigger(crate::sync_svc::CycleReason::TrayOpened);
+    }
 }
 
 /// Linux 没有托盘时的退化：打开设置窗口并发一条通知
@@ -365,6 +369,7 @@ mod tests {
             status: TrayStatus::Ok,
             paused: false,
             show_pinned: false,
+            sync_enabled: false,
             accelerators: Default::default(),
         };
         assert_eq!(tooltip(&m), "Wisp");

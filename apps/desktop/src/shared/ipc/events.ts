@@ -55,6 +55,8 @@ export const EVENT_NAMES = [
   'window:close_requested',
   'overlay:end',
   'ocr_history:changed',
+  'sync:status',
+  'glossary:changed',
 ] as const satisfies readonly EventName[]
 
 type AssertNever<Never extends never> = Never

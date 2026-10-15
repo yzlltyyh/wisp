@@ -246,6 +246,10 @@
     color: var(--fg);
     background: var(--fill-hover);
   }
+  /* 接入模型的卡片下面：「已在其他设备上使用 Wisp？连接同步」，与「稍后设置」同一种安静的链接样式 */
+  .ob-sync-link {
+    margin: 12px 0 0;
+  }
   /* 同一位置两个按钮的交叉淡入：叠在同一格，宽度按较宽的那个；隐藏的那个淡出后再 visibility: hidden */
   .ob-swap {
     display: inline-grid;

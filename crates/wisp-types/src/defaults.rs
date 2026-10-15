@@ -163,6 +163,15 @@ pub mod ranges {
     pub const UNLOAD_PANEL_AFTER_IDLE_MIN: (u32, u32) = (5, 1440);
 }
 
+/// 同步：服务器地址的长度上限（UTF-8 字节）。设置校验与连接命令的参数校验共用
+pub const SYNC_MAX_URL_BYTES: usize = 1024;
+/// 同步：WebDAV 账号的长度上限（UTF-8 字节，与其他短文本相同）
+pub const SYNC_MAX_USERNAME_BYTES: usize = 1024;
+/// 同步密码的最少字符数（按 Unicode 字符计）
+pub const SYNC_PASSPHRASE_MIN_CHARS: usize = 12;
+/// 参与同步的剪贴板图片与识别截图的单张上限（字节）；更大的只留在本机
+pub const SYNC_MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+
 /// 「空闲卸载面板」开关打开时的分钟数（设置页开关的初值；可按冷唤出的实测耗时调整，前端
 /// `GeneralPage.tsx` 的 `UNLOAD_RANGE.initial` 与之一致）
 pub const UNLOAD_PANEL_SUGGESTED_MIN: u32 = 10;

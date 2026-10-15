@@ -166,5 +166,15 @@
   "keychain": {
     "denied": "访问钥匙串被拒绝：请重试，并在系统弹框中点「允许」",
     "unavailable": "系统凭据存储不可用"
+  },
+  "sync": {
+    "passphrase": "同步密码不正确，请输入在其他设备上设置的同步密码",
+    "passphrase_weak": "同步密码至少需要 12 个字符",
+    "passphrase_reused": "同步密码不能与应用密码、账号或服务器地址相同",
+    "https_required": "只有局域网地址可以用 http；请改用 https:// 开头的地址",
+    "invalid_url": "服务器地址无效：应以 https:// 开头，且不含「?」「#」或账号",
+    "not_connected": "同步尚未连接",
+    "busy": "同步正在进行，请稍后再试",
+    "credentials_missing": "找不到已保存的密码，请重新输入应用密码"
   }
 }

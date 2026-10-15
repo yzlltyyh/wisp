@@ -845,6 +845,10 @@ export const ClipboardChanged__secret_skipped = {
   "change": "secret_skipped"
 } satisfies T.ClipboardChanged
 
+export const ClipboardChanged__reloaded = {
+  "change": "reloaded"
+} satisfies T.ClipboardChanged
+
 export const OcrHistoryItem = {
   "id": 5,
   "created_at": 1760000000000,
@@ -1662,6 +1666,19 @@ export const SettingsSnapshot = {
       "log_level": "info",
       "webview_low_memory_when_hidden": true,
       "unload_panel_after_idle_min": null
+    },
+    "sync": {
+      "enabled": false,
+      "server_url": "",
+      "username": "",
+      "auto": true,
+      "content": {
+        "settings": true,
+        "api_keys": true,
+        "clipboard": true,
+        "images": true,
+        "ocr_history": true
+      }
     }
   },
   "styles": [
@@ -1777,7 +1794,17 @@ export const SettingsSnapshot = {
       "backup_path": "/Users/me/Library/Application Support/wisp/settings.json.bak-1760000000",
       "at_ms": 1760000000000
     },
-    "orphan_keys": 1
+    "orphan_keys": 1,
+    "sync": {
+      "phase": "off",
+      "last_ok_ms": null,
+      "pending": false,
+      "error": null,
+      "transient": false,
+      "error_detail": null,
+      "progress": null,
+      "device_count": 0
+    }
   }
 } satisfies T.SettingsSnapshot
 
@@ -1863,7 +1890,17 @@ export const RuntimeInfo = {
     "backup_path": "/Users/me/Library/Application Support/wisp/settings.json.bak-1760000000",
     "at_ms": 1760000000000
   },
-  "orphan_keys": 1
+  "orphan_keys": 1,
+  "sync": {
+    "phase": "off",
+    "last_ok_ms": null,
+    "pending": false,
+    "error": null,
+    "transient": false,
+    "error_detail": null,
+    "progress": null,
+    "device_count": 0
+  }
 } satisfies T.RuntimeInfo
 
 export const SettingsFileIssue = {
@@ -1999,6 +2036,146 @@ export const UpdateStatus = {
   "progress": 0.5,
   "error": null
 } satisfies T.UpdateStatus
+
+export const SyncStatus = {
+  "phase": "syncing",
+  "last_ok_ms": 1760000000000,
+  "pending": true,
+  "error": null,
+  "transient": false,
+  "error_detail": null,
+  "progress": {
+    "done": 120,
+    "total": 1000
+  },
+  "device_count": 2
+} satisfies T.SyncStatus
+
+export const SyncStatus__transient_error = {
+  "phase": "error",
+  "last_ok_ms": 1760000000000,
+  "pending": true,
+  "error": "network",
+  "transient": true,
+  "error_detail": "timeout",
+  "progress": null,
+  "device_count": 2
+} satisfies T.SyncStatus
+
+export const SyncStatus__needs_attention = {
+  "phase": "error",
+  "last_ok_ms": null,
+  "pending": false,
+  "error": "auth",
+  "transient": false,
+  "error_detail": "http 401",
+  "progress": null,
+  "device_count": 0
+} satisfies T.SyncStatus
+
+export const SyncProgress = {
+  "done": 3,
+  "total": 8
+} satisfies T.SyncProgress
+
+export const SyncDevice = {
+  "id": "3f9a0c1d2e4b5a69",
+  "name": "MacBook Air",
+  "os": "macos",
+  "app_version": "0.2.0",
+  "last_seen_ms": 1760000000000,
+  "this_device": true
+} satisfies T.SyncDevice
+
+export const SyncAccount = {
+  "server_url": "https://dav.example.com/dav",
+  "username": "someone@example.com"
+} satisfies T.SyncAccount
+
+export const SyncProbe = {
+  "ok": true,
+  "error": null,
+  "error_detail": null,
+  "vault": {
+    "supported": true,
+    "device_count": 2,
+    "last_modified_ms": 1759740000000,
+    "restorable": false
+  }
+} satisfies T.SyncProbe
+
+export const SyncProbe__empty_server = {
+  "ok": true,
+  "error": null,
+  "error_detail": null,
+  "vault": null
+} satisfies T.SyncProbe
+
+export const SyncProbe__failed = {
+  "ok": false,
+  "error": "https_required",
+  "error_detail": "redirect",
+  "vault": null
+} satisfies T.SyncProbe
+
+export const SyncVaultInfo = {
+  "supported": true,
+  "device_count": 2,
+  "last_modified_ms": 1759740000000,
+  "restorable": false
+} satisfies T.SyncVaultInfo
+
+export const SyncVaultInfo__restorable = {
+  "supported": true,
+  "device_count": 3,
+  "last_modified_ms": null,
+  "restorable": true
+} satisfies T.SyncVaultInfo
+
+export const SyncConnectResult = {
+  "outcome": "joined",
+  "status": {
+    "phase": "syncing",
+    "last_ok_ms": 1760000000000,
+    "pending": true,
+    "error": null,
+    "transient": false,
+    "error_detail": null,
+    "progress": {
+      "done": 120,
+      "total": 1000
+    },
+    "device_count": 2
+  }
+} satisfies T.SyncConnectResult
+
+export const SyncConnectResult__created = {
+  "outcome": "created",
+  "status": {
+    "phase": "idle",
+    "last_ok_ms": 1760000000000,
+    "pending": false,
+    "error": null,
+    "transient": false,
+    "error_detail": null,
+    "progress": null,
+    "device_count": 1
+  }
+} satisfies T.SyncConnectResult
+
+export const SyncConnectResult__restored = {
+  "outcome": "restored",
+  "status": {
+    "phase": "idle",
+    "last_ok_ms": 1760000000000,
+    "pending": true,
+    "error": null,
+    "transient": false,
+    "error_detail": null,
+    "progress": null,
+    "device_count": 2
+  }
+} satisfies T.SyncConnectResult
 
 export const OnboardingHotkey = {
   "action": "ocr"
@@ -2171,6 +2348,19 @@ export const Settings = {
     "log_level": "info",
     "webview_low_memory_when_hidden": true,
     "unload_panel_after_idle_min": null
+  },
+  "sync": {
+    "enabled": false,
+    "server_url": "",
+    "username": "",
+    "auto": true,
+    "content": {
+      "settings": true,
+      "api_keys": true,
+      "clipboard": true,
+      "images": true,
+      "ocr_history": true
+    }
   }
 } satisfies T.Settings
 
@@ -2334,3 +2524,25 @@ export const Advanced = {
   "webview_low_memory_when_hidden": false,
   "unload_panel_after_idle_min": 60
 } satisfies T.Settings['advanced']
+
+export const SyncSettings = {
+  "enabled": true,
+  "server_url": "https://dav.example.com/dav",
+  "username": "someone@example.com",
+  "auto": false,
+  "content": {
+    "settings": true,
+    "api_keys": false,
+    "clipboard": true,
+    "images": false,
+    "ocr_history": true
+  }
+} satisfies T.Settings['sync']
+
+export const SyncContent = {
+  "settings": false,
+  "api_keys": false,
+  "clipboard": true,
+  "images": true,
+  "ocr_history": false
+} satisfies T.Settings['sync']['content']

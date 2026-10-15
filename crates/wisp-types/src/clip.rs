@@ -187,6 +187,8 @@ pub enum ClipboardChanged {
         paused: bool,
     },
     SecretSkipped,
+    /// 一批改动（例如同步带来的大量新增、删除）不适合逐条推送：前端重新拉取列表首页
+    Reloaded,
 }
 
 /// 平台读到的原始剪贴板内容（platform 产出，clipboard 消费）

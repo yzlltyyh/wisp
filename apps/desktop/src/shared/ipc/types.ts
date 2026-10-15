@@ -426,6 +426,8 @@ export type ClipboardChanged =
   | { change: 'cleared'; keep_pinned: boolean }
   | { change: 'paused'; paused: boolean }
   | { change: 'secret_skipped' }
+  /** 一批改动（例如同步带来的大量新增、删除）不适合逐条推送：重新拉取列表首页 */
+  | { change: 'reloaded' }
 /** 平台读到的原始剪贴板内容（platform → clipboard，不跨 IPC；`Vec<u8>` 序列化为数字数组） */
 export interface RawClipboard {
   change_id: number
@@ -868,6 +870,8 @@ export interface RuntimeInfo {
    * `settings.general.autostart_issue.translocated` / `failed`）；没有问题时省略
    */
   autostart_issue?: string | null
+  /** 多设备同步的状态（不含地址、账号与设备名）；未开启时 `phase = 'off'` */
+  sync: SyncStatus
 }
 /**
  * invalid_json：热加载时 JSON 非法，保留旧值；reset_to_default：启动时损坏，已备份并改用默认值；
@@ -1077,6 +1081,34 @@ export interface Advanced {
   /** null（关）| 30–1440 */
   unload_panel_after_idle_min: number | null
 }
+/** 同步哪些内容（也是 `sync_connect` 的参数） */
+export interface SyncContent {
+  /** 设置、模型服务、风格与术语表 */
+  settings: boolean
+  /** API Key（`settings` 关闭时无效） */
+  api_keys: boolean
+  /** 剪贴板历史 */
+  clipboard: boolean
+  /** 剪贴板图片与识别截图（单张不超过 10 MB） */
+  images: boolean
+  /** 识别历史（只在本机开启了识别历史时生效） */
+  ocr_history: boolean
+}
+/**
+ * 多设备同步（整组只属于本机）。`enabled` / `server_url` / `username` 只由 `sync_connect` / `sync_disconnect` /
+ * `sync_reset_remote` 写入；`auto` 与 `content` 经 `settings_patch` 修改
+ */
+export interface SyncSettings {
+  /** 默认 false */
+  enabled: boolean
+  /** WebDAV 地址（http / https）；默认 "" */
+  server_url: string
+  /** 默认 "" */
+  username: string
+  /** 默认 true：改动后自动上传、使用 Wisp 时取回其他设备的改动 */
+  auto: boolean
+  content: SyncContent
+}
 export interface Settings {
   schema_version: number
   general: General
@@ -1088,6 +1120,90 @@ export interface Settings {
   clipboard: ClipboardSettings
   appearance: Appearance
   advanced: Advanced
+  sync: SyncSettings
+}
+
+// ===== 同步 =====
+export type SyncPhase = 'off' | 'idle' | 'syncing' | 'error'
+/**
+ * 同步失败的种类。暂时性：network / server（以及 internal）；其余为持续性（`corrupt` 只影响出问题的那台设备），
+ * 自动同步暂停到用户处理为止
+ */
+export type SyncErrorKind =
+  | 'network'
+  | 'auth'
+  | 'forbidden'
+  | 'not_found'
+  | 'quota'
+  | 'server'
+  | 'https_required'
+  | 'passphrase'
+  | 'vault_reset'
+  | 'format_too_new'
+  | 'credentials_missing'
+  | 'keychain'
+  | 'corrupt'
+  | 'internal'
+/** 后台上传 / 下载的进度（条目数） */
+export interface SyncProgress {
+  done: number
+  total: number
+}
+/** `sync_status` / `sync:status` / `RuntimeInfo.sync`。不含地址、账号与设备名 */
+export interface SyncStatus {
+  phase: SyncPhase
+  /** 最近一次成功完成同步的时间（Unix 毫秒） */
+  last_ok_ms: number | null
+  /** 本机有改动等待上传 */
+  pending: boolean
+  /** 最近一次失败的种类；成功后清除 */
+  error: SyncErrorKind | null
+  /** 失败是暂时性的（稍后自动重试）；false 时需要用户处理 */
+  transient: boolean
+  /** 技术细节（可折叠的「详情」）：只由 HTTP 状态码、错误种类、tls / dns / timeout / redirect 等固定词汇拼成 */
+  error_detail: string | null
+  progress: SyncProgress | null
+  /** 服务器上参与同步的设备数（含本机；未连接时为 0） */
+  device_count: number
+}
+/** 参与同步的一台设备（`sync_devices`） */
+export interface SyncDevice {
+  id: string
+  name: string
+  os: OsKind
+  app_version: string
+  /** 最近一次上传的时间（Unix 毫秒） */
+  last_seen_ms: number
+  this_device: boolean
+}
+/** WebDAV 账号（密码单独传） */
+export interface SyncAccount {
+  server_url: string
+  username: string
+}
+/** 服务器上已有的同步数据概况 */
+export interface SyncVaultInfo {
+  /** 本版本能读取（false：由更新版本的 Wisp 写出） */
+  supported: boolean
+  device_count: number
+  /** Unix 毫秒；服务器没有报告时为 null */
+  last_modified_ms: number | null
+  /** 本机保存的同步状态正属于这份数据：重新连接即可继续 */
+  restorable: boolean
+}
+/** 「测试连接」的报告（`sync_probe`）；传输层面的失败在报告里，不抛错 */
+export interface SyncProbe {
+  ok: boolean
+  error: SyncErrorKind | null
+  error_detail: string | null
+  /** 服务器上已有的同步数据；没有时为 null */
+  vault: SyncVaultInfo | null
+}
+/** created：新建；joined：与服务器上已有的数据合并；restored：本机状态属于这份数据，只更新凭据 */
+export type SyncConnectOutcome = 'created' | 'joined' | 'restored'
+export interface SyncConnectResult {
+  outcome: SyncConnectOutcome
+  status: SyncStatus
 }
 
 // ===== Boot（window.__WISP_BOOT__；Rust 侧为 wisp_types::Boot）=====
@@ -1157,5 +1273,9 @@ export interface EventMap {
   'overlay:end': OverlaySessionEnd
   /** OCR 历史新增 / 删除 / 裁剪 / 清空 → settings */
   'ocr_history:changed': OcrHistoryChanged
+  /** 同步状态变化（阶段、进度、错误） */
+  'sync:status': SyncStatus
+  /** 术语表在设置窗口之外被改动（同步、手改文件）→ settings：没有未保存的编辑时重新读取 */
+  'glossary:changed': null
 }
 export type EventName = keyof EventMap

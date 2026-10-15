@@ -7401,6 +7401,7 @@ dependencies = [
 name = "wisp-desktop"
 version = "0.1.1"
 dependencies = [
+ "base64 0.23.1",
  "blake3",
  "block2",
  "blocking",
@@ -7436,6 +7437,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "url",
  "uuid",
  "webview2-com",
  "windows",
@@ -7444,6 +7446,7 @@ dependencies = [
  "wisp-llm",
  "wisp-platform",
  "wisp-prompts",
+ "wisp-sync",
  "wisp-types",
  "x11rb",
  "zip 9.0.0",
@@ -7510,6 +7513,38 @@ dependencies = [
  "tokio",
  "whatlang",
  "wisp-llm",
+ "wisp-types",
+]
+
+[[package]]
+name = "wisp-sync"
+version = "0.1.1"
+dependencies = [
+ "base64 0.23.1",
+ "blake3",
+ "bytes",
+ "flate2",
+ "futures-util",
+ "httpdate",
+ "icu_normalizer",
+ "log",
+ "parking_lot",
+ "percent-encoding",
+ "proptest",
+ "quick-xml 0.42.0",
+ "reqwest",
+ "ring",
+ "rusqlite",
+ "rusqlite_migration",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-util",
+ "url",
+ "wiremock",
  "wisp-types",
 ]
 

@@ -7,7 +7,7 @@ use wisp_types::{ModelEntry, Protocol, Provider, ProviderTemplate, ProviderTestR
 
 use crate::error::IpcError;
 use crate::ipc::validate::validate_provider;
-use crate::ipc::{MAX_KEY_BYTES, MAX_QUERY_BYTES, check_id, check_len};
+use crate::ipc::{MAX_KEY_BYTES, MAX_LIST_LEN, MAX_QUERY_BYTES, check_id, check_len, check_list_len};
 use crate::settings::service::{
     TEST_NOTICE_KEYCHAIN_UNREADABLE, probe_key, provider_models as provider_models_merged, run_blocking,
 };
@@ -37,6 +37,47 @@ pub async fn provider_delete(
     check_id("provider_id", &provider_id)?;
     let settings = Arc::clone(&app_state.settings);
     run_blocking(move || settings.provider_delete(&provider_id).map(|_| ())).await?;
+    Ok(app_state.settings.snapshot(crate::app::runtime_info(&app, &app_state)))
+}
+
+/// 保存一个已有的服务：只替换这一项，其他服务按 Rust 里最新的内容保留（设置窗口的旧快照不会覆盖别处的改动）。
+/// 该服务已被删除（在其他设备上或配置文件里）时 `not_found`，不把它加回来
+#[tauri::command(rename_all = "snake_case")]
+pub async fn provider_save(
+    app: AppHandle,
+    app_state: State<'_, AppState>,
+    provider: Provider,
+) -> Result<SettingsSnapshot, IpcError> {
+    validate_provider(&provider)?;
+    let settings = Arc::clone(&app_state.settings);
+    run_blocking(move || settings.provider_save(provider).map(|_| ())).await?;
+    Ok(app_state.settings.snapshot(crate::app::runtime_info(&app, &app_state)))
+}
+
+/// 添加服务：追加到末尾（同 id 的服务此时已经存在时替换它），其他服务不动
+#[tauri::command(rename_all = "snake_case")]
+pub async fn provider_add(
+    app: AppHandle,
+    app_state: State<'_, AppState>,
+    provider: Provider,
+) -> Result<SettingsSnapshot, IpcError> {
+    validate_provider(&provider)?;
+    let settings = Arc::clone(&app_state.settings);
+    run_blocking(move || settings.provider_add(provider).map(|_| ())).await?;
+    Ok(app_state.settings.snapshot(crate::app::runtime_info(&app, &app_state)))
+}
+
+/// 调整服务的顺序：只重排、不改内容；未知 id 忽略，缺少的服务按原顺序排在后面
+#[tauri::command(rename_all = "snake_case")]
+pub async fn providers_reorder(
+    app: AppHandle,
+    app_state: State<'_, AppState>,
+    ids: Vec<String>,
+) -> Result<SettingsSnapshot, IpcError> {
+    check_list_len("ids", ids.len(), MAX_LIST_LEN)?;
+    ids.iter().try_for_each(|id| check_id("ids[]", id))?;
+    let settings = Arc::clone(&app_state.settings);
+    run_blocking(move || settings.providers_reorder(&ids).map(|_| ())).await?;
     Ok(app_state.settings.snapshot(crate::app::runtime_info(&app, &app_state)))
 }
 
@@ -91,19 +132,14 @@ pub async fn llm_preview_url(
     Ok(wisp_llm::url_preview(protocol, &base_url, model_id.as_deref()))
 }
 
-/// 写入 Key（钥匙串访问可能弹出系统授权框，在阻塞线程池里执行）
+/// 写入 Key（钥匙串访问可能弹出系统授权框，在阻塞线程池里执行）。用户刚授权访问钥匙串：顺带清理之前删 Provider
+/// 时没删掉的条目（见 `SettingsService::secret_set`）
 #[tauri::command(rename_all = "snake_case")]
 pub async fn secret_set(app_state: State<'_, AppState>, provider_id: String, key: String) -> Result<(), IpcError> {
     check_id("provider_id", &provider_id)?;
     check_len("key", &key, MAX_KEY_BYTES)?;
     let settings = Arc::clone(&app_state.settings);
-    run_blocking(move || {
-        settings.keychain().set(&provider_id, &key)?;
-        // 用户刚授权访问钥匙串：顺带清理之前删 Provider 时没删掉的条目
-        settings.purge_orphan_keys();
-        Ok(())
-    })
-    .await
+    run_blocking(move || settings.secret_set(&provider_id, &key)).await
 }
 
 /// 删除 Key
@@ -111,12 +147,7 @@ pub async fn secret_set(app_state: State<'_, AppState>, provider_id: String, key
 pub async fn secret_delete(app_state: State<'_, AppState>, provider_id: String) -> Result<(), IpcError> {
     check_id("provider_id", &provider_id)?;
     let settings = Arc::clone(&app_state.settings);
-    run_blocking(move || {
-        settings.keychain().delete(&provider_id)?;
-        settings.purge_orphan_keys();
-        Ok(())
-    })
-    .await
+    run_blocking(move || settings.secret_delete(&provider_id)).await
 }
 
 /// 清除某个模型的能力缓存

@@ -159,6 +159,19 @@
       "log_level": "info",
       "webview_low_memory_when_hidden": true,
       "unload_panel_after_idle_min": null
+    },
+    "sync": {
+      "enabled": false,
+      "server_url": "",
+      "username": "",
+      "auto": true,
+      "content": {
+        "settings": true,
+        "api_keys": true,
+        "clipboard": true,
+        "images": true,
+        "ocr_history": true
+      }
     }
   },
   "styles": [
@@ -274,6 +287,16 @@
       "backup_path": "/Users/me/Library/Application Support/wisp/settings.json.bak-1760000000",
       "at_ms": 1760000000000
     },
-    "orphan_keys": 1
+    "orphan_keys": 1,
+    "sync": {
+      "phase": "off",
+      "last_ok_ms": null,
+      "pending": false,
+      "error": null,
+      "transient": false,
+      "error_detail": null,
+      "progress": null,
+      "device_count": 0
+    }
   }
 }

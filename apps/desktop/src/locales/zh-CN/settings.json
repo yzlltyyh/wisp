@@ -21,6 +21,7 @@
     "ocr": "OCR",
     "clipboard": "剪贴板",
     "appearance": "外观",
+    "sync": "同步",
     "about": "关于"
   },
   "unit": {
@@ -324,6 +325,7 @@
     "delete_action": "删除服务",
     "delete_confirm": "确定删除「{name}」吗？此操作无法撤销。",
     "deleted": "已删除「{name}」",
+    "deleted_elsewhere": "「{name}」已在其他设备上或配置文件里删除，刚才的改动没有保存。",
     "discard_confirm": "放弃这个新服务？填写的内容不会保存。",
     "keep_editing": "继续编辑",
     "discard": "放弃",
@@ -546,12 +548,15 @@
     "history_clear_desc": "删除全部已保存的识别结果与缩略图",
     "history_clear_action": "清空历史",
     "history_clear_confirm": "清空全部识别历史？",
+    "history_clear_confirm_synced": "清空全部识别历史？其他设备上的识别记录也会一并清除。",
     "history_clear_ok": "清空",
     "history_cleared": "已清空识别历史",
     "history_empty_on": "还没有识别记录",
     "history_empty_on_desc": "截图识别的结果会出现在这里，只保存在这台电脑上",
+    "history_empty_on_desc_synced": "截图识别的结果会出现在这里，并加密后同步到你的其他设备",
     "history_empty_off": "识别历史已关闭",
     "history_empty_off_desc": "开启后保存最近 {n} 条识别结果，可以回看、复制和重新翻译；文字与截图只存在这台电脑上",
+    "history_empty_off_desc_synced": "开启后保存最近 {n} 条识别结果，可以回看、复制和重新翻译；文字与截图会加密后同步到你的其他设备",
     "history_count_one": "{n} 条记录",
     "history_count_other": "{n} 条记录",
     "history_more": "显示更多",
@@ -644,6 +649,7 @@
     "clear_desc": "删除全部记录（置顶的条目保留）",
     "clear_button": "清空历史",
     "clear_confirm": "清空剪贴板历史？置顶的条目会保留。",
+    "clear_confirm_synced": "清空剪贴板历史？置顶的条目会保留，其他设备上的记录也会一并清除。",
     "clear_ok": "清空",
     "cleared_one": "已清除 {n} 条记录",
     "cleared_other": "已清除 {n} 条记录"
@@ -690,6 +696,224 @@
     "reduce_system": "跟随系统",
     "reduce_on": "开",
     "reduce_off": "关"
+  },
+  "sync": {
+    "description": "在你的多台设备之间同步设置与使用记录；数据在本机加密后才上传。",
+    "intro": {
+      "label": "你自己的 WebDAV 存储",
+      "detail": "坚果云、Nextcloud、NAS 等都可以；没有 Wisp 账号，也不经过中转服务器",
+      "connect": "连接 WebDAV…"
+    },
+    "connect": {
+      "title": "连接 WebDAV",
+      "title_update": "更新密码",
+      "subtitle": "数据在本机加密后才上传",
+      "back": "返回同步",
+      "server": "服务器",
+      "preset": "服务",
+      "preset_placeholder": "选择服务（可选）",
+      "preset_option": {
+        "nutstore": "坚果云",
+        "pan123": "123 云盘",
+        "nextcloud": "Nextcloud",
+        "synology": "群晖 NAS",
+        "custom": "自定义"
+      },
+      "preset_hint": {
+        "nutstore": "应用密码在坚果云网页版的「账户信息 › 安全选项 › 第三方应用管理」中添加",
+        "pan123": "在 123 云盘网页版的 WebDAV 设置里开启，并使用那里显示的账号与密码",
+        "nextcloud": "应用密码在「个人设置 › 安全 › 设备与会话」中创建",
+        "synology": "在套件中心安装 {package} 并启用 HTTPS；建议为 Wisp 单独建一个账号，填它的密码",
+        "custom": "如果服务支持，建议为 Wisp 单独申请一个应用密码"
+      },
+      "url": "服务器地址",
+      "url_placeholder": {
+        "nextcloud": "https://云盘地址/remote.php/dav/files/用户名/",
+        "synology": "https://NAS 地址:5006/",
+        "custom": "https://"
+      },
+      "url_https": "只有局域网地址可以用 http；请改用 https:// 开头的地址",
+      "url_invalid": "地址无效：应以 https:// 开头，且不含「?」「#」或账号",
+      "username": "账号",
+      "username_placeholder": "邮箱或用户名",
+      "password": "应用密码",
+      "password_placeholder": "输入应用密码",
+      "password_keep": "留空则沿用已保存的密码",
+      "password_saved": {
+        "macos": "连接后只保存在钥匙串里",
+        "windows": "连接后只保存在凭据管理器里",
+        "linux": "连接后只保存在系统密钥环里"
+      },
+      "test_desc": "检查能否登录与读写，并看看服务器上是否已有同步数据",
+      "test_stale": "地址、账号或密码改过了，下面是改动之前的结果",
+      "test_needed": "测试连接通过后才能连接",
+      "step": {
+        "connect": "连接与登录",
+        "write": "读写权限",
+        "data": "服务器上的数据"
+      },
+      "step_ok": {
+        "connect": "已登录",
+        "write": "可以读写"
+      },
+      "advice": {
+        "auth": "检查账号与应用密码后重新测试",
+        "credentials_missing": "在上面重新输入应用密码后再测试",
+        "https_required": "只有局域网地址可以用 http；请改用 https:// 开头的地址",
+        "keychain": "重新测试，系统弹出授权提示时选择「允许」"
+      },
+      "data": {
+        "none": "尚无同步数据",
+        "devices_one": "已有 {count} 台设备的同步数据",
+        "devices_other": "已有 {count} 台设备的同步数据",
+        "updated": "最近更新于 {time}",
+        "restorable": "本机之前就在同步这份数据",
+        "unsupported": "由更新版本的 Wisp 创建"
+      },
+      "content_desc": "连接之后也可以随时调整",
+      "pass": {
+        "create_title": "设置同步密码",
+        "create_desc": "用来在本机加密数据；其他设备连接时输入同一个密码。",
+        "join_title": "输入同步密码",
+        "join_desc": "将与服务器上的数据合并：服务器上已有的设置优先，本机独有的模型服务、术语与历史会保留。这台设备以前同步过这份数据的话，它离开期间其他设备上的删除与清空会在这里生效。",
+        "restore_title": "重新连接",
+        "restore_desc": "输入同步密码即可继续；本机尚未上传的改动会继续同步。",
+        "field": "同步密码",
+        "confirm": "再输入一次",
+        "generate": "生成一个",
+        "show": "显示同步密码",
+        "hide": "隐藏同步密码",
+        "rules": "至少 12 个字符，不要与应用密码或账号相同",
+        "forget": "忘记同步密码将无法读取服务器上的数据，请保存在密码管理器里",
+        "generated": "已生成并填好，先把它存进密码管理器",
+        "short": "至少需要 12 个字符",
+        "mismatch": "两次输入的不一致",
+        "required": "请输入同步密码",
+        "reused": "不能与应用密码、账号或服务器地址相同",
+        "forgot": "忘记了？",
+        "forgot_desc": "清除服务器上的数据并重新开始",
+        "forgot_action": "清除并重新开始",
+        "forgot_confirm": "清除服务器上的同步数据？其他设备都会停止同步，需要用新的同步密码重新连接。",
+        "unsupported": "服务器上的数据由更新版本的 Wisp 创建，请先把本机的 Wisp 更新到最新版本。",
+        "keychain_hint": "系统可能会请求访问钥匙串，选择「允许」即可"
+      },
+      "connect": "连接",
+      "reconnect": "重新连接",
+      "discard_confirm": "放弃这次连接？填写的内容不会保存。"
+    },
+    "server": {
+      "title": "服务器",
+      "sync_now": "立即同步",
+      "update_label": "密码",
+      "update_desc": "应用密码换了、或需要重新输入同步密码时，在这里重新输入",
+      "update": "更新密码…",
+      "reconnect": "重新连接…"
+    },
+    "status": {
+      "syncing": "同步中…",
+      "progress": "同步中 · {done} / {total}",
+      "synced": "已同步 · {time}",
+      "never": "尚未同步",
+      "pending": "有改动等待同步",
+      "transient": "暂时无法连接，稍后自动重试"
+    },
+    "error": {
+      "network": {
+        "reason": "无法连接到服务器",
+        "advice": "检查网络或代理；恢复后会自动重试"
+      },
+      "auth": {
+        "reason": "账号或应用密码不正确",
+        "advice": "在「更新密码…」里重新输入应用密码"
+      },
+      "forbidden": {
+        "reason": "服务器拒绝了读写",
+        "advice": "确认这个账号可以读写这个目录；有的服务需要先单独开启 WebDAV"
+      },
+      "not_found": {
+        "reason": "服务器上找不到这个地址",
+        "advice": "检查服务器地址是否完整，例如末尾的 /dav 有没有漏掉"
+      },
+      "quota": {
+        "reason": "服务器空间已满",
+        "advice": "在服务器上腾出空间，或关闭「剪贴板图片」以减少占用"
+      },
+      "server": {
+        "reason": "服务器暂时出了问题",
+        "advice": "稍后会自动重试；反复出现时检查服务的运行状态"
+      },
+      "https_required": {
+        "reason": "这个地址需要使用 https",
+        "advice": "只有局域网地址可以用 http；断开后用 https:// 开头的地址重新连接"
+      },
+      "passphrase": {
+        "reason": "同步密码不正确",
+        "advice": "在「更新密码…」里重新输入同步密码"
+      },
+      "vault_reset": {
+        "reason": "服务器上的同步数据已被清除",
+        "advice": "重新连接：设置新的同步密码，或输入其他设备上设置的新密码"
+      },
+      "format_too_new": {
+        "reason": "服务器上的数据来自更新版本的 Wisp",
+        "advice": "把本机的 Wisp 更新到最新版本后再同步"
+      },
+      "credentials_missing": {
+        "reason": "找不到已保存的密码",
+        "advice": "在「更新密码…」里重新输入应用密码与同步密码"
+      },
+      "keychain": {
+        "reason": "无法读取系统凭据存储",
+        "advice": "点「立即同步」重试，系统弹出授权提示时选择「允许」"
+      },
+      "corrupt": {
+        "reason": "有一台设备的同步数据无法读取",
+        "advice": "其他设备不受影响；在那台设备上再同步一次通常可以恢复"
+      },
+      "internal": {
+        "reason": "出了点问题",
+        "advice": "请重试；如果反复出现，可以在「关于」中导出诊断信息"
+      }
+    },
+    "auto": {
+      "label": "自动同步",
+      "desc": "改动后自动上传；使用 Wisp 时取回其他设备的改动"
+    },
+    "content": {
+      "title": "同步内容",
+      "settings": "设置与模型服务",
+      "settings_desc": "包括风格与术语表",
+      "api_keys": "API Key",
+      "api_keys_desc": "加密后随模型服务一起同步",
+      "api_keys_off": "需要先同步设置与模型服务",
+      "clipboard": "剪贴板历史",
+      "clipboard_desc": "文本与格式，不含文件",
+      "images": "剪贴板图片",
+      "images_desc": "包括识别截图；单张不超过 10 MB",
+      "ocr_history": "识别历史",
+      "ocr_history_desc": "只在本机开启了识别历史时同步",
+      "ocr_history_local_off": "本机没有开启识别历史，开启后才会同步",
+      "removed": "已关闭：本机上传过的记录会从服务器上移除，其他设备上已有的保留",
+      "local_note": "快捷键按系统分别同步；开机启动、剪贴板记录开关、疑似密钥检测、识别历史开关、日志与性能选项只属于本机。"
+    },
+    "devices": {
+      "title": "设备",
+      "this_device": "本机",
+      "seen": "{os} · 最近同步于 {time}",
+      "failed": "设备列表读取失败",
+      "empty": "还没有设备同步过"
+    },
+    "danger": {
+      "disconnect": "断开同步",
+      "disconnect_desc": "本机停止同步；服务器上的数据保留，之后可以重新连接",
+      "disconnect_action": "断开",
+      "disconnect_confirm": "断开同步？服务器上的数据会保留。",
+      "disconnect_confirm_pending": "断开同步？本机还有改动没有上传，断开后不会再上传。",
+      "reset": "清除服务器上的数据",
+      "reset_desc": "删除服务器上的全部同步数据；所有设备都会停止同步",
+      "reset_action": "清除",
+      "reset_confirm": "清除服务器上的同步数据？所有设备都会停止同步，此操作无法撤销。"
+    }
   },
   "about": {
     "version": "版本 {version}",

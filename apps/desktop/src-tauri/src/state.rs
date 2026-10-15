@@ -13,6 +13,7 @@ use crate::clipboard_svc::ClipboardService;
 use crate::hotkeys::HotkeyService;
 use crate::orchestrator::Orchestrator;
 use crate::settings::SettingsService;
+use crate::sync_svc::SyncService;
 use crate::windows::WindowManager;
 
 /// 构造服务所需的公共依赖
@@ -34,6 +35,8 @@ pub struct AppState {
     pub orchestrator: Arc<Orchestrator>,
     pub clipboard: Arc<ClipboardService>,
     pub hotkeys: Arc<HotkeyService>,
+    /// 多设备同步（关闭时不持有任何资源）
+    pub sync: Arc<SyncService>,
     pub perf: Arc<PerfMarks>,
     pub assets: Arc<AssetRegistry>,
     pub bus: Bus,

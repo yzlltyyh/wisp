@@ -14,6 +14,7 @@ export const SETTINGS_SECTIONS = [
   'ocr',
   'clipboard',
   'appearance',
+  'sync',
   'about',
 ] as const
 

@@ -20,7 +20,7 @@ macOS (Apple Silicon) · Windows (x64) · Linux (x64)　|　v0.1.1　|　MIT
 
 Wisp brings three small things you do all day into one panel that is always a keystroke away: translate the text you've selected, recognize the text in any region of the screen, and get back anything you've copied. It sits quietly in the menu bar or system tray and uses almost no resources. Press a shortcut and the panel appears right where you are looking — without taking focus from the app you're in — and gets out of the way when you're done.
 
-Every AI feature runs on a model you connect yourself: OpenAI, Anthropic, Gemini, DeepSeek, Qwen, Kimi, or a local Ollama. There is no account, no telemetry, and no relay server, and your API keys are kept only in the system credential store.
+Every AI feature runs on a model you connect yourself: OpenAI, Anthropic, Gemini, DeepSeek, Qwen, Kimi, or a local Ollama. There is no Wisp account, no telemetry, and no relay server, and your API keys are kept in the system credential store, never in configuration files. If you use Wisp on more than one computer, you can sync it through WebDAV storage you own; everything is encrypted on your device before it's uploaded.
 
 ## Features
 
@@ -55,6 +55,17 @@ Press <kbd>⌥ V</kbd> (Windows / Linux: <kbd>Ctrl + Alt + V</kbd>) to open your
 - Anything that looks like a password, token, or private key is never recorded. Password managers such as 1Password, Bitwarden, and KeePassXC are excluded by default, and Wisp respects apps that mark content as "do not record".
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png"><img src="docs/images/clipboard-light.png" width="640" alt="Clipboard panel: pinned and recent sections with text, links, code, colors, images, and files"></picture></p>
+
+### Multi-device sync
+
+Connect WebDAV storage you own (Nutstore, 123pan, Nextcloud, a Synology NAS, and others) in **Settings → Sync** to keep your settings, model services and API keys, translation styles, glossary, clipboard history (including images), and recognition history in step across your Macs, Windows PCs, and Linux machines. Sync is off by default.
+
+- **End-to-end encrypted**: everything is encrypted on your device with a sync password you choose before it's uploaded, so the server only ever sees ciphertext. There is no Wisp account and no relay server.
+- **Automatic and quiet**: your changes are uploaded within seconds, and changes from your other devices are picked up while you use Wisp, with no polling in the background. Conflicts are merged automatically, with no dialogs.
+- **Joining never deletes local data**: a new device is merged with what's on the server and keeps the model services, glossary terms, and history only it has. A device that synced before and reconnects picks up anything deleted or cleared on your other devices while it was away.
+- **Separate where it matters**: shortcuts sync only between devices on the same operating system, and options such as launch at login and clipboard recording stay on each device.
+
+See [Multi-device sync](docs/user-guide.md#多设备同步) and [Sync and privacy](docs/user-guide.md#同步与隐私) in the user guide (Chinese).
 
 ### Details that matter
 
@@ -189,6 +200,8 @@ Enter the address up to the version segment, without endpoint paths such as `/ch
 
 Keys are written only to the system credential store. In the macOS Keychain and in Linux Secret Service they are stored under the service name `wisp`, with the service ID as the account; in Windows Credential Manager they appear under **Windows Credentials → Generic Credentials** as `<service ID>.wisp`. Once a key is saved, the UI only says it is saved (for example, "Saved in Keychain") and never shows it again, and keys never appear in configuration files, logs, or diagnostics. The UI process never sees your keys: requests are sent directly by the background process. Deleting a service also deletes its key.
 
+With [multi-device sync](#multi-device-sync) on and **API keys** selected, keys are encrypted on your device and synced to your other devices along with your model services; on arrival they are likewise written only to that device's system credential store. Deleting a service on one device also deletes that service and its key on your other devices.
+
 ## Default shortcuts
 
 | Action | macOS | Windows | Linux |
@@ -213,10 +226,10 @@ Common keys inside the panel: <kbd>Esc</kbd> closes it, <kbd>⌘ C</kbd> copies,
 
 ## Privacy
 
-- **No data collection**: no telemetry, no account, no cloud sync, no built-in keys, and no relay server in between.
-- **Only two kinds of network requests**: requests to the model services you configured (carrying the text you selected or the region you captured), and update checks against GitHub. You can turn update checks off in **Settings → General → Check for updates**; after that, Wisp sends no requests on its own. Clipboard contents are never sent anywhere to build previews.
-- **Your data stays on your computer**: clipboard history is kept in a local SQLite database (`clipboard.db` and `blobs/` in the data folder). It is not encrypted and relies on your user account and disk encryption for protection. Screenshots are processed in memory and saved locally only if you turn on **Recognition history**.
-- **Logs contain no content**: logs record only metadata such as timings and status codes — never source text, translations, clipboard contents, screenshots, or keys. The logs and settings exported with **Settings → About → Diagnostics → Export diagnostics** are redacted in the same way.
+- **No data collection**: no telemetry, no Wisp account, no built-in keys, and no relay server in between.
+- **Only three kinds of network requests**: requests to the model services you configured (carrying the text you selected or the region you captured); update checks against GitHub, which you can turn off in **Settings → General → Check for updates**; and the sync server you set up and turned on yourself (WebDAV, off by default). With update checks off and sync not turned on, Wisp sends no requests on its own. Clipboard contents are never sent anywhere to build previews.
+- **Your data stays on your computer by default**: clipboard history is kept in a local SQLite database (`clipboard.db` and `blobs/` in the data folder). It is not encrypted and relies on your user account and disk encryption for protection. Screenshots are processed in memory and saved locally only if you turn on **Recognition history**. With sync on, whatever you choose to sync is encrypted on your device before it's uploaded to your own WebDAV storage; the server can't see the contents, only the number, sizes, and modification times of the files (see [Sync and privacy](docs/user-guide.md#同步与隐私), in Chinese).
+- **Logs contain no content**: logs record only metadata such as timings and status codes — never source text, translations, clipboard contents, screenshots, or keys, and never the sync server's address, account, or passwords. The logs and settings exported with **Settings → About → Diagnostics → Export diagnostics** are redacted in the same way.
 
 ## Known limitations
 
@@ -226,6 +239,7 @@ Common keys inside the panel: <kbd>Esc</kbd> closes it, <kbd>⌘ C</kbd> copies,
 - **Gemini API retirement risk**: the Gemini protocol uses `generateContent` / `streamGenerateContent`. Google is promoting its newer Interactions API; if the older endpoints are retired, the Gemini protocol will stop working. In that case, switch to Gemini's OpenAI-compatible endpoint: choose the OpenAI Chat Completions protocol with the Base URL `https://generativelanguage.googleapis.com/v1beta/openai`.
 - **Shortcuts**: once <kbd>⌥</kbd> + a letter is a shortcut, the special character it used to type (such as ∂, ß, or √) can no longer be typed in any app. If Terminal or iTerm2 uses Option as Meta, you lose combinations such as `M-d`; consider the alternative shortcuts. Shortcuts may not fire while Secure Input is active, for example in password fields.
 - **Reading the selection**: a few apps don't expose the selected text through the accessibility APIs. Wisp then simulates a copy and restores your clipboard afterwards. On Windows, windows running as administrator can't be read or pasted into automatically.
+- **Sync**: only WebDAV is supported (HTTP Basic authentication; https is required except for local network addresses). Wisp doesn't sync on a timer in the background, so changes made on another device are picked up only when you use Wisp. File items on the clipboard and images larger than 10 MB are not synced. The sync password can't be changed directly and can't be recovered if forgotten: the only way out is to clear the data on the server and connect again (the data on each device is not affected).
 - **Memory**: for a few dozen seconds after the panel is used, the system WebView holds extra memory (on macOS about 84 MiB, peaking around 90 MiB, until the panel is recycled about 45 seconds after it hides). After recycling it uses about 53–54 MiB (about 49 MiB if the panel was never opened). The main process uses about 13 MiB if the panel was never opened and about 15 MiB afterwards. WebView2 on Windows usually uses more memory than WebKit on macOS.
 
 ## Non-goals
@@ -235,7 +249,7 @@ Wisp does three things — screenshot OCR, selection translation, and clipboard 
 - an app launcher or file search (Spotlight and Raycast already do this well);
 - a plugin system or scripting;
 - a general-purpose AI chat window (multi-turn conversations);
-- accounts, multi-device sync, or cloud storage — your data stays on your computer;
+- Wisp accounts or relay servers — sync goes only through WebDAV storage you own, and your data is encrypted on your device before it's uploaded;
 - built-in models, built-in keys, or a relay service — you always use the model services you connect yourself;
 - a local OCR engine (Tesseract, PaddleOCR, etc.) as the main path — recognition is done by vision models, and local OCR would at most be an offline fallback (see the roadmap);
 - voice input and text-to-speech;
@@ -268,7 +282,7 @@ cargo test --workspace && pnpm test
 On macOS, privacy permissions and keychain access are tied to the code signature, and the default ad-hoc signature changes on every rebuild, which invalidates earlier grants. Run `scripts/dev-sign-macos.sh --init` once to create a development certificate, then use `scripts/dev-sign-macos.sh --dev` instead of `pnpm dev`; permissions then survive rebuilds (see [macOS development signing](docs/development.md#macos-开发签名) in the development guide).
 
 - [Development guide](docs/development.md): environment, build and test commands, debugging, CI, and the release process;
-- [Architecture](docs/architecture.md): process and module structure, IPC, windows, the platform layer, data and configuration;
+- [Architecture](docs/architecture.md): process and module structure, IPC, windows, the platform layer, multi-device sync, data and configuration;
 - [Contributing](CONTRIBUTING.md): issues and pull requests, code style, and commit conventions.
 
 These documents are in Simplified Chinese, and so are the code comments (identifiers are in English); issues, pull requests, and commit messages are welcome in English or Chinese. [CONTRIBUTING.en.md](CONTRIBUTING.en.md) summarizes the contribution rules in English. The full index of documents is in [docs/](docs/README.md).
@@ -285,9 +299,9 @@ Please report problems and suggestions in [GitHub Issues](https://github.com/yzl
 
 - your Wisp version (**Settings → About**) and operating system version (for example, macOS 15.5, Windows 11 24H2, or Ubuntu 24.04 on Xorg);
 - the steps you took, what you expected, and what actually happened — screenshots or a screen recording help a lot;
-- **a diagnostics bundle**: **Settings → About → Diagnostics → Export diagnostics** saves a zip file you can attach. It contains redacted logs and settings, your translation styles, version and system information, and selection statistics (the [user guide](docs/user-guide.md#诊断导出与反馈) lists every file, in Chinese), but no API keys and none of your source text, translations, or clipboard contents. You can unzip it and check before sending. To capture more detail, temporarily set **Settings → General → Advanced → Log level** to **Debug** and reproduce the problem once more.
+- **a diagnostics bundle**: **Settings → About → Diagnostics → Export diagnostics** saves a zip file you can attach. It contains redacted logs and settings, your translation styles, version and system information, and selection statistics (the [user guide](docs/user-guide.md#诊断导出与反馈) lists every file, in Chinese), but no API keys, no sync server address, account, or passwords, and none of your source text, translations, or clipboard contents. You can unzip it and check before sending. To capture more detail, temporarily set **Settings → General → Advanced → Log level** to **Debug** and reproduce the problem once more.
 
-**Never post your API key in an issue, screenshot, or log.** Please blur keys, personal information, and clipboard contents in screenshots before uploading.
+**Never post your API key in an issue, screenshot, or log** — the same goes for the app password and sync password you use for sync. Please blur keys, personal information, and clipboard contents in screenshots before uploading.
 
 **Please don't report security vulnerabilities in public issues.** See [SECURITY.md](SECURITY.md#english) for how to report them privately. To contribute, see [CONTRIBUTING.md](CONTRIBUTING.md) (Chinese).
 

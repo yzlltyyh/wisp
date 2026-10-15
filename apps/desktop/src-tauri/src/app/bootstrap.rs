@@ -22,6 +22,7 @@ use crate::orchestrator::Orchestrator;
 use crate::settings::SettingsService;
 use crate::settings::watcher::SettingsWatcher;
 use crate::state::{AppState, Deps};
+use crate::sync_svc::SyncService;
 use crate::windows::WindowManager;
 use crate::windows::settings_window::{ONBOARDING_LABEL, SETTINGS_LABEL};
 
@@ -149,6 +150,8 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let orchestrator = Orchestrator::new(&deps);
     let clipboard = ClipboardService::new(&deps);
     let hotkeys = HotkeyService::new(&deps);
+    // 多设备同步：构造不做任何 I/O（同步关闭时也不打开任何资源）
+    let sync = SyncService::new(&deps);
     let llm = wisp_llm::LlmClient::new(wisp_llm::ClientConfig {
         user_agent: format!("Wisp/{}", handle.package_info().version),
         caps: settings.caps_store(),
@@ -161,6 +164,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         orchestrator: Arc::clone(&orchestrator),
         clipboard: Arc::clone(&clipboard),
         hotkeys: Arc::clone(&hotkeys),
+        sync: Arc::clone(&sync),
         perf: Arc::clone(&perf),
         assets: deps.assets,
         bus: bus.clone(),
@@ -172,6 +176,9 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     //    后者在托盘建好后异步确认，见 tray::build）。托盘先按「权限未知」建好，权限查询在后台进行，结果出来后刷新
     crate::tray::build(&handle)?;
     stage("tray_ready");
+    // 同步：已开启时在后台打开本机副本、安装改动捕获、做启动核对；不联网、不读钥匙串
+    forward_sync_status(&handle, &sync);
+    sync.start_local();
     // macOS 的本地化应用菜单（替换 Tauri 的英文默认菜单）
     super::app_menu::install(&handle, crate::tray::menu::current_lang(&handle));
 
@@ -312,12 +319,38 @@ fn window_lab_mode() -> bool {
     }
 }
 
+/// 把同步状态的每次变化（状态转换与节流后的进度）转发给设置窗口（`sync:status`）。托盘只在它显示的内容
+/// （「同步需要处理」）变化时刷新，进度的节拍不重建菜单。任务只在状态变化时被唤醒，没有轮询
+fn forward_sync_status(app: &tauri::AppHandle, sync: &Arc<SyncService>) {
+    use tauri::Emitter;
+
+    let mut rx = sync.subscribe_status();
+    rx.borrow_and_update();
+    let sync = Arc::clone(sync);
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut attention = sync.needs_attention();
+        while rx.changed().await.is_ok() {
+            let status = rx.borrow_and_update().clone();
+            // 设置窗口没开时 emit_to 找不到目标，只是一次查找
+            if let Err(e) = app.emit_to(SETTINGS_LABEL, event::SYNC_STATUS, &status) {
+                log::debug!("emit sync:status failed: {e}");
+            }
+            let now = sync.needs_attention();
+            if now != attention {
+                attention = now;
+                crate::tray::refresh(&app);
+            }
+        }
+    });
+}
+
 /// 运行事件：
 /// - 最后一个窗口关闭（ExitRequested 且没有 exit code）时 prevent_exit，保持常驻；`request_restart` 发起的退出
 ///   （code = `RESTART_EXIT_CODE`）告诉更新器，以便退出时安装暂存的更新后重新打开；
 /// - 退出时写掉待写的设置（能力缓存、state.json），Windows 上安装暂存的更新；
 /// - macOS 再次打开应用（Finder / 启动台 / Spotlight / Dock，`RunEvent::Reopen`）：与二次启动相同，打开或聚焦设置；
-/// - 设置 / 引导窗口获焦：刷新权限、惰性检查更新，state.json 被重置过时核对钥匙串索引；
+/// - 设置 / 引导窗口获焦：刷新权限、惰性检查更新、发起一轮同步（有节流），state.json 被重置过时核对钥匙串索引；
 ///   引导窗口关闭：停止权限轮询；
 /// - 固定窗口出现 / 销毁：刷新托盘的「显示固定窗口」；
 /// - 窗口获焦 / 失焦 / 销毁：告诉更新器「有动静」（Windows 等待空闲安装时重新计时）。
@@ -333,6 +366,8 @@ pub fn on_run_event(app: &tauri::AppHandle, ev: tauri::RunEvent) {
         RunEvent::Exit => {
             if let Some(state) = app.try_state::<AppState>() {
                 state.settings.flush();
+                // 同步：把还在写入队列里的本机改动写进本机副本（只写本地，最多 200 ms）
+                state.sync.shutdown_flush();
                 // Linux：仍持有剪贴板时交给剪贴板管理器保存（其他平台为空操作）
                 state.platform.shutdown();
             }
@@ -362,6 +397,8 @@ fn on_window_event(app: &tauri::AppHandle, label: &str, event: &tauri::WindowEve
             crate::updater::maybe_check(app);
             if let Some(state) = app.try_state::<AppState>() {
                 state.settings.verify_key_index();
+                // 同步：打开设置正是要改东西的时候，先取回其他设备的改动（节流在服务里判断）
+                state.sync.trigger(crate::sync_svc::CycleReason::SettingsFocused);
             }
         }
         tauri::WindowEvent::Destroyed if label == ONBOARDING_LABEL => super::permissions::stop_watch(),

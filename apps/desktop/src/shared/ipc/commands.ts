@@ -80,6 +80,10 @@ export interface CommandMap extends OverlayCommandMap {
   // ----- 设置 / 风格 / 术语表
   settings_get: { args: NoArgs; ret: T.SettingsSnapshot }
   settings_patch: { args: { patch: unknown }; ret: T.SettingsSnapshot }
+  excluded_app_upsert: { args: { entry: T.ExcludedApp }; ret: T.SettingsSnapshot }
+  excluded_app_remove: { args: { os: T.OsKind; app_id: string }; ret: T.SettingsSnapshot }
+  app_keymap_upsert: { args: { entry: T.AppKeymap }; ret: T.SettingsSnapshot }
+  app_keymap_remove: { args: { os: T.OsKind; app_id: string }; ret: T.SettingsSnapshot }
   styles_list: { args: NoArgs; ret: T.Style[] }
   style_save: { args: { style: T.Style }; ret: T.Style[] }
   style_delete: { args: { id: string }; ret: T.Style[] }
@@ -88,12 +92,17 @@ export interface CommandMap extends OverlayCommandMap {
   style_preview: { args: { style: T.Style; sample: string }; ret: T.PromptPreview }
   glossary_get: { args: NoArgs; ret: T.GlossaryEntry[] }
   glossary_set: { args: { entries: T.GlossaryEntry[] }; ret: void }
+  glossary_upsert: { args: { entry: T.GlossaryEntry; previous_source: string | null }; ret: void }
+  glossary_remove: { args: { source: string }; ret: void }
   glossary_import: { args: NoArgs; ret: number }
   glossary_export: { args: NoArgs; ret: string | null }
   // ----- 模型服务
   provider_templates: { args: NoArgs; ret: T.ProviderTemplate[] }
   provider_new: { args: { template_id: string }; ret: T.Provider }
   provider_delete: { args: { provider_id: string }; ret: T.SettingsSnapshot }
+  provider_save: { args: { provider: T.Provider }; ret: T.SettingsSnapshot }
+  provider_add: { args: { provider: T.Provider }; ret: T.SettingsSnapshot }
+  providers_reorder: { args: { ids: string[] }; ret: T.SettingsSnapshot }
   provider_test: { args: { provider: T.Provider; key: string | null }; ret: T.ProviderTestReport }
   provider_models: { args: { provider: T.Provider; key: string | null }; ret: T.ModelEntry[] }
   llm_preview_url: {
@@ -133,6 +142,26 @@ export interface CommandMap extends OverlayCommandMap {
   hotkey_test_end: { args: NoArgs; ret: void }
   neighbor_apps: { args: NoArgs; ret: T.NeighborHit[] }
   keyboard_advice: { args: NoArgs; ret: T.KeyboardAdvice }
+  // ----- 同步
+  sync_status: { args: NoArgs; ret: T.SyncStatus }
+  sync_devices: { args: NoArgs; ret: T.SyncDevice[] }
+  sync_probe: { args: { account: T.SyncAccount; password: string | null }; ret: T.SyncProbe }
+  sync_connect: {
+    args: {
+      account: T.SyncAccount
+      password: string | null
+      passphrase: string
+      content: T.SyncContent
+    }
+    ret: T.SyncConnectResult
+  }
+  sync_now: { args: NoArgs; ret: T.SyncStatus }
+  sync_disconnect: { args: NoArgs; ret: void }
+  sync_reset_remote: {
+    args: { account: T.SyncAccount | null; password: string | null }
+    ret: void
+  }
+  sync_generate_passphrase: { args: NoArgs; ret: string }
 }
 
 export type CommandName = keyof CommandMap
@@ -187,6 +216,10 @@ export const COMMAND_NAMES = [
   'apps_running',
   'settings_get',
   'settings_patch',
+  'excluded_app_upsert',
+  'excluded_app_remove',
+  'app_keymap_upsert',
+  'app_keymap_remove',
   'styles_list',
   'style_save',
   'style_delete',
@@ -195,11 +228,16 @@ export const COMMAND_NAMES = [
   'style_preview',
   'glossary_get',
   'glossary_set',
+  'glossary_upsert',
+  'glossary_remove',
   'glossary_import',
   'glossary_export',
   'provider_templates',
   'provider_new',
   'provider_delete',
+  'provider_save',
+  'provider_add',
+  'providers_reorder',
   'provider_test',
   'provider_models',
   'llm_preview_url',
@@ -231,6 +269,14 @@ export const COMMAND_NAMES = [
   'hotkey_test_end',
   'neighbor_apps',
   'keyboard_advice',
+  'sync_status',
+  'sync_devices',
+  'sync_probe',
+  'sync_connect',
+  'sync_now',
+  'sync_disconnect',
+  'sync_reset_remote',
+  'sync_generate_passphrase',
 ] as const satisfies readonly CommandName[]
 
 // 编译期保证 COMMAND_NAMES 覆盖 CommandMap 的全部键（缺一个就报错，纯类型、无运行时代码）
@@ -421,6 +467,22 @@ export function settingsGet() {
 export function settingsPatch(patch: unknown) {
   return call('settings_patch', { patch })
 }
+/** 加入或更新一个剪贴板排除应用（按系统与应用 id 只改这一项） */
+export function excludedAppUpsert(entry: T.ExcludedApp) {
+  return call('excluded_app_upsert', { entry })
+}
+/** 从剪贴板排除名单移除一个应用（已经不在了也算成功） */
+export function excludedAppRemove(os: T.OsKind, app_id: string) {
+  return call('excluded_app_remove', { os, app_id })
+}
+/** 加入或更新一条应用的复制 / 粘贴键（按系统与应用 id 只改这一项） */
+export function appKeymapUpsert(entry: T.AppKeymap) {
+  return call('app_keymap_upsert', { entry })
+}
+/** 移除一条应用的复制 / 粘贴键（已经不在了也算成功） */
+export function appKeymapRemove(os: T.OsKind, app_id: string) {
+  return call('app_keymap_remove', { os, app_id })
+}
 export function stylesList() {
   return call('styles_list', none)
 }
@@ -445,6 +507,14 @@ export function glossaryGet() {
 export function glossarySet(entries: T.GlossaryEntry[]) {
   return call('glossary_set', { entries })
 }
+/** 写入一条术语（只改这一条）；`previous_source`：这一行改动前的原文（新行为 null） */
+export function glossaryUpsert(entry: T.GlossaryEntry, previous_source: string | null = null) {
+  return call('glossary_upsert', { entry, previous_source })
+}
+/** 删除一条术语（按原文；已经不在了也算成功） */
+export function glossaryRemove(source: string) {
+  return call('glossary_remove', { source })
+}
 export function glossaryImport() {
   return call('glossary_import', none)
 }
@@ -463,6 +533,18 @@ export function providerNew(template_id: string) {
 }
 export function providerDelete(provider_id: string) {
   return call('provider_delete', { provider_id })
+}
+/** 保存一个已有的服务（只替换这一项）；服务已在别处删除时抛 `not_found` */
+export function providerSave(provider: T.Provider) {
+  return call('provider_save', { provider })
+}
+/** 添加服务（追加到末尾，其他服务不动） */
+export function providerAdd(provider: T.Provider) {
+  return call('provider_add', { provider })
+}
+/** 调整服务的顺序（只重排、不改内容） */
+export function providersReorder(ids: string[]) {
+  return call('providers_reorder', { ids })
 }
 /**
  * 草稿也可以测。`key`：草稿里刚输入、还没保存的 Key，只用于这一次请求，**不写入**
@@ -575,4 +657,51 @@ export function neighborApps() {
 }
 export function keyboardAdvice() {
   return call('keyboard_advice', none)
+}
+
+// ===== 同步 =====
+
+export function syncStatus() {
+  return call('sync_status', none)
+}
+/** 参与同步的设备（含设备名）：只在同步页打开时调用 */
+export function syncDevices() {
+  return call('sync_devices', none)
+}
+/**
+ * 测试连接：登录、读写、服务器上是否已有同步数据。`password`：表单里刚输入的应用密码，只用于这一次请求；
+ * null = 用凭据存储里与地址、账号匹配的那一份。传输层面的失败在报告里，不抛错
+ */
+export function syncProbe(account: T.SyncAccount, password: string | null = null) {
+  return call('sync_probe', { account, password })
+}
+/**
+ * 创建 / 加入 / 恢复（由服务器与本机状态决定）。`passphrase` 由调用方做过 NFC 规范化；
+ * 同步密码不对时抛 `conflict`（`errors.sync.passphrase`）
+ */
+export function syncConnect(
+  account: T.SyncAccount,
+  password: string | null,
+  passphrase: string,
+  content: T.SyncContent,
+) {
+  return call('sync_connect', { account, password, passphrase, content })
+}
+/** 发起（或并入正在进行的）一次同步，立即返回；进度经 `sync:status` 推送 */
+export function syncNow() {
+  return call('sync_now', none)
+}
+/** 本机停止同步（服务器上的数据保留，地址与账号留着方便重新连接） */
+export function syncDisconnect() {
+  return call('sync_disconnect', none)
+}
+/** 清除服务器上的同步数据（所有设备随之停止同步）。account 为 null 时用已连接的账号与已保存的密码 */
+export function syncResetRemote(
+  account: T.SyncAccount | null = null,
+  password: string | null = null,
+) {
+  return call('sync_reset_remote', { account, password })
+}
+export function syncGeneratePassphrase() {
+  return call('sync_generate_passphrase', none)
 }

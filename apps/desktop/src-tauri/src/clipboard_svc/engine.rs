@@ -37,8 +37,8 @@ use parking_lot::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use wisp_clipboard::{ClipStore, IngestOutcome, IngestPolicy, RecentCache, SkipReason, StoreError};
 use wisp_platform::{HookHandle, PlatformError, ReadLimits};
 use wisp_types::{
-    ClipFilter, ClipItemDetail, ClipItemMeta, ClipPage, ClipboardChanged, ClipboardRecording, ClipboardSettings,
-    OsKind, RawClipboard,
+    ClipFilter, ClipItemDetail, ClipItemMeta, ClipKind, ClipPage, ClipboardChanged, ClipboardRecording,
+    ClipboardSettings, OsKind, RawClipboard,
 };
 
 use crate::error::{IpcError, IpcErrorCode};
@@ -49,6 +49,7 @@ use super::outbox::Outbox;
 use super::paste::PasteGate;
 use super::port::{Exec, Host, Port};
 use super::retention::Idle;
+use super::sync::{ClipSyncSink, sync_ident};
 use super::watch::{Capture, WatchSignal};
 
 /// 首屏条数：缓存的全部（先显示 Rust 内存缓存里最近 200 条的元数据）
@@ -119,6 +120,11 @@ pub(crate) struct Engine {
     pub(crate) idle: Idle,
     pub(crate) outbox: Outbox,
     pub(crate) paste_gate: PasteGate,
+    /// 本机改动的同步通知（同步关闭时为 None，记录路径上没有任何额外开销）。见 `sync.rs`
+    pub(crate) sync_sink: RwLock<Option<Arc<dyn ClipSyncSink>>>,
+    /// 识别历史的改动（本机的新增 / 删除 / 清空与远端的应用）串行执行：同步层判断「本机有没有更新的改动」与应用远端
+    /// 记录之间不会插进一次本机改动。识别历史不进剪贴板的串行区（写图片文件要几十毫秒，不该挡住记录与粘贴）
+    pub(crate) ocr_serial: Mutex<()>,
 }
 
 /// 存储层错误 → IPC 错误（message 只写英文简述，不含正文）
@@ -190,6 +196,8 @@ impl Engine {
             idle: Idle::default(),
             outbox: Outbox::default(),
             paste_gate: PasteGate::default(),
+            sync_sink: RwLock::new(None),
+            ocr_serial: Mutex::new(()),
         })
     }
 
@@ -583,6 +591,10 @@ impl Engine {
                 IngestOutcome::Touched(meta) => self.emit(ClipboardChanged::Touched { item: meta.clone() }),
                 IngestOutcome::Skipped(_) => {}
             }
+            // 首次复制与再次复制都通知同步（在串行区内，与远端改动的应用不会交错）
+            if let IngestOutcome::Inserted(meta) | IngestOutcome::Touched(meta) = &outcome {
+                self.notify_sync(&store, meta.id, meta.kind, |sink, hash| sink.content(hash));
+            }
             outcome
         };
         // 后台任务在串行区外派发（单测的同步执行器会就地执行它们，它们自己也要进串行区）
@@ -644,7 +656,7 @@ impl Engine {
 
     /// 后台生成缩略图，完成后原地更新缓存并推送 `updated`。库的改动不持串行锁，理由见模块
     /// 文档「不持串行锁的库改动」
-    fn make_thumb(&self, id: i64) {
+    pub(super) fn make_thumb(&self, id: i64) {
         let Some(store) = self.ready_store() else { return };
         let meta = match store.make_thumb(id) {
             Ok(Some(meta)) => meta,
@@ -698,6 +710,7 @@ impl Engine {
         let store = self.open_store("pin")?;
         let serial = self.serial();
         let mut meta = store.set_pinned(id, pinned).map_err(store_error)?;
+        self.notify_sync(&store, id, meta.kind, |sink, hash| sink.pin(hash, pinned));
         let mut cache = serial.cache();
         keep_checked_files(&cache, &mut meta);
         cache.upsert(&meta);
@@ -714,9 +727,16 @@ impl Engine {
             ));
         }
         let serial = self.serial();
+        // 删除之后行就没了：同步要用的 hash 在删除之前、同一个串行区里取
+        let ident = self.sync_sink().and_then(|_| sync_ident(&store, id));
         let removed = store.delete(id).map_err(store_error)?;
         serial.cache().remove(id);
         if removed {
+            if let (Some(sink), Some((hash, kind))) = (self.sync_sink(), ident)
+                && kind != ClipKind::Files
+            {
+                sink.delete(hash);
+            }
             log::debug!("clipboard item deleted id={id}");
             // 在串行区内投递（模块文档「事件的顺序」）
             self.emit(ClipboardChanged::Removed { id });
@@ -741,6 +761,9 @@ impl Engine {
         let store = self.open_store("clear")?;
         let serial = self.serial();
         let n = store.clear(keep_pinned).map_err(store_error)?;
+        if let Some(sink) = self.sync_sink() {
+            sink.clear(keep_pinned);
+        }
         serial.cache().clear(keep_pinned);
         // 在串行区内投递（模块文档「事件的顺序」）
         self.emit(ClipboardChanged::Cleared { keep_pinned });

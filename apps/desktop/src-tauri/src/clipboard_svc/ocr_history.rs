@@ -19,7 +19,7 @@
 
 use std::sync::Arc;
 
-use wisp_clipboard::OcrHistoryNew;
+use wisp_clipboard::{OcrHistoryNew, ocr_key};
 use wisp_types::{OcrHistoryChanged, OcrMode};
 
 use crate::error::IpcError;
@@ -51,9 +51,11 @@ impl Engine {
             return Ok(None);
         }
         let store = self.open_store("ocr_history")?;
+        let _ocr = self.ocr_serial.lock();
+        let created_at = self.host.now_ms();
         let id = store
             .ocr_history_add(&OcrHistoryNew {
-                created_at: self.host.now_ms(),
+                created_at,
                 mode: rec.mode,
                 model: &rec.model,
                 text: &rec.text,
@@ -61,6 +63,10 @@ impl Engine {
                 image: rec.image.as_deref().map(Vec::as_slice),
             })
             .map_err(store_error)?;
+        let sink = self.sync_sink();
+        if let Some(sink) = &sink {
+            sink.ocr_add(&ocr_key(created_at, rec.mode, &rec.text));
+        }
         match store.ocr_history_get(id) {
             Ok(Some(item)) => self.host.emit_ocr_history(&OcrHistoryChanged::Inserted { item }),
             Ok(None) => {}
@@ -68,9 +74,15 @@ impl Engine {
         }
         let mut removed = Vec::new();
         if let Some(old) = rec.replaces.filter(|&old| old != id) {
-            match store.ocr_history_delete(old) {
-                Ok(true) => removed.push(old),
-                Ok(false) => {}
+            // 被取代的旧记录对同步而言是一次删除（与用户删除一样写墓碑）；键与删除在同一个事务里取
+            match store.ocr_history_delete_keyed(old) {
+                Ok(Some(key)) => {
+                    removed.push(old);
+                    if let Some(sink) = &sink {
+                        sink.ocr_delete(&key);
+                    }
+                }
+                Ok(None) => {}
                 Err(e) => log::warn!("replace ocr history item failed: {e}"),
             }
         }
@@ -87,7 +99,11 @@ impl Engine {
     /// 删除一条 OCR 历史并推送 `removed`（id 不存在时不推送）。**会阻塞**
     pub(crate) fn ocr_history_delete(&self, id: i64) -> Result<(), IpcError> {
         let store = self.open_store("ocr_history")?;
-        if store.ocr_history_delete(id).map_err(store_error)? {
+        let _ocr = self.ocr_serial.lock();
+        if let Some(key) = store.ocr_history_delete_keyed(id).map_err(store_error)? {
+            if let Some(sink) = self.sync_sink() {
+                sink.ocr_delete(&key);
+            }
             self.host
                 .emit_ocr_history(&OcrHistoryChanged::Removed { ids: vec![id] });
         }
@@ -96,9 +112,12 @@ impl Engine {
 
     /// 清空 OCR 历史（表与 `blobs/ocr/` 一起清理）并推送 `cleared`。**会阻塞**
     pub(crate) fn ocr_history_clear(&self) -> Result<(), IpcError> {
-        self.open_store("ocr_history")?
-            .ocr_history_clear()
-            .map_err(store_error)?;
+        let store = self.open_store("ocr_history")?;
+        let _ocr = self.ocr_serial.lock();
+        store.ocr_history_clear().map_err(store_error)?;
+        if let Some(sink) = self.sync_sink() {
+            sink.ocr_clear();
+        }
         self.host.emit_ocr_history(&OcrHistoryChanged::Cleared);
         Ok(())
     }

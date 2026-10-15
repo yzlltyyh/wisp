@@ -166,5 +166,15 @@
   "keychain": {
     "denied": "Access to the keychain was denied. Try again and choose Allow when the system asks.",
     "unavailable": "The system credential store is unavailable"
+  },
+  "sync": {
+    "passphrase": "That sync password is wrong. Enter the one you set on your other devices.",
+    "passphrase_weak": "The sync password needs at least 12 characters.",
+    "passphrase_reused": "The sync password can’t be the same as your app password, account or server address.",
+    "https_required": "Only local network addresses can use http. Use an https:// address instead.",
+    "invalid_url": "That server address isn’t valid. It should start with https:// and have no “?”, “#” or account name.",
+    "not_connected": "Sync isn’t connected.",
+    "busy": "Sync is busy. Try again in a moment.",
+    "credentials_missing": "The saved password is missing. Enter your app password again."
   }
 }

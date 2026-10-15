@@ -93,6 +93,7 @@ const KEYS: &[&str] = &[
     "tray.status.paused",
     "tray.status.update",
     "tray.status.update_ready",
+    "tray.status.sync_attention",
     "tray.translate_selection",
     "tray.translate_input",
     "tray.ocr",
@@ -103,10 +104,12 @@ const KEYS: &[&str] = &[
     "tray.clear_clipboard",
     "tray.settings",
     "tray.onboarding",
+    "tray.sync_now",
     "tray.check_update",
     "tray.quit",
     "dialog.clear_clipboard.title",
     "dialog.clear_clipboard.message",
+    "dialog.clear_clipboard.message_synced",
     "dialog.clear_clipboard.ok",
     "dialog.clear_clipboard.all",
     "dialog.cancel",
@@ -167,6 +170,8 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (EnUs, "tray.status.update") => "Wisp {version} is available · Click to view",
         (ZhCn, "tray.status.update_ready") => "新版本 {version} 已就绪 · 重启后生效",
         (EnUs, "tray.status.update_ready") => "Wisp {version} is ready · Restart to apply",
+        (ZhCn, "tray.status.sync_attention") => "同步需要处理 · 点击查看",
+        (EnUs, "tray.status.sync_attention") => "Sync needs attention · Click to review",
         (ZhCn, "tray.translate_selection") => "划词翻译",
         (EnUs, "tray.translate_selection") => "Translate Selection",
         (ZhCn, "tray.translate_input") => "翻译输入…",
@@ -187,6 +192,8 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (EnUs, "tray.settings") => "Settings…",
         (ZhCn, "tray.onboarding") => "使用引导…",
         (EnUs, "tray.onboarding") => "Getting Started…",
+        (ZhCn, "tray.sync_now") => "立即同步",
+        (EnUs, "tray.sync_now") => "Sync Now",
         (ZhCn, "tray.check_update") => "检查更新",
         (EnUs, "tray.check_update") => "Check for Updates",
         (ZhCn, "tray.quit") => "退出",
@@ -199,6 +206,13 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         }
         (EnUs, "dialog.clear_clipboard.message") => {
             "Delete only unpinned items and keep pinned ones, or delete everything. This can't be undone."
+        }
+        (ZhCn, "dialog.clear_clipboard.message_synced") => {
+            "可以只删除未置顶的记录（置顶的条目保留），也可以全部删除。其他设备上的记录也会一并清除。此操作无法撤销。"
+        }
+        (EnUs, "dialog.clear_clipboard.message_synced") => {
+            "Delete only unpinned items and keep pinned ones, or delete everything. Items on your other devices will be \
+             cleared too. This can't be undone."
         }
         (ZhCn, "dialog.clear_clipboard.ok") => "清空（保留置顶）",
         (EnUs, "dialog.clear_clipboard.ok") => "Clear (Keep Pinned)",

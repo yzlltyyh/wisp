@@ -15,6 +15,7 @@
 //! - [`files`]：文件条目的 exists 检查（页面交给前端之前，有时限）与「仍存在的文件」；
 //! - [`retention`]：空闲清理与按天数过期条目的隐藏；
 //! - [`assets`]：`wisp://` 资源 `img/`、`thumb/`、`icon/`、`ocrimg/`；
+//! - [`sync`]：多设备同步的接入点（本机改动的通知 `ClipSyncSink`、远端改动的应用）；
 //! - `texts`：本模块用到的 Rust 侧文案（原生对话框与通知）。
 //!
 //! # 线程与锁
@@ -24,7 +25,9 @@
 //! - 取图标（含 `put_icon` 的 PNG 解码与缩放）、生成缩略图都在串行锁外（理由见 `engine.rs`「不持串行锁的库改动」）；
 //! - 改动缓存的 `clipboard:changed` 在串行区内交给 `outbox`，后者在投递锁内按调用顺序发出（不阻塞）：同一条目的
 //!   事件顺序与库里的改动顺序一致（`engine.rs`「事件的顺序」）。锁的顺序固定为 串行锁 → 投递锁 → 窗口层的面板状态锁；
-//! - 粘贴有自己的单飞闸门（`paste::PasteGate`），与上面的锁无嵌套；只复制的 toast 在闸门放开之后才显示。
+//! - 粘贴有自己的单飞闸门（`paste::PasteGate`），与上面的锁无嵌套；只复制的 toast 在闸门放开之后才显示；
+//! - 同步：本机改动在串行区内通知 sink，远端改动的应用每个串行区最多写 50 条（`sync.rs`）；识别历史的改动另有一把
+//!   串行锁（`Engine::ocr_serial`），与剪贴板的串行锁不嵌套。
 //!
 //! # 隐私
 //! 后台路径（记录、列表、预取）只对文件路径做 `stat`（是否存在、大小），**不读取文件内容、不列目录**；读取文件只发生在
@@ -41,6 +44,7 @@ pub(crate) mod port;
 pub mod retention;
 pub(crate) mod running;
 pub mod service;
+pub mod sync;
 pub(crate) mod texts;
 pub(crate) mod watch;
 
@@ -48,5 +52,10 @@ pub(crate) mod watch;
 mod tests;
 #[cfg(test)]
 mod tests_flow;
+#[cfg(test)]
+mod tests_sync;
 
 pub use service::ClipboardService;
+pub use sync::{
+    ClipRemoteChange, ClipRemoteClear, ClipSyncSink, OcrRemoteChange, OcrSuperseded, RemoteOutcome, Superseded,
+};

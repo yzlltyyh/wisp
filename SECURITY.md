@@ -19,7 +19,7 @@
 
 如果页面上没有「Report a vulnerability」按钮，请开一个只写「有安全问题需要私下报告」、**不含任何细节**的 issue，维护者会与你约定私下的联系方式。
 
-报告时请不要附上真实的 API Key、个人数据或剪贴板内容；需要日志时，「设置 → 关于 → 诊断信息 → 导出诊断包」导出的内容已经脱敏。
+报告时请不要附上真实的 API Key、WebDAV 密码、同步密码、个人数据或剪贴板内容；需要日志时，「设置 → 关于 → 诊断信息 → 导出诊断包」导出的内容已经脱敏。
 
 ## 处理流程
 
@@ -32,9 +32,10 @@
 属于本策略范围的：
 
 - Wisp 应用本身（`apps/desktop`、`crates/*`）：例如 API Key 泄露到界面进程、日志或诊断包，界面进程获得超出设计的权限，剪贴板隐私规则被绕过，更新包的签名校验被绕过；
+- 多设备同步：例如服务器或网络上的人不知道同步密码也能读取同步内容，或者改动、调换服务器上的文件而不被发现；WebDAV 密码或同步密钥泄露到界面进程、日志、错误信息或诊断包，或者被发往用户填写的服务器以外的地址；服务器地址、账号、设备名或同步内容出现在日志与诊断包里；
 - 发布流程（`.github/workflows/`、`scripts/release/`）中可能导致发布产物被篡改的问题。
 
-不属于范围的：你自己配置的模型服务的行为、第三方中转服务的安全性、需要攻击者已经完全控制本机账户才能实现的攻击，以及 README 中已经说明的限制（例如 macOS 版没有经过 Apple 公证、剪贴板数据库没有加密）。
+不属于范围的：你自己配置的模型服务的行为、第三方中转服务的安全性、你选择的 WebDAV 服务器自身的行为（可用性、回收站与历史版本、它能看到的文件数量、大小与时间等元数据）、对弱同步密码的离线猜测、需要攻击者已经完全控制本机账户才能实现的攻击，以及 README 与使用说明中已经说明的限制（例如 macOS 版没有经过 Apple 公证、剪贴板数据库没有加密）。
 
 ---
 
@@ -57,7 +58,7 @@ Report them privately through GitHub Security Advisories: open the repository's 
 
 If the **Report a vulnerability** button is not available, open an issue that only says you have a security problem to report, **without any details**, and the maintainer will arrange a private channel with you.
 
-Do not include real API keys, personal data, or clipboard contents. If logs are needed, the bundle exported from **Settings → About → Diagnostics → Export diagnostics** is already redacted.
+Do not include real API keys, WebDAV passwords, sync passwords, personal data, or clipboard contents. If logs are needed, the bundle exported from **Settings → About → Diagnostics → Export diagnostics** is already redacted.
 
 ### What to expect
 
@@ -70,6 +71,7 @@ Do not include real API keys, personal data, or clipboard contents. If logs are 
 In scope:
 
 - the Wisp application itself (`apps/desktop`, `crates/*`) — for example, API keys leaking into the UI process, logs, or diagnostics; the UI process gaining more privileges than intended; bypassing the clipboard privacy rules; or bypassing update signature verification;
+- multi-device sync — for example, someone on the server or the network reading synced content without the sync password, or modifying or swapping files on the server without being detected; WebDAV passwords or sync keys leaking into the UI process, logs, error messages, or diagnostics, or being sent anywhere other than the server you entered; or the server address, account, device names, or synced content appearing in logs or diagnostics;
 - issues in the release pipeline (`.github/workflows/`, `scripts/release/`) that could allow release artifacts to be tampered with.
 
-Out of scope: the behavior of model services you configure yourself, the security of third-party relay services, attacks that require full control of the local user account, and limitations already documented in the README (for example, the macOS build is not notarized and the clipboard database is not encrypted).
+Out of scope: the behavior of model services you configure yourself, the security of third-party relay services, the behavior of the WebDAV server you choose (its availability, its trash and version history, and the metadata it can see, such as the number, sizes, and times of files), offline guessing of a weak sync password, attacks that require full control of the local user account, and limitations already documented in the README and the user guide (for example, the macOS build is not notarized and the clipboard database is not encrypted).

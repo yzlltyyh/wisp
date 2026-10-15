@@ -8,6 +8,8 @@
  *   未设置 Key / 本次测试结果 / 配置改过需重新测试，从没测过时不显示「未测试」）、默认模型（翻译 / OCR）；
  *   孤立 Key 与凭据存储状态的提示；空状态是与引导一致的 2 × 2 模板卡片（第四张「其他服务」进选模板）；
  * - 新建的服务与已有的重名时自动加编号（「DeepSeek 2」）；
+ * - 写入按 id 只写一个服务（providers/persist.ts）：编辑用 `provider_save`、添加用 `provider_add`，不再整体替换 providers
+ *   数组，别处（其他设备、手改配置文件）对其他服务的改动不会被窗口里的旧数组盖掉；
  * - 选模板：16 个模板分组展示；选中后 `provider_new` 生成草稿（尚未保存）；
  * - 编辑器：见 providers/ProviderEditor。
  * 深链锚点：`provider:<id>` 打开某个服务，`new-provider` 打开选模板。
@@ -26,14 +28,7 @@ import { Page } from '../components/Page'
 import { ipcErrorText } from '../lib/errors'
 import { at } from '../lib/patch'
 import { useSubviewNav } from '../lib/subview'
-import {
-  currentSettings,
-  notify,
-  patchSettings,
-  queuePatch,
-  useRuntime,
-  useSettings,
-} from '../store'
+import { currentSettings, notify, patchSettings, useRuntime, useSettings } from '../store'
 import { DefaultModelFields } from '../providers/DefaultModels'
 import { lastTestRun, probedModel, useTestRunsVersion } from '../providers/hooks'
 import {
@@ -43,9 +38,9 @@ import {
   monogram,
   providerName,
   providerNeedsKey,
-  replaceProvider,
   uniqueName,
 } from '../providers/model'
+import { addProvider, queueProviderSave } from '../providers/persist'
 import { ProviderEditor } from '../providers/ProviderEditor'
 import { FeaturedCards } from '../providers/TemplateCard'
 import { TemplatePicker } from '../providers/TemplatePicker'
@@ -68,12 +63,6 @@ function viewKey(view: View): string {
 
 /** 键盘触发的点击（Enter / Space）：detail 为 0 */
 const viaKeyboard = (e: MouseEvent) => e.detail === 0
-
-/** 发出时按当前本地快照取整个 providers 数组（期间删掉的服务不会被写回来） */
-function providersPatch() {
-  const s = currentSettings()
-  return s ? { providers: s.providers } : null
-}
 
 export default function ProvidersPage() {
   const t = useT()
@@ -159,11 +148,11 @@ export default function ProvidersPage() {
         onAdd={async () => {
           const current = currentSettings()
           if (!current) return false
-          const providers = replaceProvider(current, draft)
           // 默认翻译模型优先用测试连接探测成功的那个（列表第一项常是嵌入模型）
           const defaults = fillDefaults(current, draft, probedModel(draft))
-          const ok = await patchSettings(defaults ? { providers, defaults } : { providers })
-          if (!ok) return false
+          if (!(await addProvider(draft))) return false
+          // 默认模型只写 defaults 这一组（服务已经加上了；这一步失败时已提示，服务照样保留）
+          if (defaults) await patchSettings({ defaults })
           notify(
             defaults
               ? t('settings.providers.added_with_defaults', { name: providerName(draft) })
@@ -183,15 +172,7 @@ export default function ProvidersPage() {
         provider={provider}
         template={templateOf(provider)}
         isNew={false}
-        onChange={(next) => {
-          const current = currentSettings()
-          if (current)
-            queuePatch(
-              `provider:${next.id}`,
-              { providers: replaceProvider(current, next) },
-              providersPatch,
-            )
-        }}
+        onChange={queueProviderSave}
         onBack={() => go({ kind: 'list' })}
         onDeleted={() => go({ kind: 'list' })}
       />

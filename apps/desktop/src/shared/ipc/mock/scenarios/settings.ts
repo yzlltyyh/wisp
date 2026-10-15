@@ -23,6 +23,7 @@ import type {
 import type { MockHandle } from '../index'
 import type { MockContext, Scenario } from '../types'
 import { mockError } from '../types'
+import { syncScenarios } from '../sync'
 
 // ---------------------------------------------------------------------------
 // 数据
@@ -459,6 +460,7 @@ export function live(ctx: MockContext, options: LiveOptions = {}): MockHandle {
     clipboard_paused: state.clipboardPaused,
     update: state.update,
     glossary_count: state.glossary.length,
+    sync: state.sync.status,
     ...options.runtime,
   })
   const snapshot = (): SettingsSnapshot => ({
@@ -1162,4 +1164,6 @@ export const scenarios: readonly Scenario[] = [
       },
     },
   ),
+  // 同步分组的场景（未连接 / 测试中 / 服务器无数据 / 已有数据 / 可恢复 / 已连接 / 同步中 / 各类错误）：见 ../sync.ts
+  ...syncScenarios(page, clickWhenReady),
 ]

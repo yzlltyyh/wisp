@@ -80,5 +80,15 @@
     "backup_path": "/Users/me/Library/Application Support/wisp/settings.json.bak-1760000000",
     "at_ms": 1760000000000
   },
-  "orphan_keys": 1
+  "orphan_keys": 1,
+  "sync": {
+    "phase": "off",
+    "last_ok_ms": null,
+    "pending": false,
+    "error": null,
+    "transient": false,
+    "error_detail": null,
+    "progress": null,
+    "device_count": 0
+  }
 }

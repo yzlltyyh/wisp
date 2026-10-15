@@ -57,6 +57,8 @@ export const RUST_KEY_PREFIXES = [
   'settings.providers.test_notice.',
   'settings.general.autostart_issue.',
   'clipboard.history_',
+  // 同步命令的错误消息（IpcError.message 下发文案 key，前端经 ipcErrorText 翻译）
+  'errors.sync.',
 ]
 /**
  * 已知缺失、暂时允许的 key（每次运行都会告警，不会被遗忘）。目前为空：新增条目时写明缺失的原因与补齐的条件。

@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "server_url": "https://dav.example.com/dav",
+  "username": "someone@example.com",
+  "auto": false,
+  "content": {
+    "settings": true,
+    "api_keys": false,
+    "clipboard": true,
+    "images": false,
+    "ocr_history": true
+  }
+}

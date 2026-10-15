@@ -1,0 +1,16 @@
+{
+  "outcome": "joined",
+  "status": {
+    "phase": "syncing",
+    "last_ok_ms": 1760000000000,
+    "pending": true,
+    "error": null,
+    "transient": false,
+    "error_detail": null,
+    "progress": {
+      "done": 120,
+      "total": 1000
+    },
+    "device_count": 2
+  }
+}

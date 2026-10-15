@@ -41,12 +41,12 @@ import {
   OPENAI_TEMPLATES,
   placeholderRange,
   providerName,
-  replaceProvider,
   templateName,
   uniqueName,
 } from '../../settings/providers/model'
 import { FeaturedCards } from '../../settings/providers/TemplateCard'
 import { TemplateTile } from '../../settings/providers/TemplatePicker'
+import { addProvider } from '../../settings/providers/persist'
 import { loadTemplates } from '../../settings/providers/templates'
 import { isAuthFailure, TestReport, TestVerdictBadge } from '../../settings/providers/TestReport'
 import { UrlPreview } from '../../settings/providers/UrlPreview'
@@ -151,22 +151,23 @@ export function Model({
   }
 
   const save = async () => {
-    const current = currentSettings()
-    if (!draft || !current) return
+    if (!draft || !currentSettings()) return
     setSaving(true)
     try {
       // 输入框里的 Key 先写入（不需要先按回车）；失败就地报错，不保存
       if (!(await key.commit())) return
-      const providers = replaceProvider(current, draft.provider)
-      const next = {
-        translate: defaults.translate ?? current.defaults.translate,
-        ocr: defaults.ocr ?? current.defaults.ocr,
+      // 按 id 只加这一个服务（provider_add），不把整个列表发回去：等待写入 Key 期间同步来的服务不会被旧列表覆盖、
+      // 进而当作删除同步到其他设备。重试是安全的：同一个 id 的服务会被替换而不是重复添加
+      if (!(await addProvider(draft.provider))) return
+      key.markAdded()
+      // 默认模型只写这里选了的那几项
+      const picked = {
+        ...(defaults.translate ? { translate: defaults.translate } : {}),
+        ...(defaults.ocr ? { ocr: defaults.ocr } : {}),
       }
-      if (await patchSettings({ providers, defaults: next })) {
-        key.markAdded()
-        store.reset()
-        onNext()
-      }
+      if (Object.keys(picked).length > 0 && !(await patchSettings({ defaults: picked }))) return
+      store.reset()
+      onNext()
     } finally {
       setSaving(false)
     }
@@ -267,6 +268,7 @@ export function Model({
           onPick={(tpl) => void pick(tpl)}
           onOthers={() => go('others')}
         />
+        <SyncLink onOpened={onNext} />
       </div>
     )
     next = <SkipStep onClick={onNext} />
@@ -541,6 +543,34 @@ function ProviderSetup({
         ) : null}
       </AnimatePresence>
     </div>
+  )
+}
+
+/**
+ * 「已在其他设备上使用 Wisp？连接同步」：一条安静的链接，打开设置的「同步」分组，引导同时跳过这一步——
+ * 连接之后模型服务与 Key 会从其他设备同步过来，不必在这里再接入一次
+ */
+function SyncLink({ onOpened }: { onOpened: () => void }) {
+  const t = useT()
+  const open = async () => {
+    try {
+      await api.windowOpen({ kind: 'settings', section: 'sync' })
+      onOpened()
+    } catch (error) {
+      notify(ipcErrorText(error, 'window_open'), 'danger')
+    }
+  }
+  return (
+    <p className="ob-sync-link">
+      <button
+        type="button"
+        className="ob-later"
+        onClick={() => void open()}
+        data-testid="onboarding-sync-link"
+      >
+        {t('onboarding.model.sync_link')}
+      </button>
+    </p>
   )
 }
 

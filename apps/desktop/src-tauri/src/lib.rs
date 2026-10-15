@@ -14,6 +14,7 @@ pub mod ipc;
 pub mod orchestrator;
 pub mod settings;
 pub mod state;
+pub mod sync_svc;
 pub mod tray;
 pub mod updater;
 pub mod windows;

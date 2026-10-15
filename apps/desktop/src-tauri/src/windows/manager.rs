@@ -584,6 +584,7 @@ impl WindowManager {
             _ => view_initial_height(req.view),
         };
         let geometry = placement::place_panel(&screen, anchor, width, initial, cap);
+        let view = req.view;
         log::debug!(
             "panel_prepare session={session_id} view={:?} placement={:?} width={} max_height={}",
             req.view,
@@ -606,6 +607,18 @@ impl WindowManager {
         // 放在 prepare 之后，不占显示的关键路径
         crate::app::permissions::refresh(&self.app);
         crate::updater::maybe_check(&self.app);
+        // 同步：用户正要看数据，取回其他设备的改动（O(1)：节流与退避都只是原子读；剪贴板视图的间隔更短，并先应用
+        // 剪贴板的改动）。轻提示不算「在看」
+        let reason = match view {
+            PanelView::Clipboard => Some(crate::sync_svc::CycleReason::ClipboardShown),
+            PanelView::Translate | PanelView::Ocr | PanelView::Input => Some(crate::sync_svc::CycleReason::PanelShown),
+            PanelView::Toast => None,
+        };
+        if let Some(reason) = reason
+            && let Some(state) = self.app.try_state::<AppState>()
+        {
+            state.sync.trigger(reason);
+        }
         Some(session_id)
     }
 

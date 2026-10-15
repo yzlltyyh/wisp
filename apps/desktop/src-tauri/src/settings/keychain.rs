@@ -1,4 +1,4 @@
-//! 钥匙串：keyring 4，`Entry::new("wisp", provider_id)`，访问串行化。Linux 没有 Secret Service 时进入
+//! 钥匙串：keyring 4，`Entry::new("wisp", provider_id)`（其他 service 名见 [`Keychain::for_service`]），访问串行化。Linux 没有 Secret Service 时进入
 //! 「仅本次会话」内存模式并显示警告，**绝不明文落盘**；用户拒绝授权导致读取失败时报 `keychain` 错误，不进入仅本次会话模式。
 //!
 //! 设计要点：
@@ -35,7 +35,7 @@ use wisp_types::{KeychainState, OsKind};
 
 use crate::error::IpcError;
 
-/// 钥匙串条目的 service 名
+/// 钥匙串条目的 service 名（模型服务的 Key；账户名是 provider_id）
 pub const SERVICE: &str = "wisp";
 /// Secret Service 在会话总线上的名字
 pub const SECRET_SERVICE_NAME: &str = "org.freedesktop.secrets";
@@ -146,6 +146,8 @@ enum Active {
 /// `get` 为 `Result<Option<Secret>, IpcError>`——不存在是 `Ok(None)`，用户拒绝授权 / 钥匙串锁定等失败是
 /// `Err(IpcError { code: keychain })`（不得把失败当成「没有 Key」静默吞掉）
 pub struct Keychain {
+    /// 条目所属的 service 名（只用于日志：真正的后端由 `factory` 决定）
+    service: &'static str,
     factory: BackendFactory,
     /// None = 还没初始化（只在持有 `io` 时写入）
     mode: RwLock<Option<Mode>>,
@@ -181,12 +183,19 @@ impl Default for Keychain {
 impl Keychain {
     /// 新建（不访问钥匙串，首次使用时才创建句柄）；索引只在内存里
     pub fn new() -> Self {
-        Self::with_backend(Box::new(os_backend))
+        Self::for_service(SERVICE)
+    }
+
+    /// 系统钥匙串里另一个 service 名下的条目（同步凭据用 `wisp-sync`，与模型服务的 Key 分开：provider_id 是用户可以
+    /// 随意起的，放在同一个 service 下可能撞名）。同样首次使用时才初始化
+    pub fn for_service(service: &'static str) -> Self {
+        Self::with_backend(Box::new(move || os_backend(service))).named(service)
     }
 
     /// 使用自定义后端工厂（测试用）
     pub fn with_backend(factory: BackendFactory) -> Self {
         Self {
+            service: SERVICE,
             factory,
             mode: RwLock::new(None),
             retry_after: RETRY_INIT_AFTER,
@@ -196,6 +205,12 @@ impl Keychain {
             persist: None,
             on_change: None,
         }
+    }
+
+    /// 日志里显示的 service 名
+    pub fn named(mut self, service: &'static str) -> Self {
+        self.service = service;
+        self
     }
 
     /// 注入持久化的索引：`initial` 为上次保存的 provider_id 集合，`persist` 在索引变化时被调用（写 state.json），
@@ -344,7 +359,7 @@ impl Keychain {
                 backend.set(provider_id, key).map_err(to_ipc)?;
                 drop(_io);
                 self.touch_index(provider_id, true);
-                log::info!("keychain: key saved provider={provider_id}");
+                log::info!("keychain: key saved {}/{provider_id}", self.service);
                 Ok(())
             }
             Active::Session => {
@@ -357,7 +372,10 @@ impl Keychain {
                 if inserted {
                     self.notify();
                 }
-                log::info!("keychain: key kept in memory (session only) provider={provider_id}");
+                log::info!(
+                    "keychain: key kept in memory (session only) {}/{provider_id}",
+                    self.service
+                );
                 Ok(())
             }
             Active::Unavailable(reason) => Err(unavailable(&reason)),
@@ -393,7 +411,7 @@ impl Keychain {
                 backend.delete(provider_id).map_err(to_ipc)?;
                 drop(_io);
                 self.touch_index(provider_id, false);
-                log::info!("keychain: key deleted provider={provider_id}");
+                log::info!("keychain: key deleted {}/{provider_id}", self.service);
                 Ok(())
             }
             Active::Session => {
@@ -480,7 +498,7 @@ static STORE_COMMITTED: AtomicBool = AtomicBool::new(false);
 /// 系统钥匙串后端（keyring v1 模式：macOS Keychain / Windows Credential Manager / Linux Secret Service）。
 /// Linux 上第一次初始化之前先确认 Secret Service 在会话总线上（或可按需激活），确认不在时返回暂时性失败、不碰 keyring
 /// （见模块说明）。**阻塞**
-fn os_backend() -> Result<Box<dyn SecretBackend>, InitError> {
+fn os_backend(service: &'static str) -> Result<Box<dyn SecretBackend>, InitError> {
     if OsKind::current() == OsKind::Linux
         && !STORE_COMMITTED.load(Ordering::Acquire)
         && crate::app::session_bus::name_reachable(SECRET_SERVICE_NAME) == Some(false)
@@ -489,29 +507,31 @@ fn os_backend() -> Result<Box<dyn SecretBackend>, InitError> {
     }
     STORE_COMMITTED.store(true, Ordering::Release);
     match keyring::Entry::store_status() {
-        Ok(()) => Ok(Box::new(OsBackend)),
+        Ok(()) => Ok(Box::new(OsBackend { service })),
         // keyring 已把这个结果缓存到进程结束，重试没有意义
         Err(e) => Err(InitError::permanent(describe(e))),
     }
 }
 
-struct OsBackend;
+struct OsBackend {
+    service: &'static str,
+}
 
 impl OsBackend {
-    fn entry(id: &str) -> Result<keyring::Entry, BackendError> {
-        keyring::Entry::new(SERVICE, id).map_err(|e| BackendError(describe(&e)))
+    fn entry(&self, id: &str) -> Result<keyring::Entry, BackendError> {
+        keyring::Entry::new(self.service, id).map_err(|e| BackendError(describe(&e)))
     }
 }
 
 impl SecretBackend for OsBackend {
     fn set(&self, id: &str, key: &str) -> Result<(), BackendError> {
-        Self::entry(id)?
+        self.entry(id)?
             .set_password(key)
             .map_err(|e| BackendError(describe(&e)))
     }
 
     fn get(&self, id: &str) -> Result<Option<String>, BackendError> {
-        match Self::entry(id)?.get_password() {
+        match self.entry(id)?.get_password() {
             Ok(key) => Ok(Some(key)),
             Err(keyring::Error::NoEntry) => Ok(None),
             Err(e) => Err(BackendError(describe(&e))),
@@ -519,7 +539,7 @@ impl SecretBackend for OsBackend {
     }
 
     fn delete(&self, id: &str) -> Result<(), BackendError> {
-        match Self::entry(id)?.delete_credential() {
+        match self.entry(id)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(BackendError(describe(&e))),
         }

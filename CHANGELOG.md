@@ -4,6 +4,33 @@
 
 Each version ends with an English summary.
 
+## 未发布
+
+### 新功能
+
+- 多设备同步：在「设置 → 同步」连接你自己的 WebDAV 存储（坚果云、123 云盘、Nextcloud、群晖 NAS 等），在多台 Mac、Windows 与 Linux 设备之间同步设置、模型服务、翻译风格、术语表、API Key、剪贴板历史（含单张不超过 10 MB 的图片）与识别历史；每一类都可以单独关闭。引导页的「接入模型」一步也可以直接去连接同步。
+- 端到端加密：数据在本机用同步密码派生的密钥加密后才上传，服务器只看到密文；没有 Wisp 账号，也不经过中转服务器。同步密码可以一键生成；它不保存、也无法找回，忘记后只能清除服务器上的数据重新开始，各设备本机的数据不受影响。
+- 自动同步：改动后约 2 秒上传，打开面板、托盘菜单或设置窗口时取回其他设备的改动；不在后台定时轮询，暂时连不上时稍后自动重试。也可以关闭自动同步，只在点「立即同步」时同步。
+- 冲突自动合并，不弹对话框：同一项以最后的改动为准，不同项的改动都会保留。加入已有的同步数据时，服务器上已有的设置优先，本机独有的模型服务、术语与历史会保留，不会删除本机已有的数据；以前同步过的设备再连接回来时，会应用它离开期间其他设备上的删除与清空。
+- 剪贴板的复制、置顶、删除与清空会同步到其他设备，粘贴只影响本机；同步来的条目同样经过本机的排除名单、疑似密钥检测与保留设置。服务器上的历史受保留设置限制，不会无限增长。
+- 全局快捷键、风格快捷键与面板材质只在同一系统的设备之间同步；开机启动、剪贴板记录开关、疑似密钥检测、识别历史开关与日志、性能选项只属于本机。
+- 同步页显示状态与进度、同步过的设备，提供「立即同步」「更新密码…」「断开同步」与「清除服务器上的数据」；同步需要处理时，托盘状态行会提示，成功时不打扰。
+
+### 修复
+
+- 用 Windows 记事本等编辑器保存、带 UTF-8 BOM 的 settings.json、styles.json、glossary.json 与 state.json 不再被当成损坏的文件而恢复默认。
+- 设置窗口里的模型服务与术语表改为逐条保存：手动修改配置文件或从其他设备同步来的改动，不会被设置窗口里打开着的旧内容整组覆盖。
+
+### English summary
+
+- Multi-device sync: connect WebDAV storage you own (Nutstore, 123pan, Nextcloud, a Synology NAS, and others) in Settings → Sync to sync settings, model services, translation styles, the glossary, API keys, clipboard history (including images up to 10 MB each), and recognition history across Macs, Windows PCs, and Linux machines. Each kind of data can be turned off separately, and onboarding links straight to sync.
+- End-to-end encryption: everything is encrypted on your device with a key derived from your sync password before it's uploaded, so the server only sees ciphertext. There is no Wisp account and no relay server. The sync password is never stored and can't be recovered; if you forget it, clear the data on the server and start over — the data on each device is kept.
+- Automatic sync uploads changes within about two seconds and picks up changes from your other devices when you open a panel, the tray menu, or Settings. Wisp never polls in the background and retries quietly when the server can't be reached; you can also turn automatic sync off and use Sync now.
+- Conflicts are merged automatically without dialogs. Joining existing sync data never deletes anything on your device: settings already on the server take priority, and model services, glossary terms, and history that only this device has are kept. A device that synced before and reconnects picks up anything deleted or cleared elsewhere while it was away.
+- Clipboard copies, pins, deletions, and clears sync across devices, while pasting stays local; synced items still pass this device's exclusions, secret detection, and retention limits, which also keep the history on the server bounded.
+- Shortcuts and panel material sync only between devices on the same operating system; launch at login, clipboard recording, secret detection, the recognition history switch, and logging and performance options stay on each device.
+- Fixes: configuration files saved with a UTF-8 BOM (for example by Windows Notepad) are no longer treated as corrupt and reset; providers and glossary entries in Settings are now saved one at a time, so changes made in the files or synced from another device aren't overwritten by stale values in an open Settings window.
+
 ## 0.1.1（2026-10-14）
 
 修复版本：修正 0.1.0 发布之后发现的面板拖动、Windows 分数缩放下的截图框选与 macOS Dock 图标问题。

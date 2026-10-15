@@ -2,19 +2,20 @@
 //!
 //! 菜单结构（快捷键只用于显示，取 `HotkeyStatus.effective`，切换语言后整份重建）：
 //! ```text
-//! ● 状态行（权限缺失 > 快捷键失败 > 记录已暂停 > 有新版本 > 正常；点击后各自跳转）
+//! ● 状态行（权限缺失 > 快捷键失败 > 记录已暂停 > 同步需要处理 > 有新版本 > 正常；点击后各自跳转）
 //! ─────
 //! 划词翻译 ⌥D / 翻译输入… ⌥⇧D / 截图 OCR ⌥S / 截图直接翻译 ⌥⇧S / 剪贴板 ⌥V
 //! 显示固定窗口（固定窗口数 > 0 时）
 //! ─────
 //! ☐ 暂停剪贴板记录 / 清空剪贴板历史…（原生确认对话框）
 //! ─────
-//! 设置… ⌘, / 使用引导… / 检查更新
+//! 立即同步（开启了同步时） / 设置… ⌘, / 使用引导… / 检查更新
 //! ─────
 //! 退出
 //! ```
 //! 菜单项只投递 `bus::Command`（打开窗口、动作、暂停 / 清空剪贴板、退出）；「显示固定窗口」调用
-//! `WindowManager::show_all_pinned`，「检查更新」调用 `updater::check_interactive`（应用核心自己的服务）。
+//! `WindowManager::show_all_pinned`，「立即同步」调用 `SyncService::sync_now`，「检查更新」调用
+//! `updater::check_interactive`（应用核心自己的服务）。
 
 use tauri::Manager;
 use tauri::image::Image;
@@ -45,11 +46,12 @@ pub mod ids {
     pub const CLEAR_CLIPBOARD: &str = "clear_clipboard";
     pub const SETTINGS: &str = "settings";
     pub const ONBOARDING: &str = "onboarding";
+    pub const SYNC_NOW: &str = "sync_now";
     pub const CHECK_UPDATE: &str = "check_update";
     pub const QUIT: &str = "quit";
 }
 
-/// 状态行（优先级：权限缺失 > 快捷键失败 > 记录已暂停 > 有新版本 > 正常）
+/// 状态行（优先级：权限缺失 > 快捷键失败 > 记录已暂停 > 同步需要处理 > 有新版本 > 正常）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayStatus {
     /// 缺少权限；`after_update` = 更新后授权失效
@@ -61,6 +63,9 @@ pub enum TrayStatus {
         count: usize,
     },
     Paused,
+    /// 同步遇到需要用户处理的错误（密码错误、服务器数据被清除等），自动同步已暂停。暂时的连接失败不算：
+    /// 它会在下一次使用时自动重试，不值得占用状态行
+    SyncAttention,
     /// 有新版本；`ready` = 已下载安装、重启后生效
     Update {
         version: String,
@@ -70,13 +75,14 @@ pub enum TrayStatus {
 }
 
 impl TrayStatus {
-    /// 托盘图标的状态：权限缺失 / 快捷键失败 → `-attention`，暂停 → `-paused`，有新版本 → 正常图 + 合成的蓝点
+    /// 托盘图标的状态：权限缺失 / 快捷键失败 → `-attention`，暂停 → `-paused`，有新版本 → 正常图 + 合成的蓝点。
+    /// 同步需要处理只在菜单的状态行里用状态点提示：Wisp 的核心功能都还正常，不值得把托盘图标换成警示
     pub const fn icon(&self) -> (Variant, Option<Dot>) {
         match self {
             Self::Permission { .. } | Self::HotkeyFailed { .. } => (Variant::Attention, None),
             Self::Paused => (Variant::Paused, None),
             Self::Update { .. } => (Variant::Normal, Some(Dot::Update)),
-            Self::Ok => (Variant::Normal, None),
+            Self::SyncAttention | Self::Ok => (Variant::Normal, None),
         }
     }
 
@@ -94,6 +100,7 @@ impl TrayStatus {
                 i18n::tr_args(lang, key, &[("count", &count.to_string())])
             }
             Self::Paused => i18n::tr(lang, "tray.status.paused").to_owned(),
+            Self::SyncAttention => i18n::tr(lang, "tray.status.sync_attention").to_owned(),
             Self::Update { version, ready: false } => {
                 i18n::tr_args(lang, "tray.status.update", &[("version", version)])
             }
@@ -113,7 +120,7 @@ impl TrayStatus {
     const fn dot(&self) -> [u8; 3] {
         match self {
             Self::Permission { .. } => [0xEF, 0x44, 0x44],
-            Self::HotkeyFailed { .. } => [0xF5, 0x9E, 0x0B],
+            Self::HotkeyFailed { .. } | Self::SyncAttention => [0xF5, 0x9E, 0x0B],
             Self::Paused => [0x9C, 0xA3, 0xAF],
             Self::Update { .. } => [0x3B, 0x82, 0xF6],
             Self::Ok => [0x22, 0xC5, 0x5E],
@@ -129,6 +136,8 @@ pub struct StatusInputs<'a> {
     pub needs_input_monitoring: bool,
     pub hotkeys: &'a [HotkeyStatus],
     pub clipboard_paused: bool,
+    /// 同步有需要用户处理的错误（`SyncService::needs_attention`）
+    pub sync_attention: bool,
     pub update: &'a UpdateStatus,
 }
 
@@ -154,6 +163,9 @@ pub fn status_of(i: &StatusInputs<'_>) -> TrayStatus {
     }
     if i.clipboard_paused {
         return TrayStatus::Paused;
+    }
+    if i.sync_attention {
+        return TrayStatus::SyncAttention;
     }
     // 检查进行中、检查 / 下载失败时，更新器仍带着已知新版本的 version：「有新版本」不因一次检查而消失
     match (i.update.state, &i.update.version) {
@@ -182,6 +194,10 @@ pub fn status_command(status: &TrayStatus) -> Option<Command> {
             anchor: None,
         })),
         TrayStatus::Paused => Some(Command::ToggleClipboardPause),
+        TrayStatus::SyncAttention => Some(Command::OpenWindow(WindowTarget::Settings {
+            section: Some(sections::SYNC.to_owned()),
+            anchor: None,
+        })),
         TrayStatus::Update { .. } => Some(Command::OpenWindow(WindowTarget::Settings {
             section: Some(sections::ABOUT.to_owned()),
             anchor: None,
@@ -197,14 +213,19 @@ pub struct MenuModel {
     pub status: TrayStatus,
     pub paused: bool,
     pub show_pinned: bool,
+    /// 开启了同步（显示「立即同步」）
+    pub sync_enabled: bool,
     /// 五个动作的实际组合键（global-hotkey 规范串，用作菜单加速键显示；未绑定 / 失败为 None）
     pub accelerators: [Option<String>; 5],
 }
 
 impl MenuModel {
-    /// 结构相同（语言、固定窗口项、加速键），可以原地更新而不必重建
+    /// 结构相同（语言、固定窗口项、立即同步项、加速键），可以原地更新而不必重建
     pub fn same_structure(&self, other: &Self) -> bool {
-        self.lang == other.lang && self.show_pinned == other.show_pinned && self.accelerators == other.accelerators
+        self.lang == other.lang
+            && self.show_pinned == other.show_pinned
+            && self.sync_enabled == other.sync_enabled
+            && self.accelerators == other.accelerators
     }
 }
 
@@ -228,6 +249,7 @@ pub fn model(app: &tauri::AppHandle, paused_override: Option<bool>) -> MenuModel
             status: TrayStatus::Ok,
             paused: false,
             show_pinned: false,
+            sync_enabled: false,
             accelerators: Default::default(),
         };
     };
@@ -240,6 +262,7 @@ pub fn model(app: &tauri::AppHandle, paused_override: Option<bool>) -> MenuModel
         needs_input_monitoring: settings.hotkeys.double_tap.enabled,
         hotkeys: &hotkeys,
         clipboard_paused: paused,
+        sync_attention: state.sync.needs_attention(),
         update: &update,
     });
     MenuModel {
@@ -247,6 +270,8 @@ pub fn model(app: &tauri::AppHandle, paused_override: Option<bool>) -> MenuModel
         status,
         paused,
         show_pinned: app.webview_windows().keys().any(|l| l.starts_with("pinned-")),
+        // 跟着设置走而不是服务的就绪状态：开启后本机部分在后台准备，期间点击只是什么也不做；设置变化本来就会刷新托盘
+        sync_enabled: settings.sync.enabled,
         accelerators: accelerators_of(&hotkeys),
     }
 }
@@ -326,6 +351,7 @@ pub fn build(app: &tauri::AppHandle, m: &MenuModel) -> tauri::Result<BuiltMenu> 
     let mac = OsKind::current() == OsKind::Macos;
     let settings = action_item(app, ids::SETTINGS, t("tray.settings"), mac.then_some("Super+Comma"))?;
     let onboarding = MenuItem::with_id(app, ids::ONBOARDING, t("tray.onboarding"), true, None::<&str>)?;
+    let sync_now = MenuItem::with_id(app, ids::SYNC_NOW, t("tray.sync_now"), true, None::<&str>)?;
     let check_update = MenuItem::with_id(app, ids::CHECK_UPDATE, t("tray.check_update"), true, None::<&str>)?;
     let quit = action_item(app, ids::QUIT, t("tray.quit"), mac.then_some("Super+KeyQ"))?;
 
@@ -342,6 +368,9 @@ pub fn build(app: &tauri::AppHandle, m: &MenuModel) -> tauri::Result<BuiltMenu> 
     menu.append(&pause)?;
     menu.append(&clear)?;
     menu.append(&sep()?)?;
+    if m.sync_enabled {
+        menu.append(&sync_now)?;
+    }
     menu.append(&settings)?;
     menu.append(&onboarding)?;
     menu.append(&check_update)?;
@@ -414,6 +443,15 @@ pub fn on_event(app: &tauri::AppHandle, ev: &MenuEvent) {
             anchor: None,
         }),
         ids::ONBOARDING => Command::OpenWindow(WindowTarget::Onboarding { step: None }),
+        ids::SYNC_NOW => {
+            // 成功不打扰；进度与结果在设置页的状态行，需要处理的错误回到托盘状态行
+            if let Some(state) = app.try_state::<AppState>()
+                && let Err(e) = state.sync.sync_now()
+            {
+                log::info!("tray sync not started: {}", e.message);
+            }
+            return;
+        }
         ids::CHECK_UPDATE => {
             crate::updater::check_interactive(app);
             return;
@@ -437,15 +475,25 @@ pub fn on_event(app: &tauri::AppHandle, ev: &MenuEvent) {
     }
 }
 
-/// 清空剪贴板历史前的原生确认框：[清空（保留置顶）]（默认）/ [全部清空] / [取消]
+/// 清空剪贴板历史前的原生确认框：[清空（保留置顶）]（默认）/ [全部清空] / [取消]。同步剪贴板历史时注明其他设备上的
+/// 记录也会一并清除（清空会同步到其他设备）
 fn confirm_clear(app: &tauri::AppHandle) {
     let lang = current_lang(app);
     let t = |key| i18n::tr(lang, key);
     let handle = app.clone();
     let keep = t("dialog.clear_clipboard.ok").to_owned();
     let all = t("dialog.clear_clipboard.all").to_owned();
+    let synced = app.try_state::<AppState>().is_some_and(|s| {
+        let sync = &s.settings.get().sync;
+        sync.enabled && sync.content.clipboard
+    });
+    let message = if synced {
+        "dialog.clear_clipboard.message_synced"
+    } else {
+        "dialog.clear_clipboard.message"
+    };
     app.dialog()
-        .message(t("dialog.clear_clipboard.message"))
+        .message(t(message))
         .title(t("dialog.clear_clipboard.title"))
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::YesNoCancelCustom(
@@ -534,6 +582,7 @@ mod tests {
             needs_input_monitoring: false,
             hotkeys,
             clipboard_paused: false,
+            sync_attention: false,
             update,
         }
     }
@@ -553,8 +602,11 @@ mod tests {
         i.permissions = granted();
         assert_eq!(status_of(&i), TrayStatus::HotkeyFailed { count: 1 });
         i.hotkeys = &[];
+        i.sync_attention = true;
         assert_eq!(status_of(&i), TrayStatus::Paused);
         i.clipboard_paused = false;
+        assert_eq!(status_of(&i), TrayStatus::SyncAttention);
+        i.sync_attention = false;
         assert_eq!(
             status_of(&i),
             TrayStatus::Update {
@@ -645,6 +697,9 @@ mod tests {
             (Variant::Attention, None)
         );
         assert_eq!(TrayStatus::Ok.icon(), (Variant::Normal, None));
+        // 同步需要处理只用状态点，托盘图标不变
+        assert_eq!(TrayStatus::SyncAttention.icon(), (Variant::Normal, None));
+        assert!(TrayStatus::SyncAttention.actionable());
         assert!(!TrayStatus::Ok.actionable());
         assert!(s.label(Lang::ZhCn).contains("1.0.0"));
     }
@@ -659,6 +714,13 @@ mod tests {
             }))
         );
         assert_eq!(status_command(&TrayStatus::Paused), Some(Command::ToggleClipboardPause));
+        assert_eq!(
+            status_command(&TrayStatus::SyncAttention),
+            Some(Command::OpenWindow(WindowTarget::Settings {
+                section: Some("sync".to_owned()),
+                anchor: None,
+            }))
+        );
         assert_eq!(
             status_command(&TrayStatus::Update {
                 version: "1".to_owned(),

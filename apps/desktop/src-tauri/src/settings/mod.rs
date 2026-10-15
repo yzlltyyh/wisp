@@ -10,6 +10,7 @@ pub mod patch;
 pub mod service;
 pub mod state_store;
 pub mod styles_store;
+pub mod sync_credential;
 pub mod validate;
 pub mod watcher;
 

@@ -1,0 +1,49 @@
+[package]
+name = "wisp-sync"
+description = "Wisp 的多设备同步：端到端加密的变更日志、混合逻辑时钟、配置投影与 WebDAV 远端"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+wisp-types = { workspace = true }
+# HTTP（WebDAV）；与 wisp-llm 一样使用 rustls-no-provider，创建 Client 前兜底安装 ring
+reqwest = { workspace = true }
+rustls = { workspace = true }
+# fs / io-util：blob 上传与下载按流读写本地文件，不整块读入内存
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio-util = { workspace = true, features = ["io"] }
+futures-util = { workspace = true }
+bytes = { workspace = true }
+rusqlite = { workspace = true }
+rusqlite_migration = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+base64 = { workspace = true }
+url = { workspace = true }
+httpdate = { workspace = true }
+parking_lot = { workspace = true }
+blake3 = { workspace = true }
+# PBKDF2 / HKDF / HMAC / ChaCha20-Poly1305 与安全随机数
+ring = { workspace = true }
+# 日志段与 head 明文的 deflate 压缩
+flate2 = { workspace = true }
+# PROPFIND 多状态响应解析
+quick-xml = { workspace = true }
+# 远端路径逐段百分号编码
+percent-encoding = { workspace = true }
+icu_normalizer = { workspace = true }
+
+[dev-dependencies]
+wiremock = { workspace = true }
+tempfile = { workspace = true }
+proptest = { workspace = true }
+tokio = { workspace = true, features = ["test-util", "macros", "rt", "fs", "io-util"] }
+
+[lints]
+workspace = true

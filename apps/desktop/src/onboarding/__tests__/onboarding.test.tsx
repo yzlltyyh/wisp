@@ -265,19 +265,26 @@ describe('接入模型', () => {
     await userEvent.click(await screen.findByTestId('onboarding-save'))
     await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
     expect(h.callsOf('secret_set')).toEqual([{ provider_id: 'openai', key: 'sk-1-new' }])
+    // 先写 Key，再按 id 只加这一个服务，最后只写默认模型（不把整个服务列表发回去）
     const order = h.calls.map(([c]) => c)
-    expect(order.lastIndexOf('secret_set')).toBeLessThan(order.indexOf('settings_patch'))
+    expect(order.lastIndexOf('secret_set')).toBeLessThan(order.indexOf('provider_add'))
+    expect(order.indexOf('provider_add')).toBeLessThan(order.indexOf('settings_patch'))
     // 保存了：离开这一步不删 Key
     expect(h.callsOf('secret_delete')).toHaveLength(0)
-    const patch = h.callsOf('settings_patch')[0]?.patch as {
-      providers: Array<{ id: string; protocol: string; models: Array<{ id: string }> }>
-      defaults: unknown
+    expect(h.callsOf('provider_add')).toHaveLength(1)
+    const added = h.callsOf('provider_add')[0]?.provider as {
+      id: string
+      protocol: string
+      models: Array<{ id: string }>
     }
-    expect(patch.providers[0]).toMatchObject({ id: 'openai', protocol: 'openai_responses' })
-    expect(patch.providers[0]?.models.map((m) => m.id)).toEqual(['gpt-mini', 'text'])
-    expect(patch.defaults).toEqual({
-      translate: { provider_id: 'openai', model_id: 'gpt-mini' },
-      ocr: { provider_id: 'openai', model_id: 'gpt-mini' },
+    expect(added).toMatchObject({ id: 'openai', protocol: 'openai_responses' })
+    expect(added.models.map((m) => m.id)).toEqual(['gpt-mini', 'text'])
+    const patch = h.callsOf('settings_patch')[0]?.patch as Record<string, unknown>
+    expect(patch).toEqual({
+      defaults: {
+        translate: { provider_id: 'openai', model_id: 'gpt-mini' },
+        ocr: { provider_id: 'openai', model_id: 'gpt-mini' },
+      },
     })
     expect(await screen.findByTestId('onboarding-try')).toBeInTheDocument()
     expect(h.callsOf('secret_delete')).toHaveLength(0)

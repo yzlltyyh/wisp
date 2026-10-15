@@ -36,6 +36,8 @@ wisp-prompts = { workspace = true }
 wisp-clipboard = { workspace = true }
 wisp-capture = { workspace = true }
 wisp-platform = { workspace = true }          # 不在依赖处写死 features（由上面的 [features] 透传）
+# 多设备同步（WebDAV、端到端加密、改动日志）；同步关闭时不创建任何资源
+wisp-sync = { workspace = true }
 
 tauri = { workspace = true }
 tauri-plugin-global-shortcut = { workspace = true }
@@ -63,6 +65,10 @@ uuid = { workspace = true }
 dirs = { workspace = true }
 zip = { workspace = true }
 blake3 = { workspace = true }
+# 同步：剪贴板 RTF 正文与主密钥的文本编码
+base64 = { workspace = true }
+# 同步：模型服务地址的 origin（scheme://host:port），判断 Key 能否随服务地址的变化沿用
+url = { workspace = true }
 parking_lot = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

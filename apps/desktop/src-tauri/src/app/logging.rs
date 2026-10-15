@@ -4,7 +4,7 @@
 //! - 位置：`log_dir/wisp/wisp.log`，2 MB × 5 滚动（`RotationStrategy::KeepSome(5)`）；debug 构建额外输出到 Stdout；
 //! - 每行格式：`2026-10-10T07:31:02.123Z INFO  wisp_desktop_lib::tray: 事件 key=value …`（UTC，毫秒精度）；
 //! - **禁止**写入日志：原文、译文、剪贴板内容、OCR 图像、Key、请求头的值、URL 的 query。各模块自己负责不写这些内容；
-//!   这里的 [`redact`] 是最后一道保险：每行写出前把形似 API Key 的片段（`sk-…`、`AIza…`、`Bearer …` 等）、URL 里的
+//!   这里的 [`redact`] 是最后一道保险：每行写出前把形似 API Key 的片段（`sk-…`、`AIza…`、`Bearer …`、`Basic …` 等）、URL 里的
 //!   userinfo（`https://user:token@host`）与 query 换成 `***`。没有命中时零额外分配（只扫描一遍）。
 //! - 日志不做定时 flush（空闲时不留周期唤醒）。
 
@@ -95,6 +95,8 @@ const KEY_PREFIXES: &[&str] = &[
 const MIN_KEY_TAIL: usize = 12;
 /// `Bearer` 之后至少多少个字符才算凭据
 const MIN_BEARER_LEN: usize = 8;
+/// `Basic` 之后至少多少个字符才算凭据（WebDAV 的 `账号:密码` 经 base64 编码，最短的实际凭据也远超这个长度）
+const MIN_BASIC_LEN: usize = 8;
 
 /// 单词字符：前一个字符是单词字符时不算「词首」（`desk-lamp` 里的 `sk-` 不是 Key）
 fn is_word_char(c: u8) -> bool {
@@ -118,7 +120,7 @@ struct Span {
     replacement: &'static str,
 }
 
-/// 脱敏：把形似 API Key 的片段、`Bearer` 凭据、URL 的 userinfo 与 query 换成 `***`。没有命中时原样借用
+/// 脱敏：把形似 API Key 的片段、`Bearer` / `Basic` 凭据、URL 的 userinfo 与 query 换成 `***`。没有命中时原样借用
 pub fn redact(input: &str) -> Cow<'_, str> {
     let bytes = input.as_bytes();
     let mut spans: Vec<Span> = Vec::new();
@@ -186,6 +188,21 @@ pub fn redact(input: &str) -> Cow<'_, str> {
                     continue;
                 }
             }
+            // Basic <base64(账号:密码)>：同步用的 WebDAV 认证头。要求形似 base64（只含 base64 字符、长度是 4 的倍数、
+            // 不全是小写字母），避免「basic settings」这类普通词组被误遮
+            if starts_with_ignore_case(&bytes[i..], b"basic ") {
+                let start = i + "basic ".len();
+                let end = token_end(bytes, start);
+                if looks_like_basic_credential(&bytes[start..end]) {
+                    spans.push(Span {
+                        start,
+                        end,
+                        replacement: "***",
+                    });
+                    i = end;
+                    continue;
+                }
+            }
             // sk-… 等前缀
             if let Some(prefix) = KEY_PREFIXES.iter().find(|p| bytes[i..].starts_with(p.as_bytes())) {
                 let end = token_end(bytes, i);
@@ -223,6 +240,15 @@ fn token_end(bytes: &[u8], start: usize) -> usize {
         .map_or(bytes.len(), |p| start + p)
 }
 
+fn looks_like_basic_credential(token: &[u8]) -> bool {
+    token.len() >= MIN_BASIC_LEN
+        && token.len().is_multiple_of(4)
+        && token
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'/' | b'='))
+        && !token.iter().all(u8::is_ascii_lowercase)
+}
+
 fn starts_with_ignore_case(hay: &[u8], needle: &[u8]) -> bool {
     hay.len() >= needle.len() && hay[..needle.len()].eq_ignore_ascii_case(needle)
 }
@@ -257,6 +283,23 @@ mod tests {
             "header Authorization: Bearer ***"
         );
         assert_eq!(redact("bearer short"), "bearer short");
+    }
+
+    #[test]
+    fn basic_credentials_are_masked() {
+        // 「someone:not-a-real-password」的 base64
+        assert_eq!(
+            redact("Authorization: Basic c29tZW9uZTpub3QtYS1yZWFsLXBhc3N3b3Jk"),
+            "Authorization: Basic ***"
+        );
+        assert_eq!(
+            redact("authorization: basic dTpwYXNzd29yZA== sent"),
+            "authorization: basic *** sent"
+        );
+        // 普通词组不误伤
+        for clean in ["using basic settings", "Basic auth failed", "basic short"] {
+            assert!(matches!(redact(clean), Cow::Borrowed(_)), "{clean}");
+        }
     }
 
     #[test]

@@ -129,6 +129,7 @@
     "delete_pinned": "Press {key} again to delete this pinned item",
     "delete": "Delete",
     "clear": "Clear clipboard history?",
+    "clear_synced": "Clear clipboard history? Items on your other devices will be cleared too.",
     "keep_pinned": "Keep pinned items",
     "clear_action": "Clear"
   },

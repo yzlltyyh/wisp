@@ -88,20 +88,54 @@ pub(crate) struct StagedBlob {
 /// 把 `bytes` 写进 `dir` 下的临时文件并 `sync_all`。临时文件名带进程号与序号，并发写同一个 key 互不干扰。
 /// 应在存储锁之外调用
 pub(crate) fn stage(dir: &Path, name: &str, bytes: &[u8]) -> io::Result<StagedBlob> {
-    static SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-    let staged = StagedBlob {
-        tmp: dir.join(format!("{TMP_PREFIX}{}-{seq}-{name}", std::process::id())),
-        dest: dir.join(name),
-        committed: false,
-    };
+    let staged = StagedBlob::new(dir, name);
     let mut f = fs::File::create(&staged.tmp)?;
     f.write_all(bytes)?;
     f.sync_all()?;
     Ok(staged)
 }
 
+/// 同 [`stage`]，内容从文件 `src` 流式复制（同步下载到本地的原图：几 MB 的文件不整块读进内存）。`src` 原样保留，
+/// 由调用方处理。应在存储锁之外调用
+pub(crate) fn stage_file(dir: &Path, name: &str, src: &Path) -> io::Result<StagedBlob> {
+    let staged = StagedBlob::new(dir, name);
+    let mut from = fs::File::open(src)?;
+    // 先建临时文件再复制：中途失败时由 Drop 删除半成品
+    let mut to = fs::File::create(&staged.tmp)?;
+    io::copy(&mut from, &mut to)?;
+    to.sync_all()?;
+    Ok(staged)
+}
+
+/// 文件内容的 blake3 与长度（流式读取，不整块读进内存）
+pub(crate) fn hash_file(path: &Path) -> io::Result<([u8; 32], u64)> {
+    let mut f = fs::File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(&mut f)?;
+    let len = f.metadata()?.len();
+    Ok((*hasher.finalize().as_bytes(), len))
+}
+
+/// 文件开头的若干字节（按魔数识别格式用）；文件比 `n` 短时返回实际读到的部分
+pub(crate) fn read_head(path: &Path, n: usize) -> io::Result<Vec<u8>> {
+    use std::io::Read as _;
+    let mut buf = Vec::with_capacity(n);
+    fs::File::open(path)?.take(n as u64).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 impl StagedBlob {
+    /// 临时文件名带进程号与序号，并发写同一个 key 互不干扰
+    fn new(dir: &Path, name: &str) -> Self {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+        Self {
+            tmp: dir.join(format!("{TMP_PREFIX}{}-{seq}-{name}", std::process::id())),
+            dest: dir.join(name),
+            committed: false,
+        }
+    }
+
     /// 改名为正式文件名（已存在时覆盖）。调用方持有存储锁，保证孤儿清理看到这个文件时，引用它的行已在同一临界区内写入
     pub(crate) fn commit(mut self) -> io::Result<()> {
         fs::rename(&self.tmp, &self.dest)?;

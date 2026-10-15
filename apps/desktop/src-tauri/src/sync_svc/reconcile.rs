@@ -1,0 +1,172 @@
+//! 同步开启时（托盘就绪之后、不联网）的本机核对。
+//!
+//! - 配置：与上次记下的「影子」比较，找出应用没在运行时对配置文件的手改，以新的 t 发布。只有本机值既不同于影子、也不同于
+//!   副本里的胜出值时才算手改（等于胜出值说明它就是从别处同步来的）。升级或降级之后影子的形状可能变了，这时静默重建影子，
+//!   并让这些域在下一轮重新应用；启动时被新建或重置成默认值的文件不发布任何东西，而是让服务器上的值在下一轮覆盖回来。
+//!   文件里有写错、被宽松解析丢掉的内容时（[`LoadState::Lossy`]），缺少的 key 不当作删除发布，只发布新增与修改。
+//! - API Key：副本里有、本机钥匙串里却没有的（Linux 只在内存里保存 Key 的会话重启之后）重新标为未应用，下一轮写回。
+//! - 剪贴板的置顶状态：在第一次成功同步之后单独核对（[`clip_pins`]），这时远端的置顶都已经应用过了。
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+use serde_json::Value;
+use wisp_sync::model::keys::{self, ClipKey};
+use wisp_sync::projection::{self, ConfigDoc};
+use wisp_sync::{Domain, Engine, Hlc, Journal, JournalEntry, JournalValue, ShadowUpdate, SyncError};
+use wisp_types::{ClipKind, OsKind};
+
+use super::capture::{CaptureKey, Captures, Msg, file_of};
+use crate::settings::service::{ConfigFile, LoadState};
+
+/// 核对需要的输入
+pub struct Startup<'a> {
+    pub journal: &'a Journal,
+    pub engine: &'a Engine,
+    /// 安装钩子那一刻的三份规范化文档
+    pub baseline: &'a BTreeMap<ConfigFile, Value>,
+    pub load_state: &'a dyn Fn(ConfigFile) -> LoadState,
+    /// 手改要用的时间戳：在安装钩子**之前**分配，之后钩子捕获的改动 t 都更大，不会被这里的旧值盖掉
+    pub t0: Hlc,
+    pub fingerprint: &'a str,
+    pub os: OsKind,
+    /// 本机是否有这个服务、并且钥匙串索引里有它的 Key
+    pub key_present: &'a dyn Fn(&str) -> Option<bool>,
+}
+
+/// 核对的结果（只有计数，写日志用）
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Report {
+    /// 作为手改发布的配置 key 数
+    pub published: usize,
+    /// 重新标为未应用的域
+    pub reapplied: Vec<Domain>,
+}
+
+pub fn run(s: &Startup<'_>) -> Result<Report, SyncError> {
+    let mut report = Report::default();
+    let mut entries = Vec::new();
+    let mut shadows = Vec::new();
+    for doc in ConfigDoc::ALL {
+        let file = file_of(doc);
+        let empty = Value::Null;
+        let local = projection::project(doc, s.baseline.get(&file).unwrap_or(&empty), s.os);
+        let replace = |map: BTreeMap<String, Value>| ShadowUpdate::Replace {
+            doc,
+            fingerprint: s.fingerprint.to_owned(),
+            map,
+        };
+        let state = (s.load_state)(file);
+        if matches!(state, LoadState::Created | LoadState::ResetToDefault) {
+            // 内存里是默认值，不是用户的选择：不发布，下一轮用服务器上的值
+            shadows.push(replace(local));
+            report.reapplied.push(doc.domain());
+            continue;
+        }
+        let Some(shadow) = s.journal.shadow(doc)? else {
+            // 第一次（刚连接）：本机的值已由连接时的加入处理，这里只记下基线
+            shadows.push(replace(local));
+            continue;
+        };
+        if shadow.fingerprint != s.fingerprint {
+            shadows.push(replace(local));
+            report.reapplied.push(doc.domain());
+            continue;
+        }
+        let winners: BTreeMap<String, Option<Value>> = s
+            .journal
+            .winners(&doc.domain())?
+            .into_iter()
+            .map(|r| (r.k, r.v))
+            .collect();
+        let lossy = state == LoadState::Lossy;
+        let keys: BTreeSet<&String> = local.keys().chain(shadow.map.keys()).collect();
+        for key in keys {
+            let mine = local.get(key);
+            if mine == shadow.map.get(key) {
+                continue;
+            }
+            if mine == winners.get(key).and_then(Option::as_ref) {
+                continue;
+            }
+            // 手改写错的内容被丢掉了，不是用户删除的：不发墓碑（影子随后改为当前值，改正文件后照常作为新增发布）
+            if lossy && mine.is_none() {
+                continue;
+            }
+            entries.push(JournalEntry {
+                d: doc.domain(),
+                k: key.clone(),
+                t: s.t0,
+                value: mine.cloned().map_or(JournalValue::Delete, JournalValue::Set),
+            });
+        }
+        shadows.push(replace(local));
+    }
+    // 本机有这个服务、副本里有它的 Key、钥匙串里却没有：下一轮把 Key 写回
+    let missing_key = s
+        .journal
+        .winners(&Domain::Key)?
+        .into_iter()
+        .any(|r| r.v.is_some() && (s.key_present)(&r.k) == Some(false));
+    if missing_key {
+        report.reapplied.push(Domain::Key);
+    }
+    report.published = entries.len();
+    s.journal.record(entries, shadows)?;
+    for d in &report.reapplied {
+        s.engine.reapply(d)?;
+    }
+    Ok(report)
+}
+
+/// 剪贴板置顶状态的核对：本机与副本不一致的（例如上次退出时还没来得及写进副本的置顶），以新的 t 补发 `p`。
+/// 只看副本里有存活内容记录的条目；本机刚改过的跳过（它们自己会被记录）。返回补发的条数
+pub fn clip_pins(
+    store: &wisp_clipboard::ClipStore,
+    journal: &Journal,
+    captures: &Captures,
+    clock: &Arc<wisp_sync::Clock>,
+    tx: &std::sync::mpsc::Sender<Msg>,
+) -> Result<usize, SyncError> {
+    let rows = store
+        .sync_rows()
+        .map_err(|_| SyncError::Local(wisp_sync::LocalError::Failed("clipboard rows")))?;
+    let mut alive = BTreeSet::new();
+    let mut pins = BTreeMap::new();
+    for record in journal.winners(&Domain::Clip)? {
+        match keys::parse_clip(&record.k) {
+            Some(ClipKey::Content(hash)) if record.v.is_some() => {
+                alive.insert(hash);
+            }
+            Some(ClipKey::Pin(hash)) => {
+                pins.insert(hash, record.v.as_ref().and_then(Value::as_bool).unwrap_or(false));
+            }
+            _ => {}
+        }
+    }
+    let mut sent = 0;
+    for row in rows {
+        if row.kind == ClipKind::Files || !alive.contains(&row.hash) || captures.clip_pending(&row.hash) {
+            continue;
+        }
+        if pins.get(&row.hash).copied().unwrap_or(false) == row.pinned {
+            continue;
+        }
+        let t = clock.now();
+        captures.note(CaptureKey::Clip(row.hash), t);
+        let msg = Msg::Record {
+            entry: JournalEntry {
+                d: Domain::Clip,
+                k: keys::clip_pin(&row.hash),
+                t,
+                value: JournalValue::Set(Value::Bool(row.pinned)),
+            },
+            capture: CaptureKey::Clip(row.hash),
+        };
+        if tx.send(msg).is_err() {
+            break;
+        }
+        sent += 1;
+    }
+    Ok(sent)
+}

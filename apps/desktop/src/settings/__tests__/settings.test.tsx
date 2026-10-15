@@ -8,7 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getAppearance, setAppearance } from '../../shared/hooks/useAppearance'
 import { boot } from '../../shared/ipc'
-import type { ProviderTemplate } from '../../shared/ipc/types'
+import type { Provider, ProviderTemplate } from '../../shared/ipc/types'
 import { resetAdviceCache } from '../components/AdviceBanners'
 import { resetHotkeyTest } from '../components/hotkeyTest'
 import { resetStyleSaves } from '../lib/styleSave'
@@ -126,6 +126,7 @@ describe('窗口框架', () => {
       'settings-nav-ocr',
       'settings-nav-clipboard',
       'settings-nav-appearance',
+      'settings-nav-sync',
       'settings-nav-about',
     ])
     expect(await screen.findByTestId('ocr-mode')).toBeInTheDocument()
@@ -173,13 +174,13 @@ describe('窗口框架', () => {
     const h = installHarness(snapshot({ providers: [provider('openai', { name: 'OpenAI' })] }))
     let release: () => void = () => {}
     h.handle(
-      'settings_patch',
-      ({ patch }) =>
+      'provider_save',
+      ({ provider: p }) =>
         new Promise((resolve) => {
           release = () => {
             h.state.snap = {
               ...h.state.snap,
-              settings: { ...h.state.snap.settings, ...(patch as object) },
+              settings: { ...h.state.snap.settings, providers: [p as Provider] },
             }
             resolve(structuredClone(h.state.snap))
           }
@@ -192,15 +193,17 @@ describe('窗口框架', () => {
     await userEvent.clear(name)
     await userEvent.type(name, 'Work')
     // 还在 450 ms 的停顿里：什么都没发
-    expect(h.callsOf('settings_patch')).toHaveLength(0)
+    expect(h.callsOf('provider_save')).toHaveLength(0)
     fireEvent.keyDown(window, {
       key: 'w',
       code: 'KeyW',
       ...(boot.os === 'macos' ? { metaKey: true } : { ctrlKey: true }),
     })
-    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
-    const sent = h.callsOf('settings_patch')[0]?.patch as { providers: Array<{ name: string }> }
-    expect(sent.providers[0]?.name).toBe('Work')
+    await waitFor(() => expect(h.callsOf('provider_save')).toHaveLength(1))
+    // 只写这一个服务（不再整体替换 providers 数组）
+    const sent = h.callsOf('provider_save')[0]?.provider as Provider
+    expect(sent.name).toBe('Work')
+    expect(h.callsOf('settings_patch')).toHaveLength(0)
     // 写入还没返回：不关窗
     expect(h.close).not.toHaveBeenCalled()
     expect(pendingWriteCount()).toBe(1)
@@ -392,16 +395,16 @@ describe('模型与服务', () => {
 
     await userEvent.click(screen.getByTestId('provider-add'))
     await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
-    // 添加时才写入凭据存储，且在写设置之前
+    // 添加时才写入凭据存储，且在写设置之前；服务按 id 单独添加，默认模型只写 defaults 这一组
     expect(h.callsOf('secret_set')).toEqual([{ provider_id: 'openai', key: 'sk-test' }])
     const order = h.calls.map(([c]) => c)
-    expect(order.indexOf('secret_set')).toBeLessThan(order.indexOf('settings_patch'))
-    const patch = h.callsOf('settings_patch')[0]?.patch as {
-      providers: Array<{ id: string; base_url: string; models: unknown[] }>
-      defaults: unknown
-    }
-    expect(patch.providers.map((p) => p.id)).toEqual(['openai'])
-    expect(patch.providers[0]?.base_url).toBe('https://api.openai.com/v1#')
+    expect(order.indexOf('secret_set')).toBeLessThan(order.indexOf('provider_add'))
+    expect(order.indexOf('provider_add')).toBeLessThan(order.indexOf('settings_patch'))
+    const added = h.callsOf('provider_add')[0]?.provider as Provider
+    expect(added.id).toBe('openai')
+    expect(added.base_url).toBe('https://api.openai.com/v1#')
+    const patch = h.callsOf('settings_patch')[0]?.patch as Record<string, unknown>
+    expect(Object.keys(patch)).toEqual(['defaults'])
     expect(patch.defaults).toEqual({
       translate: { provider_id: 'openai', model_id: 'gpt-mini' },
       ocr: { provider_id: 'openai', model_id: 'gpt-mini' },
@@ -426,10 +429,10 @@ describe('模型与服务', () => {
     await userEvent.click(await screen.findByTestId('template-openai'))
     await userEvent.type(await screen.findByTestId('key-input'), 'sk-direct')
     await userEvent.click(screen.getByTestId('provider-add'))
-    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
+    await waitFor(() => expect(h.callsOf('provider_add')).toHaveLength(1))
     expect(h.callsOf('secret_set')).toEqual([{ provider_id: 'openai', key: 'sk-direct' }])
     const order = h.calls.map(([c]) => c)
-    expect(order.indexOf('secret_set')).toBeLessThan(order.indexOf('settings_patch'))
+    expect(order.indexOf('secret_set')).toBeLessThan(order.indexOf('provider_add'))
     expect(await screen.findByTestId('key-saved')).toBeInTheDocument()
   })
 
@@ -444,6 +447,7 @@ describe('模型与服务', () => {
     await userEvent.type(await screen.findByTestId('key-input'), 'sk-x')
     await userEvent.click(screen.getByTestId('provider-add'))
     expect(await within(screen.getByTestId('key-field')).findByRole('alert')).toBeInTheDocument()
+    expect(h.callsOf('provider_add')).toHaveLength(0)
     expect(h.callsOf('settings_patch')).toHaveLength(0)
   })
 
@@ -653,12 +657,10 @@ describe('模型与服务', () => {
     const radios = within(vision).getAllByRole('radio')
     expect(radios.map((r) => r.tabIndex)).toEqual([-1, 0, -1])
     await userEvent.click(within(vision).getByRole('radio', { name: '支持图片' }))
-    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1), { timeout: 2000 })
-    const first = h.callsOf('settings_patch')[0] as {
-      patch: { providers: Array<{ models: Array<{ vision: string; vision_source: string }> }> }
-    }
-    const providers = first.patch.providers
-    expect(providers[0]?.models[0]).toMatchObject({ vision: 'yes', vision_source: 'user' })
+    await waitFor(() => expect(h.callsOf('provider_save')).toHaveLength(1), { timeout: 2000 })
+    const first = h.callsOf('provider_save')[0]?.provider as Provider
+    expect(first.models[0]).toMatchObject({ vision: 'yes', vision_source: 'user' })
+    expect(h.callsOf('settings_patch')).toHaveLength(0)
     fireEvent.keyDown(within(vision).getByRole('radio', { name: '支持图片' }), { key: 'End' })
     await waitFor(() =>
       expect(within(vision).getByRole('radio', { name: '不支持图片' })).toHaveAttribute(
@@ -706,14 +708,17 @@ describe('模型与服务', () => {
     )
     const switches = screen.getAllByRole('switch')
     await userEvent.click(switches[0] as HTMLElement)
-    expect(h.callsOf('settings_patch')).toHaveLength(0)
+    expect(h.callsOf('provider_save')).toHaveLength(0)
     await userEvent.click(screen.getByTestId('provider-delete'))
     await userEvent.click(await screen.findByTestId('provider-delete-ok'))
     await waitFor(() => expect(h.callsOf('provider_delete')).toHaveLength(1))
-    // 断言行为本身：删除之后没有任何补丁再把 openai 写回来；最终只剩 deepseek
+    // 断言行为本身：删除之后没有任何写入再提到 openai；最终只剩 deepseek
     const deletedAt = h.calls.findIndex(([c]) => c === 'provider_delete')
-    const after = h.calls.slice(deletedAt + 1).filter(([c]) => c === 'settings_patch')
+    const after = h.calls
+      .slice(deletedAt + 1)
+      .filter(([c]) => c === 'settings_patch' || c === 'provider_save')
     for (const [, args] of after) expect(JSON.stringify(args)).not.toContain('"openai"')
+    expect(h.callsOf('provider_save')).toHaveLength(0)
     expect(h.callsOf('settings_patch')).toHaveLength(0)
     expect(useSettingsStore.getState().snap?.settings.providers.map((p) => p.id)).toEqual([
       'deepseek',
@@ -734,11 +739,9 @@ describe('模型与服务', () => {
     const table = await screen.findByTestId('model-table')
     await userEvent.click(within(table).getAllByRole('button', { name: '更多' })[0] as HTMLElement)
     await userEvent.click(await screen.findByRole('menuitem', { name: '全部停用' }))
-    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1), { timeout: 2000 })
-    const sent = h.callsOf('settings_patch')[0]?.patch as {
-      providers: Array<{ models: Array<{ id: string; enabled: boolean }> }>
-    }
-    expect(sent.providers[0]?.models).toEqual([
+    await waitFor(() => expect(h.callsOf('provider_save')).toHaveLength(1), { timeout: 2000 })
+    const sent = h.callsOf('provider_save')[0]?.provider as Provider
+    expect(sent.models).toEqual([
       expect.objectContaining({ id: 'gpt-mini', enabled: true }),
       expect.objectContaining({ id: 'o4', enabled: false }),
     ])
@@ -1131,21 +1134,22 @@ describe('翻译', () => {
     expect(screen.getByTestId('style-system')).toHaveValue('new template')
   })
 
-  it('术语表：编辑后停顿写入；译文留空 = 与原文相同（不译）', async () => {
+  it('术语表：编辑后停顿逐条写入；译文留空 = 与原文相同（不译）', async () => {
     const h = installHarness(translateSnapshot())
     h.handle('glossary_get', () => [{ source: 'token', target: '令牌', note: null }])
     renderApp('translate')
     await userEvent.click(await screen.findByTestId('glossary-add'))
     const sources = await screen.findAllByTestId('glossary-source')
     await userEvent.type(sources[1] as HTMLElement, 'Tauri')
-    await waitFor(() => expect(h.callsOf('glossary_set').length).toBeGreaterThan(0), {
+    await waitFor(() => expect(h.callsOf('glossary_upsert').length).toBeGreaterThan(0), {
       timeout: 2000,
     })
-    const last = h.callsOf('glossary_set').at(-1)?.entries
-    expect(last).toEqual([
-      { source: 'token', target: '令牌', note: null },
-      { source: 'Tauri', target: 'Tauri', note: null },
-    ])
+    // 只写新的这一条，已有的「token」不动；不再整表替换
+    expect(h.callsOf('glossary_upsert').at(-1)).toEqual({
+      entry: { source: 'Tauri', target: 'Tauri', note: null },
+      previous_source: null,
+    })
+    expect(h.callsOf('glossary_set')).toHaveLength(0)
   })
 })
 

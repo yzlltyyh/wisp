@@ -37,6 +37,11 @@
 //!   `thumb_url` 为 None——按上面「缩略图」一条照常在后台 `make_thumb`；
 //! - 打开：`ClipStore::open` 返回 [`StoreError::SchemaTooNew`] 时（用户从新版降级），停用剪贴板历史并提示升级，
 //!   不要删除或改名数据目录里的库文件；其余错误按「历史不可用」处理并记日志；
+//! - 多设备同步（`sync.rs`）：导出用 [`ClipStore::sync_rows`] / [`ClipStore::sync_export`]（只读，不需要串行锁）；
+//!   应用远端条目先在串行锁之外 [`ClipStore::prepare_remote`]（本机隐私规则、类型开关、上限、图片解码与 hash 核对），
+//!   再持锁 [`ClipStore::apply_remote_many`]（一个事务，最多 [`MAX_REMOTE_BATCH`] 条）+ 更新缓存；
+//!   [`ClipStore::set_pinned_by_hash`]、[`ClipStore::delete_by_hashes`]、[`ClipStore::delete_unsynced_before`] 与本机的置顶 /
+//!   删除一样持锁调用。识别历史的同步身份是派生键 [`ocr_key`]；
 //! - `ClipStore` 的方法都是阻塞的，统一放在 `spawn_blocking` / 工作线程中调用。
 
 mod blobs;
@@ -54,6 +59,7 @@ mod row;
 mod schema;
 mod search;
 mod store;
+mod sync;
 
 pub use blobs::BlobKind;
 pub use cache::RecentCache;
@@ -65,6 +71,10 @@ pub use privacy::{PrivacyRules, looks_like_secret};
 pub use retention::{RetentionPolicy, RetentionReport};
 pub use row::refresh_file_exists;
 pub use store::ClipStore;
+pub use sync::{
+    MAX_REMOTE_BATCH, OcrApplied, OcrSyncItem, OcrSyncRow, PreparedOcr, PreparedRemote, RejectReason, Rejected,
+    RemoteApplied, RemoteItem, RemoteOcr, SyncImage, SyncItem, SyncRow, SyncSource, hash_hex, ocr_key, parse_hash_hex,
+};
 
 /// 检索覆盖的正文前缀（字符）：FTS 索引、1–2 字查询的 LIKE 与搜索结果的上下文片段都只看每条正文的前这么多个字符
 /// （trigram 索引的开销随文本长度超线性增长，见 `schema.rs`）。详情与粘贴不受影响

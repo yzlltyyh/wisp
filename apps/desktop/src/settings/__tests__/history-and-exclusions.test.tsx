@@ -77,9 +77,14 @@ describe('识别历史：纯函数', () => {
 })
 
 describe('识别历史（设置 › OCR）', () => {
-  function historyHarness(items: OcrHistoryItem[], on = true) {
+  function historyHarness(items: OcrHistoryItem[], on = true, synced = false) {
     const snap = snapshot()
     snap.settings.ocr.history = on
+    snap.settings.sync = {
+      ...snap.settings.sync,
+      enabled: synced,
+      content: { ...snap.settings.sync.content, ocr_history: true },
+    }
     const h = installHarness(snap)
     let list = items
     h.handle('ocr_history_list', ({ offset, limit }) =>
@@ -266,6 +271,44 @@ describe('识别历史（设置 › OCR）', () => {
     historyHarness([], true)
     renderAt({ kind: 'settings', section: 'ocr' })
     expect(await screen.findByTestId('ocr-history-empty')).toHaveTextContent('还没有识别记录')
+    expect(screen.getByTestId('ocr-history-empty')).toHaveTextContent('只保存在这台电脑上')
+  })
+
+  it('同步识别历史时：空状态不说只保存在本机；清空的确认注明其他设备也会清除', async () => {
+    historyHarness([], false, true)
+    const first = renderAt({ kind: 'settings', section: 'ocr' })
+    const off = await screen.findByTestId('ocr-history-empty')
+    expect(off).toHaveTextContent('同步到你的其他设备')
+    expect(off).not.toHaveTextContent('只存在这台电脑上')
+    first.unmount()
+    resetSettingsStore()
+    historyHarness([], true, true)
+    const second = renderAt({ kind: 'settings', section: 'ocr' })
+    const on = await screen.findByTestId('ocr-history-empty')
+    expect(on).toHaveTextContent('同步到你的其他设备')
+    expect(on).not.toHaveTextContent('只保存在这台电脑上')
+    second.unmount()
+    resetSettingsStore()
+
+    const h = historyHarness([item(1)], true, true)
+    renderAt({ kind: 'settings', section: 'ocr' })
+    await screen.findByTestId('ocr-history-list')
+    await userEvent.click(screen.getByTestId('ocr-history-clear'))
+    expect(await screen.findByTestId('ocr-history-clear-confirm')).toHaveTextContent(
+      '其他设备上的识别记录也会一并清除',
+    )
+    await userEvent.click(screen.getByTestId('ocr-history-clear-ok'))
+    await waitFor(() => expect(h.callsOf('ocr_history_clear')).toHaveLength(1))
+  })
+
+  it('没有同步识别历史时：清空的确认只问本机', async () => {
+    historyHarness([item(1)], true, false)
+    renderAt({ kind: 'settings', section: 'ocr' })
+    await screen.findByTestId('ocr-history-list')
+    await userEvent.click(screen.getByTestId('ocr-history-clear'))
+    const confirm = await screen.findByTestId('ocr-history-clear-confirm')
+    expect(confirm).toHaveTextContent('清空全部识别历史？')
+    expect(confirm).not.toHaveTextContent('其他设备')
   })
 
   it('有记录时关掉开关：原地询问是否一并清空；「清空 N 条」清掉全部', async () => {
@@ -316,11 +359,13 @@ describe('排除名单的应用选择器', () => {
     // 占位行与真实行交叉淡出 / 淡入：淡出结束后只剩一个「正在运行」标题
     await waitFor(() => expect(within(picker).getAllByText('正在运行的应用')).toHaveLength(1))
     await userEvent.click(within(picker).getByTestId('clip-app-option-com.run'))
-    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
-    const patch = h.callsOf('settings_patch')[0]?.patch as {
-      clipboard: { excluded_apps: Array<{ app_id: string }> }
-    }
-    expect(patch.clipboard.excluded_apps.some((a) => a.app_id === 'com.run')).toBe(true)
+    await waitFor(() => expect(h.callsOf('excluded_app_upsert')).toHaveLength(1))
+    expect(h.callsOf('excluded_app_upsert')[0]?.entry).toEqual({
+      os: 'macos',
+      app_id: 'com.run',
+      name: 'Runner',
+    })
+    expect(h.callsOf('settings_patch')).toHaveLength(0)
   })
 
   it('每次打开只读一次 apps_running（最近来源读回不会再读一遍）；过滤框从一开始就在、打开时焦点在它上面', async () => {
@@ -374,18 +419,57 @@ describe('排除名单的应用选择器', () => {
     await userEvent.keyboard('{ArrowUp}{ArrowUp}')
     expect(filter).toHaveFocus()
     await userEvent.keyboard('{ArrowDown}{ArrowDown}{Enter}')
-    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
-    const patch = h.callsOf('settings_patch')[0]?.patch as {
-      clipboard: { excluded_apps: Array<{ app_id: string }> }
-    }
-    expect(patch.clipboard.excluded_apps.at(-1)?.app_id).toBe('com.b')
+    await waitFor(() => expect(h.callsOf('excluded_app_upsert')).toHaveLength(1))
+    expect(h.callsOf('excluded_app_upsert')[0]?.entry).toMatchObject({ app_id: 'com.b' })
     await waitFor(() => expect(add).toHaveFocus())
     // 过滤框里 Enter：选中第一个候选
     await userEvent.keyboard('{Enter}')
     await within(await screen.findByTestId('clip-app-picker')).findByTestId('clip-app-option-com.a')
     await userEvent.keyboard('Alp{Enter}')
-    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(2))
+    await waitFor(() => expect(h.callsOf('excluded_app_upsert')).toHaveLength(2))
     await waitFor(() => expect(add).toHaveFocus())
+  })
+
+  it('逐项写入：移除只发这一项，别处刚加进来的应用不会被当作删除写回去；按键映射同样', async () => {
+    const initial = snapshot()
+    initial.settings.hotkeys.app_keymaps = [
+      { os: 'macos', app_id: 'com.term', copy: null, paste: 'Meta+Shift+KeyV' },
+    ]
+    const h = installHarness(initial)
+    renderAt({ kind: 'settings', section: 'clipboard' })
+    const list = await screen.findByTestId('clip-excluded')
+    // 另一台设备刚排除了一个密码管理器：已经写进设置，这个窗口的快照还没更新
+    const s = h.state.snap.settings
+    h.state.snap = {
+      ...h.state.snap,
+      settings: {
+        ...s,
+        clipboard: {
+          ...s.clipboard,
+          excluded_apps: [
+            ...s.clipboard.excluded_apps,
+            { os: 'macos', app_id: 'com.vault', name: 'Vault' },
+          ],
+        },
+      },
+    }
+    await userEvent.click(within(list).getByRole('button', { name: '不再排除 1Password' }))
+    await waitFor(() =>
+      expect(h.callsOf('excluded_app_remove')).toEqual([
+        { os: 'macos', app_id: 'com.1password.1password' },
+      ]),
+    )
+    expect(h.callsOf('settings_patch')).toHaveLength(0)
+    expect(await within(list).findByTitle('com.vault')).toBeInTheDocument()
+    expect(within(list).queryByTitle('com.1password.1password')).toBeNull()
+
+    const keymaps = screen.getByTestId('clip-keymaps')
+    await userEvent.click(within(keymaps).getByRole('button', { name: '移除' }))
+    await waitFor(() =>
+      expect(h.callsOf('app_keymap_remove')).toEqual([{ os: 'macos', app_id: 'com.term' }]),
+    )
+    await waitFor(() => expect(screen.queryByTestId('clip-keymaps')).toBeNull())
+    expect(h.callsOf('settings_patch')).toHaveLength(0)
   })
 
   it('apps_running 失败：退回只列最近来源，不显示「正在运行」分组', async () => {

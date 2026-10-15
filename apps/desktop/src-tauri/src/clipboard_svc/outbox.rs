@@ -59,7 +59,29 @@ impl Inner {
     }
 }
 
+/// 此刻推送的事件会怎样到达剪贴板视图（远端改动据此选择逐条推送还是只推一条 `reloaded`，见 `sync.rs`）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Delivery {
+    /// 视图已显示：立即送达
+    Shown,
+    /// 视图准备中或即将打开：排队，视图就绪后补发
+    Soon,
+    /// 面板没有显示剪贴板视图：丢弃
+    None,
+}
+
 impl Engine {
+    /// 此刻推送的事件会怎样到达（与 [`Engine::emit`] 同样持投递锁读面板状态）。不阻塞
+    pub(crate) fn delivery(&self) -> Delivery {
+        let ob = self.outbox.inner.lock();
+        match self.host.clipboard_view() {
+            ClipView::Shown(_) => Delivery::Shown,
+            ClipView::Preparing(_) => Delivery::Soon,
+            ClipView::Hidden if ob.expecting(Instant::now()) => Delivery::Soon,
+            ClipView::Hidden => Delivery::None,
+        }
+    }
+
     /// 推送 `clipboard:changed`（规则见模块文档）。不阻塞
     pub(crate) fn emit(&self, change: ClipboardChanged) {
         let mut ob = self.outbox.inner.lock();

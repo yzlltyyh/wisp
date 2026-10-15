@@ -24,6 +24,8 @@
  * - 悬停 300 ms 在面板内部显示预览卡片，原图只在这时请求。卡片只在指针明显想进入它时保持（指针在卡片上
  *   慢下来）：正常速度往下扫时卡片收起、卡片下面的那一行照常被选中，不会挡住指针的去路；点卡片等于点它对应的行；
  *   卡片的出现 / 消失都按 presets.popover；单击粘贴（可改为双击），右键菜单 / ⌘K 操作菜单含全部操作；
+ * - 防误点：行的屏幕位置因为数据变化（其他设备同步来的条目插在上面、置顶、删除、重新检索）刚改变过——不到一个
+ *   `--dur-base`，或在按下指针之后才变——的那一行，单击只选中、不粘贴：用户瞄准的是变化之前在那里的条目；
  * - 滚动条是覆盖式的（三端一致）：不占内容宽度，行与高亮离卡片两边恒为 6 px；滚动时 / 指针靠近右边缘时出现，可拖动；
  * - 行内确认进行中时，悬停不移动选中项（再按一次 ⌫ 只作用于发起确认的那一条）；
  * - 距离末尾不到两屏时加载下一页。
@@ -129,6 +131,11 @@ const BAR_NEAR = 12
 
 /** 位移的过渡（与行的 FLIP 同一条曲线） */
 const MOVE = { duration: duration.base, ease: ease.standard } as const
+/**
+ * 行的屏幕位置变化之后多久之内单击不粘贴（毫秒，`--dur-base`：位移的过渡就是这么长，变化还没走完时指针下的已经不是
+ * 用户瞄准的那一条）
+ */
+const SHIFT_GUARD_MS = ms(duration.base)
 /** 残影（被删除 / 清空的行）淡出 */
 const GHOST_OUT = { duration: timing.menuOut, ease: ease.standard } as const
 
@@ -205,6 +212,26 @@ export function ClipList({
   )
   const indicatorAnim = useRef<{ stop(): void }[]>([])
   const flips = useRef(new Map<HTMLElement, Flip>())
+  /** 条目 → 它的屏幕位置最近一次因为数据变化而改变的时刻（performance.now；只留防误点窗口内的） */
+  const shiftedAt = useRef(new Map<string | number, number>())
+
+  /**
+   * 记下这次提交里屏幕位置变了的条目（防误点）：新出现在列表里的、或位置与变化之前不同的。`delta` 是为了让视口内容
+   * 不动而补偿的滚动距离——补偿之后屏幕上没动的行不算。用户自己的滚动不经过这里（滚动时看得见内容在动）
+   */
+  const markShifted = (before: Snapshot, delta: number) => {
+    const at = performance.now()
+    const marks = shiftedAt.current
+    for (const [key, when] of marks) if (at - when >= SHIFT_GUARD_MS) marks.delete(key)
+    const old = new Map<string | number, number>()
+    before.rows.forEach((r, i) => old.set(r.key, before.offsets[i] ?? 0))
+    rows.forEach((r, i) => {
+      if (r.type !== 'item') return
+      const from = old.get(r.key)
+      if (from === undefined || Math.abs(from + delta - (offsets[i] ?? 0)) >= 0.5)
+        marks.set(r.key, at)
+    })
+  }
 
   const stopIndicator = () => {
     for (const a of indicatorAnim.current) a.stop()
@@ -383,6 +410,8 @@ export function ClipList({
     const moved = rowsChanged && before.moves !== moves
     movedNow.current = false
     if (!moved) pendingGhosts.current.clear()
+    // 重新检索、刷新首页这类不带位移动画的变化同样会让行换位置
+    if (rowsChanged && !moved) markShifted(before, 0)
     // 实时变化：先位移与残影，再让指示器从选中行此刻画出来的位置出发、与它同一条曲线
     if (moved) {
       const el = listRef.current?.element()
@@ -390,6 +419,7 @@ export function ClipList({
       // 只做锚定，不播放位移与残影
       const scrolledReveal = before.reveal !== reveal && !!el && el.scrollTop > 1
       const { started, delta } = playMoves(before, !scrolledReveal)
+      markShifted(before, delta)
       if (scrolledReveal) pendingGhosts.current.clear()
       else playGhosts(delta)
       movedNow.current = started.size > 0
@@ -773,6 +803,25 @@ export function ClipList({
     }, ms(timing.hoverDelay))
   }
 
+  // ----- 防误点（见文件头）：按下指针时记下按在哪一条上、什么时候
+  const pressed = useRef<{ id: number | null; at: number } | null>(null)
+  const onPointerDown = (e: ReactPointerEvent) => {
+    if (e.button !== 0) return
+    pressed.current = {
+      id: inCard(e.target) ? (hover?.id ?? null) : idOf(rowAt(e.target)),
+      at: performance.now(),
+    }
+  }
+  /** 这次单击落在的条目刚换过位置（或按下之后才换到指针下面）：只选中、不粘贴 */
+  const shiftedUnder = (id: number): boolean => {
+    const down = pressed.current
+    pressed.current = null
+    const moved = shiftedAt.current.get(id)
+    if (moved !== undefined && performance.now() - moved < SHIFT_GUARD_MS) return true
+    if (!down) return false
+    return down.id !== id || (moved !== undefined && moved >= down.at)
+  }
+
   // 点卡片等于点它对应的行（单击粘贴；改为双击时双击粘贴）
   const onClick = (e: ReactMouseEvent) => {
     if (e.button !== 0) return
@@ -780,7 +829,8 @@ export function ClipList({
       if (hover && !pasteOnDoubleClick) {
         const id = hover.id
         hideHover()
-        actions.paste('normal', id)
+        if (shiftedUnder(id)) actions.select(id)
+        else actions.paste('normal', id)
       }
       return
     }
@@ -788,6 +838,7 @@ export function ClipList({
     if (id === null) return
     hideHover()
     if (pasteOnDoubleClick) actions.select(id)
+    else if (shiftedUnder(id)) actions.select(id)
     else actions.paste('normal', id)
   }
   const onDoubleClick = (e: ReactMouseEvent) => {
@@ -826,6 +877,8 @@ export function ClipList({
   const openMenu = (id: number, x: number, y: number, via: 'pointer' | 'keyboard') => {
     hideHover()
     actions.select(id)
+    // ⌘K 操作菜单的最后一项是「清空历史…」：先读清空会不会同步到其他设备
+    if (via === 'keyboard') actions.prepareClear()
     const card = wrapRef.current?.closest('.clip')?.getBoundingClientRect()
     const need = menuHeight(itemsFor(id, via)) + 8
     let side: 'top' | 'bottom' = 'bottom'
@@ -933,6 +986,7 @@ export function ClipList({
         // 卡片不滚动：在卡片上滚轮时收起卡片，之后的滚轮落到列表上
         if (inCard(e.target)) hideHover()
       }}
+      onPointerDown={onPointerDown}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
