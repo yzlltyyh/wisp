@@ -275,7 +275,7 @@ macOS 的隐私授权与钥匙串访问绑定在代码签名上，默认的 ad-h
 
 当前版本 **v0.1.1**（2026-10-14，[Release 页面](https://github.com/yzlltyyh/wisp/releases/tag/v0.1.1)）：所有悬浮面板都可以拖动，修正了 Windows 分数缩放下的截图框选与 macOS 打开设置时的 Dock 图标。
 
-**v0.1.0**（2026-10-13，[Release 页面](https://github.com/yzlltyyh/wisp/releases/tag/v0.1.0)）是第一个版本，三大场景与设置、引导、自动更新、诊断导出等功能都已可用。macOS 是测试最充分的平台，Windows 与 Linux 的测试覆盖仍在完善。完整的变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+三大场景与设置、引导、自动更新、诊断导出等功能都已可用（首个版本 0.1.0 于 2026-10-13 发布，已由 0.1.1 取代）。macOS 是测试最充分的平台，Windows 与 Linux 的测试覆盖仍在完善。完整的变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 反馈
 

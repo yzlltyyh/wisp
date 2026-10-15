@@ -277,7 +277,7 @@ These documents are in Simplified Chinese, and so are the code comments (identif
 
 The current version is **v0.1.1** (2026-10-14, [release page](https://github.com/yzlltyyh/wisp/releases/tag/v0.1.1)): every floating panel can now be dragged, and screenshot selection under fractional display scaling on Windows and the blank Dock icon shown while Settings is open on macOS are fixed.
 
-**v0.1.0** (2026-10-13, [release page](https://github.com/yzlltyyh/wisp/releases/tag/v0.1.0)) is the first release. All three core features are in place, along with settings, onboarding, automatic updates, and diagnostics export. macOS is the most thoroughly tested platform; test coverage on Windows and Linux is still being expanded. See [CHANGELOG.md](CHANGELOG.md) (Chinese) for the full list of changes.
+All three core features are in place, along with settings, onboarding, automatic updates, and diagnostics export (the first version, 0.1.0, was released on 2026-10-13 and has been superseded by 0.1.1). macOS is the most thoroughly tested platform; test coverage on Windows and Linux is still being expanded. See [CHANGELOG.md](CHANGELOG.md) (Chinese) for the full list of changes.
 
 ## Feedback
 
