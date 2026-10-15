@@ -1,0 +1,37 @@
+[package]
+name = "wisp-clipboard"
+description = "Wisp 的剪贴板历史存储：SQLite + FTS5、记录管线、隐私规则、保留策略与 blob 管理"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+wisp-types = { workspace = true }
+# functions：用 Rust 覆盖内置 like()，让短查询与 FTS5 trigram 一样做 Unicode 大小写折叠（不引入新包）
+rusqlite = { workspace = true, features = ["functions"] }
+rusqlite_migration = { workspace = true }
+image = { workspace = true }
+# 原图流式解码（逐行计算像素 hash、流式生成缩略图，不分配整帧 RGBA）与缩略图 / 图标的 PNG 编码
+png = { workspace = true }
+blake3 = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+criterion = { workspace = true }
+proptest = { workspace = true }
+
+[[bench]]
+name = "search"
+harness = false
+
+[lints]
+workspace = true

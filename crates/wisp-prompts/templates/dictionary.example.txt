@@ -1,0 +1,5 @@
+**token** /ˈtoʊkən/ n.
+1. 令牌；凭证 — 计算机：身份验证凭据
+2. 词元；标记 — NLP / 编译：文本切分单元
+3. 代币；筹码 — 游戏、区块链
+例：The API rejected the expired token. → API 拒绝了过期的令牌。

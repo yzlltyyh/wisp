@@ -1,0 +1,4 @@
+data: {"id":"c-2","choices":[{"index":0,"delta":{"role":"assistant","content":"半句"}}]}
+
+data: {"id":"c-2","choices":[{"index":0,"delta":{"content":"话"}}]}
+

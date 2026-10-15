@@ -1,0 +1,71 @@
+# 各 job 共用的环境准备：Linux 系统依赖 → pnpm / Node 24 → 依赖安装 → Rust 工具链 → Rust 缓存。
+# 版本都不在这里写死：pnpm 取根 package.json 的 packageManager，Rust 取 rust-toolchain.toml 的 channel。
+name: setup
+description: Wisp 构建环境（Node / pnpm / Rust / Linux 系统依赖）
+inputs:
+  node:
+    description: 安装 Node 24 + pnpm 并执行 pnpm install --frozen-lockfile
+    default: 'true'
+  rust:
+    description: 安装 rust-toolchain.toml 指定的工具链并启用 Swatinem/rust-cache
+    default: 'true'
+  linux-deps:
+    description: Linux 系统依赖档位（build / release / smoke，见 scripts/ci/linux-deps.sh）；空串表示不装
+    default: build
+  rust-target:
+    description: 额外安装的 Rust 目标（发布矩阵的 target）；空串表示只用宿主目标
+    default: ''
+  cache-key:
+    description: rust-cache 的附加 key（同一 job 的不同构建配置用不同 key，避免互相覆盖）
+    default: ''
+  cache-save:
+    description: 是否保存 Rust 缓存（PR 上不保存，避免挤占仓库 10 GB 的缓存额度）
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Linux 系统依赖
+      if: runner.os == 'Linux' && inputs.linux-deps != ''
+      shell: bash
+      env:
+        PROFILE: ${{ inputs.linux-deps }}
+      run: bash scripts/ci/linux-deps.sh "$PROFILE"
+
+    - name: pnpm
+      if: inputs.node == 'true'
+      uses: pnpm/action-setup@v6
+
+    - name: Node 24
+      if: inputs.node == 'true'
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+        cache: pnpm
+
+    - name: pnpm install
+      if: inputs.node == 'true'
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    - name: Rust 工具链（rust-toolchain.toml）
+      if: inputs.rust == 'true'
+      shell: bash
+      env:
+        EXTRA_TARGET: ${{ inputs.rust-target }}
+      run: |
+        channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)"
+        if [ -z "$channel" ]; then echo "::error::rust-toolchain.toml 中没有 channel"; exit 1; fi
+        # minimal profile：不装 rust-docs（Windows 上解压上万个小文件要一分多钟）
+        args=(--profile minimal --component rustfmt,clippy)
+        if [ -n "$EXTRA_TARGET" ]; then args+=(--target "$EXTRA_TARGET"); fi
+        rustup toolchain install "$channel" "${args[@]}"
+        rustc --version --verbose
+
+    - name: Rust 缓存
+      if: inputs.rust == 'true'
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ inputs.cache-key }}
+        save-if: ${{ inputs.cache-save == 'true' }}
+        # 测试失败时也保存依赖的编译产物：修复提交不必从头编译（Windows 冷编译约 35 分钟）
+        cache-on-failure: true

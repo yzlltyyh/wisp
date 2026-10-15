@@ -1,0 +1,690 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yzlltyyh/wisp/scripts/perf/perf-record.schema.json",
+  "title": "Wisp 性能记录（measure-*.sh 写出的记录与 scripts/perf/baselines/<os>.json）",
+  "type": "object",
+  "required": ["schema", "ts", "os", "version", "idle", "latency"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "wisp.perf/1"
+    },
+    "ts": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "os": {
+      "enum": ["macos", "windows", "linux"]
+    },
+    "os_version": {
+      "type": ["string", "null"]
+    },
+    "arch": {
+      "type": ["string", "null"]
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "build": {
+      "enum": ["release", "debug", null]
+    },
+    "machine": {
+      "type": ["string", "null"]
+    },
+    "idle": {
+      "type": ["object", "null"],
+      "required": [
+        "duration_s",
+        "samples",
+        "rss_main",
+        "rss_webview",
+        "webview_attribution",
+        "cpu_avg",
+        "cpu_webview_avg",
+        "cpu_total_avg",
+        "wakeups",
+        "wakeups_webview"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "duration_s": {
+          "type": "number",
+          "minimum": 0
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rss_main": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rss_main_max": {
+          "type": "number",
+          "minimum": 0
+        },
+        "rss_webview": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "rss_webview_max": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "webview_processes": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "webview_attribution": {
+          "enum": ["responsible", "responsible-approx", "descendants", null]
+        },
+        "cpu_avg": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cpu_max": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cpu_webview_avg": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "cpu_webview_max": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "cpu_total_avg": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "wakeups": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "wakeups_webview": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "wakeups_method": {
+          "type": ["string", "null"]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "memory_metric": {
+          "enum": ["rss", "phys_footprint", "working_set"],
+          "description": "rss_* 字段的口径"
+        },
+        "launch_env": {
+          "type": ["boolean", "null"],
+          "description": "macOS：这次启动的应用日志里 `preflight … launch_env=` 的值，即经 LaunchServices / LaunchAgent 启动时 Info.plist 的 LSEnvironment（MallocSpaceEfficient=1）是否生效（record.mjs 从 --app-log 得出）。读不到日志、日志里没有这一项或不是 macOS 时为 null"
+        },
+        "activity": {
+          "type": ["object", "null"],
+          "description": "采样窗口里的用户活动，由 record.mjs 从应用的 debug 日志得出：macOS 剪贴板轮询各档的时长、复制次数。有人在用时 smoke-gate 把 CPU / 唤醒判定降为告警",
+          "required": ["tiers_s", "copies", "user_active_s"],
+          "additionalProperties": false,
+          "properties": {
+            "tiers_s": {
+              "type": ["object", "null"],
+              "description": "窗口里各档的秒数（只有 macOS 有分档；屏幕空闲闸门打开的时段计入 screens_idle）",
+              "required": ["active", "quiet", "away", "screens_idle"],
+              "additionalProperties": false,
+              "properties": {
+                "active": { "type": "number", "minimum": 0 },
+                "quiet": { "type": "number", "minimum": 0 },
+                "away": { "type": "number", "minimum": 0 },
+                "screens_idle": { "type": "number", "minimum": 0 }
+              }
+            },
+            "copies": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "窗口里记进历史的复制次数"
+            },
+            "user_active_s": {
+              "type": ["number", "null"],
+              "minimum": 0,
+              "description": "不能用 exercise 解释的活跃档时长（exercise 结束后 32 s 以内的不算）；没有分档时为 null"
+            }
+          }
+        },
+        "session": {
+          "type": ["object", "null"],
+          "description": "会话后空闲（measure-*.sh --exercise）的核对信息，由 record.mjs 从应用日志得出：exercise 是否唤出过面板、采样窗口是回收前还是回收后。时刻均为 exercise 结束后的秒数",
+          "required": ["settle_s", "window_s", "shown", "state"],
+          "additionalProperties": false,
+          "properties": {
+            "settle_s": {
+              "type": "number",
+              "minimum": 0
+            },
+            "window_s": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "description": "采样窗口 [起, 止]"
+            },
+            "traces": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "exercise 开始之后日志里的 perf 追踪数"
+            },
+            "shown": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "其中面板显示过的追踪数；读不到日志时为 null"
+            },
+            "recycles_s": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "description": "面板回收（panel … recycling webview）的时刻"
+            },
+            "unloads_s": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "description": "空闲卸载（panel idle, unloading webview）的时刻"
+            },
+            "state": {
+              "enum": ["hot", "recycled", "unloaded", "mixed", "unknown"],
+              "description": "hot：采样结束前没有回收 / 卸载（回收前，刚用过）；recycled / unloaded：采样开始前已回收 / 卸载、采样期间没有；mixed：采样期间发生了；unknown：读不到日志"
+            },
+            "panel": {
+              "enum": ["hidden", "visible", "unknown"],
+              "description": "采样窗口里面板的状态（debug 级别日志）：hidden：exercise 唤出的面板在窗口开始前都已开始隐藏、窗口里没有再上屏；visible：窗口开始时仍有面板在屏幕上或窗口里有面板上屏（测的是可见的面板）；unknown：日志里没有 debug 行"
+            },
+            "views": {
+              "type": ["array", "null"],
+              "items": {
+                "type": "string"
+              },
+              "description": "exercise 之后上屏过的面板视图（按上屏顺序，PanelView 的 snake_case：input / clipboard / translate …）；没有 debug 日志时为 null"
+            },
+            "hides": {
+              "type": ["object", "null"],
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "description": "上屏过的面板的隐藏原因计数（HideReason 的 snake_case；unlogged：Rust 内部直接隐藏、没有原因日志）"
+            },
+            "last_hide_s": {
+              "type": ["number", "null"],
+              "description": "最后一次开始隐藏面板的时刻"
+            },
+            "clipboard": {
+              "type": ["object", "null"],
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "description": "exercise 之后应用记录到的剪贴板变化：新条目按 ClipKind 的 snake_case 计数（exercise.mjs 灌入的使用画像）；内容与历史里已有的条目相同、只被置顶的记为 touched"
+            },
+            "log_lines": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "采样窗口里写出的日志行数（空闲时应接近 0）"
+            },
+            "log": {
+              "type": ["string", "null"],
+              "description": "应用日志的来源（文件名）"
+            }
+          }
+        }
+      }
+    },
+    "latency": {
+      "type": ["object", "null"],
+      "required": ["source", "count", "p50", "p95"],
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "enum": ["log", "smoke"]
+        },
+        "metric": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "p50": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "p95": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "max": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "mean": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "ready_timeouts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "first_token_p50": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "first_token_p95": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "overlay_p50": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "overlay_p95": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "overlay_max": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "overlay_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pages": {
+          "type": "object",
+          "description": "按 perf 行 page= 分组的 prepare→shown 与 ready 超时：warm 热页面、recycled 回收出来的新页面、cold 空闲卸载后重建（冷唤出 ≤ 150 ms，不计入主指标）",
+          "additionalProperties": false,
+          "properties": {
+            "warm": {
+              "type": "object",
+              "required": ["count", "p50", "p95", "max", "ready_timeouts"],
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "p50": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "p95": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "max": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "ready_timeouts": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "recycled": {
+              "type": "object",
+              "required": ["count", "p50", "p95", "max", "ready_timeouts"],
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "p50": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "p95": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "max": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "ready_timeouts": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            },
+            "cold": {
+              "type": "object",
+              "required": ["count", "p50", "p95", "max", "ready_timeouts"],
+              "additionalProperties": false,
+              "properties": {
+                "window": {
+                  "type": "object",
+                  "description": "冷唤出的卡片上屏（prepare→window_ms：原生外壳上屏或交接时刻）；冷唤出 150 ms 的硬门禁按它判，p50 / p95 / max 是内容首帧（prepare→shown）",
+                  "required": ["count", "p50", "p95", "max"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "p50": {
+                      "type": ["number", "null"],
+                      "minimum": 0
+                    },
+                    "p95": {
+                      "type": ["number", "null"],
+                      "minimum": 0
+                    },
+                    "max": {
+                      "type": ["number", "null"],
+                      "minimum": 0
+                    }
+                  }
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "p50": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "p95": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "max": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "ready_timeouts": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        "split": {
+          "type": "object",
+          "description": "ready 之后的 Rust 侧拆分：ready→原生窗口上屏（window_ms − ready_ms）、ready→成为 key（key_ms − ready_ms）、ready→shown",
+          "additionalProperties": false,
+          "properties": {
+            "ready_to_window": {
+              "type": "object",
+              "required": ["count", "p50", "p95", "max"],
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "p50": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "p95": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "max": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                }
+              }
+            },
+            "ready_to_key": {
+              "type": "object",
+              "required": ["count", "p50", "p95", "max"],
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "p50": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "p95": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "max": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                }
+              }
+            },
+            "ready_to_shown": {
+              "type": "object",
+              "required": ["count", "p50", "p95", "max"],
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "p50": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "p95": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                },
+                "max": {
+                  "type": ["number", "null"],
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        },
+        "first_show": {
+          "type": "object",
+          "description": "每次启动后的第一次面板唤出：次数、ready 超时次数、没有显示的次数、prepare→shown 最大值",
+          "required": ["count", "ready_timeouts", "not_shown", "max"],
+          "additionalProperties": false,
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ready_timeouts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "not_shown": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max": {
+              "type": ["number", "null"],
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "smoke": {
+      "type": ["object", "null"],
+      "description": "冒烟摘要按构建类型分组：release（CI 的 macOS 冒烟）与 debug（本机冒烟）口径不同，分开保存、分开比较",
+      "additionalProperties": false,
+      "properties": {
+        "release": {
+          "type": "object",
+          "required": ["cold_start_ms", "rss_main", "prepare_to_shown_p95"],
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "cold_start_ms": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "panel_prewarm_ms": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "rss_main": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "rss_main_peak": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "prepare_to_shown_p95": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "trigger_to_shown_p95": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "windows_end": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "memory_metric": {
+              "enum": ["rss", "phys_footprint", "working_set"]
+            },
+            "os_version": {
+              "type": ["string", "null"],
+              "description": "录制这份冒烟的系统版本（跨系统大版本时 RSS 退化比较只告警）"
+            },
+            "rss_webview": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "rss_webview_peak": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "webview_attribution": {
+              "type": ["string", "null"]
+            }
+          }
+        },
+        "debug": {
+          "type": "object",
+          "required": ["cold_start_ms", "rss_main", "prepare_to_shown_p95"],
+          "additionalProperties": false,
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "cold_start_ms": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "panel_prewarm_ms": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "rss_main": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "rss_main_peak": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "prepare_to_shown_p95": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "trigger_to_shown_p95": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "windows_end": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "memory_metric": {
+              "enum": ["rss", "phys_footprint", "working_set"]
+            },
+            "os_version": {
+              "type": ["string", "null"],
+              "description": "录制这份冒烟的系统版本（跨系统大版本时 RSS 退化比较只告警）"
+            },
+            "rss_webview": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "rss_webview_peak": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "webview_attribution": {
+              "type": ["string", "null"]
+            }
+          }
+        }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_ready_timeouts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_rss_main": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "会话后窗口（记录带 idle.session：回收前 / 回收后）主进程内存的参考值（MiB，与基线的空闲段同一环境实测、取两个窗口的较大者）：smoke-gate 按 regression 与 floor.rss 判退化，经 LaunchServices 启动的 macOS release 记录是硬门禁"
+        },
+        "regression": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "floor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rss": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cpu": {
+              "type": "number",
+              "minimum": 0
+            },
+            "wakeups": {
+              "type": "number",
+              "minimum": 0
+            },
+            "latency": {
+              "type": "number",
+              "minimum": 0
+            },
+            "cold_start": {
+              "type": "number",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

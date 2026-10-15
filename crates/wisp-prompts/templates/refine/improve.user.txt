@@ -1,0 +1,13 @@
+<source_text>
+{{text}}
+</source_text>
+
+<draft_translation>
+{{draft}}
+</draft_translation>
+
+<review>
+{{review}}
+</review>
+
+Produce the final {{target_lang}} translation of <source_text>, applying the corrections in <review> and keeping everything else from the draft. Reply with the translation only.

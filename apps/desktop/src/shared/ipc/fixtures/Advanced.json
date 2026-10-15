@@ -1,0 +1,5 @@
+{
+  "log_level": "debug",
+  "webview_low_memory_when_hidden": false,
+  "unload_panel_after_idle_min": 60
+}

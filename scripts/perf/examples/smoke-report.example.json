@@ -1,0 +1,124 @@
+{
+  "schema": 1,
+  "ok": true,
+  "failures": [],
+  "ts": 1791648000000,
+  "os": "macos",
+  "os_version": "26.4.0",
+  "arch": "aarch64",
+  "version": "0.1.0",
+  "debug_build": false,
+  "fake_llm": true,
+  "duration_ms": 9120,
+  "log_file": "target/smoke-report.log",
+  "startup": {
+    "tray_ready_ms": 412,
+    "pre_main_ms": 38,
+    "stages": [
+      {
+        "name": "settings_loaded",
+        "ms": 31
+      },
+      {
+        "name": "services",
+        "ms": 96
+      },
+      {
+        "name": "tray_ready",
+        "ms": 412
+      },
+      {
+        "name": "services_started",
+        "ms": 413
+      },
+      {
+        "name": "setup_done",
+        "ms": 413
+      },
+      {
+        "name": "panel_prewarmed",
+        "ms": 598
+      }
+    ]
+  },
+  "panel_prewarm_ms": 598,
+  "first_translate": {
+    "shown_ms": 41,
+    "first_token_ms": 152,
+    "finished": true,
+    "elapsed_ms": 880,
+    "ready_timeout": false,
+    "prepare_to_shown_ms": 22
+  },
+  "triggers": {
+    "count": 100,
+    "shown": 100,
+    "ready_timeouts": 0,
+    "hangs": 0,
+    "prepare_to_shown_ms": {
+      "p50": 16,
+      "p95": 23,
+      "max": 31
+    },
+    "trigger_to_shown_ms": {
+      "p50": 21,
+      "p95": 29,
+      "max": 38
+    },
+    "first": {
+      "index": 1,
+      "shown": true,
+      "ready_timeout": false,
+      "hang": false,
+      "prepare_to_shown_ms": 21,
+      "trigger_to_shown_ms": 30
+    },
+    "last": {
+      "index": 100,
+      "shown": true,
+      "ready_timeout": false,
+      "hang": false,
+      "prepare_to_shown_ms": 17,
+      "trigger_to_shown_ms": 24
+    }
+  },
+  "overlay": {
+    "count": 5,
+    "shown": 5,
+    "p50": 82,
+    "p95": 97,
+    "max": 101
+  },
+  "settings_window": {
+    "opened": true,
+    "open_ms": 182,
+    "closed": true,
+    "close_ms": 19
+  },
+  "windows": {
+    "peak": 2,
+    "end": 1,
+    "labels_end": ["panel"]
+  },
+  "post_session_idle": {
+    "seconds": 10.0,
+    "cpu_pct": 0.01,
+    "wakeups_per_s": 0.4
+  },
+  "memory_metric": "phys_footprint",
+  "rss_kb": {
+    "after_startup": 30720,
+    "after_triggers": 36352,
+    "end": 37274
+  },
+  "webview": {
+    "memory_metric": "phys_footprint",
+    "attribution": "approx",
+    "samples": 14,
+    "hot_samples": 8,
+    "hot_kb": 51712,
+    "peak_kb": 88064,
+    "processes": 3,
+    "notes": []
+  }
+}

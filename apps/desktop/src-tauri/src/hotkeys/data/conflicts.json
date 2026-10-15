@@ -1,0 +1,634 @@
+{
+  "schema_version": 1,
+  "sources": "各平台系统快捷键取自官方文档与系统设置；邻居应用的 bundle id / 进程名已逐条核实，来源写在每条的 source 字段；verified=false 的是没有找到公开来源的条目",
+  "levels": "forbidden = 系统保留（红，不能保存，注册时视为失败参与回退）；warning = 高冲突（黄，可「仍然使用」）；info = 有条件冲突（灰，只提示）；kind = edit 表示通用编辑键（复制 / 粘贴 / 剪切 / 全选 / 撤销，以及 Wisp 自己会模拟的终端复制粘贴键）：注册成全局键会截获 Wisp 自己注入的按键，一律禁止",
+  "entries": [
+    { "os": ["macos"], "combo": "Super+Space", "level": "forbidden", "note": "Spotlight" },
+    { "os": ["macos"], "combo": "Control+Space", "level": "forbidden", "note": "上一个输入源" },
+    { "os": ["macos"], "combo": "Control+Alt+Space", "level": "forbidden", "note": "下一个输入源" },
+    { "os": ["macos"], "combo": "Super+Tab", "level": "forbidden", "note": "App 切换" },
+    { "os": ["macos"], "combo": "Super+KeyQ", "level": "forbidden", "note": "退出 App" },
+    { "os": ["macos"], "combo": "Alt+Super+Escape", "level": "forbidden", "note": "强制退出" },
+    {
+      "os": ["macos"],
+      "combo": "Shift+Super+Digit3",
+      "level": "forbidden",
+      "note": "截图（全屏）"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Shift+Super+Digit4",
+      "level": "forbidden",
+      "note": "截图（区域）"
+    },
+    { "os": ["macos"], "combo": "Shift+Super+Digit5", "level": "forbidden", "note": "截图 App" },
+    {
+      "os": ["macos"],
+      "combo": "Control+Shift+Super+Digit3",
+      "level": "forbidden",
+      "note": "截图到剪贴板"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Control+Shift+Super+Digit4",
+      "level": "forbidden",
+      "note": "区域截图到剪贴板"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Shift+Super+Digit6",
+      "level": "forbidden",
+      "note": "询问屏幕区域（macOS 27）"
+    },
+    { "os": ["macos"], "combo": "Control+Super+KeyQ", "level": "forbidden", "note": "锁定屏幕" },
+    {
+      "os": ["macos"],
+      "combo": "Shift+Super+Space",
+      "level": "forbidden",
+      "note": "Siri / 1Password Quick Access"
+    },
+    { "os": ["macos"], "combo": "Control+Super+Space", "level": "forbidden", "note": "表情与符号" },
+    {
+      "os": ["macos"],
+      "combo": "Super+KeyC",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "复制（Wisp 取词的复制回退会模拟它）"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Super+KeyV",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "粘贴（Wisp 粘贴回原应用会模拟它）"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Super+KeyX",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "剪切"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Super+KeyA",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "全选"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Super+KeyZ",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "撤销"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Shift+Super+KeyV",
+      "level": "warning",
+      "app": "Paste / Clipy",
+      "note": "剪贴板备选键，保留但标黄；也是「粘贴并匹配样式」"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Shift+Super+KeyD",
+      "level": "warning",
+      "app": "Finder",
+      "note": "桌面文件夹 / Mail 发送"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Shift+Super+KeyS",
+      "level": "warning",
+      "app": "macOS",
+      "note": "存储为 / 复制"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Alt+Super+KeyD",
+      "level": "warning",
+      "app": "Dock",
+      "note": "显示 / 隐藏 Dock"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Alt+Super+KeyS",
+      "level": "warning",
+      "app": "Finder",
+      "note": "边栏"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Alt+Super+KeyV",
+      "level": "warning",
+      "app": "Finder",
+      "note": "移动文件"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Alt+Space",
+      "level": "warning",
+      "app": "Raycast / Alfred",
+      "note": "启动器、JetBrains Quick Definition"
+    },
+    {
+      "os": ["macos"],
+      "combo": "Control+Alt+KeyD",
+      "level": "info",
+      "app": "Rectangle",
+      "note": "左三分之一"
+    },
+    { "os": ["macos"], "combo": "Control+Alt+KeyF", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+KeyG", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+KeyE", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+KeyT", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+KeyC", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+KeyU", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+KeyI", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+KeyJ", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+KeyK", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+Enter", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+ArrowLeft", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+ArrowRight", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+ArrowUp", "level": "info", "app": "Rectangle" },
+    { "os": ["macos"], "combo": "Control+Alt+ArrowDown", "level": "info", "app": "Rectangle" },
+    {
+      "os": ["macos"],
+      "combo": "Shift+Super+Digit2",
+      "level": "info",
+      "app": "CleanShot X / Shottr"
+    },
+    { "os": ["macos"], "combo": "Alt+Super+KeyC", "level": "info", "app": "Alfred" },
+    { "os": ["macos"], "combo": "Shift+Super+KeyC", "level": "info", "app": "Maccy" },
+    { "os": ["macos"], "combo": "Control+Super+KeyA", "level": "info", "app": "WeChat / QQ" },
+    { "os": ["macos"], "combo": "Shift+Super+KeyA", "level": "info", "app": "Lark / DingTalk" },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Alt+Delete",
+      "level": "forbidden",
+      "note": "安全选项 / 注销"
+    },
+    { "os": ["windows", "linux"], "combo": "Alt+Tab", "level": "forbidden", "note": "窗口切换" },
+    { "os": ["windows", "linux"], "combo": "Alt+F4", "level": "forbidden", "note": "关闭窗口" },
+    { "os": ["windows", "linux"], "combo": "Super+KeyL", "level": "forbidden", "note": "锁屏" },
+    { "os": ["windows", "linux"], "combo": "PrintScreen", "level": "forbidden", "note": "截图" },
+    { "os": ["windows", "linux"], "combo": "Alt+Space", "level": "forbidden", "note": "窗口菜单" },
+    {
+      "os": ["windows"],
+      "combo": "Control+Shift+Escape",
+      "level": "forbidden",
+      "note": "任务管理器"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Super+Space",
+      "level": "forbidden",
+      "note": "切换输入源（GNOME）"
+    },
+    { "os": ["linux"], "combo": "Alt+F2", "level": "forbidden", "note": "运行命令（GNOME / KDE）" },
+    {
+      "os": ["linux"],
+      "combo": "Control+Alt+Tab",
+      "level": "forbidden",
+      "note": "切换系统控件（GNOME）"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Control+Alt+Escape",
+      "level": "forbidden",
+      "note": "切换系统控件（GNOME）"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+KeyC",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "复制（Wisp 取词的复制回退会模拟它）"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+KeyV",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "粘贴（Wisp 粘贴回原应用会模拟它）"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+KeyX",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "剪切"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+KeyA",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "全选"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+KeyZ",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "撤销"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Insert",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "复制（mintty 等终端，Wisp 会模拟它）"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Shift+KeyC",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "终端复制（Windows Terminal / conhost / Linux 终端，Wisp 会模拟它）"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Control+Shift+KeyV",
+      "level": "forbidden",
+      "kind": "edit",
+      "note": "终端粘贴（Linux 终端，Wisp 会模拟它）"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Alt+KeyA",
+      "level": "warning",
+      "app": "QQ",
+      "note": "截图；Windows / Linux 输入翻译的备选键"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Shift+KeyD",
+      "level": "warning",
+      "app": "Chrome / Edge"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Shift+KeyT",
+      "level": "warning",
+      "app": "Chrome / Edge"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Shift+KeyW",
+      "level": "warning",
+      "app": "Chrome / Edge"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Shift+KeyN",
+      "level": "warning",
+      "app": "Chrome / Edge"
+    },
+    {
+      "os": ["windows", "linux"],
+      "combo": "Control+Shift+KeyS",
+      "level": "warning",
+      "app": "Office / Chrome"
+    },
+    {
+      "os": ["windows"],
+      "combo": "Control+Shift+KeyV",
+      "level": "warning",
+      "app": "Chrome / Office"
+    },
+    { "os": ["windows"], "combo": "Alt+KeyA", "level": "warning", "app": "WeChat" },
+    { "os": ["windows"], "combo": "Control+Shift+KeyA", "level": "warning", "app": "DingTalk" },
+    {
+      "os": ["windows"],
+      "combo": "Super+KeyV",
+      "level": "warning",
+      "app": "Windows",
+      "note": "剪贴板历史"
+    },
+    { "os": ["windows"], "combo": "Shift+Super+KeyS", "level": "warning", "app": "Snipping Tool" },
+    { "os": ["windows"], "combo": "Shift+Super+KeyT", "level": "warning", "app": "PowerToys" },
+    { "os": ["windows"], "combo": "Shift+Super+KeyC", "level": "warning", "app": "PowerToys" },
+    {
+      "os": ["windows"],
+      "combo": "Control+Alt+KeyV",
+      "level": "info",
+      "app": "Word",
+      "note": "选择性粘贴（只在编辑器内）"
+    },
+    {
+      "os": ["windows"],
+      "combo": "Control+Alt+KeyS",
+      "level": "info",
+      "app": "Word",
+      "note": "拆分窗口"
+    },
+    {
+      "os": ["windows"],
+      "combo": "Control+Alt+KeyD",
+      "level": "info",
+      "app": "Word",
+      "note": "尾注"
+    },
+    {
+      "os": ["windows"],
+      "combo": "Control+Alt+Shift+KeyS",
+      "level": "info",
+      "app": "Word",
+      "note": "样式窗格"
+    },
+    {
+      "os": ["windows"],
+      "combo": "Alt+Shift+KeyD",
+      "level": "info",
+      "app": "Word",
+      "note": "插入日期域"
+    },
+    {
+      "os": ["windows"],
+      "combo": "Alt+Shift+KeyT",
+      "level": "info",
+      "app": "Word",
+      "note": "插入时间域"
+    },
+    { "os": ["windows"], "combo": "Alt+Shift+KeyA", "level": "info", "app": "Lark" },
+    { "os": ["windows"], "combo": "Control+Backquote", "level": "info", "app": "Ditto / VS Code" },
+    {
+      "os": ["linux"],
+      "combo": "Super+KeyV",
+      "level": "warning",
+      "app": "GNOME / KDE",
+      "note": "通知列表 / Klipper"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Super+KeyA",
+      "level": "warning",
+      "app": "GNOME",
+      "note": "应用列表"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Super+KeyS",
+      "level": "warning",
+      "app": "GNOME",
+      "note": "系统菜单"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Super+KeyN",
+      "level": "warning",
+      "app": "GNOME",
+      "note": "聚焦通知"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Super+KeyH",
+      "level": "warning",
+      "app": "GNOME",
+      "note": "隐藏窗口"
+    },
+    { "os": ["linux"], "combo": "Super+KeyE", "level": "warning", "app": "KDE", "note": "Dolphin" },
+    {
+      "os": ["linux"],
+      "combo": "Super+KeyD",
+      "level": "warning",
+      "app": "KDE",
+      "note": "显示桌面"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Control+Alt+Shift+KeyR",
+      "level": "warning",
+      "app": "GNOME",
+      "note": "录屏"
+    },
+    {
+      "os": ["linux"],
+      "combo": "Alt+Super+KeyS",
+      "level": "info",
+      "app": "GNOME",
+      "note": "读屏开关；Linux 截图 OCR 的备选键"
+    },
+    { "os": ["linux"], "combo": "Control+Backquote", "level": "info", "app": "VS Code" }
+  ],
+  "neighbors": [
+    {
+      "name": "Bob",
+      "os": "macos",
+      "ids": ["com.hezongyidev.Bob", "com.ripperhe.Bob"],
+      "combos": ["Alt+KeyD", "Alt+KeyS", "Alt+KeyA", "Alt+Shift+KeyS"],
+      "verified": true,
+      "source": "1.x：官方文档 AppleScript 调用 tell application id \"com.hezongyidev.Bob\"（bobtranslate.com/guide/integration/applescript.html）；0.x：Homebrew cask bob-app 的 zap 路径 com.ripperhe.Bob；默认键：bobtranslate.com/guide（⌥D / ⌥S / ⌥A / ⇧⌥S）"
+    },
+    {
+      "name": "Easydict",
+      "os": "macos",
+      "ids": ["com.izual.Easydict"],
+      "combos": ["Alt+KeyD", "Alt+KeyA", "Alt+KeyS", "Alt+Shift+KeyS"],
+      "verified": true,
+      "source": "Homebrew cask easydict 的 zap 路径；默认键：tisfeng/Easydict README"
+    },
+    {
+      "name": "Pot",
+      "os": "macos",
+      "ids": ["com.pot-app.desktop"],
+      "combos": [],
+      "verified": true,
+      "source": "pot-app/pot-desktop src-tauri/tauri.conf.json 的 bundle.identifier；Homebrew cask pot 的 zap 路径；默认没有全局快捷键"
+    },
+    {
+      "name": "Raycast",
+      "os": "macos",
+      "ids": ["com.raycast.macos"],
+      "combos": ["Alt+Space"],
+      "verified": true,
+      "source": "Homebrew cask raycast 的 quit / zap（formulae.brew.sh/api/cask/raycast.json）"
+    },
+    {
+      "name": "PopClip",
+      "os": "macos",
+      "ids": ["com.pilotmoon.popclip"],
+      "combos": [],
+      "verified": true,
+      "source": "Homebrew cask popclip 的 quit / zap（formulae.brew.sh/api/cask/popclip.json）；没有全局快捷键"
+    },
+    {
+      "name": "Maccy",
+      "os": "macos",
+      "ids": ["org.p0deje.Maccy"],
+      "combos": ["Shift+Super+KeyC"],
+      "verified": true,
+      "source": "Homebrew cask maccy 的 quit / zap（formulae.brew.sh/api/cask/maccy.json）"
+    },
+    {
+      "name": "Paste",
+      "os": "macos",
+      "ids": ["com.wiheads.paste", "com.wiheads.paste-setapp", "com.wiheads.paste-direct"],
+      "combos": ["Shift+Super+KeyV"],
+      "verified": true,
+      "source": "官网直装 / Homebrew：cask paste 的 zap 路径 com.wiheads.paste-direct；App Store：com.wiheads.paste（沙盒容器路径）；Setapp：com.wiheads.paste-setapp（iboostup.com 的应用记录）"
+    },
+    {
+      "name": "Clipy",
+      "os": "macos",
+      "ids": ["com.clipy-app.Clipy"],
+      "combos": ["Shift+Super+KeyV", "Control+Super+KeyV"],
+      "verified": true,
+      "source": "Homebrew cask clipy 的 quit / zap（formulae.brew.sh/api/cask/clipy.json）"
+    },
+    {
+      "name": "Alfred",
+      "os": "macos",
+      "ids": ["com.runningwithcrayons.Alfred"],
+      "combos": ["Alt+Space", "Alt+Super+KeyC"],
+      "verified": true,
+      "source": "Homebrew cask alfred 的 quit / zap（formulae.brew.sh/api/cask/alfred.json）"
+    },
+    {
+      "name": "Snipaste",
+      "os": "macos",
+      "ids": ["com.Snipaste"],
+      "combos": ["F1", "F3"],
+      "verified": true,
+      "source": "Homebrew cask snipaste 的 quit / zap（formulae.brew.sh/api/cask/snipaste.json）；默认键：Snipaste/feedback wiki Getting Started（F1 截图、F3 贴图）"
+    },
+    {
+      "name": "PixPin",
+      "os": "macos",
+      "ids": ["com.depthpicture.PixPin"],
+      "combos": ["Control+Digit1", "Control+Digit2"],
+      "verified": true,
+      "source": "PixPin.app 的 Contents/Info.plist（3.5.5.1）与 Homebrew cask pixpin；默认键：默认配置下 PixPin 日志里的全局快捷键为 Qt 的 Meta+1（即 ⌃1），官方文档 pixpin.cn/docs/start/quick-start 为 Ctrl+1 截图、Ctrl+2 贴图（不是 F1 / F3）"
+    },
+    {
+      "name": "uTools",
+      "os": "macos",
+      "ids": ["org.yuanli.utools"],
+      "combos": ["Alt+Space"],
+      "verified": true,
+      "source": "uTools.app 的 Contents/Info.plist（7.8.0）与 Homebrew cask utools；默认键：u-tools.cn/docs/guide/shortcut.html（⌥Space）"
+    },
+    {
+      "name": "QQ",
+      "os": "macos",
+      "ids": ["com.tencent.qq"],
+      "combos": ["Control+Super+KeyA"],
+      "verified": true,
+      "source": "QQ.app 的 Contents/Info.plist（7.0.2）与 Homebrew cask qq"
+    },
+    {
+      "name": "Pot",
+      "os": "windows",
+      "ids": ["pot.exe"],
+      "combos": [],
+      "verified": true,
+      "source": "pot-app/pot-desktop tauri.conf.json 的 package.productName = pot（Tauri 以它命名 exe）"
+    },
+    {
+      "name": "Snipaste",
+      "os": "windows",
+      "ids": ["Snipaste.exe"],
+      "combos": ["F1", "F3"],
+      "verified": true,
+      "source": "Snipaste/feedback wiki Command Line Options（X:/path/to/your/Snipaste.exe）；默认键同上"
+    },
+    {
+      "name": "PixPin",
+      "os": "windows",
+      "ids": ["PixPin.exe"],
+      "combos": ["Control+Digit1", "Control+Digit2"],
+      "verified": true,
+      "source": "Scoop 清单 dodorz/scoop PixPin.json 的 bin；默认键：pixpin.cn/docs/start/quick-start（Ctrl+1 / Ctrl+2）"
+    },
+    {
+      "name": "uTools",
+      "os": "windows",
+      "ids": ["uTools.exe"],
+      "combos": ["Alt+Space"],
+      "verified": true,
+      "source": "社区脚本（autoahk.com / cnblogs）以 Process,Exist,uTools.exe 检测；默认键：u-tools.cn/docs/guide/shortcut.html（Alt+Space）"
+    },
+    {
+      "name": "Ditto",
+      "os": "windows",
+      "ids": ["Ditto.exe"],
+      "combos": ["Control+Backquote"],
+      "verified": true,
+      "source": "sabrogden/Ditto CP_Main.vcxproj 的 TargetName = Ditto"
+    },
+    {
+      "name": "QQ",
+      "os": "windows",
+      "ids": ["QQ.exe"],
+      "combos": ["Control+Alt+KeyA"],
+      "verified": true,
+      "source": "QQNT 主程序 Tencent\\QQNT\\QQ.exe（NapCatQQ issue #2091 的启动命令）"
+    },
+    {
+      "name": "Raycast",
+      "os": "windows",
+      "ids": ["Raycast.exe"],
+      "combos": ["Alt+Space"],
+      "verified": false,
+      "source": "未核实：Raycast for Windows 仍是 beta，没有找到公开的进程名来源（winget / Store 页面不列 exe 名）。默认键：新装为单独的 Win 键（Wisp 不会与之重合），较早安装为 Alt+Space（manual.raycast.com/settings）"
+    },
+    {
+      "name": "PowerToys",
+      "os": "windows",
+      "ids": ["PowerToys.exe"],
+      "combos": ["Alt+Space", "Shift+Super+KeyT", "Shift+Super+KeyC"],
+      "verified": true,
+      "source": "microsoft/PowerToys src/runner/runner.vcxproj 的 TargetName = PowerToys（各模块的快捷键由这个常驻进程管理）"
+    },
+    {
+      "name": "WeChat",
+      "os": "windows",
+      "ids": ["WeChat.exe", "Weixin.exe"],
+      "combos": ["Alt+KeyA"],
+      "verified": true,
+      "source": "3.x 为 WeChat.exe，4.0.5 起改名 Weixin.exe（WeFlow issue #100 同时检测两者、WeixinUnlockMutex README）"
+    },
+    {
+      "name": "Pot",
+      "os": "linux",
+      "ids": ["pot"],
+      "combos": [],
+      "verified": true,
+      "source": "官方 deb pot_<ver>_amd64.deb 安装 /usr/bin/pot（AUR pot-translation-bin；productName = pot）"
+    },
+    {
+      "name": "uTools",
+      "os": "linux",
+      "ids": ["utools"],
+      "combos": ["Alt+Space"],
+      "verified": true,
+      "source": "官方 deb 安装 /opt/uTools/utools，utools.desktop 的 StartupWMClass=uTools（比较时不区分大小写）"
+    },
+    {
+      "name": "QQ",
+      "os": "linux",
+      "ids": ["qq"],
+      "combos": ["Control+Alt+KeyA"],
+      "verified": true,
+      "source": "官方 deb 的 qq.desktop：Exec=/opt/QQ/qq（AUR linuxqq PKGBUILD）"
+    },
+    {
+      "name": "Snipaste",
+      "os": "linux",
+      "ids": ["snipaste"],
+      "combos": ["F1", "F3"],
+      "verified": true,
+      "source": "AppImage 内的 bin/Snipaste 与 Snipaste.desktop（AUR snipaste PKGBUILD）"
+    },
+    {
+      "name": "CopyQ",
+      "os": "linux",
+      "ids": ["copyq"],
+      "combos": [],
+      "verified": true,
+      "source": "hluk/CopyQ shared/com.github.hluk.copyq.desktop.in：Exec=copyq --start-server show；默认没有全局快捷键"
+    }
+  ]
+}

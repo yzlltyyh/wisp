@@ -1,0 +1,304 @@
+/*
+ * 组件展示页（?scenario=shell.gallery，只在浏览器 mock 中加载）的版式。不是产品界面，颜色仍只取令牌。
+ */
+html[data-window='gallery'],
+html[data-window='gallery'] body {
+  overflow: auto;
+  height: auto;
+  background: var(--surface-solid);
+}
+html[data-window='gallery'] #wisp-mock-desktop {
+  display: none;
+}
+html[data-window='gallery'] #root {
+  min-height: 100vh;
+  background: var(--surface-solid);
+  position: relative !important;
+  transform: none !important;
+  visibility: visible !important;
+  width: auto !important;
+  height: auto !important;
+  overflow: visible !important;
+  z-index: 1;
+}
+.gal {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 32px 32px 96px;
+  color: var(--fg);
+}
+.gal-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding-bottom: 24px;
+  margin-bottom: 32px;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.gal-title {
+  margin: 0;
+  font-size: var(--text-page);
+  line-height: var(--lh-page);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.gal-sub {
+  margin: 4px 0 0;
+  font-size: var(--text-ui);
+  color: var(--fg-2);
+}
+.gal-env {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.gal-section {
+  margin-top: 40px;
+  scroll-margin-top: 24px;
+}
+.gal-section > h2 {
+  margin: 0 0 4px;
+  font-size: var(--text-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+}
+.gal-section > p {
+  margin: 0 0 16px;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}
+.gal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.gal-grid[data-cols='1'] {
+  grid-template-columns: 1fr;
+}
+.gal-grid[data-cols='2'] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.gal-grid[data-cols='3'] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+/* 标本：模拟面板卡片的表面（纯色 + 描边 + 阴影） */
+.gal-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: var(--r-panel);
+  background: var(--surface-tint);
+  box-shadow:
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-popover),
+    var(--highlight-top);
+  min-width: 0;
+}
+[data-frame='native'] .gal-spec {
+  box-shadow:
+    0 0 0 0.5px var(--hairline-strong),
+    0 8px 24px rgb(0 0 0 / 0.12);
+  background: var(--surface-raised);
+}
+.gal-spec-label {
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-2);
+}
+.gal-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.gal-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gal-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.gal-state > span:last-child {
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+  color: var(--fg-2);
+}
+.gal-swatch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--text-meta);
+}
+.gal-swatch i {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-control);
+  box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+  flex: none;
+}
+.gal-swatch code {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-2);
+}
+.gal-type {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.gal-type code {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-2);
+}
+.gal-box {
+  width: 64px;
+  height: 40px;
+  background: var(--surface-raised);
+}
+.gal-stage {
+  position: relative;
+  height: 180px;
+  overflow: hidden;
+  border-radius: var(--r-card);
+  background:
+    radial-gradient(60% 80% at 20% 20%, var(--accent-soft), transparent 70%), var(--fill-control);
+}
+.gal-mini {
+  position: absolute;
+  left: 50%;
+  width: 220px;
+  margin-left: -110px;
+  padding: 12px 14px;
+  border-radius: var(--r-panel);
+  background: var(--surface-solid);
+  box-shadow:
+    inset 0 0 0 1px var(--hairline),
+    var(--shadow-popover),
+    var(--highlight-top);
+  font-size: var(--text-ui);
+}
+.gal-mini[data-placement='below'] {
+  top: 56px;
+}
+.gal-mini[data-placement='above'] {
+  bottom: 56px;
+}
+.gal-mini[data-placement='center'] {
+  top: 50%;
+  margin-top: -36px;
+}
+.gal-anchor {
+  position: absolute;
+  left: calc(50% - 110px + 48px);
+  width: 64px;
+  height: 18px;
+  border-radius: 3px;
+  background: var(--mark-bg);
+}
+.gal-anchor[data-placement='below'] {
+  top: 26px;
+}
+.gal-anchor[data-placement='above'] {
+  bottom: 26px;
+}
+.gal-origin {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--surface-solid);
+  z-index: 2;
+}
+.gal-demo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 96px;
+  border-radius: var(--r-card);
+  background: var(--fill-control);
+  overflow: hidden;
+}
+.gal-chip-target {
+  padding: 8px 12px;
+  border-radius: var(--r-row);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-control);
+  font-size: var(--text-ui);
+}
+.gal-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: -16px 0 8px;
+  font-size: var(--text-meta);
+}
+.gal-nav a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.gal-nav a:hover {
+  text-decoration: underline;
+}
+/* 动效演示：Overlay 暗化与飞入、列表 stagger、确认条 */
+.gal-overlay-demo {
+  position: relative;
+}
+.gal-dim {
+  position: absolute;
+  inset: 0;
+  background: var(--dim-overlay);
+}
+.gal-selection {
+  position: absolute;
+  left: calc(50% - 40px);
+  top: calc(50% - 20px);
+  width: 80px;
+  height: 40px;
+  border-radius: var(--r-control);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--accent-soft);
+}
+.gal-fly-target {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  padding: 4px 8px;
+  border-radius: var(--r-row);
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+  color: var(--fg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-control);
+}
+.gal-stagger {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px 16px;
+}
+.gal-stagger-row {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--fill-control-pressed);
+}
+.gal-confirm-demo {
+  align-items: stretch;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 12px;
+}

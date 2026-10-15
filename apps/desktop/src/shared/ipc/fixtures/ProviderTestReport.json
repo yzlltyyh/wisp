@@ -1,0 +1,42 @@
+{
+  "models": {
+    "ok": true,
+    "status": 200,
+    "elapsed_ms": 280,
+    "url": "api.openai.com/v1/models",
+    "error": null
+  },
+  "stream": {
+    "ok": true,
+    "status": 200,
+    "elapsed_ms": 640,
+    "url": "api.openai.com/v1/chat/completions",
+    "error": null
+  },
+  "overall": "ok",
+  "model_used": "gpt-5-mini",
+  "fetched_models": [
+    {
+      "id": "gpt-5-mini",
+      "label": "GPT-5 mini",
+      "vision": "yes",
+      "vision_source": "keyword",
+      "reasoning": true,
+      "enabled": true,
+      "missing_upstream": false,
+      "deprecated": false,
+      "context_tokens": 400000,
+      "caps": {
+        "temperature": false,
+        "max_tokens_field": "max_completion_tokens",
+        "thinking_param": null,
+        "effort_param": true,
+        "stream_options": true,
+        "include_obfuscation": null,
+        "anthropic_thinking_disabled": null,
+        "anthropic_efforts": null
+      },
+      "reasoning_effort": "minimal"
+    }
+  ]
+}

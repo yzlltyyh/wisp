@@ -1,0 +1,10 @@
+{
+  "theme": "dark",
+  "accent": "#3478F6",
+  "reduce_motion": false,
+  "reduce_transparency": false,
+  "material": "native",
+  "font_size": 14,
+  "os": "macos",
+  "ui_language": "zh-CN"
+}

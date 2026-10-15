@@ -1,0 +1,12 @@
+data: {"id":"ds-1","object":"chat.completion.chunk","model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":""},"finish_reason":null}]}
+
+data: {"id":"ds-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":null,"reasoning_content":"用户要翻译"},"finish_reason":null}]}
+
+data: {"id":"ds-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":null,"reasoning_content":"一句问候。"},"finish_reason":null}]}
+
+data: {"id":"ds-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"reasoning_content":null,"content":"你好"},"finish_reason":null}]}
+
+data: {"id":"ds-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"！"},"finish_reason":"stop"}],"usage":{"prompt_tokens":8,"completion_tokens":20,"total_tokens":28,"completion_tokens_details":{"reasoning_tokens":17}}}
+
+data: [DONE]
+

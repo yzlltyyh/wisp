@@ -1,0 +1,4 @@
+# 模板以 include_str! 逐字嵌入提示词，快照与夹具逐字比对：任何平台检出都必须保持 LF（Windows 上 git 常见 core.autocrlf=true）
+templates/** text eol=lf
+tests/fixtures/** text eol=lf
+tests/snapshots/** text eol=lf

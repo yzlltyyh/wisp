@@ -1,0 +1,2 @@
+data: {"id":"","choices":null,"created":0,"model":"MiniMax-M2.7","object":"chat.completion.chunk","usage":null,"input_sensitive":false,"output_sensitive":false,"input_sensitive_type":0,"output_sensitive_type":0,"output_sensitive_int":0,"base_resp":{"status_code":1008,"status_msg":"insufficient balance"}}
+

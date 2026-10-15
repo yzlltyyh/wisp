@@ -1,0 +1,137 @@
+/*
+ * 组件派生令牌：只随 tailwind.css 进入 React 窗口（面板 / 固定窗口 / 设置 / 引导），Overlay 不引用。
+ * 全部由 tokens.css 的基础令牌派生或补充；深色模式单独调校（强调色作为白字底色时压暗、状态色文字提亮等），
+ * 对比度由 `__tests__/contrast.test.ts` 把关（正文 / 次要文字 / 状态文字 / 按钮标签都 ≥ 4.5:1）。
+ * 强调色相关的四个令牌另由 styles/accent.ts 按实际强调色求解覆盖（见下）。
+ */
+:root {
+  --hairline-strong: rgb(0 0 0 / 0.12); /* 浮层外缘、输入框描边 */
+  --fill-control: rgb(0 0 0 / 0.045); /* 次要按钮、chip、分段控件轨道的静止底色 */
+  --fill-control-hover: rgb(0 0 0 / 0.075);
+  --fill-control-pressed: rgb(0 0 0 / 0.1);
+  --field-bg: rgb(255 255 255 / 0.62); /* 输入框底色：浅色下比卡片略亮 */
+  --field-border: rgb(0 0 0 / 0.12);
+  --switch-off: rgb(0 0 0 / 0.14);
+  --knob: #ffffff;
+  --thumb-bg: #ffffff; /* 分段控件的选中块 */
+  --group-bg: var(--surface-raised); /* 设置页分组卡片 */
+  --checker: rgb(0 0 0 / 0.06); /* 透明图片底下的棋盘格 */
+  /*
+   * 强调色的填充（主按钮、开关、勾选框，上面放 --accent-fg）与强调色文字（链接、选中项）：这里是默认蓝色的值；
+   * 换了强调色（预设 / 自定义 / 系统色）时由 styles/accent.ts 按 WCAG 求解并写成 <html> 的内联值，
+   * 三种状态的标签与强调色文字都 ≥ 4.5:1（contrast.test.ts 核对两边一致）
+   */
+  --accent-fill: color-mix(in srgb, var(--accent) 88%, #000);
+  --accent-fill-hover: color-mix(in srgb, var(--accent) 78%, #000);
+  --accent-fill-pressed: color-mix(in srgb, var(--accent) 68%, #000);
+  --accent-text: color-mix(in srgb, var(--accent) 79%, #000);
+  --danger-fg: #ffffff;
+  /* 危险按钮的底色（上面放 --danger-fg）：略压暗，标签 ≥ 4.5:1 */
+  --danger-fill: color-mix(in srgb, var(--danger) 90%, #000);
+  --danger-text: color-mix(in srgb, var(--danger) 78%, #000);
+  --warning-text: color-mix(in srgb, var(--warning) 68%, #000);
+  --success-text: color-mix(in srgb, var(--success) 68%, #000);
+  --danger-soft: color-mix(in srgb, var(--danger) 10%, transparent);
+  --warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+  --success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --mark-bg: color-mix(in srgb, var(--accent) 22%, transparent); /* 搜索命中高亮 */
+  --selection-bg: color-mix(in srgb, var(--accent) 28%, transparent);
+  --shadow-menu:
+    0 0 0 0.5px rgb(0 0 0 / 0.14), 0 2px 6px rgb(0 0 0 / 0.06), 0 10px 28px rgb(0 0 0 / 0.14);
+  --shadow-control: 0 0 0 0.5px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.12);
+  --shadow-knob: 0 0 0 0.5px rgb(0 0 0 / 0.06), 0 1px 3px rgb(0 0 0 / 0.2);
+  --menu-bg: var(--surface-raised);
+  --tooltip-bg: rgb(30 30 34 / 0.94);
+  --tooltip-fg: #f4f4f6;
+  --kbd-bg: rgb(0 0 0 / 0.045);
+  --kbd-border: rgb(0 0 0 / 0.09);
+  --kbd-fg: var(--fg-2);
+  --kbd-inverted-bg: rgb(255 255 255 / 0.14);
+  --kbd-inverted-border: rgb(255 255 255 / 0.18);
+  --scrollbar-thumb: rgb(0 0 0 / 0.18);
+  --scrollbar-thumb-hover: rgb(0 0 0 / 0.32);
+  --caret: var(--accent);
+  --mask: #000; /* 遮罩的不透明部分（mask-image 只取 alpha，不是显示色） */
+  --r-kbd: 4px;
+  --icon-sm: 14px;
+  --icon: 16px;
+  --lh-title: 20px;
+  --lh-page: 28px;
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 1px;
+  --z-floating: 50;
+  --z-tooltip: 60;
+}
+
+[data-theme='dark'] {
+  --hairline-strong: rgb(255 255 255 / 0.14);
+  --fill-control: rgb(255 255 255 / 0.07);
+  --fill-control-hover: rgb(255 255 255 / 0.1);
+  --fill-control-pressed: rgb(255 255 255 / 0.14);
+  --field-bg: rgb(0 0 0 / 0.22);
+  --field-border: rgb(255 255 255 / 0.12);
+  --switch-off: rgb(255 255 255 / 0.18);
+  --knob: #f4f4f6;
+  --thumb-bg: rgb(255 255 255 / 0.16);
+  --group-bg: rgb(255 255 255 / 0.035);
+  --checker: rgb(255 255 255 / 0.07);
+  /*
+   * 深色下强调色是亮色（#60a5fa）：作为白字底色时在 OKLCH 里只降亮度、色度保持（略提高 15%），不在 sRGB 里混黑——混黑会
+   * 连色度一起丢，填充发灰发闷（66% 混黑 ≈ rgb(63 109 165)，HSL 饱和度只有约 45%）。这里是 accent.ts
+   * 的 DARK_FILL 对默认蓝色的解（contrast.test.ts 核对两边一致）；悬停提亮、按下加深，三种状态的标签都 ≥ 4.5:1
+   */
+  --accent-fill: #146dcb;
+  --accent-fill-hover: #2176d5;
+  --accent-fill-pressed: #0164c1;
+  --accent-text: color-mix(in srgb, var(--accent) 86%, #fff);
+  --danger-text: color-mix(in srgb, var(--danger) 86%, #fff);
+  --danger-fill: color-mix(in srgb, var(--danger) 76%, #000);
+  --warning-text: var(--warning);
+  --success-text: var(--success);
+  --danger-soft: color-mix(in srgb, var(--danger) 16%, transparent);
+  --warning-soft: color-mix(in srgb, var(--warning) 14%, transparent);
+  --success-soft: color-mix(in srgb, var(--success) 14%, transparent);
+  --accent-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  --mark-bg: color-mix(in srgb, var(--accent) 34%, transparent);
+  --selection-bg: color-mix(in srgb, var(--accent) 40%, transparent);
+  --shadow-menu:
+    0 0 0 0.5px rgb(255 255 255 / 0.12), 0 2px 6px rgb(0 0 0 / 0.3), 0 12px 32px rgb(0 0 0 / 0.5);
+  --shadow-control: 0 0 0 0.5px rgb(255 255 255 / 0.08), 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-knob: 0 0 0 0.5px rgb(0 0 0 / 0.2), 0 1px 3px rgb(0 0 0 / 0.45);
+  --tooltip-bg: rgb(58 58 64 / 0.96);
+  --tooltip-fg: #f4f4f6;
+  --kbd-bg: rgb(255 255 255 / 0.07);
+  --kbd-border: rgb(255 255 255 / 0.1);
+  --scrollbar-thumb: rgb(255 255 255 / 0.2);
+  --scrollbar-thumb-hover: rgb(255 255 255 / 0.34);
+}
+
+/* 时长：交叉淡入、文字块淡入、减少动效上限、脉冲周期（与 shared/motion/tokens.ts 的 timing 同值） */
+:root {
+  --dur-crossfade: 120ms;
+  --dur-chunk: 120ms;
+  --dur-reduced: 100ms;
+  --pulse-period: 1s;
+}
+/*
+ * 减少动效（≤ 100 ms）：交叉淡入 / 文字块淡入同样缩到 100 ms（fast / base / slow 见 shared/motion/tokens.css）。
+ * 特异性 0,2,0：压过上面同为 html 的 :root。CSS 过渡只能引用会被这里或 motion/tokens.css 覆盖的时长令牌
+ * （styles/__tests__/reducedMotion.test.ts 静态检查）；CSS 动画由 base.css 统一归零
+ */
+:root[data-reduced-motion='true'] {
+  --dur-crossfade: 100ms;
+  --dur-chunk: 100ms;
+}
+
+/* 增强对比度 */
+@media (prefers-contrast: more) {
+  :root {
+    --hairline-strong: rgb(0 0 0 / 0.24);
+    --field-border: rgb(0 0 0 / 0.24);
+  }
+  [data-theme='dark'] {
+    --hairline-strong: rgb(255 255 255 / 0.28);
+    --field-border: rgb(255 255 255 / 0.26);
+  }
+}

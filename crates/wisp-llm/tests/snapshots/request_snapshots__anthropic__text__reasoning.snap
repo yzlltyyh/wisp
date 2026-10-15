@@ -1,0 +1,31 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: text
+---
+{
+  "body": {
+    "max_tokens": 1024,
+    "messages": [
+      {
+        "content": "Hello, world.",
+        "role": "user"
+      }
+    ],
+    "model": "claude-sonnet-5-5",
+    "output_config": {
+      "effort": "low"
+    },
+    "stream": true,
+    "system": "You are a translator."
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "anthropic-version": "2023-06-01",
+    "authorization": "Bearer sk-test",
+    "content-type": "application/json",
+    "user-agent": "Wisp/test",
+    "x-api-key": "sk-test"
+  },
+  "method": "POST",
+  "target": "/v1/messages"
+}

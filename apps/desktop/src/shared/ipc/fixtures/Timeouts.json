@@ -1,0 +1,5 @@
+{
+  "connect_ms": 10000,
+  "first_token_ms": 120000,
+  "idle_ms": 120000
+}

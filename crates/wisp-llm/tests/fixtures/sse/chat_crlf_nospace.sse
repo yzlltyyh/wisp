@@ -1,0 +1,10 @@
+:keep-alive
+
+data:{"id":"c-4","choices":[{"index":0,"delta":{"role":"assistant","content":"多字节"}}]}
+
+: comment between events
+data: {"id":"c-4","choices":[{"index":0,"delta":{"content":"字符😀"}}]}
+
+data:{"id":"c-4","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data:[DONE]

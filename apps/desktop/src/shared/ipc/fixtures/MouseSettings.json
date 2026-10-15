@@ -1,0 +1,16 @@
+{
+  "enabled": true,
+  "long_press": true,
+  "middle": {
+    "enabled": true,
+    "action": "translate_selection"
+  },
+  "back": {
+    "enabled": false,
+    "action": "clipboard"
+  },
+  "forward": {
+    "enabled": false,
+    "action": "ocr"
+  }
+}

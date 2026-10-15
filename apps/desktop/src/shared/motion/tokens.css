@@ -1,0 +1,23 @@
+/*
+ * 时长与曲线的 CSS 变量：与 tokens.ts 的 duration / ease 同值（改动时两边一起改；Rust 的
+ * `windows::sizing` 由单测 `motion_tokens_match_frontend` 对照 tokens.ts）。经 shared/styles/tokens-overlay.css →
+ * tokens.css 引入；减少动效时 fast / base / slow 都缩到 100 ms。
+ */
+:root {
+  --dur-instant: 80ms;
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --dur-slow: 320ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-pulse: cubic-bezier(0.42, 0, 0.58, 1);
+}
+/*
+ * 减少动效（进入 / 退出 ≤ 100 ms 纯淡入淡出）：fast（140 ms）同样缩到 100 ms；交叉淡入 / 文字块
+ * 淡入的令牌在 shared/styles/tokens-ui.css（同样缩到 100 ms）
+ */
+:root[data-reduced-motion='true'] {
+  --dur-fast: 100ms;
+  --dur-base: 100ms;
+  --dur-slow: 100ms;
+}

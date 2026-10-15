@@ -1,0 +1,15 @@
+{
+  "kind": "translate",
+  "source_text": "The quick brown fox jumps over the lazy dog.",
+  "result_text": "敏捷的棕色狐狸跳过了懒狗。",
+  "task": "translate",
+  "style_id": "natural",
+  "target_lang": "zh-CN",
+  "detected_lang": "en",
+  "request_id": null,
+  "capture_id": null,
+  "ocr_text": null,
+  "ocr_mode": null,
+  "show_source": true,
+  "status_line": "gpt-5-mini · 1.2 s"
+}

@@ -1,0 +1,1 @@
+Read the text in this image and reply with its {{target_lang}} translation only.

@@ -1,0 +1,8 @@
+{
+  "level": "warning",
+  "source": "static_app",
+  "message_key": "hotkeys.conflict.static_app",
+  "params": {
+    "app": "Rectangle"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "thinking_off": "openai_effort",
+  "merge_system_into_user": false,
+  "strip_think_tags": true,
+  "max_tokens_field": "max_completion_tokens",
+  "dual_auth_header": null,
+  "gemini_key_in_query": false
+}

@@ -1,0 +1,2 @@
+## Glossary (mandatory; overrides any style rule about adding the original term in parentheses)
+Use exactly these renderings for the listed terms, every time they occur. If the target equals the source, keep the term untranslated. Do not add the source term in parentheses after a glossary rendering.

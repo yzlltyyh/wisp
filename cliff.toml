@@ -1,0 +1,72 @@
+# git-cliff 配置：由 Conventional Commits 生成 CHANGELOG.md 的新版本段落与 Release 说明。
+#
+# 发版流程（docs/development.md「发布流程」）：
+#   1. 打 tag 之前，把上一个正式版以来的变更作为新段落插到 CHANGELOG.md 顶部（文件头保持不变）：
+#        npx --yes git-cliff@2.14.2 --unreleased --tag v<版本> --prepend CHANGELOG.md
+#      （--prepend 会去掉原文件里与下面 header 逐字相同的文件头、再把「header + 新段落」写在最前面，所以 CHANGELOG.md
+#      的开头必须与 header 一字不差）
+#   2. 人工审定这一段：按功能概括、合并同类项，去掉内部细节；不写 Markdown 链接与 HTML——这一段会原样成为 Release 说明
+#      与 latest.json 的 notes（应用「关于 → 更新内容」用 mdlite 渲染，链接会原样显示）。scripts/release/self-test.mjs 检查。
+#   3. release.yml 的 prepare 优先取 CHANGELOG.md 里 `## <版本>` 的段落；没有时（例如预发布 v0.2.0-beta.1）才用：
+#        git-cliff --strip header --tag <tag> <上一个正式版 tag>..HEAD
+#      不用 --current / --latest：它们以最近的任意 tag 为起点，预发布 tag 会被当成「未发布」，正式版又会漏掉预发布期间的变更。
+#
+# 规则：提交标题为 `<type>(<scope>)!: <描述>`。feat / fix / perf / refactor / revert 与破坏性变更分组列出；不进入面向用户
+# 的说明的有：docs / ci / chore / build / style / test 类型，以及范围为 ci / build / deps / e2e / qa 的提交（如 fix(ci)、
+# fix(e2e)）。release.yml 会在正文前后加上下载表、系统要求、首次打开说明与校验和。
+
+[changelog]
+header = """
+# 更新日志
+
+每个版本的段落先由 [git-cliff](https://git-cliff.org) 根据 Conventional Commits 生成，再经人工审定、按功能概括；版本号遵循 SemVer。
+
+Each version ends with an English summary.
+"""
+body = """
+{% if version %}\
+## {{ version | trim_start_matches(pat="v") }}（{{ timestamp | date(format="%Y-%m-%d") }}）
+{% else %}\
+## 未发布
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}**：{% endif %}\
+{% if commit.breaking %}**[破坏性]** {% endif %}\
+{{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor %}"""
+footer = ""
+# 不裁掉模板首尾的空白：header 以一个换行结尾、body 以最后一条的换行结尾（模板最后的 endfor 后面紧跟三引号），这样
+# --prepend 之后文件头与新段落、新段落与上一个版本之间都恰好隔一个空行（trim = true 时文件头与新段落会挤在一起）
+trim = false
+postprocessors = []
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+protect_breaking_commits = true
+filter_commits = false
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+.*"
+# 预发布 tag（v0.2.0-beta.1）不单独成段，变更并入下一个正式版本
+ignore_tags = "v[0-9]+\\.[0-9]+\\.[0-9]+-.*"
+topo_order = false
+sort_commits = "oldest"
+commit_preprocessors = [
+  # 去掉 GitHub 合并时追加的 PR 号，标题保持干净
+  { pattern = '\s*\(#[0-9]+\)$', replace = "" },
+]
+# 分组顺序由 <!-- n --> 前缀决定（模板里用 striptags 去掉）
+commit_parsers = [
+  # 范围是 ci / build / deps / e2e / qa 的提交（fix(ci)、feat(build)、fix(deps)、fix(e2e)…）不面向用户：先于按类型分组的规则跳过
+  { message = '^[a-z]+\((?:ci|build|deps|e2e|qa)\)!?:', skip = true },
+  { message = "^feat", group = "<!-- 0 -->新功能" },
+  { message = "^fix", group = "<!-- 1 -->修复" },
+  { message = "^perf", group = "<!-- 2 -->性能" },
+  { message = "^refactor", group = "<!-- 3 -->重构" },
+  { message = "^revert", group = "<!-- 4 -->回退" },
+  { body = ".*security", group = "<!-- 5 -->安全" },
+  { message = "^(docs|ci|chore|build|style|test)", skip = true },
+]

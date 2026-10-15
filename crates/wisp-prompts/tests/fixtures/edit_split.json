@@ -1,0 +1,119 @@
+{
+  "description": "polish / proofread 输出切分用例。Rust split_edit_output 与 TS splitEditOutput 共用，TS 只读引用。规则：先把 \\r\\n 规范为 \\n（返回的正文与改动都是规范化之后的文本）；找最后一个 \\n---\\n（输出以 \\n--- 结尾也算，此时改动为空）；分隔线之后 trim 的内容（可带 ** 加粗）以「改动」或 Changes（大小写不敏感）开头才切分，否则整段都是正文；切分时正文去掉末尾空白，改动 trim，改动为空时为 null。",
+  "cases": [
+    {
+      "name": "basic",
+      "input": "Thanks for the review. I've fixed the issues you mentioned.\n\n---\n改动：补上冠词，修正时态。",
+      "body": "Thanks for the review. I've fixed the issues you mentioned.",
+      "changes": "改动：补上冠词，修正时态。"
+    },
+    {
+      "name": "last separator wins",
+      "input": "A\n---\nB\n---\n改动：x",
+      "body": "A\n---\nB",
+      "changes": "改动：x"
+    },
+    {
+      "name": "no separator",
+      "input": "Just the edited text.",
+      "body": "Just the edited text.",
+      "changes": null
+    },
+    {
+      "name": "unchanged text",
+      "input": "这个功能明天上线。\n\n---\n改动：无",
+      "body": "这个功能明天上线。",
+      "changes": "改动：无"
+    },
+    {
+      "name": "markdown rule in body without changes line",
+      "input": "Part 1\n---\nPart 2",
+      "body": "Part 1\n---\nPart 2",
+      "changes": null
+    },
+    {
+      "name": "markdown rule in body with changes line",
+      "input": "# Title\n\n---\n\nText\n\n---\n改动：润色措辞",
+      "body": "# Title\n\n---\n\nText",
+      "changes": "改动：润色措辞"
+    },
+    {
+      "name": "bold changes label",
+      "input": "Body\n\n---\n**改动**：去掉冗余的「进行」",
+      "body": "Body",
+      "changes": "**改动**：去掉冗余的「进行」"
+    },
+    {
+      "name": "english changes label",
+      "input": "Body\n---\nChanges: fixed a typo",
+      "body": "Body",
+      "changes": "Changes: fixed a typo"
+    },
+    {
+      "name": "multi-line changes",
+      "input": "Body\n---\n改动：第一处。\n第二处。",
+      "body": "Body",
+      "changes": "改动：第一处。\n第二处。"
+    },
+    {
+      "name": "trailing whitespace is trimmed",
+      "input": "Body  \n\n---\n改动：x  \n",
+      "body": "Body",
+      "changes": "改动：x"
+    },
+    {
+      "name": "dangling separator at end",
+      "input": "Body\n\n---",
+      "body": "Body",
+      "changes": null
+    },
+    {
+      "name": "dangling separator with trailing newline",
+      "input": "Body\n---\n",
+      "body": "Body",
+      "changes": null
+    },
+    {
+      "name": "separator at the very start",
+      "input": "\n---\n改动：无",
+      "body": "",
+      "changes": "改动：无"
+    },
+    {
+      "name": "separator without leading newline is not a separator",
+      "input": "---\n改动：无",
+      "body": "---\n改动：无",
+      "changes": null
+    },
+    {
+      "name": "longer dash line is not a separator",
+      "input": "Body\n----\n改动：x",
+      "body": "Body\n----\n改动：x",
+      "changes": null
+    },
+    {
+      "name": "crlf line endings",
+      "input": "Body\r\n\r\n---\r\n改动：无",
+      "body": "Body",
+      "changes": "改动：无"
+    },
+    {
+      "name": "crlf multi-line changes",
+      "input": "Line 1\r\nLine 2\r\n---\r\nChanges: a\r\nb\r\n",
+      "body": "Line 1\nLine 2",
+      "changes": "Changes: a\nb"
+    },
+    {
+      "name": "crlf without separator is normalized",
+      "input": "A\r\nB",
+      "body": "A\nB",
+      "changes": null
+    },
+    {
+      "name": "empty",
+      "input": "",
+      "body": "",
+      "changes": null
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: "snap[\"body\"]"
+---
+{
+  "max_tokens": 556,
+  "messages": [
+    {
+      "content": "You are a translator.",
+      "role": "system"
+    },
+    {
+      "content": "Hello, world.",
+      "role": "user"
+    }
+  ],
+  "model": "glm-5.3",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "temperature": 0.3,
+  "thinking": {
+    "type": "disabled"
+  }
+}

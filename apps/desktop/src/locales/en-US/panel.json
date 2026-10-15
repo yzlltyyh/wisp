@@ -1,0 +1,111 @@
+{
+  "a11y": {
+    "panel": "Wisp panel",
+    "content": "Panel content"
+  },
+  "view": {
+    "translate": "Translate",
+    "ocr": "Text recognition",
+    "clipboard": "Clipboard",
+    "input": "Type to translate",
+    "toast": "Notice"
+  },
+  "task": {
+    "translate": "Translate",
+    "polish": "Polish",
+    "proofread": "Proofread",
+    "refine": "Improve translation"
+  },
+  "status": {
+    "cancelled": "Cancelled",
+    "copied": "Copied",
+    "truncated": "Output hit the limit and was truncated",
+    "thinking_exhausted": "The model used up its output budget while thinking",
+    "cached": "From cache",
+    "param_degraded": "Some parameters were unsupported and adjusted",
+    "retried": "Retried automatically",
+    "low_confidence": "Language detection may be inaccurate",
+    "tokens": "{input} → {output} tokens"
+  },
+  "stream": {
+    "changes": "Changes",
+    "thinking": "Thinking…",
+    "reviewing": "Reviewing…",
+    "improving": "Improving…"
+  },
+  "not_ready": {
+    "no_provider": {
+      "title": "No model connected yet",
+      "detail": "Connect OpenAI, Anthropic, Gemini, or any compatible service to get started.",
+      "action": "Go to settings"
+    },
+    "no_default_model": {
+      "title": "No default model selected",
+      "detail": "Choose a default model for {task} in Models & services.",
+      "action": "Go to settings"
+    },
+    "no_vision_model": {
+      "title": "No model can read images yet",
+      "detail": "Screenshot OCR needs a model with image input. Pick one in Settings.",
+      "action": "Go to settings"
+    },
+    "permission": {
+      "accessibility": {
+        "title": "Accessibility permission is needed to read selected text",
+        "detail": "Grant it to translate selections. Until then, you can type to translate."
+      },
+      "screen_recording": {
+        "title": "Screen Recording permission is needed to capture",
+        "detail": "Screen Recording takes effect after Wisp relaunches."
+      },
+      "input_monitoring": {
+        "title": "Input Monitoring permission is needed",
+        "detail": "The floating button next to selected text, double-tap modifiers, and mouse buttons rely on it."
+      },
+      "action": "Open System Settings",
+      "relaunch": "Relaunch Wisp"
+    },
+    "wayland_copy_first": {
+      "title": "Copy first, then translate",
+      "detail": "On Wayland, selected text can't be read directly."
+    },
+    "capture_failed": {
+      "title": "Screenshot failed",
+      "detail": "The screenshot didn't finish. Please try again."
+    },
+    "elevated": {
+      "title": "Can't read text from an administrator window",
+      "detail": "The target app runs as administrator, so Wisp can't read it. Copy the text and type to translate instead."
+    },
+    "keychain_unavailable": {
+      "title": "System credential store is unavailable",
+      "detail": "Your API key is kept for this session only and must be re-entered after restart."
+    },
+    "selection_unavailable": {
+      "title": "Can't read the selected text",
+      "detail": "Copy it first, then translate it in input mode."
+    },
+    "retake": "Capture again"
+  },
+  "input_hint": {
+    "accessibility": "Grant Accessibility access to read selected text directly",
+    "screen_recording": "Grant Screen Recording access to take screenshots",
+    "input_monitoring": "Grant Input Monitoring access to use the extra triggers",
+    "grant": "Grant access",
+    "elevated": "The app is running as administrator, so Wisp can't read its selection. Copy the text and paste it here",
+    "wayland_copy_first": "Wayland doesn't let Wisp read the selection. Copy the text first, then paste it here",
+    "selection_unavailable": "Wisp couldn't read the selected text. Copy it first, then paste it here"
+  },
+  "dev": {
+    "latency": "Latency",
+    "selection": "Selection",
+    "ready": "Ready",
+    "shown": "Shown",
+    "first_token": "First token",
+    "timeout": "Ready timeout",
+    "frames": "Frame time",
+    "dropped": "Dropped",
+    "js": "JS / frame",
+    "p95": "p95"
+  }
+}

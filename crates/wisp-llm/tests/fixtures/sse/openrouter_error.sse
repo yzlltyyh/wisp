@@ -1,0 +1,4 @@
+: OPENROUTER PROCESSING
+
+data: {"id":"cmpl-abc123","object":"chat.completion.chunk","created":1702256850,"model":"gpt-3.5-turbo","provider":"openai","error":{"code":"server_error","message":"Provider disconnected unexpectedly"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}
+

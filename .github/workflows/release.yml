@@ -1,0 +1,284 @@
+# Wisp 发布
+#
+# 流程：prepare（发布脚本自检 → 版本校验 → Release 说明 → 创建或复用该 tag 的草稿 Release）
+#    → build × 3（macOS arm64 / Windows x64 / Linux x64：构建、核对（macOS 另核对 Info.plist 的启动环境），通过后各自上传到同一份草稿；
+#      一个平台失败不影响其他平台）
+#    → finalize（核对产物清单、用公钥校验每个 .sig、生成并上传 latest.json、把各产物的 SHA-256 写进 Release 说明）。
+# 草稿由 prepare 建好，build 只按 releaseId 往里上传（scripts/release/upload.mjs）：三个平台不各自去「找或建」同名
+# Release，不会竞争出多份草稿。草稿由人工检查后手动发布；发布之后更新器才能在 releases/latest 下看到新版本。
+# 单独重跑失败的 build 作业时，prepare 不重跑、复用同一份草稿（同名资源先删后传）；finalize 依赖 build，会跟着重跑并重写
+# latest.json 与校验和。整个运行重跑（Re-run all jobs）时 prepare 找到同一 tag、同一提交的草稿照样复用：说明重新生成，
+# 但 <!-- wisp:notes --> 之间人工改过的内容与已写入的校验和保留（prepare.mjs 的 upsertDraft）。
+#
+# Release 说明（scripts/release/prepare.mjs）：变更取 CHANGELOG.md 里该版本的段落（发版前人工审定；没有时用 git-cliff），
+# 并写明下载表与系统要求、只出三种平台架构、macOS 未公证 / Windows 未签名的打开方法与 Linux 会话限制；仓库为私有时
+# 顶部注明「应用内自动更新不可用」（已安装的客户端读不到 releases/latest/download/latest.json）。
+#
+# 降级（两条分支在下面的 build 作业里分开写）：
+# - 没有 TAURI_SIGNING_PRIVATE_KEY：用 no-updater 配置关闭更新器产物，照样出安装包，Release 说明顶部加警告；
+# - 没有 MACOS_SELF_SIGNED_P12_BASE64：macOS 保持 ad-hoc 签名（tauri.conf.json 的 signingIdentity "-"）。
+# 手动触发时可以勾选「模拟缺少」来验证这两条降级分支，不必删除 secret；测试草稿还可以只构建一个平台（例如只用 Linux
+# 演练「没有私钥」分支），节省 runner 时间。
+#
+# secret 与令牌的作用域（如实说明保护到哪一步为止）：
+# - 作业级 env 只有 HAS_* 布尔值；checkout 一律 persist-credentials: false，可写令牌不会留在 .git/config。
+# - pnpm install、rustup、cargo fetch 等前置步骤里拿不到更新器私钥，也拿不到 GITHUB_TOKEN。
+# - 「构建」一步**不带 GITHUB_TOKEN**，但带着更新器私钥与口令：tauri-cli 在打包时签名，而这一步同时执行 beforeBuildCommand
+#   （vite 及其插件）与 cargo build（几百个 crate 的 build.rs / 过程宏）——这些第三方代码与私钥在同一个进程环境里，
+#   私钥对它们**可见**。降低风险靠锁版本：pnpm install --frozen-lockfile、cargo fetch --locked 与构建时的 cargo --locked，
+#   tauri-cli 用 devDependency 里锁定的版本（不经第三方 action 转手）。
+# - GITHUB_TOKEN（contents: write）只交给「上传到草稿」一步，那一步只运行本仓库的 upload.mjs（Node 内置模块，不加载依赖包）。
+#   这不是完整的隔离：构建期的代码仍能改写工作区文件或 $GITHUB_ENV，影响同一作业后面的步骤。更彻底的做法是另起作业上传、
+#   构建时不给私钥、之后只用 `tauri signer sign` 单独签名。
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 上传到哪个 tag 的草稿（例如 v0.1.0，必须与版本号一致）；留空 = CI 测试草稿 v<版本>-ci.<运行号>（不创建 git tag，验证后删除）
+        type: string
+        default: ''
+      without_updater_key:
+        description: 模拟未配置 TAURI_SIGNING_PRIVATE_KEY（验证无更新器签名的降级分支）
+        type: boolean
+        default: false
+      without_macos_cert:
+        description: 模拟未配置 macOS 自签证书（验证 ad-hoc 签名分支）
+        type: boolean
+        default: false
+      platforms:
+        description: 构建哪些平台（只构建一个平台仅限测试草稿，用来低成本演练降级分支；正式 tag 必须 all）
+        type: choice
+        options: [all, linux, macos, windows]
+        default: all
+
+permissions:
+  contents: write
+
+# 同一个 tag 的运行排队执行：推 tag（ref_name = v0.1.0）与手动触发并填 tag=v0.1.0 落在同一组，不会同时进入 prepare、
+# 各建一份同名草稿。手动触发且 tag 留空时按分支名分组（测试草稿的 tag 各不相同，排队只为节省 runner）
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  prepare:
+    name: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+      version: ${{ steps.prepare.outputs.version }}
+      updater: ${{ steps.prepare.outputs.updater }}
+      release-id: ${{ steps.prepare.outputs.release-id }}
+      platforms: ${{ steps.prepare.outputs.platforms }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # git-cliff 需要完整历史与 tag
+          persist-credentials: false # 之后只读本地历史，不把可写令牌留在 .git/config
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: 发布脚本自检（离线，几秒钟；脚本或 CHANGELOG 有问题时在花 macOS / Windows 分钟数之前失败）
+        run: node scripts/release/self-test.mjs
+      - name: 更新器私钥与口令成对配置（缺口令时在花 macOS / Windows 分钟数之前失败）
+        env:
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          HAS_UPDATER_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
+          WITHOUT_UPDATER_KEY: ${{ inputs.without_updater_key }}
+        # 正式私钥有口令保护：只有私钥、没有口令时，三个平台都会在完整构建之后的签名阶段才失败
+        run: |
+          if [ "$HAS_UPDATER_KEY" = true ] && [ "$WITHOUT_UPDATER_KEY" != true ] && [ "$HAS_UPDATER_KEY_PASSWORD" != true ]; then
+            echo "::error::配置了 TAURI_SIGNING_PRIVATE_KEY，但 TAURI_SIGNING_PRIVATE_KEY_PASSWORD 为空：私钥有口令保护，签名会在三个平台构建完之后失败。补上口令 secret，或勾选「模拟未配置 TAURI_SIGNING_PRIVATE_KEY」走降级分支"
+            exit 1
+          fi
+      - name: 版本与 tag、Release 说明、草稿 Release
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
+          HAS_UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          WITHOUT_UPDATER_KEY: ${{ inputs.without_updater_key }}
+          # 只决定 Release 说明里 macOS 更新后权限是否保持的那句话（与 build 作业的 HAS_MAC_P12 同一判断）
+          HAS_MAC_P12: ${{ !inputs.without_macos_cert && secrets.MACOS_SELF_SIGNED_P12_BASE64 != '' }}
+        run: node scripts/release/prepare.mjs
+
+  build:
+    name: build (${{ matrix.name }})
+    needs: prepare
+    strategy:
+      fail-fast: false # 一个平台失败不取消其他平台
+      # 矩阵由 prepare 给出（scripts/release/lib.mjs 的 BUILD_TARGETS）：macos-15 → aarch64-apple-darwin、windows-latest →
+      # x86_64-pc-windows-msvc、ubuntu-22.04 → x86_64-unknown-linux-gnu（glibc 2.35）。只出 Apple Silicon、Windows x64、
+      # Linux x64，不出 universal / Intel / ARM64；推 tag 时三端齐全
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      # 作业级只放布尔值（if 里用）：私钥只映射到「构建」、p12 只映射到导入、GITHUB_TOKEN 只映射到「上传到草稿」，
+      # pnpm install、rustup、cargo fetch 等前置步骤都读不到它们。「模拟缺少」时为 false
+      HAS_UPDATER_KEY: ${{ needs.prepare.outputs.updater == 'true' }}
+      HAS_MAC_P12: ${{ !inputs.without_macos_cert && secrets.MACOS_SELF_SIGNED_P12_BASE64 != '' }}
+    steps:
+      - name: 检出时保持 LF
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false # 不把 contents: write 的令牌留在 .git/config（构建期的代码读得到这个文件）
+      - uses: ./.github/actions/setup
+        with:
+          linux-deps: release
+          rust-target: ${{ matrix.target }}
+          cache-key: release-${{ matrix.target }}
+      - name: 依赖与 Cargo.lock 一致
+        run: cargo fetch --locked
+
+      # ① 更新器签名
+      - name: 更新器签名：有私钥
+        if: env.HAS_UPDATER_KEY == 'true'
+        run: echo "TAURI_EXTRA_ARGS=" >> "$GITHUB_ENV"
+        shell: bash
+      - name: 更新器签名：没有私钥 → 只出安装包
+        if: env.HAS_UPDATER_KEY != 'true'
+        shell: bash
+        run: |
+          echo "TAURI_EXTRA_ARGS=--config src-tauri/tauri.no-updater.conf.json" >> "$GITHUB_ENV"
+          echo "::warning::未配置 TAURI_SIGNING_PRIVATE_KEY（或模拟缺少）：本次不生成更新器签名与 latest.json，只出安装包"
+
+      # ② macOS 签名（自签证书，或 ad-hoc）
+      - name: macOS 签名：没有自签证书 → ad-hoc
+        if: runner.os == 'macOS' && env.HAS_MAC_P12 != 'true'
+        run: echo "macOS 签名：ad-hoc（tauri.conf.json 的 signingIdentity \"-\"）"
+      - name: macOS 签名：导入自签证书到临时 keychain
+        if: runner.os == 'macOS' && env.HAS_MAC_P12 == 'true'
+        shell: bash
+        env:
+          MAC_P12: ${{ secrets.MACOS_SELF_SIGNED_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SELF_SIGNED_P12_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/wisp-sign.keychain-db"; KC_PW="$(uuidgen)"; TMP_PW="$(uuidgen)"
+          printf '%s' "$MAC_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          # p12 的口令只经环境变量交给 openssl（-passin env:），不出现在任何命令行上；security import 只能在命令行上
+          # 接收口令，所以先解开、再用一次性口令重新打包给它（这个口令只保护随即删除的临时文件）
+          /usr/bin/openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin env:P12_PASSWORD -nokeys -clcerts -out "$RUNNER_TEMP/cert.pem"
+          /usr/bin/openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin env:P12_PASSWORD -nodes -out "$RUNNER_TEMP/bundle.pem"
+          /usr/bin/openssl pkcs12 -export -in "$RUNNER_TEMP/bundle.pem" -passout "pass:$TMP_PW" -out "$RUNNER_TEMP/import.p12"
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/bundle.pem"
+          security create-keychain -p "$KC_PW" "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
+          security unlock-keychain -p "$KC_PW" "$KC"
+          security import "$RUNNER_TEMP/import.p12" -k "$KC" -P "$TMP_PW" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/import.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PW" "$KC" > /dev/null
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          # 自签证书默认不受信任，codesign 会报 "no identity found"：在管理员域设置「代码签名：始终信任」（runner 有免密
+          # sudo）。非交互会话里直接 sudo security add-trusted-cert -d 会被授权服务拒绝，脚本临时放开
+          # com.apple.trust-settings.admin 规则、写完即恢复（与 ci.yml 的 dev-sign 自检走同一段代码）
+          bash scripts/dev-sign-macos.sh --trust-admin "$RUNNER_TEMP/cert.pem" "$KC"
+          SHA1="$(security find-identity -v -p codesigning "$KC" | awk '/\)/{print $2; exit}')"
+          if [ -z "$SHA1" ]; then echo "::error::p12 中没有可用于代码签名的身份"; exit 1; fi
+          # 只导出 APPLE_SIGNING_IDENTITY（证书 SHA-1 走 bundler 的 with_signing_identity 分支，不做 Apple 前缀校验）
+          echo "APPLE_SIGNING_IDENTITY=$SHA1" >> "$GITHUB_ENV"
+          echo "macOS 签名：自签证书 $SHA1"
+
+      # ③ 构建：**不带 GITHUB_TOKEN**。私钥与口令只在这一步出现（tauri-cli 打包时签名），但这一步也执行 beforeBuildCommand
+      # （vite 及其插件）与 cargo build（全部依赖的 build.rs / 过程宏）——它们与私钥在同一个进程环境里，私钥对它们可见（见文件头
+      # 「secret 与令牌的作用域」）。降低风险靠锁版本：setup 里的 pnpm install --frozen-lockfile、上面的 cargo fetch --locked、
+      # 这里传给 cargo 的 --locked；tauri-cli 用 apps/desktop 的 devDependency（pnpm-lock 锁定），不经第三方 action 转手。
+      - name: 构建
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          # 没有私钥（或模拟缺少）时为空串，此时用的是 no-updater 配置，不会签名
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.HAS_UPDATER_KEY == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.HAS_UPDATER_KEY == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # 注意：这里**不写** APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY。
+          # 未配置的 secret 会展开成空串但变量仍然存在：tauri-cli 2.12.1 会用空串覆盖配置里的 "-"，bundler 还会尝试导入空证书。
+          # 自签证书的身份只由上面的导入步骤写入 GITHUB_ENV（没有 p12 时完全不出现这个变量）。
+          # 将来接入 Developer ID 签名 / 公证时，同样只在 secret 非空时写入 GITHUB_ENV；
+          # Windows 签名的接入点是 tauri.conf.json 的 bundle.windows.signCommand。
+        run: |
+          # TAURI_EXTRA_ARGS 为空，或 --config src-tauri/tauri.no-updater.conf.json（相对 apps/desktop）
+          read -ra extra <<< "$TAURI_EXTRA_ARGS"
+          pnpm exec tauri build --target "$TARGET" "${extra[@]}" -- --locked
+
+      - name: 签名信息（macOS）
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="target/${{ matrix.target }}/release/bundle/macos/Wisp.app"
+          codesign --verify --deep "$app"
+          info="$(codesign -dv --verbose=2 "$app" 2>&1 | grep -E '^(Identifier|Authority|Signature|TeamIdentifier|Format)=')"
+          printf '%s\n' "$info"
+          { echo '### macOS 签名'; echo '```'; printf '%s\n' "$info"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # 启动环境：打出来的 .app 的 Info.plist 必须带 LSEnvironment 的 MallocSpaceEfficient=1，且与
+      # src-tauri/Info.plist 逐项一致——丢了这一段，经 LaunchServices 启动的主进程从约 13 MiB 回到约 21 MiB、应用照常能用。ci.yml
+      # 的运行时核对（launch_env）只在手动勾选 macOS + 冒烟时跑，出包路径靠这一步拦：失败时不上传（dmg 与 app.tar.gz 都由这个 .app 打出）
+      - name: 启动环境（macOS，Info.plist 的 LSEnvironment）
+        if: runner.os == 'macOS'
+        run: bash scripts/release/verify-macos-launch-env.sh "target/${{ matrix.target }}/release/bundle/macos/Wisp.app"
+      - name: 安装包体积
+        run: node scripts/check-size.mjs --bundles "target/${{ matrix.target }}/release/bundle"
+      - name: Linux 运行时依赖核对
+        if: runner.os == 'Linux'
+        run: bash scripts/release/verify-linux-deps.sh "target/${{ matrix.target }}/release/bundle"
+
+      # ④ 上传：只有这一步拿到 GITHUB_TOKEN（contents: write），运行的只是本仓库的 upload.mjs。放在全部核对之后：
+      # 签名、体积或依赖核对失败的平台不往草稿里放任何文件（finalize 会以缺失为由失败，修好后 Re-run failed jobs）。
+      # 同名资源先删后传，重跑幂等；macOS 的 Wisp.app.tar.gz(.sig) 改名为 Wisp_<版本>_aarch64.app.tar.gz(.sig)
+      - name: 上传到草稿
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release-id }}
+          PLATFORM: ${{ matrix.name }}
+          BUNDLE_DIR: target/${{ matrix.target }}/release/bundle
+        run: |
+          flags=(--release-id "$RELEASE_ID" --platform "$PLATFORM" --bundle-dir "$BUNDLE_DIR")
+          if [ "$HAS_UPDATER_KEY" != true ]; then flags+=(--no-updater); fi
+          node scripts/release/upload.mjs "${flags[@]}"
+
+      - name: 清理临时 keychain
+        if: always() && runner.os == 'macOS' && env.HAS_MAC_P12 == 'true'
+        shell: bash
+        run: security delete-keychain "$RUNNER_TEMP/wisp-sign.keychain-db" || true
+
+  finalize:
+    name: finalize
+    needs: [prepare, build]
+    # 某个平台失败时也为成功的平台核对产物、写好 latest.json；重跑失败的作业后它会跟着重跑。
+    # 整个运行被手动取消时不运行（产物必然不全，只会制造一条失败记录）
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: 核对产物、校验更新器签名、生成 latest.json、写入校验和
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release-id }}
+          UPDATER: ${{ needs.prepare.outputs.updater }}
+          PLATFORMS: ${{ needs.prepare.outputs.platforms }}
+        run: |
+          flags=(--platforms "$PLATFORMS")
+          if [ "$UPDATER" != true ]; then flags+=(--no-updater); fi
+          node scripts/release/finalize.mjs --release-id "$RELEASE_ID" --tag "$TAG" "${flags[@]}"

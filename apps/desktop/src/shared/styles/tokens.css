@@ -1,0 +1,174 @@
+/*
+ * 设计令牌。颜色、圆角、间距、字号、阴影、时长与曲线只能用这里的令牌。
+ *
+ * 本文件是基础层：基础令牌（灰阶、fg、表面、hairline、填充、强调色、状态色、阴影、圆角、间距、字号、字体、时长）
+ * 与平台 / 帧模式 / 材质 / 减少动效 / 增强对比度的覆盖。所有窗口都引用它，保持精简；截图 Overlay 的首帧只加载开头
+ * @import 的 tokens-overlay.css（暗化色 + 时长 / 曲线），本文件随交互模块动态注入（Overlay 入口 ≤ 15 KB）。组件用的派生令牌（控件填充、强调色的悬停 / 按下态、状态色的淡底与
+ * 文字色、菜单 / 提示 / 键帽 / 滚动条……）在 tokens-ui.css，只随 tailwind.css 进入 React 窗口。
+ * 深色模式**单独调校**（阴影更深、hairline 用白色、强调色提亮），不是反色。
+ *
+ * 注意：`--surface-tint` / `--surface-solid` / `--hairline` 的取值同时被 Rust 镜像（原生卡片表面
+ * `windows::native::CardSurface::resolve`、设置窗口首帧背景 `settings_window::window_background`），
+ * 改动时必须同步，两处都有单测把关。
+ */
+/* Overlay 首帧需要的那一小份（暗化色 + 时长 / 曲线）单独成文件：Overlay 入口只加载它（≤ 15 KB） */
+@import './tokens-overlay.css';
+
+:root {
+  /* ---- 灰阶（浅色） ---- */
+  --g1: #fcfcfd;
+  --g2: #f7f7f9;
+  --g3: #efeff2;
+  --g4: #e7e7eb;
+  --g5: #dfdfe4;
+  --g6: #d4d4da;
+  --g7: #c5c5cc;
+  --g8: #adadb5;
+  --g9: #8b8b93;
+  --g10: #7e7e86;
+  --g11: #5f5f67;
+  --g12: #1c1c21;
+  --fg: var(--g12);
+  --fg-2: var(--g11);
+  --fg-3: var(--g9); /* 只用于占位符、禁用态和图标，不用于正文 */
+
+  /* ---- 表面 ---- */
+  --surface-tint: rgb(255 255 255 / 0.55); /* 叠在原生材质上的着色 */
+  --surface-solid: #fbfbfc; /* 纯色材质 */
+  --surface-raised: #ffffff; /* 菜单、提示、预览卡片 */
+  --hairline: rgb(0 0 0 / 0.08);
+
+  /* ---- 填充（叠加在任意表面上，半透明，材质与纯色下都成立） ---- */
+  --fill-hover: rgb(0 0 0 / 0.05);
+  --fill-pressed: rgb(0 0 0 / 0.08);
+  --fill-selected: color-mix(in srgb, var(--accent) 14%, transparent);
+
+  /* ---- 强调色与状态色 ---- */
+  --accent: #3b82f6;
+  --accent-fg: #ffffff; /* 强调色填充上的文字；非默认强调色时由 styles/accent.ts 按对比度在白 / 深色之间选择 */
+  --danger: #e5484d;
+  --warning: #d97706;
+  --success: #30a46c;
+
+  /* ---- 阴影 ---- */
+  --shadow-popover: 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 8px 24px rgb(0 0 0 / 0.14);
+  --shadow-pinned:
+    0 0 0 0.5px rgb(0 0 0 / 0.12), 0 12px 32px rgb(0 0 0 / 0.18); /* 固定窗口「浮起」后的阴影 */
+  /* Css 帧模式的阴影边距不在这里定义：唯一来源是 Rust 注入的 --shadow-margin（Boot.shadow_margin） */
+  --highlight-top: none;
+
+  /* ---- 圆角 ---- */
+  --r-panel: 12px;
+  --r-card: 10px;
+  --r-menu: 10px;
+  --r-row: 8px;
+  --r-control: 6px;
+  --r-chip: 6px;
+
+  /* ---- 间距（8 pt 栅格，4 pt 半格只用于图标与文字微调） ---- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --pad-panel-y: 12px;
+  --pad-panel-x: 16px;
+
+  /* ---- 尺寸 ---- */
+  --h-control: 28px;
+  --h-control-lg: 32px;
+  --h-row: 44px;
+  --h-row-image: 64px;
+
+  /* ---- 字号（五档 + 页面标题） ---- */
+  --text-body: 14px; /* 正文，随设置的「字号」变化（boot.font_size，12–18） */
+  --lh-body: 1.6; /* 按 CJK 调整 */
+  --text-ui: 13px;
+  --lh-ui: 18px;
+  --text-meta: 12px;
+  --lh-meta: 16px;
+  --text-caption: 11px;
+  --lh-caption: 14px;
+  --text-title: 15px;
+  --text-page: 20px;
+  --font-sans:
+    system-ui, -apple-system, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI', Inter,
+    'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', sans-serif;
+  --font-mono:
+    ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, 'Noto Sans Mono CJK SC', monospace;
+
+  /* ---- 焦点环：2 px 强调色 ---- */
+  --focus-ring: 0 0 0 2px var(--accent);
+}
+
+[data-theme='dark'] {
+  --g1: #111113;
+  --g2: #18181b;
+  --g3: #212125;
+  --g4: #28282d;
+  --g5: #2f2f35;
+  --g6: #38383f;
+  --g7: #46464e;
+  --g8: #5e5e67;
+  --g9: #6e6e77;
+  --g10: #7c7c85;
+  --g11: #b2b2ba;
+  --g12: #ededf0;
+  --surface-tint: rgb(30 30 32 / 0.5);
+  --surface-solid: #1c1c1f;
+  --surface-raised: #26262a;
+  --hairline: rgb(255 255 255 / 0.1);
+  --fill-hover: rgb(255 255 255 / 0.06);
+  --fill-pressed: rgb(255 255 255 / 0.1);
+  --fill-selected: color-mix(in srgb, var(--accent) 22%, transparent);
+  --accent: #60a5fa;
+  /* 深色下强调色是亮蓝（用于焦点环、指示器）；作为白字的底色时压暗（tokens-ui.css 的 --accent-fill），保证按钮文字的对比度 */
+  --danger: #ff6369;
+  --warning: #ffc53d;
+  --success: #3dd68c;
+  --shadow-popover: 0 0 0 0.5px rgb(255 255 255 / 0.1), 0 8px 24px rgb(0 0 0 / 0.45);
+  --shadow-pinned: 0 0 0 0.5px rgb(255 255 255 / 0.12), 0 12px 32px rgb(0 0 0 / 0.55);
+  --highlight-top: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+[data-os='windows'] {
+  --r-panel: 8px; /* 与 DWM 圆角一致 */
+}
+[data-frame='css'] {
+  --surface-tint: var(--surface-solid); /* Css 帧模式一律纯色 */
+  /*
+   * 只负责投影：卡片的描边是 1 px --hairline，画在卡片内缘（components.css 的 .panel-card::after），
+   * 不受窗口后面的桌面颜色影响。阴影要完整落在 24 px 的透明边距里（向下 6 + 模糊 16 < 24），否则窗口边缘会切掉阴影；
+   * 近处加一层短阴影让卡片在白底上也有轮廓
+   */
+  --shadow-popover: 0 1px 3px rgb(0 0 0 / 0.08), 0 6px 16px rgb(0 0 0 / 0.14);
+}
+[data-frame='css'][data-theme='dark'] {
+  --shadow-popover: 0 1px 3px rgb(0 0 0 / 0.4), 0 6px 16px rgb(0 0 0 / 0.45);
+}
+[data-frame='native'] {
+  /* 卡片的外阴影由原生 hasShadow 提供，着色与描边由原生层画（windows/native/macos.rs） */
+  --shadow-popover: 0 0 0 0.5px var(--hairline);
+}
+[data-material='solid'] {
+  --surface-tint: var(--surface-solid);
+}
+/* Linux 的卡片 95% 着色；「降低透明度」/ 纯色材质（data-material='solid'）时仍是纯色 */
+[data-os='linux']:not([data-material='solid']) {
+  --surface-tint: color-mix(in srgb, var(--surface-solid) 95%, transparent);
+}
+
+/* ---- 时长与曲线、Overlay 暗化色：在 tokens-overlay.css（文件开头 @import；Overlay 首帧只加载那一份） ---- */
+
+/* ---- 增强对比度 ---- */
+@media (prefers-contrast: more) {
+  :root {
+    --hairline: rgb(0 0 0 / 0.16);
+    --fg-2: var(--fg);
+  }
+  [data-theme='dark'] {
+    --hairline: rgb(255 255 255 / 0.2);
+  }
+}

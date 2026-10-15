@@ -1,0 +1,64 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`减少动效 > 风格切换：正常时透明度 + 2 px 模糊，减少动效时只降透明度、≤ 100 ms 1`] = `
+{
+  "in": {
+    "keyframes": {
+      "filter": "blur(0px)",
+      "opacity": 1,
+    },
+    "transition": {
+      "duration": 0.22,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+  "inReduced": {
+    "keyframes": {
+      "opacity": 1,
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+  "out": {
+    "keyframes": {
+      "filter": "blur(2px)",
+      "opacity": 0.3,
+    },
+    "transition": {
+      "duration": 0.14,
+      "ease": [
+        0.4,
+        0,
+        1,
+        1,
+      ],
+    },
+  },
+  "outReduced": {
+    "keyframes": {
+      "opacity": 0.3,
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+}
+`;

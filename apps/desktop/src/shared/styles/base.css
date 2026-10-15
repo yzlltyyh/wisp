@@ -1,0 +1,187 @@
+/*
+ * 基础样式。
+ *
+ * - 透明窗口（panel / pinned / overlay）的页面背景必须透明；settings / onboarding 不透明（与 Rust 设置的窗口背景同色，无白闪）；
+ *   面板窗口不能透明时（`<html data-opaque>`）页面底色取 --surface-solid；
+ * - html 字号固定为 UI 字号（13 px），正文字号单独由 `--text-body` 控制（随设置「字号」变化），间距不受影响；
+ * - CJK 排版：行高 1.6、中英文自动间距（支持的引擎）、严格断行、避免孤字换行；
+ * - 面板隐藏时（`<html data-hidden>`）暂停一切 CSS 动画（隐藏期间不消耗 CPU）；
+ * - 焦点环：2 px 强调色，只在键盘导航时出现。
+ *
+ * 全部放在 `@layer base`（与 Tailwind preflight 同层、在它之后）：组件层（components.css）与 utility 能覆盖这里的
+ * 默认值——不分层的样式会压过所有分层样式，`button { color: inherit }` 就会盖掉主按钮的白字。唯一的例外是文件末尾
+ * 的 `html[data-opaque]`（要压过 HTML 里内联的透明底色，见那里的说明）。
+ */
+@layer base {
+  html,
+  body,
+  #root {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: transparent;
+  }
+  html {
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: var(--text-ui);
+    line-height: var(--lh-ui);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+    color-scheme: light;
+    /* 中英文混排的自动间距（CSS Text 4，支持的引擎生效）与严格断行（标点不悬挂、不出现行首标点） */
+    text-autospace: normal;
+    line-break: strict;
+    overflow-wrap: break-word;
+  }
+  html[data-theme='dark'] {
+    color-scheme: dark;
+  }
+  /*
+   * 自动间距只给 UI 文案与译文正文（.ui-stream）：用户的数据与可编辑区域原样显示。OCR 是逐字转录、
+   * 要照着校对编辑，输入框 / 文本框里插进数据中并不存在的空格（「空闲 CPU 约 0%」），复制出来却没有、光标还在幻影空格处
+   * 跳动；Chromium（WebView2）还会在「季度报告.pdf」的点号前插一段间隙。表单控件、代码 / 键帽 / 路径 / URL，以及各视图里
+   * 显示原文、剪贴板条目、文件名的容器（在各自的 CSS 里声明）一律不加
+   */
+  input,
+  textarea,
+  [contenteditable],
+  code,
+  kbd,
+  pre,
+  samp {
+    text-autospace: no-autospace;
+  }
+  /* 设置 / 引导窗口不透明 */
+  html[data-window='settings'] body,
+  html[data-window='onboarding'] body {
+    background: var(--surface-solid);
+  }
+  /* 面板页面不滚动：Native 帧模式下视口比卡片高（WebView 固定为卡片上限高，窗口只露出卡片那一段） */
+  html[data-window='panel'],
+  html[data-window='panel'] body {
+    overflow: hidden;
+  }
+  /* 面板与固定窗口默认不可选中文字，正文区域用 .ui-selectable 开启 */
+  html[data-window='panel'] body,
+  html[data-window='pinned'] body {
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  ::selection {
+    background: var(--selection-bg);
+  }
+  img {
+    -webkit-user-drag: none;
+  }
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+  }
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: var(--focus-ring-width) solid var(--accent);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /*
+   * ---- 滚动条 ----
+   * macOS 保留系统的覆盖式滚动条（滚动时才出现、不占宽度、随明暗变化）——自定义 ::-webkit-scrollbar 会把它变成常驻的
+   * 传统滚动条，反而不像原生。Windows / Linux 用细滚动条（ScrollArea 另设 scrollbar-gutter: stable，出现时内容不跳）。
+   */
+  [data-os='windows'] ::-webkit-scrollbar,
+  [data-os='linux'] ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+    background: transparent;
+  }
+  [data-os='windows'] ::-webkit-scrollbar-thumb,
+  [data-os='linux'] ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 9999px;
+    background: var(--scrollbar-thumb) padding-box;
+  }
+  [data-os='windows'] ::-webkit-scrollbar-thumb:hover,
+  [data-os='linux'] ::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover) padding-box;
+  }
+  [data-os='windows'] ::-webkit-scrollbar-corner,
+  [data-os='linux'] ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  @supports (scrollbar-color: auto) {
+    [data-os='windows'] *,
+    [data-os='linux'] * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
+  }
+
+  /* ---- 面板隐藏：暂停全部 CSS 动画（光标脉冲、骨架屏、转圈） ---- */
+  html[data-hidden] *,
+  html[data-hidden] *::before,
+  html[data-hidden] *::after {
+    animation-play-state: paused !important;
+  }
+
+  /* ---- 关键帧（只动 transform / opacity） ---- */
+  @keyframes wisp-chunk-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes wisp-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.6;
+    }
+  }
+  @keyframes wisp-caret {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.2;
+    }
+  }
+  @keyframes wisp-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  /* 减少动效：CSS 动画一律停在终态（光标静止、骨架不脉冲），过渡缩到 ≤ 100 ms */
+  html[data-reduced-motion='true'] *,
+  html[data-reduced-motion='true'] *::before,
+  html[data-reduced-motion='true'] *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/*
+ * 窗口不能透明（Css 帧模式且 shadow_margin = 0，面板外壳设置 `<html data-opaque>`）：页面底色与卡片同色，卡片还没画出来
+ * 的帧、窗口边缘都不会露出 WebView 的默认底色（WebKitGTK 为白色）。**不放进 @layer**：panel.html / pinned.html 为了
+ * CSS 加载前不白闪，内联了不分层的 `html, body { background: transparent }`，分层的规则无论特异性多高都压不过它；
+ * 不分层时按特异性比较（0,1,1 > 0,0,1）
+ */
+html[data-opaque] {
+  background: var(--surface-solid);
+}

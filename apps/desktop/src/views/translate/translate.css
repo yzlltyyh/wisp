@@ -1,0 +1,410 @@
+/*
+ * 翻译视图。版式与视觉稿 design.translate-* 一致（panel/shell/design/design.css 的 dz-header / dz-footer /
+ * 词典式）：头部与底栏的控件有 6 px 内边距（命中区 28），用 −6 px 外边距让控件里的文字 / 图标与正文左右对齐。
+ * 颜色、字号、间距、圆角只取令牌；动效只在 shared/motion 的预设里（这里没有任何过渡 / 动画定义）。
+ *
+ * 高度：视图整体不超过 --tv-max（卡片上限 − 上下内边距，由视图按 maxHeight 写入），超出时正文（StreamView，
+ * 自己是滚动容器）与原文对照按比例收缩、在内部滚动；头部、提示行、底栏、卡片类内容不收缩。Pinned 里铺满窗口（data-fill）。
+ * 不用 height: 100% / vh：Native 帧模式下 WebView 比卡片高（固定为卡片上限的高度）。
+ */
+.tv {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-height: var(--tv-max);
+}
+.tv[data-fill] {
+  height: var(--tv-max);
+}
+
+/* ---- 头部 ---- */
+.tv-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--h-control);
+  margin: -2px -6px 8px;
+}
+.tv-spacer {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 8px;
+}
+/*
+ * 头部的收缩顺序（文案变长时元素叠在一起而不是截断）：空白先让，然后标题截断（flex-shrink 远大于其他），
+ * 再到语言条截断语言名（完整名在无障碍名称里）；图标按钮、风格 chip 不收缩
+ */
+.tv-title {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0 6px;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+  color: var(--fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tv-header .ui-langbar {
+  flex: 0 1 auto;
+}
+.tv-header .ui-iconbtn {
+  flex: none;
+}
+/* 交换方向没有意义时（aria-disabled，仍可聚焦、悬停看原因）：不显示悬停底色 */
+.tv-langbar .ui-langbar-part[aria-disabled='true'] {
+  cursor: default;
+}
+.tv-langbar .ui-langbar-part[aria-disabled='true']:hover {
+  background: transparent;
+}
+.tv-header .ui-chip {
+  flex: none;
+}
+
+/*
+ * ---- 原文对照（⇄）：自己有 40% 的上限、超出时内部滚动（ScrollArea：上下渐隐，上限取整到整行），空间不够时让正文
+ * 先收缩。原文与正文之间是「10 px · 分隔线 · 10 px」，分隔线画在滚动区域之外（不被渐隐遮罩淡掉）；滚动区域与正文
+ * 一样伸进卡片右内边距、按滚动条宽度补回，文字列与正文对齐 ----
+ */
+.tv-source-clip {
+  position: relative;
+  flex: none;
+  min-height: 0;
+  margin-right: calc(-1 * var(--pad-panel-x));
+  padding-bottom: 21px;
+  overflow: hidden;
+  contain: layout paint;
+}
+.tv-source-clip::after {
+  content: '';
+  position: absolute;
+  right: var(--pad-panel-x);
+  bottom: 10px;
+  left: 0;
+  height: 1px;
+  background: var(--hairline);
+}
+.tv-source {
+  box-sizing: border-box;
+  max-height: calc(var(--tv-max) * 0.4 - 21px);
+  max-height: round(down, calc(var(--tv-max) * 0.4 - 21px), 1lh);
+  padding-right: calc(var(--pad-panel-x) - var(--tv-sbw, 0px));
+  font-size: var(--text-ui);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  text-wrap: pretty;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* ---- 正文 ---- */
+.tv-body {
+  position: relative;
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.tv[data-fill] .tv-body {
+  flex: 1 1 auto;
+}
+/* 第一次流式期间不低于骨架屏的高度（骨架每行 = 正文行高，Skeleton 组件的约定）；之后的代次由视图写入旧正文的高度 */
+.tv-body[data-hold] {
+  min-height: calc(var(--tv-hold) * var(--text-body) * var(--lh-body));
+}
+.tv-body > .ui-stream {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+/*
+ * 叠层：正在淡出的旧正文、正在退场的卡片 / 骨架（popLayout）脱离排版、叠在当前正文的下层（当前正文 position:
+ * relative、排在它们之后）；旧正文比新正文高时（命中缓存、卡片同时收缩）可以伸出正文区，提示行与底栏画在它上面
+ */
+.tv-body > .tv-stream-out {
+  position: absolute;
+  inset: 0 0 auto;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tv-body > .tv-stream:not(.tv-stream-out),
+.tv-notice,
+.tv-footer {
+  position: relative;
+}
+/* 长译文的滚动容器溢出时可以 Tab 聚焦（键盘滚动）：聚焦环不被边缘渐隐遮罩淡掉 */
+.tv-body > .ui-stream:focus-visible {
+  border-radius: var(--r-control);
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: -2px;
+  mask-image: none;
+}
+/*
+ * 正文的滚动容器向右伸进卡片的右内边距，再按滚动条宽度补回内边距（--tv-sbw，scrollbar.ts 测得）：正文列宽恒等于
+ * 视图宽度（与头部、底栏对齐），常驻的滚动条槽落在卡片右边缘；macOS 覆盖式滚动条宽度为 0
+ */
+.tv-body > .ui-stream.ui-scroll {
+  margin-right: calc(-1 * var(--pad-panel-x));
+  padding-right: calc(var(--pad-panel-x) - var(--tv-sbw, 0px));
+}
+/*
+ * 正文溢出时的边缘渐隐上下都是一行高（1lh）：顶部遮住被切掉的半行；底部即使只溢出一行，最后一行也明显淡下去，
+ * 看得出下面还有内容（12 px 的渐隐会落在行距里，最后一行看上去是完整的）
+ */
+.tv-body > .ui-stream.ui-scroll[data-fade-top='true'] {
+  mask-image: linear-gradient(to bottom, transparent, var(--mask) 1lh);
+}
+.tv-body > .ui-stream.ui-scroll[data-fade-bottom='true'] {
+  mask-image: linear-gradient(to top, transparent, var(--mask) 1lh);
+}
+.tv-body > .ui-stream.ui-scroll[data-fade-top='true'][data-fade-bottom='true'] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    var(--mask) 1lh,
+    var(--mask) calc(100% - 1lh),
+    transparent
+  );
+}
+/* 一次性写入的静态正文（固定窗口里已结束的结果）：避免末行孤字；流式正文以折行稳定为先，不启用 */
+.tv-static .ui-stream-body,
+.tv-static .ui-stream-changes {
+  text-wrap: pretty;
+}
+/* 「粗体小标题 + 列表」的间距与列表项的行首标点已并入组件库的 .ui-md（components.css），翻译 / OCR / 固定窗口一致 */
+/*
+ * 正文区里的卡片 / 骨架（交叉淡入的容器）。与上方正文的间距用内边距：退场时脱离排版（popLayout 按原位置绝对定位）
+ * 不会因为外边距再下移一次
+ */
+.tv-body > .tv-card {
+  flex: none;
+}
+.tv-body > .ui-stream + .tv-error {
+  padding-top: 12px;
+}
+/* 思考耗尽了输出额度（原因在状态行）：正文区的轻量空状态给出下一步；居中的说明各行均衡 */
+.tv-card > .tv-exhausted {
+  padding-block: 8px 4px;
+}
+.tv-exhausted .ui-empty-detail {
+  text-wrap: balance;
+}
+
+/*
+ * 词典式（视觉稿 design.translate-dict）：首行词头 + 音标 + 词性小胶囊，编号义项，例句左侧竖线、原句 / 译句
+ * 分两行、原句里的词头加粗（dict.ts 整理）。只在首段后面跟着义项列表时套用词头样式（代码 / 缩写那种一行说明照常显示）
+ */
+.tv-dict .ui-md > p:first-child:has(+ :is(ol, ul)) {
+  margin-bottom: 6px;
+  font-size: var(--text-meta);
+  line-height: var(--lh-title);
+  color: var(--fg-2);
+}
+.tv-dict .ui-md > p:first-child:has(+ :is(ol, ul)) strong {
+  margin-right: 2px;
+  font-size: var(--text-title);
+  font-weight: 600;
+  color: var(--fg);
+}
+/* 词性：小胶囊（行内代码整理而来，不是代码） */
+.tv-dict .ui-md > p:first-child:has(+ :is(ol, ul)) code {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 7px;
+  border-radius: 9999px;
+  font-family: var(--font-sans);
+  font-size: var(--text-caption);
+  line-height: 18px;
+  color: var(--fg-2);
+  background: var(--fill-control);
+  vertical-align: 1px;
+}
+.tv-dict .ui-md > :is(ol, ul) {
+  margin-bottom: 0;
+  padding-left: 20px;
+}
+.tv-dict .ui-md > :is(ol, ul) > li::marker {
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-2);
+}
+.tv-dict .ui-md > :is(ol, ul) ~ p {
+  margin: 8px 0 0;
+  padding-left: 10px;
+  box-shadow: inset 2px 0 0 var(--hairline-strong);
+  font-size: var(--text-ui);
+  line-height: var(--lh-body);
+  color: var(--fg-2);
+}
+.tv-dict .ui-md > :is(ol, ul) ~ p strong {
+  font-weight: 600;
+  color: var(--fg);
+}
+.tv-dict .ui-md > :is(ol, ul) ~ p + p {
+  margin-top: 6px;
+}
+
+/* ---- 长文本确认：与错误卡片同一套卡片视觉，图标用中性强调色 ---- */
+.tv-longtext {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  box-sizing: border-box;
+  border-radius: var(--r-card);
+  background: var(--fill-control);
+  box-shadow: inset 0 0 0 0.5px var(--hairline);
+}
+.tv-longtext-head {
+  display: flex;
+  gap: 10px;
+}
+.tv-longtext-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.tv-longtext[data-hard] .tv-longtext-icon {
+  color: var(--warning-text);
+  background: var(--warning-soft);
+}
+.tv-longtext-text {
+  min-width: 0;
+  padding-top: 1px;
+}
+.tv-longtext-title {
+  margin: 0;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+  color: var(--fg);
+}
+.tv-longtext-detail {
+  margin: 2px 0 0;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+.tv-longtext-warning {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 0;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--warning-text);
+}
+.tv-longtext-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 38px;
+}
+
+/* ---- 提示行：截断 / 参数已调整（完整显示，可带一个操作） ---- */
+.tv-notice {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--h-control);
+  margin: 10px -6px -6px 0;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}
+.tv-notice[data-tone='warning'] {
+  color: var(--warning-text);
+}
+.tv-notice-icon {
+  flex: none;
+}
+.tv-notice-text {
+  flex: 1;
+  min-width: 0;
+  text-wrap: pretty;
+}
+.tv-notice .ui-btn {
+  flex: none;
+}
+/* 提示行里的操作（「调高上限」）是链接色的幽灵按钮（组件库 .ui-link-action） */
+
+/* ---- 底栏：流式中与完成后同高（CLS = 0） ---- */
+.tv-footer {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--h-control);
+  margin: 12px -6px -2px 0;
+}
+.tv-notice + .tv-footer {
+  margin-top: 6px;
+}
+/* 状态行占满左侧；轻提示（已复制…）叠在它上面、临时替换它，不参与挤压 */
+.tv-status {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  align-self: stretch;
+  min-width: 0;
+}
+.tv-status-line,
+.tv-status-anchor,
+.tv-status-focus {
+  display: flex;
+  min-width: 0;
+}
+.tv-status-line {
+  flex: 1;
+}
+.tv-status-focus {
+  border-radius: var(--r-control);
+  outline: none;
+}
+.tv-status-focus:focus-visible {
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: 2px;
+}
+.tv-footer .ui-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.tv-flash {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  max-width: 100%;
+  margin-top: -11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tv-flash[data-tone='warning'] {
+  color: var(--warning-text);
+  background: var(--warning-soft);
+}
+.tv-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 原文对照是用户选中的原文：原样显示，不加中英文自动间距（译文正文 .ui-stream 照常开，base.css） */
+.tv-source {
+  text-autospace: no-autospace;
+}

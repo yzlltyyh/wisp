@@ -1,0 +1,10 @@
+{
+  "temperature": false,
+  "max_tokens_field": "max_completion_tokens",
+  "thinking_param": null,
+  "effort_param": true,
+  "stream_options": true,
+  "include_obfuscation": null,
+  "anthropic_thinking_disabled": null,
+  "anthropic_efforts": null
+}

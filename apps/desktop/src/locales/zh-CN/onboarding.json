@@ -1,0 +1,84 @@
+{
+  "skip_all": "稍后设置",
+  "skip_step": "跳过这一步",
+  "steps_label": "引导步骤",
+  "step_done": "（已完成）",
+  "step_skipped": "（已跳过）",
+  "window_label": "首次设置",
+  "step": {
+    "welcome": "欢迎",
+    "permissions": "权限",
+    "model": "接入模型",
+    "try": "试一试"
+  },
+  "welcome": {
+    "title": "欢迎使用 Wisp",
+    "description": "选中、截图或复制之后按一下快捷键，结果就出现在光标旁边。花一分钟完成设置。",
+    "start": "开始设置",
+    "feature_desc": {
+      "translate_selection": "在任意应用里选中文字，译文逐字流出",
+      "ocr": "框选屏幕任意区域，识别其中的文字",
+      "clipboard": "找回复制过的内容，一键粘贴"
+    }
+  },
+  "permissions": {
+    "title": "授予两项权限",
+    "description": "macOS 需要你允许 Wisp 读取选中的文字和屏幕画面。",
+    "privacy": "Wisp 只在你按下快捷键时读取选中的文字或截图，不会在后台读取屏幕内容。",
+    "all_set": "两项权限都已就绪",
+    "granted": "已授权",
+    "denied": "已拒绝",
+    "not_granted": "未授权",
+    "open_again": "再次打开",
+    "relaunch_hint": "已经在系统设置里打开开关？屏幕录制需要重新启动 Wisp 才能生效。",
+    "lost_title": "更新后系统授权失效了。",
+    "lost_detail": "请在系统设置里先选中 Wisp 点「−」移除，再重新添加；或者把开关关闭后再打开。",
+    "accessibility": {
+      "title": "辅助功能",
+      "why": "读取选中的文字，把剪贴板条目粘贴回原来的应用"
+    },
+    "screen_recording": {
+      "title": "屏幕录制",
+      "why": "截图 OCR 需要读取屏幕画面"
+    }
+  },
+  "model": {
+    "title": "接入一个模型",
+    "description": "翻译与截图 OCR 由你选择的模型完成；API Key 只保存在系统凭据存储中。",
+    "openai_protocol": "Responses 是 OpenAI 主推的新协议；Chat 兼容性更好",
+    "key_hint": "保存并继续时一并写入系统凭据存储",
+    "save": "保存并继续",
+    "configured": "已接入：{names}",
+    "add_another": "再添加一个服务"
+  },
+  "try": {
+    "title": "试一试",
+    "description": "在下面这段文字上试试 Wisp 的两个快捷键。",
+    "sample": "Wisp stays out of your way: it idles at near-zero CPU, wakes in milliseconds, and streams the translation right next to your cursor.",
+    "task": {
+      "translate_selection": "选中上面的文字，按",
+      "clipboard": "打开剪贴板历史，按"
+    },
+    "task_nokey": {
+      "translate_selection": "选中上面的文字，再按划词翻译的快捷键",
+      "clipboard": "按剪贴板的快捷键，打开剪贴板历史"
+    },
+    "hint": {
+      "translate_selection": "面板会出现在选区旁边，译文逐字流出",
+      "clipboard": "最近复制过的内容都在这里"
+    },
+    "done": "完成！",
+    "broken": "{issue}，在下面换一个组合即可",
+    "unbound": "还没有设置快捷键，在下面录一个",
+    "unavailable": "当前环境不支持全局快捷键，可以点「直接试试」",
+    "fix": "按下新的组合即可保存",
+    "try_now": "直接试试",
+    "more": "随时还可以按 {combo} 使用截图 OCR。",
+    "more_nokey": "随时还可以从托盘菜单打开截图 OCR。",
+    "finish_done": "开始使用",
+    "no_model": "还没接入模型，翻译会失败。",
+    "go_model": "接入模型",
+    "no_permission": "还没有辅助功能权限：在其他应用里取词、粘贴需要它。",
+    "go_permissions": "去授权"
+  }
+}

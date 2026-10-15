@@ -1,0 +1,34 @@
+/*
+ * 输入视图。头部 / 底栏沿用翻译视图的 tv-header / tv-footer（translate.css），版式与视觉稿 design.input 一致：
+ * 无边框多行输入框贴着正文左右边缘；主按钮右缘与正文对齐（底栏不做右侧 −6 px 外伸）。
+ * 输入框的行数上限按「提示条一行」估算；提示条折成两行时输入框在 --tv-max 内收缩（至少 3 行，内部滚动）。
+ */
+.iv .iv-banner {
+  flex: none;
+  margin-bottom: 8px;
+}
+/* 提示条是一两行的静态文字：各行均衡，末行不会只剩一两个字（CJK 孤字） */
+.iv .iv-banner .ui-banner-text {
+  text-wrap: balance;
+}
+.iv .iv-text {
+  flex: 0 1 auto;
+  min-height: calc(3 * var(--text-body) * var(--lh-body));
+}
+.iv .iv-footer {
+  margin-right: 0;
+}
+.iv-hint .ui-kbd-key {
+  padding-inline: 3px;
+}
+.iv-hint {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  /* 与剪贴板底部提示条同一种写法：键帽 + 说明，间距 5 px、键帽内边距 3 px */
+  gap: 5px;
+  min-width: 0;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}

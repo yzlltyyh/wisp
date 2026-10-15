@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 透明窗口：CSS 加载前也保持透明，避免白闪（style-src 允许 inline） -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        background: transparent;
+      }
+    </style>
+    <link rel="icon" href="data:," />
+    <title>Wisp</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/entries/overlay.ts"></script>
+  </body>
+</html>

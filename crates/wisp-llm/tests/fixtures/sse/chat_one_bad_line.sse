@@ -1,0 +1,8 @@
+data: {"id":"c-5","choices":[{"index":0,"delta":{"content":"a"}}]}
+
+data: not json
+
+data: {"id":"c-5","choices":[{"index":0,"delta":{"content":"b"},"finish_reason":"stop"}]}
+
+data: [DONE]
+

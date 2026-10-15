@@ -1,0 +1,26 @@
+{
+  "id": "1",
+  "name": "Built-in Retina Display",
+  "physical_origin": {
+    "x": 0,
+    "y": 0
+  },
+  "physical_size": {
+    "width": 3024,
+    "height": 1964
+  },
+  "scale_factor": 2.0,
+  "frame": {
+    "x": 0.0,
+    "y": 0.0,
+    "width": 1512.0,
+    "height": 982.0
+  },
+  "work_area": {
+    "x": 0.0,
+    "y": 33.0,
+    "width": 1512.0,
+    "height": 949.0
+  },
+  "is_primary": true
+}

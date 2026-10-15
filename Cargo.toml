@@ -1,0 +1,159 @@
+# Wisp 工作区。依赖版本统一在 [workspace.dependencies] 锁定，各 crate 用 `xxx.workspace = true` 引用
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/desktop/src-tauri"]
+# vendor/ 下是 [patch] 引入的第三方源码，不是工作区成员（否则 fmt / clippy --workspace 会检查它）
+exclude = ["vendor"]
+
+[workspace.package]
+version = "0.1.1"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+repository = "https://github.com/yzlltyyh/wisp"
+
+[workspace.dependencies]
+# ---- 本仓库 crate ----
+wisp-types = { path = "crates/wisp-types" }
+wisp-llm = { path = "crates/wisp-llm" }
+wisp-prompts = { path = "crates/wisp-prompts" }
+wisp-clipboard = { path = "crates/wisp-clipboard" }
+wisp-capture = { path = "crates/wisp-capture" }
+wisp-platform = { path = "crates/wisp-platform", default-features = false }
+
+# ---- Tauri 族（精确版本，全部锁在 2.x，不跟进 3.0 alpha）----
+tauri = { version = "=2.12.2", features = ["tray-icon", "image-png"] }
+tauri-build = { version = "=2.7.1", features = [] }
+tauri-plugin-global-shortcut = "=2.4.0"
+tauri-plugin-single-instance = "=2.5.2"
+tauri-plugin-autostart = "=2.7.0"
+tauri-plugin-updater = "=2.13.2"
+tauri-plugin-process = "=2.4.0"
+tauri-plugin-log = "=2.10.0"
+tauri-plugin-opener = "=2.7.0"
+tauri-plugin-dialog = "=2.8.1"
+tauri-plugin-notification = "=2.5.1"
+tauri-plugin-os = "=2.4.0"
+tauri-nspanel = "2.1.1"
+
+# ---- macOS 原生绑定 ----
+objc2 = "0.6.5"
+block2 = "0.6.2"
+dispatch2 = "0.3.1"
+objc2-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = "0.3.2"
+objc2-quartz-core = "0.3.2"
+objc2-application-services = "0.3.2"
+objc2-screen-capture-kit = "0.3.2"
+
+# ---- Windows 原生绑定（根只锁版本，feature 由各 crate 自行声明）----
+windows = "0.62.2"
+webview2-com = "0.39.1"
+
+# ---- Linux ----
+x11rb = { version = "0.13.2", features = ["xtest", "xfixes", "xinput", "record", "randr", "shm"] }
+wl-clipboard-rs = "0.9.4"
+ashpd = "0.13.13"
+
+# ---- 截图 / 图像 ----
+xcap = "0.9.8"
+png = "0.18.1"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+
+# ---- 网络 / 异步 ----
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "stream", "json", "charset", "system-proxy"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1.53.2", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio-util = "0.7.20"
+futures-util = "0.3.34"
+bytes = "1.12.1"
+
+# ---- 存储 ----
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite_migration = "2.6.0"
+keyring = "4.2.0"
+
+# ---- 通用 ----
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.21"
+log = "0.4.34"
+notify = "8.2.0"
+whatlang = "0.18.0"
+regex = "1.13.1"
+aho-corasick = "1.1.5"
+blake3 = "1.8.7"
+lru = "0.18.5"
+base64 = "0.23.1"
+url = "2.5.8"
+httpdate = "1.0.3"
+uuid = { version = "1.28.0", features = ["v4"] }
+parking_lot = "0.12.5"
+zip = { version = "9.0.0", default-features = false, features = ["deflate"] }
+dirs = "7.0.0"
+
+# ---- 测试 / 基准 ----
+insta = { version = "1.49.0", features = ["json"] }
+wiremock = "0.6.5"
+tempfile = "3.27.0"
+criterion = "0.8.2"
+proptest = "1.11.0"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"              # 存根用 Err(NotImplemented)，不用 todo!()
+unimplemented = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+unwrap_used = "warn"       # 根目录 clippy.toml 设 allow-unwrap-in-tests / allow-expect-in-tests = true
+undocumented_unsafe_blocks = "warn"   # 每个 unsafe 块前写 `// SAFETY: …`（中文）
+large_enum_variant = "allow"
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# 热点包单独用 opt-level 3（4K 截图编码 / 缩放、blake3 去重、SQLite FTS），其余保持 "s"（两种配置用 criterion 对比过）
+[profile.release.package.image]
+opt-level = 3
+[profile.release.package.png]
+opt-level = 3
+[profile.release.package.fdeflate]
+opt-level = 3
+[profile.release.package.zune-jpeg]
+opt-level = 3
+[profile.release.package.blake3]
+opt-level = 3
+[profile.release.package.libsqlite3-sys]
+opt-level = 3
+# 截图热点循环（ZPixmap 解码、1/2 降采样、RGBA → RGB；实测 release "s" → 3：解码 6.4–7.7 → 3.6 ms）
+[profile.release.package.wisp-capture]
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 2              # 测试中 image / sqlite / regex 依赖跑得快一些
+# `"*"` 不覆盖工作区成员：截图的逐像素循环在 opt 0 下 185 ms（ZPixmap）/ 99 ms（降采样），dev 下 Overlay 首帧远超
+# 150 ms 预算；opt 2 后为 4 ms 级
+[profile.dev.package.wisp-capture]
+opt-level = 2
+
+# ---- 第三方补丁（说明见 vendor/README.md；升级相应依赖时先看上游是否已修复，修复后删除对应的一行与 vendor/ 下的目录）----
+# wry 0.57.0（macOS）：`focused(false)` 的 WebView 不激活应用；自定义协议处理器不再泄漏；异步协议响应在主线程完成
+# tao 0.37.1（macOS）：TaoView / TaoWindowDelegate 的 `dealloc` 补上 `[super dealloc]`，销毁的窗口不再留下视图与委托对象
+# notify 8.2.0（Windows）：ReadDirectoryChangesW 服务线程改为无限期的可警报等待，不再每 100 ms 空转唤醒
+# tray-icon 0.25.1（Windows）：托盘「离开检测」定时器在光标离开或停住约 0.5 s 后关掉，不再常驻唤醒 UI 线程
+[patch.crates-io]
+wry = { path = "vendor/wry" }
+tao = { path = "vendor/tao" }
+notify = { path = "vendor/notify" }
+tray-icon = { path = "vendor/tray-icon" }

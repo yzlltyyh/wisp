@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 报告安全问题 / Report a security vulnerability
+    url: https://github.com/yzlltyyh/wisp/blob/main/SECURITY.md
+    about: 请按安全策略私下报告，不要公开提交 / Follow the security policy and report privately, not in a public issue
+  - name: 使用说明 / User guide
+    url: https://github.com/yzlltyyh/wisp/blob/main/docs/user-guide.md
+    about: 常见问题与排错 / FAQ and troubleshooting

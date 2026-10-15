@@ -1,0 +1,30 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: "snap[\"body\"]"
+---
+{
+  "contents": [
+    {
+      "parts": [
+        {
+          "text": "Hello, world."
+        }
+      ],
+      "role": "user"
+    }
+  ],
+  "generationConfig": {
+    "maxOutputTokens": 556,
+    "temperature": 0.3,
+    "thinkingConfig": {
+      "thinkingBudget": 0
+    }
+  },
+  "systemInstruction": {
+    "parts": [
+      {
+        "text": "You are a translator."
+      }
+    ]
+  }
+}

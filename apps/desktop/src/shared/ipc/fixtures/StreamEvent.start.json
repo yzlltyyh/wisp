@@ -1,0 +1,8 @@
+{
+  "type": "start",
+  "request_id": "r-1",
+  "provider_id": "openai-main",
+  "model_id": "gpt-5-mini",
+  "model_label": "GPT-5 mini",
+  "upstream_id": "chatcmpl-9x"
+}

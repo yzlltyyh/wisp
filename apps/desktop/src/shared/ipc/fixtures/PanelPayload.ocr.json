@@ -1,0 +1,13 @@
+{
+  "kind": "ocr",
+  "capture_id": "c-7",
+  "request_id": "r-2",
+  "mode": "lines",
+  "thumb_url": "http://wisp.localhost/crop%2Fc-7.png",
+  "image_size": {
+    "width": 840,
+    "height": 312
+  },
+  "target_lang": "zh-CN",
+  "not_ready": null
+}

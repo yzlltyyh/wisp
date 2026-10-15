@@ -1,0 +1,17 @@
+[package]
+name = "wisp-types"
+description = "Wisp 的共享数据类型：IPC DTO、领域类型与配置文档"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+# 配置文档的宽松反序列化（lenient.rs）用 `serde_json::Value` 缓冲字段值
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,9 @@
+<source_text>
+{{text}}
+</source_text>
+
+<draft_translation>
+{{draft}}
+</draft_translation>
+
+List up to 8 specific problems in the draft, each on one line in the form "quote → fix: reason", covering (i) accuracy — additions, omissions, mistranslation, untranslated text; (ii) fluency and natural {{target_lang}} phrasing; (iii) style and register matching the source; (iv) terminology consistency and conventions of the field. Ignore anything that is already fine. If the draft is already good, reply with exactly: OK

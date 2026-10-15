@@ -1,0 +1,81 @@
+{
+  "id": "openai",
+  "name_key": "settings.providers.template.openai",
+  "group": "openai",
+  "provider": {
+    "id": "openai-main",
+    "name": "OpenAI",
+    "protocol": "openai_chat",
+    "base_url": "https://api.openai.com/v1",
+    "headers": {
+      "x-org": "wisp"
+    },
+    "quirks": {
+      "thinking_off": "openai_effort",
+      "merge_system_into_user": false,
+      "strip_think_tags": true,
+      "max_tokens_field": "max_completion_tokens",
+      "dual_auth_header": null,
+      "gemini_key_in_query": false
+    },
+    "models": [
+      {
+        "id": "gpt-5-mini",
+        "label": "GPT-5 mini",
+        "vision": "yes",
+        "vision_source": "keyword",
+        "reasoning": true,
+        "enabled": true,
+        "missing_upstream": false,
+        "deprecated": false,
+        "context_tokens": 400000,
+        "caps": {
+          "temperature": false,
+          "max_tokens_field": "max_completion_tokens",
+          "thinking_param": null,
+          "effort_param": true,
+          "stream_options": true,
+          "include_obfuscation": null,
+          "anthropic_thinking_disabled": null,
+          "anthropic_efforts": null
+        },
+        "reasoning_effort": "minimal"
+      },
+      {
+        "id": "gpt-4.1-nano",
+        "label": null,
+        "vision": "unknown",
+        "vision_source": null,
+        "reasoning": false,
+        "enabled": true,
+        "missing_upstream": false,
+        "deprecated": false,
+        "context_tokens": null,
+        "caps": {
+          "temperature": null,
+          "max_tokens_field": null,
+          "thinking_param": null,
+          "effort_param": null,
+          "stream_options": null,
+          "include_obfuscation": null,
+          "anthropic_thinking_disabled": null,
+          "anthropic_efforts": null
+        },
+        "reasoning_effort": null
+      }
+    ],
+    "timeouts": {
+      "connect_ms": 10000,
+      "first_token_ms": 30000,
+      "idle_ms": 60000
+    },
+    "template_id": "openai"
+  },
+  "key_required": true,
+  "region_variants": [
+    {
+      "label_key": "settings.providers.region.default",
+      "base_url": "https://api.openai.com/v1"
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+/* 翻译视图状态总览页（只在浏览器 mock 中加载，translate.states / translate.errors）：每个状态一张静态面板卡片 */
+html[data-window='wp14-states'],
+html[data-window='wp14-states'] body {
+  overflow: auto;
+  height: auto;
+  background: var(--g3);
+}
+html[data-window='wp14-states'] #wisp-mock-desktop {
+  display: none;
+}
+html[data-window='wp14-states'] #root {
+  position: relative !important;
+  min-height: 100vh;
+  width: auto !important;
+  height: auto !important;
+  overflow: visible !important;
+  transform: none !important;
+  visibility: visible !important;
+}
+.tvm-page {
+  padding: 24px;
+}
+.tvm-title {
+  margin: 0 0 4px;
+  font-size: var(--text-page);
+  font-weight: 600;
+  color: var(--fg);
+}
+.tvm-desc {
+  margin: 0 0 20px;
+  font-size: var(--text-ui);
+  color: var(--fg-2);
+}
+.tvm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: 24px;
+  align-items: start;
+}
+.tvm-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tvm-caption {
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+}
+.tvm-card {
+  position: relative;
+  width: 400px;
+  border-radius: var(--r-panel);
+  background: var(--surface-solid);
+  box-shadow:
+    var(--shadow-popover),
+    inset 0 0 0 1px var(--hairline),
+    var(--highlight-top);
+  contain: layout paint;
+}
+.tvm-card .panel-floating {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}

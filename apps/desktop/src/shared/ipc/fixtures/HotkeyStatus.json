@@ -1,0 +1,11 @@
+{
+  "target": {
+    "kind": "action",
+    "action": "translate_selection"
+  },
+  "binding": "default",
+  "effective": "Alt+KeyD",
+  "display": "⌥D",
+  "state": "registered",
+  "reason_key": null
+}

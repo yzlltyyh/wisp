@@ -1,0 +1,32 @@
+{
+  "change": "touched",
+  "item": {
+    "id": 129,
+    "kind": "image",
+    "created_at": 1760000100000,
+    "last_used_at": 1760000100000,
+    "use_count": 1,
+    "pinned": true,
+    "source": null,
+    "preview": "",
+    "char_count": null,
+    "line_count": null,
+    "truncated": false,
+    "image": {
+      "width": 1280,
+      "height": 720,
+      "bytes": 245760,
+      "thumb_url": "http://wisp.localhost/thumb%2Fd4e5f6.jpg"
+    },
+    "files": [
+      {
+        "path": "/Users/me/Desktop/report.pdf",
+        "name": "report.pdf",
+        "exists": true,
+        "size": 182044
+      }
+    ],
+    "link": "https://example.com/",
+    "color": "#3478F6"
+  }
+}

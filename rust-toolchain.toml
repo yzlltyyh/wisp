@@ -1,0 +1,4 @@
+# 锁定 Rust 工具链，本机与 CI 使用同一个版本。不写 targets：交叉编译目标由发布矩阵按需安装，本机交叉检查前自行 rustup target add
+[toolchain]
+channel = "1.96.1"
+components = ["rustfmt", "clippy"]

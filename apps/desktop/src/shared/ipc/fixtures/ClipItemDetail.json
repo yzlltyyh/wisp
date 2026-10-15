@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "id": 128,
+    "kind": "text",
+    "created_at": 1760000000000,
+    "last_used_at": 1760000360000,
+    "use_count": 3,
+    "pinned": false,
+    "source": {
+      "id": "com.apple.Safari",
+      "name": "Safari",
+      "icon_url": "http://wisp.localhost/icon%2Fa1b2c3.png"
+    },
+    "preview": "The quick brown fox jumps over the lazy dog",
+    "char_count": 43,
+    "line_count": 1,
+    "truncated": false,
+    "image": null,
+    "files": null,
+    "link": null,
+    "color": null
+  },
+  "text": "The quick brown fox jumps over the lazy dog",
+  "has_html": true,
+  "has_rtf": false,
+  "image_url": null,
+  "files": null
+}

@@ -1,0 +1,15 @@
+# pnpm 工作区。pnpm 12 的设置都写在这里（.npmrc 只放认证 / registry）。
+# 构建脚本白名单：2026-10-10 执行 pnpm install 时没有任何依赖带 pre/post/install 脚本
+# （rolldown / oxlint / lightningcss / @tailwindcss/oxide / @tauri-apps/cli 均为预编译的可选依赖），因此不需要放行任何包。
+# minimumReleaseAgeExclude 由 pnpm 在安装锁定的较新版本（发布时间还不满最短发布期）时自动写入。
+packages:
+  - apps/*
+minimumReleaseAgeExclude:
+  - '@tanstack/react-virtual@3.14.14'
+  - '@tanstack/virtual-core@3.18.0'
+  - '@types/node@26.6.5'
+  - framer-motion@14.1.0
+  - lucide-react@1.54.0
+  - motion-dom@14.1.0
+  - motion-utils@14.1.0
+  - motion@14.1.0

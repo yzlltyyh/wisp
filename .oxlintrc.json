@@ -1,0 +1,135 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "eslint",
+    "typescript",
+    "unicorn",
+    "oxc",
+    "import",
+    "react",
+    "react-perf",
+    "jsx-a11y",
+    "vitest",
+    "promise"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "browser": true,
+    "es2024": true
+  },
+  "globals": {
+    "__WISP_MOCK__": "readonly"
+  },
+  "ignorePatterns": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "target/**",
+    "artifacts/**",
+    "docs/**",
+    "apps/desktop/src-tauri/**",
+    "apps/desktop/src/shared/ipc/fixtures/**",
+    "apps/desktop/src/generated/**"
+  ],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "regex": "^@tauri-apps/",
+            "message": "前端只能经 src/shared/ipc 访问 Tauri"
+          }
+        ]
+      }
+    ],
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "warn",
+    "react/jsx-key": "error",
+    "react/react-in-jsx-scope": "off",
+    "react-perf/jsx-no-new-object-as-prop": "off",
+    "react-perf/jsx-no-new-array-as-prop": "off",
+    "react-perf/jsx-no-new-function-as-prop": "off",
+    "react-perf/jsx-no-jsx-as-prop": "off",
+    "import/no-cycle": "error",
+    "typescript/no-explicit-any": "warn",
+    "typescript/consistent-type-imports": "error",
+    "eslint/no-console": [
+      "warn",
+      {
+        "allow": ["warn", "error", "info", "debug"]
+      }
+    ],
+    "eslint/no-debugger": "error",
+    "unicorn/prefer-add-event-listener": "off",
+    "unicorn/no-array-sort": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "oxc/no-map-spread": "off",
+    "promise/always-return": "off",
+    "eslint/no-underscore-dangle": "off",
+    "import/no-unassigned-import": [
+      "warn",
+      {
+        "allow": ["**/*.css", "@testing-library/jest-dom/vitest"]
+      }
+    ],
+    "vitest/valid-expect": [
+      "error",
+      {
+        "maxArgs": 2
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["apps/desktop/src/shared/ipc/**"],
+      "rules": {
+        "no-restricted-imports": "off"
+      }
+    },
+    {
+      "files": ["apps/desktop/src/overlay/**", "apps/desktop/src/entries/overlay.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^@tauri-apps/",
+                "message": "前端只能经 src/shared/ipc 访问 Tauri"
+              },
+              {
+                "regex": "(^|/)shared/ipc(/index(\\.ts)?)?$",
+                "message": "Overlay 只能从 shared/ipc/overlay 导入（体积：桶会拖进全部命令封装）"
+              },
+              {
+                "regex": "(^|/)shared/ipc/commands(\\.ts)?$",
+                "message": "Overlay 只能从 shared/ipc/overlay 导入（体积：commands.ts 含全部命令封装）"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**", "apps/desktop/src/test/**"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "eslint/no-console": "off"
+      }
+    },
+    {
+      "files": ["apps/desktop/*.config.ts", "scripts/**"],
+      "env": {
+        "node": true,
+        "browser": false
+      },
+      "rules": {
+        "eslint/no-console": "off"
+      }
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+/*
+ * Tailwind 4 入口：设计令牌映射为 utility，深色与平台差异用 custom-variant。
+ *
+ * 约束（「颜色只能用令牌」）：默认调色板、字号、圆角、阴影、缓动全部清空（`--*-*: initial`），
+ * 只保留令牌映射出的 utility——`bg-red-500`、`text-sm` 之类的类名不会生成，写了也没有效果。
+ * 间距基数固定为 4 px（`p-2` = 8 px、`gap-3` = 12 px），不随 html 字号变化，保证 8 pt 栅格。
+ *
+ * 常用：`text-fg` / `text-fg-2` / `bg-surface` / `border-hairline` / `rounded-panel` / `text-ui` / `text-meta` /
+ * `shadow-menu` / `ease-standard` / `duration-fast` / `animate-chunk-in`；变体 `dark:` / `mac:` / `win:` / `linux:` /
+ * `reduced:` / `native:` / `css:`（帧模式）。
+ */
+@import 'tailwindcss';
+@import './tokens.css';
+@import './tokens-ui.css';
+@import './base.css';
+@import './components.css';
+
+@custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
+@custom-variant mac (&:where([data-os=macos], [data-os=macos] *));
+@custom-variant win (&:where([data-os=windows], [data-os=windows] *));
+@custom-variant linux (&:where([data-os=linux], [data-os=linux] *));
+@custom-variant reduced (&:where([data-reduced-motion=true], [data-reduced-motion=true] *));
+@custom-variant native (&:where([data-frame=native], [data-frame=native] *));
+@custom-variant css (&:where([data-frame=css], [data-frame=css] *));
+
+@theme {
+  --color-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --ease-*: initial;
+  --animate-*: initial;
+  --blur-*: initial;
+  --spacing: 4px;
+}
+
+@theme inline {
+  --color-fg: var(--fg);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-surface: var(--surface-tint);
+  --color-surface-solid: var(--surface-solid);
+  --color-surface-raised: var(--surface-raised);
+  --color-hairline: var(--hairline);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-fill-hover: var(--fill-hover);
+  --color-fill-pressed: var(--fill-pressed);
+  --color-fill-selected: var(--fill-selected);
+  --color-fill-control: var(--fill-control);
+  --color-field: var(--field-bg);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-text: var(--danger-text);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-warning-text: var(--warning-text);
+  --color-warning-soft: var(--warning-soft);
+  --color-success: var(--success);
+  --color-success-text: var(--success-text);
+  --color-success-soft: var(--success-soft);
+  --color-mark: var(--mark-bg);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+
+  --text-body: var(--text-body);
+  --text-body--line-height: var(--lh-body);
+  --text-ui: var(--text-ui);
+  --text-ui--line-height: var(--lh-ui);
+  --text-meta: var(--text-meta);
+  --text-meta--line-height: var(--lh-meta);
+  --text-caption: var(--text-caption);
+  --text-caption--line-height: var(--lh-caption);
+  --text-title: var(--text-title);
+  --text-title--line-height: var(--lh-title);
+  --text-page: var(--text-page);
+  --text-page--line-height: var(--lh-page);
+
+  --radius-panel: var(--r-panel);
+  --radius-card: var(--r-card);
+  --radius-menu: var(--r-menu);
+  --radius-row: var(--r-row);
+  --radius-control: var(--r-control);
+  --radius-chip: var(--r-chip);
+  --radius-kbd: var(--r-kbd);
+  --radius-full: 9999px;
+
+  --shadow-popover: var(--shadow-popover);
+  --shadow-pinned: var(--shadow-pinned);
+  --shadow-menu: var(--shadow-menu);
+  --shadow-control: var(--shadow-control);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --ease-standard: var(--ease-standard);
+  --ease-exit: var(--ease-exit);
+
+  --animate-chunk-in: wisp-chunk-in var(--dur-chunk) var(--ease-standard) both;
+  --animate-pulse: wisp-pulse var(--pulse-period) var(--ease-pulse) infinite;
+  --animate-caret: wisp-caret var(--pulse-period) steps(1, end) infinite;
+  --animate-spin: wisp-spin var(--pulse-period) linear infinite;
+}
+
+/* 动画时长 utility 只能取令牌（duration-instant / fast / base / slow） */
+@utility duration-instant {
+  transition-duration: var(--dur-instant);
+}
+@utility duration-fast {
+  transition-duration: var(--dur-fast);
+}
+@utility duration-base {
+  transition-duration: var(--dur-base);
+}
+@utility duration-slow {
+  transition-duration: var(--dur-slow);
+}

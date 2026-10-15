@@ -1,0 +1,2 @@
+## Mode: line by line
+Output one line per visual line of text, in reading order. Keep leading indentation using spaces. Do not merge lines, and insert a blank line only where there is a clear vertical gap in the image.

@@ -1,0 +1,16 @@
+{
+  "id": "custom-3f9a1c2e",
+  "name": "Release notes",
+  "builtin": false,
+  "system_template": "Translate release notes from {{source_lang}} into {{target_lang}}.",
+  "tail_instruction": "Reply with the translation only.",
+  "temperature": null,
+  "output": "markdown_lite",
+  "dictionary_mode": false,
+  "model_ref": {
+    "provider_id": "openai-main",
+    "model_id": "gpt-5-mini"
+  },
+  "hotkey": "Control+Alt+KeyR",
+  "modified": false
+}

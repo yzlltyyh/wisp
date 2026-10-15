@@ -1,0 +1,433 @@
+[
+  {
+    "os": "macos",
+    "combo": "Super+Space",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]],
+    "params": { "combo": "⌘Space" }
+  },
+  {
+    "os": "macos",
+    "combo": "Control+Space",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Shift+Super+Space",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Super+Shift+Digit4",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]],
+    "params": { "combo": "⇧⌘4" }
+  },
+  {
+    "os": "macos",
+    "combo": "Super+KeyQ",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.conflict.reserved"],
+      ["warning", "hotkeys.conflict.single_letter"]
+    ]
+  },
+  {
+    "os": "macos",
+    "combo": "Super+KeyK",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.single_letter"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Control+KeyD",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.single_letter"]]
+  },
+  { "os": "macos", "combo": "Alt+KeyD", "acceptable": true, "expect": [] },
+  { "os": "macos", "combo": "Alt+Shift+KeyS", "acceptable": true, "expect": [] },
+  {
+    "os": "macos",
+    "combo": "Alt+KeyE",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.dead_key"]],
+    "params": { "combo": "⌥E" }
+  },
+  {
+    "os": "macos",
+    "combo": "Alt+KeyN",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.dead_key"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Shift+KeyA",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.shift_letter"]]
+  },
+  {
+    "os": "macos",
+    "combo": "KeyA",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.recorder.modifier_required"]]
+  },
+  { "os": "macos", "combo": "F13", "acceptable": true, "expect": [] },
+  {
+    "os": "macos",
+    "combo": "F5",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.bare_key"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Shift+Super+KeyV",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.static_app"]],
+    "params": { "app": "Paste / Clipy" }
+  },
+  {
+    "os": "macos",
+    "combo": "Control+Alt+KeyD",
+    "acceptable": true,
+    "expect": [["info", "hotkeys.conflict.static_app"]],
+    "params": { "app": "Rectangle" }
+  },
+  { "os": "macos", "combo": "Control+Alt+KeyS", "acceptable": true, "expect": [] },
+  {
+    "os": "macos",
+    "combo": "Control+Alt+KeyS",
+    "system": ["Control+Alt+KeyS"],
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.system_taken"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Control+ArrowUp",
+    "system": ["Control+ArrowUp", "Control+ArrowDown"],
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.system_taken"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Alt+Space",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.static_app"]],
+    "params": { "app": "Raycast / Alfred" }
+  },
+  {
+    "os": "macos",
+    "combo": "Control+Alt",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.recorder.modifier_required"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Fn+KeyE",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.invalid"]]
+  },
+  {
+    "os": "macos",
+    "combo": "AltLeft+KeyD",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.invalid"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Alt+IntlBackslash",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.invalid"]]
+  },
+
+  {
+    "os": "macos",
+    "combo": "Super+KeyC",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.conflict.edit_key"],
+      ["warning", "hotkeys.conflict.single_letter"]
+    ],
+    "params": { "combo": "⌘C" }
+  },
+  {
+    "os": "macos",
+    "combo": "Command+V",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.conflict.edit_key"],
+      ["warning", "hotkeys.conflict.single_letter"]
+    ]
+  },
+  {
+    "os": "macos",
+    "combo": "Super+KeyZ",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.conflict.edit_key"],
+      ["warning", "hotkeys.conflict.single_letter"]
+    ]
+  },
+  {
+    "os": "macos",
+    "combo": "Shift+Super+KeyZ",
+    "acceptable": true,
+    "expect": []
+  },
+  {
+    "os": "macos",
+    "combo": "F21",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.invalid"]]
+  },
+  {
+    "os": "macos",
+    "combo": "Alt+F24",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.invalid"]]
+  },
+  { "os": "macos", "combo": "F20", "acceptable": true, "expect": [] },
+  {
+    "os": "windows",
+    "combo": "Control+Alt+Delete",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Control+Shift+Escape",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Alt+F4",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Alt+Tab",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Alt+Space",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Super+KeyL",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.conflict.reserved"],
+      ["warning", "hotkeys.conflict.win_key"]
+    ]
+  },
+  {
+    "os": "windows",
+    "combo": "PrintScreen",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.recorder.modifier_required"],
+      ["forbidden", "hotkeys.conflict.reserved"]
+    ]
+  },
+  {
+    "os": "windows",
+    "combo": "F12",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.f12"]]
+  },
+  {
+    "os": "windows",
+    "combo": "F11",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.bare_key"]]
+  },
+  { "os": "windows", "combo": "F20", "acceptable": true, "expect": [] },
+  {
+    "os": "windows",
+    "combo": "Control+Alt+KeyA",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.static_app"]],
+    "params": { "app": "QQ" }
+  },
+  {
+    "os": "windows",
+    "combo": "Control+Alt+KeyD",
+    "acceptable": true,
+    "expect": [["info", "hotkeys.conflict.static_app"]],
+    "params": { "app": "Word" }
+  },
+  {
+    "os": "windows",
+    "combo": "Control+Alt+KeyD",
+    "altgr": true,
+    "acceptable": true,
+    "expect": [
+      ["warning", "hotkeys.conflict.layout"],
+      ["info", "hotkeys.conflict.static_app"]
+    ]
+  },
+  { "os": "windows", "combo": "Control+Alt+Shift+KeyD", "acceptable": true, "expect": [] },
+  {
+    "os": "windows",
+    "combo": "Alt+Shift+KeyD",
+    "acceptable": true,
+    "expect": [["info", "hotkeys.conflict.static_app"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Alt+KeyD",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.alt_letter"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Alt+KeyA",
+    "acceptable": true,
+    "expect": [
+      ["warning", "hotkeys.conflict.alt_letter"],
+      ["warning", "hotkeys.conflict.static_app"]
+    ],
+    "params": { "app": "WeChat" }
+  },
+  {
+    "os": "windows",
+    "combo": "Shift+Super+KeyS",
+    "acceptable": true,
+    "expect": [
+      ["warning", "hotkeys.conflict.win_key"],
+      ["warning", "hotkeys.conflict.static_app"]
+    ]
+  },
+  {
+    "os": "windows",
+    "combo": "Control+KeyK",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.single_letter"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Control+KeyC",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.conflict.edit_key"],
+      ["warning", "hotkeys.conflict.single_letter"]
+    ],
+    "params": { "combo": "Ctrl+C" }
+  },
+  {
+    "os": "windows",
+    "combo": "Control+KeyV",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.conflict.edit_key"],
+      ["warning", "hotkeys.conflict.single_letter"]
+    ]
+  },
+  {
+    "os": "windows",
+    "combo": "Control+Insert",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.edit_key"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Control+Shift+KeyC",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.edit_key"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Control+Alt+NumpadEqual",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.invalid"]]
+  },
+  { "os": "windows", "combo": "Control+Alt+F24", "acceptable": true, "expect": [] },
+  {
+    "os": "windows",
+    "combo": "Shift+KeyV",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.shift_letter"]]
+  },
+  {
+    "os": "windows",
+    "combo": "Control+Shift+KeyV",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.static_app"]],
+    "params": { "app": "Chrome / Office" }
+  },
+
+  {
+    "os": "linux",
+    "combo": "Super+Space",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "linux",
+    "combo": "Super+KeyL",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "linux",
+    "combo": "Alt+F2",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.reserved"]]
+  },
+  {
+    "os": "linux",
+    "combo": "Alt+Super+KeyS",
+    "acceptable": true,
+    "expect": [["info", "hotkeys.conflict.static_app"]],
+    "params": { "app": "GNOME" }
+  },
+  {
+    "os": "linux",
+    "combo": "Super+KeyV",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.static_app"]]
+  },
+  {
+    "os": "linux",
+    "combo": "Control+Shift+KeyC",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.edit_key"]]
+  },
+  {
+    "os": "linux",
+    "combo": "Control+Shift+KeyV",
+    "acceptable": false,
+    "expect": [["forbidden", "hotkeys.conflict.edit_key"]],
+    "params": { "combo": "Ctrl+Shift+V" }
+  },
+  {
+    "os": "linux",
+    "combo": "Control+KeyZ",
+    "acceptable": false,
+    "expect": [
+      ["forbidden", "hotkeys.conflict.edit_key"],
+      ["warning", "hotkeys.conflict.single_letter"]
+    ]
+  },
+  {
+    "os": "linux",
+    "combo": "Alt+KeyD",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.alt_letter"]]
+  },
+  { "os": "linux", "combo": "Control+Alt+KeyD", "altgr": true, "acceptable": true, "expect": [] },
+  {
+    "os": "linux",
+    "combo": "F12",
+    "acceptable": true,
+    "expect": [["warning", "hotkeys.conflict.bare_key"]]
+  },
+  { "os": "linux", "combo": "Alt+Super+KeyD", "acceptable": true, "expect": [] }
+]

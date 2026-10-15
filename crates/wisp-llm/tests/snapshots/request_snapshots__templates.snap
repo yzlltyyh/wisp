@@ -1,0 +1,501 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: "wisp_llm::templates()"
+---
+[
+  {
+    "id": "openai",
+    "name_key": "settings.providers.template.openai",
+    "group": "openai",
+    "provider": {
+      "id": "openai",
+      "name": "OpenAI",
+      "protocol": "openai_chat",
+      "base_url": "https://api.openai.com/v1",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "openai_effort",
+        "merge_system_into_user": false,
+        "strip_think_tags": false,
+        "max_tokens_field": "max_completion_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "openai"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "openai-responses",
+    "name_key": "settings.providers.template.openai-responses",
+    "group": "openai",
+    "provider": {
+      "id": "openai-responses",
+      "name": "OpenAI Responses",
+      "protocol": "openai_responses",
+      "base_url": "https://api.openai.com/v1",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "openai_effort",
+        "merge_system_into_user": false,
+        "strip_think_tags": false,
+        "max_tokens_field": null,
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "openai-responses"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "anthropic",
+    "name_key": "settings.providers.template.anthropic",
+    "group": "anthropic",
+    "provider": {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "protocol": "anthropic_messages",
+      "base_url": "https://api.anthropic.com",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "anthropic_effort",
+        "merge_system_into_user": false,
+        "strip_think_tags": false,
+        "max_tokens_field": null,
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "anthropic"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "gemini",
+    "name_key": "settings.providers.template.gemini",
+    "group": "gemini",
+    "provider": {
+      "id": "gemini",
+      "name": "Google Gemini",
+      "protocol": "gemini",
+      "base_url": "https://generativelanguage.googleapis.com",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "gemini_level",
+        "merge_system_into_user": false,
+        "strip_think_tags": false,
+        "max_tokens_field": null,
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "gemini"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "deepseek",
+    "name_key": "settings.providers.template.deepseek",
+    "group": "other",
+    "provider": {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "protocol": "openai_chat",
+      "base_url": "https://api.deepseek.com",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "deepseek",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "deepseek"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "openrouter",
+    "name_key": "settings.providers.template.openrouter",
+    "group": "other",
+    "provider": {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "protocol": "openai_chat",
+      "base_url": "https://openrouter.ai/api/v1",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "none",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_completion_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "openrouter"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "qwen",
+    "name_key": "settings.providers.template.qwen",
+    "group": "other",
+    "provider": {
+      "id": "qwen",
+      "name": "通义千问（百炼）",
+      "protocol": "openai_chat",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "qwen",
+        "merge_system_into_user": true,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "qwen"
+    },
+    "key_required": true,
+    "region_variants": [
+      {
+        "label_key": "settings.providers.region.cn",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+      },
+      {
+        "label_key": "settings.providers.region.intl",
+        "base_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+      },
+      {
+        "label_key": "settings.providers.region.workspace",
+        "base_url": "https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+      }
+    ]
+  },
+  {
+    "id": "zhipu",
+    "name_key": "settings.providers.template.zhipu",
+    "group": "other",
+    "provider": {
+      "id": "zhipu",
+      "name": "智谱",
+      "protocol": "openai_chat",
+      "base_url": "https://open.bigmodel.cn/api/paas/v4",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "glm",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "zhipu"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "volcengine",
+    "name_key": "settings.providers.template.volcengine",
+    "group": "other",
+    "provider": {
+      "id": "volcengine",
+      "name": "火山方舟",
+      "protocol": "openai_chat",
+      "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "glm",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "volcengine"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "moonshot",
+    "name_key": "settings.providers.template.moonshot",
+    "group": "other",
+    "provider": {
+      "id": "moonshot",
+      "name": "Moonshot / Kimi",
+      "protocol": "openai_chat",
+      "base_url": "https://api.moonshot.cn/v1",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "kimi",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "moonshot"
+    },
+    "key_required": true,
+    "region_variants": [
+      {
+        "label_key": "settings.providers.region.cn",
+        "base_url": "https://api.moonshot.cn/v1"
+      },
+      {
+        "label_key": "settings.providers.region.intl",
+        "base_url": "https://api.moonshot.ai/v1"
+      }
+    ]
+  },
+  {
+    "id": "siliconflow",
+    "name_key": "settings.providers.template.siliconflow",
+    "group": "other",
+    "provider": {
+      "id": "siliconflow",
+      "name": "硅基流动",
+      "protocol": "openai_chat",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "qwen",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "siliconflow"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "minimax",
+    "name_key": "settings.providers.template.minimax",
+    "group": "other",
+    "provider": {
+      "id": "minimax",
+      "name": "MiniMax",
+      "protocol": "openai_chat",
+      "base_url": "https://api.minimaxi.com/v1",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "minimax",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_completion_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "minimax"
+    },
+    "key_required": true,
+    "region_variants": [
+      {
+        "label_key": "settings.providers.region.cn",
+        "base_url": "https://api.minimaxi.com/v1"
+      },
+      {
+        "label_key": "settings.providers.region.intl",
+        "base_url": "https://api.minimax.io/v1"
+      }
+    ]
+  },
+  {
+    "id": "groq",
+    "name_key": "settings.providers.template.groq",
+    "group": "other",
+    "provider": {
+      "id": "groq",
+      "name": "Groq",
+      "protocol": "openai_chat",
+      "base_url": "https://api.groq.com/openai/v1",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "none",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_completion_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "groq"
+    },
+    "key_required": true,
+    "region_variants": []
+  },
+  {
+    "id": "ollama",
+    "name_key": "settings.providers.template.ollama",
+    "group": "local",
+    "provider": {
+      "id": "ollama",
+      "name": "Ollama",
+      "protocol": "openai_chat",
+      "base_url": "http://localhost:11434",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "none",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 120000,
+        "idle_ms": 120000
+      },
+      "template_id": "ollama"
+    },
+    "key_required": false,
+    "region_variants": []
+  },
+  {
+    "id": "lmstudio",
+    "name_key": "settings.providers.template.lmstudio",
+    "group": "local",
+    "provider": {
+      "id": "lmstudio",
+      "name": "LM Studio",
+      "protocol": "openai_chat",
+      "base_url": "http://localhost:1234",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "none",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 120000,
+        "idle_ms": 120000
+      },
+      "template_id": "lmstudio"
+    },
+    "key_required": false,
+    "region_variants": []
+  },
+  {
+    "id": "relay",
+    "name_key": "settings.providers.template.relay",
+    "group": "other",
+    "provider": {
+      "id": "relay",
+      "name": "中转站",
+      "protocol": "openai_chat",
+      "base_url": "",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "none",
+        "merge_system_into_user": false,
+        "strip_think_tags": true,
+        "max_tokens_field": "max_completion_tokens",
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "relay"
+    },
+    "key_required": true,
+    "region_variants": []
+  }
+]

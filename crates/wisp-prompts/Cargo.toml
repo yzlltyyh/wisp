@@ -1,0 +1,44 @@
+[package]
+name = "wisp-prompts"
+description = "Wisp 的提示词：内置风格、模板渲染、提示词装配、语言检测、术语匹配、流式后处理与缓存键"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# 评测运行器（仅开发用；CI 不跑）。依赖只在打开 feature 时编译，不进常驻应用的依赖图：
+# wisp-llm + tokio 发请求，regex 做断言，serde_json 读写配置与报告，image 把 OCR 截图缩到长边 ≤2048
+eval = ["dep:wisp-llm", "dep:tokio", "dep:regex", "dep:serde_json", "dep:image"]
+
+[dependencies]
+wisp-types = { workspace = true }
+whatlang = { workspace = true }
+aho-corasick = { workspace = true }
+log = { workspace = true }
+wisp-llm = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+regex = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+criterion = { workspace = true }
+# tests/post.rs 读取与 TS 共用的 edit_split.json 夹具
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[bench]]
+name = "assemble"
+harness = false
+
+[[bin]]
+name = "wisp-eval"
+path = "src/bin/wisp-eval.rs"
+required-features = ["eval"]
+
+[lints]
+workspace = true

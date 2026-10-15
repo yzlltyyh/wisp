@@ -1,0 +1,9 @@
+{
+  "request_id": "",
+  "width": 480.0,
+  "long_text": {
+    "chars": 5200,
+    "est_tokens": 1300,
+    "est_seconds": 12.5
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "label": "settings",
+  "os": "windows",
+  "os_version": "10.0.26100",
+  "theme": "dark",
+  "accent": "#0A84FF",
+  "reduce_motion": false,
+  "reduce_transparency": false,
+  "material": "native",
+  "frame_mode": "css",
+  "shadow_margin": 24.0,
+  "font_size": 14,
+  "ui_language": "zh-CN",
+  "dev": true,
+  "debug_build": true,
+  "route": {
+    "kind": "settings",
+    "section": "providers"
+  }
+}

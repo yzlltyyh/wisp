@@ -1,0 +1,77 @@
+{
+  "arch": "aarch64",
+  "debug_build": true,
+  "duration_ms": 13574,
+  "failures": [
+    "first translate: no perf trace (orchestrator did not handle TranslateText)",
+    "triggers: no perf traces at all; aborting the remaining triggers",
+    "triggers: 100 hang(s)"
+  ],
+  "fake_llm": true,
+  "first_translate": null,
+  "log_file": "target/smoke-report.log",
+  "ok": false,
+  "os": "macos",
+  "os_version": "26.4.0",
+  "panel_prewarm_ms": 264,
+  "rss_kb": {
+    "after_startup": 92976,
+    "after_triggers": 117072,
+    "end": 131872
+  },
+  "schema": 1,
+  "settings_window": {
+    "close_ms": 37,
+    "closed": true,
+    "open_ms": 1335,
+    "opened": true
+  },
+  "startup": {
+    "stages": [
+      {
+        "ms": 115,
+        "name": "settings_loaded"
+      },
+      {
+        "ms": 117,
+        "name": "services"
+      },
+      {
+        "ms": 152,
+        "name": "tray_ready"
+      },
+      {
+        "ms": 152,
+        "name": "services_started"
+      },
+      {
+        "ms": 152,
+        "name": "setup_done"
+      }
+    ],
+    "tray_ready_ms": 152
+  },
+  "triggers": {
+    "count": 100,
+    "hangs": 100,
+    "prepare_to_shown_ms": {
+      "max": null,
+      "p50": null,
+      "p95": null
+    },
+    "ready_timeouts": 0,
+    "shown": 0,
+    "trigger_to_shown_ms": {
+      "max": null,
+      "p50": null,
+      "p95": null
+    }
+  },
+  "ts": 1791636338168,
+  "version": "0.1.0",
+  "windows": {
+    "end": 1,
+    "labels_end": ["panel"],
+    "peak": 2
+  }
+}

@@ -1,0 +1,1 @@
+Look up the item inside <source_text> ({{source_lang}}) and give its {{target_lang}} equivalents as specified.

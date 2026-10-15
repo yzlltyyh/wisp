@@ -1,0 +1,13 @@
+{
+  "primary_lang": "en",
+  "secondary_lang": "ja",
+  "default_style": "technical",
+  "long_text_threshold": 3000,
+  "close_on_click_outside": true,
+  "close_on_mouse_leave": false,
+  "mouse_leave_px": 160,
+  "anchor": "cursor",
+  "input_anchor": "center",
+  "cache_enabled": true,
+  "show_source_by_default": false
+}

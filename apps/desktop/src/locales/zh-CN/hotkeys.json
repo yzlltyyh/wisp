@@ -1,0 +1,77 @@
+{
+  "action": {
+    "translate_selection": "划词翻译",
+    "translate_input": "输入翻译",
+    "ocr": "截图 OCR",
+    "ocr_translate": "截图翻译",
+    "clipboard": "剪贴板"
+  },
+  "recorder": {
+    "placeholder": "点击录制快捷键",
+    "recording": "按下组合…",
+    "hint": "{esc} 取消 · {backspace} 清除",
+    "none": "未设置",
+    "default": "默认",
+    "restore": "恢复默认",
+    "clear": "清除",
+    "force": "仍然使用",
+    "test": "测试",
+    "test_waiting": "按一下快捷键试试…",
+    "test_received": "已收到",
+    "modifier_required": "至少需要一个修饰键",
+    "check_failed": "无法检测冲突，请重试",
+    "label": "{action}的快捷键",
+    "label_value": "{label}：{combo}"
+  },
+  "state": {
+    "registered": "已生效",
+    "fallback": "已改用备选键",
+    "failed": "注册失败",
+    "unbound": "未设置",
+    "suspended": "已暂停",
+    "unavailable": "当前环境不支持"
+  },
+  "level": {
+    "forbidden": "无法使用",
+    "warning": "可能冲突",
+    "info": "提示"
+  },
+  "conflict": {
+    "reserved": "{combo} 是系统保留的组合",
+    "self_duplicate": "已用于「{action}」",
+    "static_app": "可能与 {app} 的快捷键冲突",
+    "registration": "已被其他程序占用",
+    "neighbor": "{app} 也使用 {combo}，建议二选一",
+    "layout": "在 AltGr 键盘布局下可能无法输入字符",
+    "dead_key": "{combo} 是重音死键，会影响字符输入",
+    "single_letter": "修饰键加单个字母容易与应用快捷键冲突",
+    "alt_letter": "Alt + 字母会与菜单访问键冲突",
+    "win_key": "Win 组合通常保留给系统",
+    "shift_letter": "Shift + 字母会影响大写输入",
+    "f12": "F12 保留给调试器",
+    "system_taken": "已被系统快捷键占用，可在「系统设置 › 键盘 › 键盘快捷键」中调整",
+    "invalid": "无法识别这个组合，请换一个",
+    "bare_key": "单独的功能键常被应用占用",
+    "shift_key": "单独的 Shift 组合会影响正常输入",
+    "rejected": "系统拒绝注册这个组合，请换一个",
+    "edit_key": "{combo} 是复制、粘贴等通用编辑快捷键，Wisp 取词和粘贴时也要用到",
+    "unusable": "这个组合无法使用，请重新检测",
+    "needs_confirm": "这个组合可能冲突，确认后才能使用"
+  },
+  "reason": {
+    "duplicate": "与另一个快捷键重复",
+    "reserved": "系统保留的组合",
+    "system": "已被系统快捷键占用",
+    "taken": "已被其他程序占用",
+    "rejected": "系统拒绝注册这个组合",
+    "invalid": "无法识别的组合",
+    "both_unavailable": "首选键与备选键都不可用",
+    "recording": "录制快捷键期间暂停"
+  },
+  "ext": {
+    "need_input_monitoring": "需要输入监控权限",
+    "need_accessibility": "需要辅助功能权限",
+    "unavailable": "当前环境不支持"
+  },
+  "copy_wait_ms": "复制等待时间"
+}

@@ -1,0 +1,7 @@
+{
+  "a11y": {
+    "region": "Screenshot selection: drag to select, click a window to pick it, Enter to confirm, Esc to cancel"
+  },
+  "size_pt": "{width} × {height} pt",
+  "size_px": "{width} × {height} px"
+}

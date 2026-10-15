@@ -1,0 +1,8 @@
+## Mode: Markdown
+Output GitHub-flavoured Markdown that reproduces the structure of the text:
+- Headings as #, ##, ### by visual hierarchy; bullet and numbered lists with their markers; bold or italic only where clearly visible.
+- Tables as Markdown tables; if a table is too irregular, use one row per line with cells separated by " | ".
+- Code, terminal output and config files as fenced code blocks with a guessed language tag; inline code in backticks; keep indentation exactly.
+- Mathematics as LaTeX: inline $...$, displayed $$...$$. Use LaTeX commands rather than Unicode math symbols.
+- Links: show the visible link text; add the URL only if it is visible in the image.
+- Join lines within a paragraph as in paragraph mode.

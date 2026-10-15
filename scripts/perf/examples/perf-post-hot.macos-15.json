@@ -1,0 +1,129 @@
+{
+  "schema": "wisp.perf/1",
+  "ts": "2026-10-13T03:40:52.931Z",
+  "os": "macos",
+  "os_version": "15.7.9",
+  "arch": "arm64",
+  "version": "0.1.0",
+  "build": "release",
+  "machine": "VirtualMac2,1",
+  "idle": {
+    "duration_s": 25.3,
+    "samples": 26,
+    "memory_metric": "phys_footprint",
+    "rss_main": 13.3,
+    "rss_main_max": 13.4,
+    "rss_webview": 61.3,
+    "rss_webview_max": 62,
+    "webview_processes": 2,
+    "webview_attribution": "responsible",
+    "cpu_avg": 0.079,
+    "cpu_max": 1.08,
+    "cpu_webview_avg": 0.039,
+    "cpu_webview_max": 1.08,
+    "cpu_total_avg": 0.118,
+    "wakeups": 0,
+    "wakeups_webview": 0.04,
+    "wakeups_method": "top-idlew",
+    "notes": [
+      "会话后空闲：采样前执行了 --exercise（node scripts/perf/exercise.mjs --views input,clipboard --texts 30 --images 3）并静置 5 秒",
+      "采样终点钉在 exercise 结束后 32 秒（--window-end）",
+      "采样期间出现过的 WebKit 进程：12673=WebContent, 12674=Networking",
+      "更新检查：本次运行没有发生（测量设置关闭了更新检查，或还没到启动后 30 s）",
+      "采样窗口里的用户活动：剪贴板轮询 活跃 21.1 s / 安静 4.3 s / 离开 0 s，复制 0 次"
+    ],
+    "activity": {
+      "tiers_s": {
+        "active": 21.1,
+        "quiet": 4.3,
+        "away": 0,
+        "screens_idle": 0
+      },
+      "copies": 0,
+      "user_active_s": 0
+    },
+    "session": {
+      "settle_s": 5,
+      "window_s": [5.7, 31],
+      "traces": 2,
+      "shown": 2,
+      "recycles_s": [],
+      "unloads_s": [],
+      "state": "hot",
+      "panel": "hidden",
+      "views": ["input", "clipboard"],
+      "hides": {
+        "toggle": 2
+      },
+      "last_hide_s": -1.8,
+      "clipboard": {
+        "text": 21,
+        "link": 4,
+        "color": 3,
+        "code": 2,
+        "image": 3
+      },
+      "log_lines": 2,
+      "log": "wisp.log"
+    }
+  },
+  "latency": {
+    "source": "log",
+    "metric": "prepare_to_shown_ms",
+    "count": 2,
+    "p50": 231,
+    "p95": 658,
+    "max": 658,
+    "mean": 444.5,
+    "ready_timeouts": 2,
+    "first_token_p50": null,
+    "first_token_p95": null,
+    "overlay_count": 0,
+    "overlay_p50": null,
+    "overlay_p95": null,
+    "overlay_max": null,
+    "pages": {
+      "warm": {
+        "count": 1,
+        "p50": 231,
+        "p95": 231,
+        "max": 231,
+        "ready_timeouts": 1
+      },
+      "recycled": {
+        "count": 1,
+        "p50": 658,
+        "p95": 658,
+        "max": 658,
+        "ready_timeouts": 1
+      }
+    },
+    "split": {
+      "ready_to_window": {
+        "count": 2,
+        "p50": 4,
+        "p95": 196,
+        "max": 196
+      },
+      "ready_to_key": {
+        "count": 2,
+        "p50": 4,
+        "p95": 193,
+        "max": 193
+      },
+      "ready_to_shown": {
+        "count": 2,
+        "p50": 181,
+        "p95": 500,
+        "max": 500
+      }
+    },
+    "first_show": {
+      "count": 1,
+      "ready_timeouts": 1,
+      "not_shown": 0,
+      "max": 658
+    }
+  },
+  "smoke": null
+}

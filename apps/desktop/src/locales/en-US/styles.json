@@ -1,0 +1,22 @@
+{
+  "natural": "Natural",
+  "technical": "Technical",
+  "academic": "Academic",
+  "casual": "Casual",
+  "learn": "Learn",
+  "literal": "Literal",
+  "desc": {
+    "natural": "Fluent and idiomatic",
+    "technical": "Precise terms, keeps code and names",
+    "academic": "Formal and rigorous",
+    "casual": "Relaxed and conversational",
+    "learn": "Adds vocabulary and grammar notes",
+    "literal": "Sentence by sentence, easy to compare"
+  },
+  "custom": "Custom style",
+  "menu": {
+    "title": "Translation style",
+    "edit": "Edit current style",
+    "hint": "{key} to switch"
+  }
+}

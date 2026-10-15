@@ -1,0 +1,68 @@
+{
+  "a11y": {
+    "view": "文字识别结果",
+    "thumbnail": "截图",
+    "expand_thumbnail": "放大查看截图",
+    "collapse_thumbnail": "收起截图",
+    "text": "识别出的文字",
+    "translation": "译文",
+    "source": "原文转录",
+    "style_menu": "选择翻译风格",
+    "recognize_menu": "识别模式与模型",
+    "back_to_menu": "返回识别菜单",
+    "copy_text": "复制识别文字",
+    "copy_translation": "复制译文",
+    "copy_source": "复制原文",
+    "recognized": "识别完成",
+    "translated": "翻译完成"
+  },
+  "meta": {
+    "size_pt": "{width} × {height} pt",
+    "size_px": "{width} × {height} px",
+    "size_physical": "截图原图 {width} × {height} 像素",
+    "failed": "识别失败",
+    "edited": "已编辑"
+  },
+  "mode_hint": {
+    "lines": "逐行，保留换行与缩进",
+    "paragraphs": "合并段内断行",
+    "markdown": "标题、列表、表格"
+  },
+  "menu": {
+    "modes": "识别模式",
+    "models": "视觉模型",
+    "unknown_vision": "未确认是否支持图片",
+    "no_models": "没有可用的视觉模型",
+    "ocr_settings": "OCR 设置…",
+    "retake": "重新截图",
+    "history": "识别历史…"
+  },
+  "action": {
+    "recognize_again": "重新识别",
+    "retranslate": "重新翻译",
+    "source": "原文",
+    "switch_model": "切换模型",
+    "switch_mode": "切换模式",
+    "raise_limit": "调高上限"
+  },
+  "empty": {
+    "no_text": "未检测到文字",
+    "no_text_detail": "可以切换识别模式或模型后再试一次。",
+    "no_result": "没有产出识别结果",
+    "no_result_detail": "可以切换模型，或调高输出上限。"
+  },
+  "confirm": {
+    "overwrite": "重新识别会覆盖你的修改",
+    "overwrite_action": "仍然识别"
+  },
+  "translation": {
+    "stale": "原文已修改",
+    "source_title": "原文",
+    "transcribing": "正在识别原文…"
+  },
+  "hint": {
+    "retrigger": "在系统设置里打开开关后，点「重新启动 Wisp」，之后按 {key} 截图。",
+    "retrigger_plain": "在系统设置里打开开关后，点「重新启动 Wisp」，之后重新截图即可。",
+    "capture_backend_short": "可能被其他截图工具占用，或显示器刚刚变化。"
+  }
+}

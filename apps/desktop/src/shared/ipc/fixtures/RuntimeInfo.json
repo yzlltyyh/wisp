@@ -1,0 +1,84 @@
+{
+  "version": "0.1.0",
+  "platform": {
+    "os": "macos",
+    "os_version": "26.4",
+    "arch": "aarch64",
+    "session": "native",
+    "capabilities": {
+      "global_hotkeys": {
+        "available": true,
+        "reason_key": null
+      },
+      "selection": {
+        "available": true,
+        "reason_key": null
+      },
+      "simulated_copy": {
+        "available": true,
+        "reason_key": null
+      },
+      "paste_inject": {
+        "available": true,
+        "reason_key": null
+      },
+      "capture_overlay": {
+        "available": true,
+        "reason_key": null
+      },
+      "clipboard_watch": {
+        "available": true,
+        "reason_key": null
+      },
+      "input_hooks": {
+        "available": false,
+        "reason_key": "errors.platform.input_monitoring_missing"
+      }
+    }
+  },
+  "has_key": {
+    "openai-main": true
+  },
+  "keychain": "available",
+  "hotkeys": [
+    {
+      "target": {
+        "kind": "action",
+        "action": "translate_selection"
+      },
+      "binding": "default",
+      "effective": "Alt+KeyD",
+      "display": "⌥D",
+      "state": "registered",
+      "reason_key": null
+    }
+  ],
+  "ext_triggers": {
+    "bobber": "off",
+    "double_tap": "waiting_permission",
+    "mouse": "off",
+    "reason_key": "hotkeys.ext.need_input_monitoring"
+  },
+  "permissions": {
+    "accessibility": "granted",
+    "screen_recording": "not_determined",
+    "input_monitoring": "denied",
+    "lost_after_update": false
+  },
+  "clipboard_paused": false,
+  "update": {
+    "state": "idle",
+    "version": null,
+    "notes": null,
+    "progress": null,
+    "error": null
+  },
+  "glossary_count": 0,
+  "settings_issue": {
+    "kind": "reset_to_default",
+    "file": "settings.json",
+    "backup_path": "/Users/me/Library/Application Support/wisp/settings.json.bak-1760000000",
+    "at_ms": 1760000000000
+  },
+  "orphan_keys": 1
+}

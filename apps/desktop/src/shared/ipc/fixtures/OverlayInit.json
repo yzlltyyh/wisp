@@ -1,0 +1,55 @@
+{
+  "session_id": 3,
+  "monitor": {
+    "id": "1",
+    "name": "Built-in Retina Display",
+    "physical_origin": {
+      "x": 0,
+      "y": 0
+    },
+    "physical_size": {
+      "width": 3024,
+      "height": 1964
+    },
+    "scale_factor": 2.0,
+    "frame": {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1512.0,
+      "height": 982.0
+    },
+    "work_area": {
+      "x": 0.0,
+      "y": 33.0,
+      "width": 1512.0,
+      "height": 949.0
+    },
+    "is_primary": true
+  },
+  "image_url": "http://wisp.localhost/capture%2F3%2F1%2Ffull",
+  "image_size": {
+    "width": 3024,
+    "height": 1964
+  },
+  "windows": [
+    {
+      "x": 100.0,
+      "y": 80.0,
+      "width": 900.0,
+      "height": 600.0
+    },
+    {
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1512.0,
+      "height": 33.0
+    }
+  ],
+  "mode": "ocr_translate",
+  "window_detect": true,
+  "fly_animation": true,
+  "reduced_motion": false,
+  "frozen_native": true,
+  "half_url": null,
+  "region_url": "capture/3/31/region"
+}

@@ -1,0 +1,170 @@
+{
+  "code": {
+    "auth": {
+      "title": "Invalid API key or missing permission",
+      "detail": "Check the key and account access for “{provider}”",
+      "detail_generic": "Check your API key and account access"
+    },
+    "not_found": {
+      "title": "Model or endpoint not found",
+      "detail": "Requested {url}; try adding or removing /v1",
+      "detail_generic": "Check the model ID and endpoint; try adding or removing /v1"
+    },
+    "no_vision": {
+      "title": "This model can't read images",
+      "detail": "Switch to a model with image input, or set a vision model for OCR in Settings"
+    },
+    "image_too_large": {
+      "title": "Image is too large",
+      "detail": "Capture a smaller area, or lower the max image size in Settings"
+    },
+    "param_unsupported": {
+      "title": "Some parameters are unsupported",
+      "detail": "Unsupported parameters were removed automatically"
+    },
+    "too_long": {
+      "title": "Text exceeds the model's context length",
+      "detail": "Shorten the text, or switch to a model with a longer context"
+    },
+    "quota": {
+      "title": "Quota exhausted or billing not enabled",
+      "detail": "Check your balance and billing in the provider's console"
+    },
+    "rate_limited": {
+      "title": "Too many requests",
+      "reason": "The provider is temporarily limiting how often you can send requests",
+      "detail": "Retry in {n}s",
+      "detail_ready": "You can retry now",
+      "detail_generic": "Wait a moment and try again"
+    },
+    "upstream": {
+      "title": "Service temporarily unavailable",
+      "detail": "The server returned {status}",
+      "detail_generic": "The server can't handle the request right now"
+    },
+    "content_filter": {
+      "title": "Blocked by the provider's content filter",
+      "detail": "Switch model and try again"
+    },
+    "network": {
+      "title": "Network connection failed",
+      "detail": "Check your network or proxy"
+    },
+    "timeout": {
+      "title": "Timed out waiting for a response",
+      "detail": "The network or service is slow. Retry, or raise the timeout"
+    },
+    "cancelled": {
+      "title": "Cancelled",
+      "detail": "Generation stopped"
+    },
+    "protocol": {
+      "title": "Unrecognized response",
+      "detail": "base_url may point to a web page instead of an API"
+    },
+    "not_configured": {
+      "title": "No model connected yet",
+      "detail": "Add a service and choose a default model in Settings"
+    },
+    "keychain": {
+      "title": "Can't read the API key",
+      "detail": "Access was denied or the credential store is busy. Try again and choose Allow if the system asks, or enter the key again."
+    },
+    "internal": {
+      "title": "Something went wrong",
+      "detail": "Please retry. If it keeps happening, export diagnostics from About"
+    }
+  },
+  "subcode": {
+    "region": "This service isn't available in your region",
+    "thinking_exhausted": "The model used up its output budget while thinking",
+    "connection_lost": "The connection dropped mid-response",
+    "html_body": "The server returned a web page instead of an API response",
+    "version_hint": "The endpoint may be missing or have an extra /v1"
+  },
+  "hint": {
+    "check_key": "Check that the API key is correct and can access this model",
+    "region": "Use a regional endpoint or a proxy",
+    "check_model": "Check the spelling of the model ID",
+    "try_v1": "Try adding or removing /v1 in the endpoint",
+    "pick_vision_model": "Choose a model with image input for OCR",
+    "shrink_image": "Capture a smaller area, or lower the max image size",
+    "shorten_text": "Shorten the text, or use a model with a longer context",
+    "check_billing": "Check your balance and billing settings",
+    "retry_later": "Wait a moment and try again",
+    "retry": "You can retry right away",
+    "switch_model": "Switch model and try again",
+    "check_network": "Check your network connection or proxy",
+    "adjust_timeout": "Raise the timeout in the service settings",
+    "check_protocol": "Check that the protocol matches the base_url",
+    "check_settings": "Check the service settings",
+    "param_adjusted": "Incompatible parameters were adjusted. Click Retry",
+    "param_rejected": "The model rejected a request parameter. Switch model or check the service template"
+  },
+  "details": {
+    "title": "Details",
+    "code": "Code",
+    "request_id": "Request ID",
+    "status": "HTTP status",
+    "url": "URL",
+    "message": "Server message",
+    "copy": "Copy details",
+    "copied": "Copied"
+  },
+  "action": {
+    "retry": "Retry",
+    "retry_in": "Retry in {n}s",
+    "open_settings": "Open settings",
+    "choose_model": "Choose model",
+    "switch_model": "Switch model"
+  },
+  "ipc": {
+    "invalid_argument": "Invalid argument",
+    "not_found": "Not found",
+    "not_ready": "Not ready yet",
+    "permission": "Missing system permission",
+    "platform": "Not supported on this platform",
+    "keychain": "Couldn’t access the system credential store. If the system asks for permission, try again and choose Allow.",
+    "io": "File access failed",
+    "llm": "Model request failed",
+    "conflict": "Conflict",
+    "not_implemented": "Not implemented yet",
+    "internal": "Internal error"
+  },
+  "platform": {
+    "accessibility_missing": "Accessibility permission is missing",
+    "screen_recording_missing": "Screen Recording permission is missing",
+    "input_monitoring_missing": "Input Monitoring permission is missing",
+    "hooks_not_compiled": "This build doesn't include mouse and key triggers",
+    "no_permission_model": "No separate permission is needed on this platform",
+    "wayland": "Not supported on Wayland",
+    "wayland_selection": "Selected text can't be read on Wayland. Copy it first",
+    "wayland_simulated_copy": "Copy can't be simulated on Wayland",
+    "wayland_paste": "Auto-paste isn't available on Wayland. The content was copied",
+    "wayland_hotkeys": "Global shortcuts can't be registered on Wayland. Bind them in system settings",
+    "wayland_capture": "Screenshots aren't available in a Wayland session in this version. To take screenshots, switch to an X11 session",
+    "wayland_clipboard_watch": "The clipboard can’t be recorded in the background on Wayland",
+    "wayland_input_hooks": "Mouse and key triggers aren't supported on Wayland",
+    "wayland_clipboard": "Clipboard access is limited on Wayland",
+    "wayland_clipboard_bridge": "This desktop doesn't let background apps write to the clipboard. Copy from the panel instead",
+    "wayland_focus": "Focus can't be restored to the original window on Wayland",
+    "no_display": "No graphical display found",
+    "x11_connect_failed": "Can't connect to the X11 server",
+    "x11_missing_xtest": "The XTest extension is missing, so keys can't be simulated",
+    "x11_missing_xfixes": "The XFixes extension is missing, so the clipboard can’t be recorded",
+    "x11_missing_xinput": "The XInput2 extension is missing, so triggers are unavailable",
+    "x11_mouse_button_busy": "Another app is using the side mouse buttons, so their bindings have no effect",
+    "x11_middle_button": "On X11 the middle button pastes the selection, so it can't be used as a trigger",
+    "clipboard_too_large": "The clipboard is too large, so Wisp didn't copy the selection automatically",
+    "clipboard_watch_unavailable": "The clipboard can’t be recorded"
+  },
+  "capture": {
+    "backend": "The screenshot didn't go through. Please try again.",
+    "no_displays": "No display is available to capture.",
+    "unsupported": "This desktop doesn't support screenshots."
+  },
+  "keychain": {
+    "denied": "Access to the keychain was denied. Try again and choose Allow when the system asks.",
+    "unavailable": "The system credential store is unavailable"
+  }
+}

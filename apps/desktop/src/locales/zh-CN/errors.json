@@ -1,0 +1,170 @@
+{
+  "code": {
+    "auth": {
+      "title": "API Key 无效或没有权限",
+      "detail": "检查「{provider}」的 Key 与账户权限",
+      "detail_generic": "检查 API Key 与账户权限"
+    },
+    "not_found": {
+      "title": "找不到模型或接口地址",
+      "detail": "请求地址：{url}；可尝试添加或去掉 /v1",
+      "detail_generic": "检查模型 ID 与接口地址；可尝试添加或去掉 /v1"
+    },
+    "no_vision": {
+      "title": "当前模型不支持图片",
+      "detail": "切换到支持图片的模型，或在设置中为 OCR 指定视觉模型"
+    },
+    "image_too_large": {
+      "title": "图片过大",
+      "detail": "缩小截图范围，或在设置中调低图片长边上限"
+    },
+    "param_unsupported": {
+      "title": "部分参数不受支持",
+      "detail": "已自动去掉不支持的参数"
+    },
+    "too_long": {
+      "title": "文本超出模型上下文长度",
+      "detail": "缩短文本，或切换到上下文更长的模型"
+    },
+    "quota": {
+      "title": "额度用尽或未开通计费",
+      "detail": "前往服务商控制台检查余额与计费设置"
+    },
+    "rate_limited": {
+      "title": "请求过于频繁",
+      "reason": "服务商暂时限制了请求频率",
+      "detail": "{n} 秒后可重试",
+      "detail_ready": "现在可以重试了",
+      "detail_generic": "稍等片刻后再试"
+    },
+    "upstream": {
+      "title": "服务暂时不可用",
+      "detail": "服务端返回 {status}",
+      "detail_generic": "服务端暂时无法处理请求"
+    },
+    "content_filter": {
+      "title": "内容被服务方拦截",
+      "detail": "可以切换模型后再试"
+    },
+    "network": {
+      "title": "网络连接失败",
+      "detail": "检查网络或代理"
+    },
+    "timeout": {
+      "title": "等待响应超时",
+      "detail": "网络较慢或服务繁忙，可以重试或调大超时时间"
+    },
+    "cancelled": {
+      "title": "已取消",
+      "detail": "已停止生成"
+    },
+    "protocol": {
+      "title": "返回内容无法识别",
+      "detail": "base_url 可能指向了网页而不是 API"
+    },
+    "not_configured": {
+      "title": "还没有接入模型",
+      "detail": "在设置中添加服务并选择默认模型"
+    },
+    "keychain": {
+      "title": "无法读取 API Key",
+      "detail": "访问被拒绝或凭据存储暂时不可用：请重试，系统弹出授权提示时点「允许」；也可以重新填写 Key"
+    },
+    "internal": {
+      "title": "出了点问题",
+      "detail": "请重试；如果反复出现，可以在「关于」中导出诊断信息"
+    }
+  },
+  "subcode": {
+    "region": "该服务在当前地区不可用",
+    "thinking_exhausted": "模型思考耗尽了输出额度",
+    "connection_lost": "连接在传输途中断开",
+    "html_body": "服务端返回了网页而不是 API 响应",
+    "version_hint": "接口地址可能缺少或多了 /v1"
+  },
+  "hint": {
+    "check_key": "检查 API Key 是否正确、能否访问该模型",
+    "region": "可改用区域端点，或通过代理访问",
+    "check_model": "检查模型 ID 是否拼写正确",
+    "try_v1": "接口地址可尝试添加或去掉 /v1",
+    "pick_vision_model": "为 OCR 选择一个支持图片的模型",
+    "shrink_image": "缩小截图范围，或调低图片长边上限",
+    "shorten_text": "缩短文本，或切换到上下文更长的模型",
+    "check_billing": "检查账户余额与计费设置",
+    "retry_later": "稍等片刻后再试",
+    "retry": "可以直接重试",
+    "switch_model": "可以切换模型后再试",
+    "check_network": "检查网络连接或代理设置",
+    "adjust_timeout": "可以在服务设置中调大超时时间",
+    "check_protocol": "检查协议类型与 base_url 是否匹配",
+    "check_settings": "检查服务设置",
+    "param_adjusted": "已自动调整不兼容的参数，点「重试」即可",
+    "param_rejected": "模型不接受请求中的某个参数，可以切换模型或检查服务模板"
+  },
+  "details": {
+    "title": "详情",
+    "code": "错误码",
+    "request_id": "请求 ID",
+    "status": "HTTP 状态",
+    "url": "地址",
+    "message": "服务端信息",
+    "copy": "复制详情",
+    "copied": "已复制"
+  },
+  "action": {
+    "retry": "重试",
+    "retry_in": "{n} 秒后重试",
+    "open_settings": "打开设置",
+    "choose_model": "选择模型",
+    "switch_model": "切换模型"
+  },
+  "ipc": {
+    "invalid_argument": "参数无效",
+    "not_found": "找不到对象",
+    "not_ready": "尚未就绪",
+    "permission": "缺少系统权限",
+    "platform": "当前平台不支持该操作",
+    "keychain": "无法访问系统凭据存储。如果系统弹出了授权提示，请重试并点「允许」",
+    "io": "读写文件失败",
+    "llm": "模型请求失败",
+    "conflict": "存在冲突",
+    "not_implemented": "该功能尚未实现",
+    "internal": "内部错误"
+  },
+  "platform": {
+    "accessibility_missing": "缺少辅助功能权限",
+    "screen_recording_missing": "缺少屏幕录制权限",
+    "input_monitoring_missing": "缺少输入监控权限",
+    "hooks_not_compiled": "此版本未包含鼠标与按键扩展触发",
+    "no_permission_model": "该平台不需要单独授权",
+    "wayland": "Wayland 下不支持该功能",
+    "wayland_selection": "Wayland 下无法直接读取选中的文字，请先复制",
+    "wayland_simulated_copy": "Wayland 下无法模拟复制",
+    "wayland_paste": "Wayland 下无法自动粘贴，内容已复制到剪贴板",
+    "wayland_hotkeys": "Wayland 下无法注册全局快捷键，请在系统设置中绑定",
+    "wayland_capture": "这一版在 Wayland 会话下无法截图。需要截图时，请切换到 X11 会话",
+    "wayland_clipboard_watch": "Wayland 下无法在后台记录剪贴板",
+    "wayland_input_hooks": "Wayland 下不支持鼠标与按键扩展触发",
+    "wayland_clipboard": "Wayland 下剪贴板访问受限",
+    "wayland_clipboard_bridge": "当前桌面不允许后台程序写入剪贴板，请在面板中复制",
+    "wayland_focus": "Wayland 下无法还原原窗口的焦点",
+    "no_display": "找不到图形显示环境",
+    "x11_connect_failed": "无法连接 X11 显示服务",
+    "x11_missing_xtest": "缺少 XTest 扩展，无法模拟按键",
+    "x11_missing_xfixes": "缺少 XFixes 扩展，无法记录剪贴板",
+    "x11_missing_xinput": "缺少 XInput2 扩展，无法使用扩展触发",
+    "x11_mouse_button_busy": "鼠标侧键已被其他程序占用，侧键绑定无法生效",
+    "x11_middle_button": "X11 下中键用于粘贴选中的文字，不能绑定为触发键",
+    "clipboard_too_large": "剪贴板内容过大，未执行自动复制",
+    "clipboard_watch_unavailable": "无法记录剪贴板"
+  },
+  "capture": {
+    "backend": "截图没有成功，请再试一次。",
+    "no_displays": "没有找到可以截图的显示器。",
+    "unsupported": "当前桌面环境不支持截图。"
+  },
+  "keychain": {
+    "denied": "访问钥匙串被拒绝：请重试，并在系统弹框中点「允许」",
+    "unavailable": "系统凭据存储不可用"
+  }
+}

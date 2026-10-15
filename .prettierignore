@@ -1,0 +1,21 @@
+# 生成物与依赖
+node_modules/
+**/dist/
+target/
+artifacts/
+pnpm-lock.yaml
+apps/desktop/src-tauri/gen/
+
+# 黄金样例由 wisp-types 的 golden.rs 生成（serde_json pretty 格式），不参与格式化
+apps/desktop/src/shared/ipc/fixtures/
+# scripts/licenses.mjs 生成
+apps/desktop/src/generated/
+
+# Markdown 不由 prettier 管理（表格与中英混排按原样维护）
+docs/
+*.md
+LICENSE
+
+# Rust 侧文件（rustfmt 负责）
+*.rs
+Cargo.lock

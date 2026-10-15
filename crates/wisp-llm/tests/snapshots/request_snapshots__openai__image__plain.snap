@@ -1,0 +1,45 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: image
+---
+{
+  "body": {
+    "max_completion_tokens": 4096,
+    "messages": [
+      {
+        "content": "You are a translator.",
+        "role": "system"
+      },
+      {
+        "content": [
+          {
+            "image_url": {
+              "detail": "high",
+              "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
+            },
+            "type": "image_url"
+          },
+          {
+            "text": "Transcribe the text.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "gpt-4.1",
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    },
+    "temperature": 0.0
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "Bearer sk-test",
+    "content-type": "application/json",
+    "user-agent": "Wisp/test"
+  },
+  "method": "POST",
+  "target": "/v1/chat/completions"
+}

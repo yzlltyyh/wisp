@@ -1,0 +1,75 @@
+{
+  "a11y": {
+    "view": "Translation panel",
+    "source": "Source text",
+    "result": "Translated text",
+    "style_menu": "Translation style",
+    "style_menu_current": "Translation style: {name}",
+    "model_menu": "Switch model",
+    "swap_unavailable": "The text is already {lang}; swapping wouldn’t change the result"
+  },
+  "status": {
+    "waiting": "Waiting for response…",
+    "translating": "Translating…",
+    "polishing": "Polishing…",
+    "proofreading": "Proofreading…",
+    "reviewing": "Reviewing translation…",
+    "improving": "Improving translation…",
+    "no_improvement": "No further improvement needed",
+    "refined": "Improved",
+    "original": "Original translation",
+    "copied_selection": "Selection copied",
+    "copied_source": "Source copied",
+    "tokens": "{input} in · {output} out tokens"
+  },
+  "notice": {
+    "raise_limit": "Raise limit"
+  },
+  "exhausted": {
+    "title": "No translation produced",
+    "detail": "Regenerate, switch model, or raise the output limit."
+  },
+  "more": {
+    "polish": "Polish",
+    "proofread": "Proofread",
+    "refine": "Improve translation",
+    "refine_hint": "Needs 40+ words or 60+ characters",
+    "show_original": "Show original translation",
+    "show_refined": "Show improved translation",
+    "copy_source": "Copy source text",
+    "switch_model": "Switch model",
+    "edit_style": "Edit current style",
+    "back_to_translate": "Back to translation"
+  },
+  "model": {
+    "back": "Back",
+    "default": "Default model",
+    "default_hint": "From settings",
+    "none": "No models available yet"
+  },
+  "task_title": {
+    "polish": "Polish",
+    "proofread": "Proofread"
+  },
+  "long_text": {
+    "title": "This text is quite long",
+    "detail": "{chars} · about {tokens} tokens",
+    "eta": "est. {time}",
+    "truncate_warning": "Over {limit} — the translation may be cut off",
+    "continue": "Translate anyway",
+    "cancel": "Cancel"
+  },
+  "input": {
+    "placeholder": "Type or paste text…",
+    "newline": "New line",
+    "submit": "Translate"
+  },
+  "pinned": {
+    "on_top": "Keep on top",
+    "close": "Close pinned window",
+    "title": {
+      "translate": "Translation",
+      "ocr": "Text recognition"
+    }
+  }
+}

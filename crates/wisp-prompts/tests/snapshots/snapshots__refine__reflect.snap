@@ -1,0 +1,24 @@
+---
+source: crates/wisp-prompts/tests/snapshots.rs
+assertion_line: 162
+expression: show(&p)
+---
+temperature: Some(0.2)
+max_output_tokens: 1024
+output: PlainText
+post: Raw
+merge_system_hint: false
+
+===== system =====
+You are an expert reviewer of English → Simplified Chinese translations. You will be given a source text and a draft translation. Produce a short list of concrete, actionable corrections. Do not rewrite the translation yourself.
+
+===== user =====
+<source_text>
+Although the proposed method achieves state-of-the-art results on three benchmarks, its performance degrades substantially under distribution shift, suggesting that the learned representations may rely on dataset-specific artifacts rather than causally relevant features.
+</source_text>
+
+<draft_translation>
+尽管所提出的方法在三个基准上取得了最先进的结果，但其性能在分布偏移下显著下降。
+</draft_translation>
+
+List up to 8 specific problems in the draft, each on one line in the form "quote → fix: reason", covering (i) accuracy — additions, omissions, mistranslation, untranslated text; (ii) fluency and natural Simplified Chinese phrasing; (iii) style and register matching the source; (iv) terminology consistency and conventions of the field. Ignore anything that is already fine. If the draft is already good, reply with exactly: OK

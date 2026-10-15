@@ -1,0 +1,37 @@
+{
+  "name": "wisp",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Wisp：常驻后台的轻量桌面伴侣（LLM OCR · 划词翻译 · 剪贴板）",
+  "license": "MIT",
+  "repository": "https://github.com/yzlltyyh/wisp",
+  "type": "module",
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": "^22.22.2 || >=24.15",
+    "pnpm": ">=12.3.4"
+  },
+  "scripts": {
+    "tauri": "pnpm -C apps/desktop tauri",
+    "vitest": "pnpm -C apps/desktop vitest",
+    "dev": "pnpm -C apps/desktop tauri dev --features fake-llm",
+    "build": "pnpm -C apps/desktop build",
+    "build:debug": "pnpm -C apps/desktop tauri build --debug --features fake-llm --config src-tauri/tauri.no-updater.conf.json",
+    "test": "pnpm -C apps/desktop test",
+    "typecheck": "pnpm -C apps/desktop typecheck",
+    "lint": "oxlint --deny-warnings",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "qa:shots": "node scripts/qa/screenshots.ts",
+    "i18n:check": "node scripts/check-i18n.mjs",
+    "check:contract": "node scripts/check-contract.mjs",
+    "check:size": "node scripts/check-size.mjs",
+    "check:cross": "bash scripts/cross-check.sh",
+    "licenses": "node scripts/licenses.mjs",
+    "perf:mac": "bash scripts/perf/measure-macos.sh"
+  },
+  "devDependencies": {
+    "oxlint": "1.87.0",
+    "prettier": "3.9.9"
+  }
+}

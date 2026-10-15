@@ -1,0 +1,94 @@
+[
+  { "combo": "Alt+KeyD", "macos": "⌥D", "windows": "Alt+D", "linux": "Alt+D" },
+  { "combo": "Alt+Shift+KeyD", "macos": "⌥⇧D", "windows": "Alt+Shift+D", "linux": "Alt+Shift+D" },
+  { "combo": "Control+Alt+KeyD", "macos": "⌃⌥D", "windows": "Ctrl+Alt+D", "linux": "Ctrl+Alt+D" },
+  {
+    "combo": "Control+Alt+Shift+KeyS",
+    "macos": "⌃⌥⇧S",
+    "windows": "Ctrl+Alt+Shift+S",
+    "linux": "Ctrl+Alt+Shift+S"
+  },
+  {
+    "combo": "Super+Shift+KeyV",
+    "macos": "⇧⌘V",
+    "windows": "Win+Shift+V",
+    "linux": "Super+Shift+V"
+  },
+  {
+    "combo": "Shift+Super+KeyV",
+    "macos": "⇧⌘V",
+    "windows": "Win+Shift+V",
+    "linux": "Super+Shift+V"
+  },
+  { "combo": "Super+Alt+KeyD", "macos": "⌥⌘D", "windows": "Win+Alt+D", "linux": "Super+Alt+D" },
+  {
+    "combo": "Control+Shift+Super+Alt+KeyK",
+    "macos": "⌃⌥⇧⌘K",
+    "windows": "Win+Ctrl+Alt+Shift+K",
+    "linux": "Super+Ctrl+Alt+Shift+K"
+  },
+  {
+    "combo": "CmdOrCtrl+Shift+KeyS",
+    "macos": "⇧⌘S",
+    "windows": "Ctrl+Shift+S",
+    "linux": "Ctrl+Shift+S"
+  },
+  { "combo": "Super+Space", "macos": "⌘Space", "windows": "Win+Space", "linux": "Super+Space" },
+  { "combo": "Control+Space", "macos": "⌃Space", "windows": "Ctrl+Space", "linux": "Ctrl+Space" },
+  { "combo": "Super+Comma", "macos": "⌘,", "windows": "Win+,", "linux": "Super+," },
+  { "combo": "Control+Comma", "macos": "⌃,", "windows": "Ctrl+,", "linux": "Ctrl+," },
+  { "combo": "Super+Enter", "macos": "⌘↩", "windows": "Win+Enter", "linux": "Super+Enter" },
+  { "combo": "Control+Enter", "macos": "⌃↩", "windows": "Ctrl+Enter", "linux": "Ctrl+Enter" },
+  { "combo": "Shift+Enter", "macos": "⇧↩", "windows": "Shift+Enter", "linux": "Shift+Enter" },
+  { "combo": "Escape", "macos": "⎋", "windows": "Esc", "linux": "Esc" },
+  { "combo": "Backspace", "macos": "⌫", "windows": "Backspace", "linux": "Backspace" },
+  {
+    "combo": "Super+Backspace",
+    "macos": "⌘⌫",
+    "windows": "Win+Backspace",
+    "linux": "Super+Backspace"
+  },
+  { "combo": "Delete", "macos": "⌦", "windows": "Delete", "linux": "Delete" },
+  { "combo": "Control+Delete", "macos": "⌃⌦", "windows": "Ctrl+Delete", "linux": "Ctrl+Delete" },
+  { "combo": "Tab", "macos": "⇥", "windows": "Tab", "linux": "Tab" },
+  { "combo": "Shift+Tab", "macos": "⇧⇥", "windows": "Shift+Tab", "linux": "Shift+Tab" },
+  { "combo": "Super+ArrowUp", "macos": "⌘↑", "windows": "Win+↑", "linux": "Super+↑" },
+  { "combo": "Control+ArrowDown", "macos": "⌃↓", "windows": "Ctrl+↓", "linux": "Ctrl+↓" },
+  { "combo": "Super+Digit1", "macos": "⌘1", "windows": "Win+1", "linux": "Super+1" },
+  {
+    "combo": "Control+Shift+Digit9",
+    "macos": "⌃⇧9",
+    "windows": "Ctrl+Shift+9",
+    "linux": "Ctrl+Shift+9"
+  },
+  { "combo": "F13", "macos": "F13", "windows": "F13", "linux": "F13" },
+  { "combo": "Alt+F4", "macos": "⌥F4", "windows": "Alt+F4", "linux": "Alt+F4" },
+  {
+    "combo": "Control+Shift+Escape",
+    "macos": "⌃⇧⎋",
+    "windows": "Ctrl+Shift+Esc",
+    "linux": "Ctrl+Shift+Esc"
+  },
+  {
+    "combo": "Super+Shift+Digit3",
+    "macos": "⇧⌘3",
+    "windows": "Win+Shift+3",
+    "linux": "Super+Shift+3"
+  },
+  { "combo": "Alt+Shift+KeyT", "macos": "⌥⇧T", "windows": "Alt+Shift+T", "linux": "Alt+Shift+T" },
+  { "combo": "Super+Alt+KeyS", "macos": "⌥⌘S", "windows": "Win+Alt+S", "linux": "Super+Alt+S" },
+  {
+    "combo": "Control+Alt+Delete",
+    "macos": "⌃⌥⌦",
+    "windows": "Ctrl+Alt+Delete",
+    "linux": "Ctrl+Alt+Delete"
+  },
+  { "combo": "Super+Slash", "macos": "⌘/", "windows": "Win+/", "linux": "Super+/" },
+  { "combo": "Control+Backquote", "macos": "⌃`", "windows": "Ctrl+`", "linux": "Ctrl+`" },
+  { "combo": "Super+PageDown", "macos": "⌘⇟", "windows": "Win+PgDn", "linux": "Super+PgDn" },
+  { "combo": "Home", "macos": "↖", "windows": "Home", "linux": "Home" },
+  { "combo": "PrintScreen", "macos": "PrintScreen", "windows": "PrtSc", "linux": "PrtSc" },
+  { "combo": "Control+Alt+KeyA", "macos": "⌃⌥A", "windows": "Ctrl+Alt+A", "linux": "Ctrl+Alt+A" },
+  { "combo": "Super+KeyW", "macos": "⌘W", "windows": "Win+W", "linux": "Super+W" },
+  { "combo": "Control+KeyW", "macos": "⌃W", "windows": "Ctrl+W", "linux": "Ctrl+W" }
+]

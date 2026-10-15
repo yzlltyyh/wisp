@@ -1,0 +1,105 @@
+[package]
+name = "wisp-desktop"
+description = "Wisp 桌面应用（Tauri 2）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+default-run = "wisp-desktop"
+
+[lib]
+name = "wisp_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[features]
+default = ["mouse-hook"]
+# 扩展触发（浮标 / 双击修饰键 / 鼠标键）：发布版默认编入，运行时默认关闭（关闭时不安装任何钩子）
+mouse-hook = ["wisp-platform/mouse-hook"]
+# Wayland 降级支持（默认关）
+wayland = ["wisp-platform/wayland", "wisp-capture/wayland"]
+# Windows 截图改用 Windows.Graphics.Capture（GDI 整屏发白时的切换开关；默认关）
+wgc = ["wisp-capture/wgc"]
+# 假模型（WISP_FAKE_LLM=1 时由编排器切换，见 orchestrator/mod.rs）：冒烟测试（WISP_SMOKE）、演示与性能门禁用。
+# 默认关闭，发布版不编入；`pnpm dev` / `pnpm build:debug` 与 CI 的冒烟 / 性能构建显式加 `--features fake-llm`
+fake-llm = ["wisp-llm/fake"]
+
+[dependencies]
+wisp-types = { workspace = true }
+# fake 假模型不常开：由上面的 `fake-llm` feature 打开（测试构建经 dev-dependencies 打开）
+wisp-llm = { workspace = true }
+wisp-prompts = { workspace = true }
+wisp-clipboard = { workspace = true }
+wisp-capture = { workspace = true }
+wisp-platform = { workspace = true }          # 不在依赖处写死 features（由上面的 [features] 透传）
+
+tauri = { workspace = true }
+tauri-plugin-global-shortcut = { workspace = true }
+tauri-plugin-single-instance = { workspace = true }
+tauri-plugin-autostart = { workspace = true }
+tauri-plugin-updater = { workspace = true }
+tauri-plugin-process = { workspace = true }
+tauri-plugin-log = { workspace = true }
+tauri-plugin-opener = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-notification = { workspace = true }
+tauri-plugin-os = { workspace = true }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+rustls = { workspace = true }
+keyring = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+notify = { workspace = true }
+lru = { workspace = true }
+uuid = { workspace = true }
+dirs = { workspace = true }
+zip = { workspace = true }
+blake3 = { workspace = true }
+parking_lot = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+tauri-nspanel = { workspace = true }
+objc2 = { workspace = true }
+block2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-core-graphics = { workspace = true }
+objc2-quartz-core = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = { workspace = true }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Dwm",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_HiDpi",
+  "Win32_System_Threading",
+  "Win32_System_Com",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { workspace = true }
+# 不直接使用：只为把整个依赖图里的 blocking 钉在 1.6.2。zbus（单实例插件、
+# 钥匙串、通知）建连接时经 blocking::unblock 起一个 blocking-1 线程；blocking 1.7.0 的空闲线程永不退出、每 500 ms 醒一次
+# （main_loop 的退出条件要求「线程数超过上限」），Linux 上整个进程因此常驻 2 次/秒的唤醒。1.6.2 的空闲线程 500 ms 后退出
+blocking = "=1.6.2"
+
+[dev-dependencies]
+tauri = { workspace = true, features = ["test"] }
+# 编排器状态机测试用 wisp_llm::fake（resolver 3：dev-dependencies 的 feature 只在构建测试目标时生效，不进入发布构建）
+wisp-llm = { workspace = true, features = ["fake"] }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

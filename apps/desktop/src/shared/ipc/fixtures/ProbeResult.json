@@ -1,0 +1,17 @@
+{
+  "ok": false,
+  "status": 401,
+  "elapsed_ms": 312,
+  "url": "api.openai.com/v1/models",
+  "error": {
+    "code": "auth",
+    "subcode": null,
+    "message": "Incorrect API key provided",
+    "retryable": false,
+    "hint": null,
+    "status": 401,
+    "url": null,
+    "retry_after_s": null,
+    "upstream_request_id": null
+  }
+}

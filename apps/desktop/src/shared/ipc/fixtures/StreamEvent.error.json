@@ -1,0 +1,12 @@
+{
+  "type": "error",
+  "code": "rate_limited",
+  "subcode": null,
+  "message": "Rate limit reached for gpt-5-mini",
+  "retryable": true,
+  "hint": "errors.hint.retry_later",
+  "status": 429,
+  "url": "api.openai.com/v1/chat/completions",
+  "retry_after_s": 20,
+  "upstream_request_id": "req_8f2c1a"
+}

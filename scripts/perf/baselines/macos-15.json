@@ -1,0 +1,106 @@
+{
+  "schema": "wisp.perf/1",
+  "ts": "2026-10-13T03:43:51.422Z",
+  "os": "macos",
+  "os_version": "15.7.9",
+  "arch": "arm64",
+  "version": "0.1.0",
+  "build": "release",
+  "machine": "VirtualMac2,1",
+  "idle": {
+    "duration_s": 60.4,
+    "samples": 61,
+    "memory_metric": "phys_footprint",
+    "rss_main": 12.7,
+    "rss_main_max": 12.7,
+    "rss_webview": 40.4,
+    "rss_webview_max": 40.4,
+    "webview_processes": 2,
+    "webview_attribution": "responsible",
+    "cpu_avg": 0.017,
+    "cpu_max": 1.08,
+    "cpu_webview_avg": 0,
+    "cpu_webview_max": 0,
+    "cpu_total_avg": 0.017,
+    "wakeups": 0.02,
+    "wakeups_webview": 0,
+    "wakeups_method": "top-idlew",
+    "notes": [
+      "会话后空闲：采样前执行了 --exercise（node scripts/perf/exercise.mjs --views input,clipboard --texts 30 --images 3）并静置 60 秒",
+      "采样期间出现过的 WebKit 进程：15525=Networking, 18073=WebContent",
+      "更新检查：本次运行没有发生（测量设置关闭了更新检查，或还没到启动后 30 s）",
+      "采样窗口里的用户活动：剪贴板轮询 活跃 0 s / 安静 60.4 s / 离开 0 s，复制 0 次",
+      "runner 上没有「从未显示」的窗口：本段取 CI 会话后测量 ② 回收后的记录（scripts/perf/examples/perf-post-recycled.macos-15.json，exercise 后 60.8–121.2 s，43.3 s 回收）；launch_env 由同一次运行的应用日志读出（preflight … launch_env=true）",
+      "idle.session 原样取自同一份记录，state = recycled，机器可读地标明本段不是「从未显示」。smoke-gate 遇到带 idle.session 的基线空闲段时，从未显示的记录只比较主进程内存，WebView / CPU / 唤醒不比较（口径不同）"
+    ],
+    "session": {
+      "settle_s": 60,
+      "window_s": [60.8, 121.2],
+      "traces": 2,
+      "shown": 2,
+      "recycles_s": [43.3],
+      "unloads_s": [],
+      "state": "recycled",
+      "panel": "hidden",
+      "views": ["input", "clipboard"],
+      "hides": {
+        "toggle": 2
+      },
+      "last_hide_s": -1.8,
+      "clipboard": {
+        "text": 21,
+        "link": 4,
+        "color": 3,
+        "code": 2,
+        "image": 3
+      },
+      "log_lines": 0,
+      "log": "wisp.log"
+    },
+    "launch_env": true
+  },
+  "latency": null,
+  "smoke": {
+    "release": {
+      "ok": true,
+      "cold_start_ms": 1234,
+      "panel_prewarm_ms": 3290,
+      "rss_main": 16.1,
+      "rss_main_peak": 16.1,
+      "prepare_to_shown_p95": 53,
+      "trigger_to_shown_p95": 61,
+      "windows_end": 1,
+      "memory_metric": "phys_footprint",
+      "os_version": "15.7.9",
+      "rss_webview": null,
+      "rss_webview_peak": null,
+      "webview_attribution": null
+    },
+    "debug": {
+      "ok": true,
+      "cold_start_ms": 207,
+      "panel_prewarm_ms": 385,
+      "rss_main": 37.1,
+      "rss_main_peak": 37.1,
+      "prepare_to_shown_p95": 26,
+      "trigger_to_shown_p95": 32,
+      "windows_end": 1,
+      "memory_metric": "phys_footprint",
+      "os_version": "26.4.0",
+      "rss_webview": null,
+      "rss_webview_peak": null,
+      "webview_attribution": null
+    }
+  },
+  "notes": [
+    "CI runner 基线（GitHub macos-15 runner：macOS 15.7.9 / VirtualMac2,1，Apple 虚拟机，WebKit 没有 GPU 进程、软件合成）。CI 的 smoke-gate 在 macOS 15 上按 sw_vers 的系统大版本优先选本文件：冒烟门禁读 smoke.release，会话后两个窗口读 gate.session_rss_main。",
+    "空闲段与 gate.session_rss_main 取自同一次 CI 运行（勾选 macOS 与冒烟）的 smoke-macos 产物，两份会话后记录见 scripts/perf/examples/perf-post-*.macos-15.json（smoke-gate --self-test 核对它们对本基线通过）。空闲段是会话后 ② 回收后窗口（主进程 12.7 MiB、WebView 40.4 MiB / 2 个进程，经 LaunchServices 启动、launch_env=true）；gate.session_rss_main 取两个会话后窗口主进程的较大者（回收前 13.3、回收后 12.7 MiB），按 +10 % 且 +0.5 MiB 判退化，门限约 14.6 MiB。延迟段置空：虚拟机的唤出延迟不代表真机，CI 不比较。",
+    "要恢复从未显示的记录对 WebView / CPU / 唤醒的比较，在 runner 上录一段从未显示的空闲换掉本段，并去掉 idle.session。",
+    "smoke.release 取自 runner 上的 release 冒烟报告（record.mjs --update 生成，冒烟主进程 16.1 MiB，多次运行读数一致）；smoke.debug 沿用本机基线（段内带 os_version，CI 的 macOS 冒烟只跑 release）。",
+    "gate.max_ready_timeouts = 2：runner 虚拟机没有 GPU 进程、软件合成，100 次连续触发里偶尔有一次撞上 40 ms 的 ready 兜底（同一构建在真机上为 0 次）。启动后第一次唤出不受这个上限放宽，照常判定。"
+  ],
+  "gate": {
+    "max_ready_timeouts": 2,
+    "session_rss_main": 13.3
+  }
+}

@@ -1,0 +1,580 @@
+# Wisp CI
+#
+# - push（main、ci/**）与 PR：Linux（lint：全部静态检查与全量 feature 的 clippy；test）与 Windows（clippy / test）；
+# - 浏览器级用例（e2e，Playwright 的 WebKit + Chromium）：改了前端（apps/desktop 除 src-tauri 之外、依赖与 CI 配置）的
+#   push / PR 上跑，只用 Linux runner（Playwright 官方容器，浏览器与系统依赖都在镜像里，约 4–6 分钟）；手动触发时总跑
+#   （取消 linux_windows 时除外）。失败即让运行失败；
+# - macOS 作业、三端冒烟与视觉 QA 只在手动触发（workflow_dispatch）时按勾选运行；macOS 冒烟另跑两段会话后 WebView 内存的
+#   短测量（回收前 / 回收后两个窗口，约 4 分钟）。手动触发时取消 linux_windows 只跑勾选的 macOS 作业（同一提交的 push
+#   运行已经跑过 Linux / Windows 与 e2e 时用，lint 照常）：Linux / Windows 的 test、冒烟、e2e 与 panel-recycle 都不跑
+#   （同时勾选 panel_recycle 时 plan 报错）；
+# - Windows / Linux 的面板回收对照（panel-recycle）只在手动触发、勾选 panel_recycle 且不取消 linux_windows 时各跑一次
+#   （默认关闭，见 scripts/perf/README.md「面板回收对照」）；
+# - main 推送时的 Linux / Windows 冒烟由仓库变量 WISP_CI_SMOKE=true 打开；
+# - 只改文档（docs/**、*.md、LICENSE）时各作业跳过——跳过的作业在分支保护里视为通过；矩阵作业被跳过时检查名不会展开
+#   （显示为 test (${{ matrix.name }})），所以由汇总作业 test 给出三端测试的结论；
+# - 功能分支与 PR 的新提交会取消同一分支上正在跑的旧运行；main 上的运行不取消（每次推送都要完整结果与 Rust 缓存），
+#   手动触发与推送分属不同的并发组，互不取消。
+# main 分支保护的必需检查是 lint 与 test（汇总作业），改名时同步仓库设置。
+name: ci
+
+on:
+  push:
+    branches: [main, 'ci/**']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      macos:
+        description: macOS 作业（clippy / test；冒烟勾选时也跑 macOS release 冒烟）
+        type: boolean
+        default: true
+      smoke:
+        description: WISP_SMOKE 冒烟（fake-llm 构建 → 启动 → 100 次触发 → smoke-gate）
+        type: boolean
+        default: false
+      qa_shots:
+        description: 视觉 QA 截图矩阵（macOS runner，WebKit + Chromium，含流畅度 trace）
+        type: boolean
+        default: false
+      panel_recycle:
+        description: 面板回收对照：Linux / Windows 各测一次「从未显示 / 用过之后 / 用过并回收」的空闲（release 构建，约 25 / 50 分钟；需要 linux_windows 也勾选）
+        type: boolean
+        default: false
+      linux_windows:
+        description: 同时跑 Linux / Windows 的 test、冒烟与 e2e（同一提交的 push 运行已经覆盖时关掉，只跑勾选的 macOS 作业与 lint；关掉时不能勾 panel_recycle）
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # 只保留行号表：链接更快、缓存更小，测试失败时的回溯仍有文件与行号
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  RUSTFLAGS: -D warnings
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter 在 PR 上通过 API 列出改动文件
+    outputs:
+      code: ${{ steps.plan.outputs.code }}
+      test: ${{ steps.plan.outputs.test }}
+      smoke: ${{ steps.plan.outputs.smoke }}
+      qa: ${{ steps.plan.outputs.qa }}
+      e2e: ${{ steps.plan.outputs.e2e }}
+      panel-recycle: ${{ steps.plan.outputs.panel-recycle }}
+      cache-save: ${{ steps.plan.outputs.cache-save }}
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'push'
+      - id: filter
+        if: github.event_name != 'workflow_dispatch'
+        uses: dorny/paths-filter@v4
+        with:
+          # push：与本次推送之前的提交比较（默认会与 main 的合并基点比较，功能分支上任何推送都会被判为「有代码改动」）；
+          # PR：始终比较整个 PR 的改动，此项被忽略
+          base: ${{ github.ref_name }}
+          # every：一个过滤器里的模式必须全部满足
+          predicate-quantifier: every
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!**/*.md'
+              - '!LICENSE'
+            # 浏览器级用例的输入：前端源码与入口、依赖、CI 配置（every：三个模式同时满足——在前一个集合里、不在
+            # src-tauri 里、不是 Markdown）
+            frontend:
+              - '{apps/desktop/**,package.json,pnpm-lock.yaml,pnpm-workspace.yaml,.github/workflows/ci.yml,.github/actions/setup/**}'
+              - '!apps/desktop/src-tauri/**'
+              - '!**/*.md'
+      - id: plan
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          CODE: ${{ steps.filter.outputs.code }}
+          FRONTEND: ${{ steps.filter.outputs.frontend }}
+          IN_MACOS: ${{ inputs.macos }}
+          IN_SMOKE: ${{ inputs.smoke }}
+          IN_QA: ${{ inputs.qa_shots }}
+          IN_PANEL_RECYCLE: ${{ inputs.panel_recycle }}
+          IN_LINUX_WINDOWS: ${{ inputs.linux_windows }}
+          SMOKE_ON_PUSH: ${{ vars.WISP_CI_SMOKE }}
+        run: |
+          linux='{"name":"linux","runner":"ubuntu-22.04"}'
+          windows='{"name":"windows","runner":"windows-latest"}'
+          macos='{"name":"macos","runner":"macos-15"}'
+          code=false; test="[$linux,$windows]"; smoke='[]'; qa=false; panel_recycle=false
+          if [ "$EVENT" = workflow_dispatch ]; then
+            code=true
+            if [ "$IN_PANEL_RECYCLE" = true ]; then panel_recycle=true; fi
+            if [ "$IN_LINUX_WINDOWS" = false ]; then
+              # 只跑 macOS（同一提交的 push 运行已经跑过 Linux / Windows 与 e2e）：Linux / Windows 的作业一个都不跑。panel-recycle
+              # 只在 Linux / Windows 上跑，同时勾选是矛盾的输入——报错，不悄悄丢掉
+              if [ "$IN_MACOS" != true ]; then
+                echo "::error::macos 与 linux_windows 至少勾一个"
+                exit 1
+              fi
+              if [ "$panel_recycle" = true ]; then
+                echo "::error::panel_recycle 在 Linux / Windows runner 上跑：取消 linux_windows 时不能勾选 panel_recycle（要跑就保留 linux_windows）"
+                exit 1
+              fi
+              test="[$macos]"
+              if [ "$IN_SMOKE" = true ]; then smoke="[$macos]"; fi
+            else
+              if [ "$IN_MACOS" = true ]; then test="[$linux,$windows,$macos]"; fi
+              if [ "$IN_SMOKE" = true ]; then
+                smoke="[$linux,$windows]"
+                if [ "$IN_MACOS" = true ]; then smoke="[$linux,$windows,$macos]"; fi
+              fi
+            fi
+            if [ "$IN_QA" = true ]; then qa=true; fi
+          else
+            if [ "$CODE" = true ]; then code=true; fi
+            if [ "$EVENT" = push ] && [ "$REF" = refs/heads/main ] && [ "$SMOKE_ON_PUSH" = true ]; then
+              smoke="[$linux,$windows]"
+            fi
+          fi
+          # 浏览器级用例：改了前端的 push / PR 上跑，手动运行时总跑（取消 linux_windows 时不跑）
+          e2e=false
+          if [ "$EVENT" = workflow_dispatch ] || [ "$FRONTEND" = true ]; then e2e=true; fi
+          if [ "$EVENT" = workflow_dispatch ] && [ "$IN_LINUX_WINDOWS" = false ]; then e2e=false; fi
+          # PR 上不保存 Rust 缓存：PR 的缓存只能被同一个 PR 使用，徒占仓库 10 GB 的缓存额度
+          cache_save=true
+          if [ "$EVENT" = pull_request ]; then cache_save=false; fi
+          {
+            echo "code=$code"
+            echo "test=$test"
+            echo "smoke=$smoke"
+            echo "qa=$qa"
+            echo "e2e=$e2e"
+            echo "panel-recycle=$panel_recycle"
+            echo "cache-save=$cache_save"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  lint:
+    name: lint
+    needs: plan
+    if: needs.plan.outputs.code == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-save: ${{ needs.plan.outputs.cache-save }}
+
+      # 便宜的检查放前面，出错时一两分钟内就能看到
+      - name: 工作流与 shell 脚本（actionlint + shellcheck）
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.12/scripts/download-actionlint.bash) 1.7.12 "$RUNNER_TEMP"
+          "$RUNNER_TEMP/actionlint" -color
+          git ls-files -z '*.sh' | xargs -0 shellcheck --severity=warning
+      - name: 版本号一致
+        run: node scripts/bump.mjs --check
+      - name: oxlint
+        run: pnpm lint
+      - name: prettier
+        run: pnpm format:check
+      - name: tsc
+        run: pnpm typecheck
+      # scripts/qa/screenshots.ts 由 Node 的类型剥离直接运行（不做类型检查），也不在任何 tsconfig 的 include 里：
+      # 在这里用显式参数单独检查一遍，与 tsconfig.node.json 的严格选项一致
+      - name: tsc（scripts/qa/screenshots.ts）
+        working-directory: apps/desktop
+        run: >-
+          pnpm exec tsc --ignoreConfig --noEmit --strict --noUncheckedIndexedAccess --noUnusedLocals
+          --noUnusedParameters --target es2023 --lib ES2023,DOM,DOM.Iterable --module nodenext
+          --moduleResolution nodenext --types node --allowImportingTsExtensions --verbatimModuleSyntax
+          --erasableSyntaxOnly --allowJs --skipLibCheck ../../scripts/qa/screenshots.ts
+      - name: i18n（key 对齐、占位符、Rust 下发的 key、硬编码文案）
+        run: pnpm i18n:check
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy（默认 feature）
+        run: cargo clippy --workspace --all-targets --locked
+      - name: clippy（全部 feature：wayland / fake-llm / wgc / eval）
+        run: cargo clippy --workspace --all-targets --all-features --locked
+      # 放在 clippy 之后：crate 依赖边界与许可清单要用 cargo metadata，此时依赖已经下载好
+      - name: 契约检查（command 声明、命令清单、Tauri 导入边界、动效魔法数、crate 依赖边界）
+        run: pnpm check:contract
+      - name: 第三方许可清单与 lockfile 同步
+        run: node scripts/licenses.mjs --check
+
+  test:
+    name: test (${{ matrix.name }})
+    needs: plan
+    if: needs.plan.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.test) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      # Windows 的 git 默认 autocrlf=true，会把黄金样例检出成 CRLF，逐字节比对的 golden 测试随之失败
+      - name: 检出时保持 LF
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          cache-save: ${{ needs.plan.outputs.cache-save }}
+
+      # Linux 的 clippy 在 lint 里；Windows / macOS 在这里对各自的 cfg 代码各跑一次
+      - name: clippy
+        if: runner.os != 'Linux'
+        run: cargo clippy --workspace --all-targets --locked
+      # 三端 cargo test；Windows 的 desktop lib 单测依赖 build.rs 的 /DELAYLOAD:comctl32.dll
+      - name: cargo test
+        run: cargo test --workspace --locked
+      # 默认 feature 之外的测试：冒烟 / 性能门禁依赖的假模型（wisp-llm fake）、评测运行器（wisp-prompts eval，
+      # 含 required-features 的测试目标）。只在 Linux 上跑一遍（与平台无关）；wayland 由 lint 的全 feature clippy 覆盖
+      - name: cargo test（fake / eval feature）
+        if: runner.os == 'Linux'
+        run: |
+          cargo test -p wisp-llm --features fake --locked
+          cargo test -p wisp-prompts --features eval --locked
+      # X11 平台层的端到端用例（剪贴板读写 / 快照恢复 / INCR、模拟复制与粘贴、退出交接、显示器 id）：用例自带对端
+      # x11rb 客户端，无需人工操作。不启动窗口管理器——粘贴用例覆盖的正是「没有 EWMH 窗口管理器」的激活分支
+      - name: X11 冒烟（wisp-platform smoke_linux，Xvfb）
+        if: runner.os == 'Linux'
+        run: |
+          bash scripts/ci/linux-deps.sh smoke
+          xvfb-run -a cargo test -p wisp-platform --test smoke_linux --locked -- --ignored --test-threads=1
+      - name: vitest
+        run: pnpm test
+
+      - name: 前端构建 + 体积 / 入口依赖图检查
+        if: runner.os == 'Linux'
+        run: pnpm check:size
+      - name: 性能、发布与检查脚本自检
+        if: runner.os == 'Linux'
+        run: |
+          bash scripts/perf/measure-linux.sh --dry-run
+          node scripts/perf/record.mjs --self-test
+          node scripts/perf/smoke-gate.mjs --self-test
+          node scripts/perf/latency-report.mjs --self-test
+          node scripts/perf/run-smoke.mjs --self-test
+          node scripts/perf/compare-records.mjs --self-test
+          node scripts/perf/exercise.mjs --self-test
+          node scripts/bump.mjs --self-test
+          node scripts/check-size.mjs --self-test
+          node scripts/gen-fixtures.mjs --self-test
+          node scripts/ci/e2e-summary.mjs --self-test
+          node scripts/release/self-test.mjs
+          node scripts/release/updater-rehearsal.mjs --self-test
+          node scripts/check-contract.mjs --self-test
+          node scripts/check-i18n.mjs --self-test
+          node scripts/licenses.mjs --self-test
+      # 空闲唤醒的按线程归因工具：起一个每 100 ms 醒一次的临时进程，核对能测出、能归到线程（约 10 s）
+      - name: 性能脚本自检
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/perf/measure-windows.ps1 -DryRun
+          ./scripts/perf/windows-thread-wakeups.ps1 -SelfTest
+      - name: 性能脚本与开发签名脚本自检
+        if: runner.os == 'macOS'
+        run: |
+          bash scripts/perf/measure-macos.sh --dry-run
+          bash scripts/dev-sign-macos.sh --self-test
+
+  # 分支保护的必需检查（检查名取 job 的 name）：只改文档时矩阵作业整体跳过、检查名不展开，必需检查会一直
+  # 「等待中」，所以由这里汇总。作业 id 不叫 test：rust-cache 的 key 含作业 id，矩阵作业保持 test 才能沿用缓存
+  test-summary:
+    name: test
+    needs: [plan, test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 汇总各平台测试结果
+        env:
+          PLAN: ${{ needs.plan.result }}
+          CODE: ${{ needs.plan.outputs.code }}
+          TESTS: ${{ needs.test.result }}
+        run: |
+          if [ "$PLAN" != success ]; then echo "::error::plan 作业没有成功（$PLAN）"; exit 1; fi
+          if [ "$CODE" != true ]; then echo "只改了文档，测试已跳过"; exit 0; fi
+          if [ "$TESTS" != success ]; then echo "::error::平台测试没有全部通过（$TESTS）"; exit 1; fi
+          echo "各平台测试全部通过"
+
+  smoke:
+    name: smoke (${{ matrix.name }})
+    needs: plan
+    if: needs.plan.outputs.code == 'true' && needs.plan.outputs.smoke != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.smoke) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      # macOS 用 release 配置（RSS 硬门禁与基线同口径），Linux / Windows 用 debug
+      PROFILE: ${{ matrix.name == 'macos' && 'release' || 'debug' }}
+      # 会话后 WebView 内存的判定：55 MiB 判「回收后」（用过之后的常驻状态）；「回收前（刚用过）」按 100 MiB 防退化上限
+      # （smoke-gate 的 BUDGET.rss_webview_hot）。两个窗口都是硬门禁——热状态的内存退化同样拦得住。超出时先看
+      # compare-records 的摘要与 WebKit 进程构成，再决定修代码还是调整预算
+      WEBVIEW_GATE_HOT: hard
+      WEBVIEW_GATE_RECYCLED: hard
+      # 会话后测量的 exercise（scripts/perf/exercise.mjs，measure-macos.sh 以 bash -e -c 执行）：先往剪贴板灌 30 条文本
+      # （短语 / 中英段落 / 代码 / 链接 / 颜色值 / 4 KB 长文）与 3 张 PNG，等应用全部记录；再依次唤出、关闭输入面板与剪贴板
+      # 面板（剪贴板视图渲染真实的列表、图标与缩略图），每一步由应用的 debug 日志核对——失焦先隐藏、再次 --trigger 把面板
+      # 重新打开时再关一次，结束时没有面板在屏幕上，否则失败。最后一次隐藏约在 exercise 结束前 1.8 s。没有覆盖翻译
+      # （流式渲染 / markdown-lite）：CLI 没有带文本的触发方式
+      EXERCISE: node scripts/perf/exercise.mjs --views input,clipboard --texts 30 --images 3
+    steps:
+      - name: 检出时保持 LF
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          linux-deps: smoke
+          cache-key: smoke
+          cache-save: ${{ needs.plan.outputs.cache-save }}
+      # 基线（scripts/perf/baselines/，见 scripts/perf/README.md「基线」）：macOS 按系统大版本选——有 macos-<大版本>.json
+      # （runner 上录的）时用它，RSS 退化是硬比较；否则用 macos.json（本机 macOS 26 录的，跨大版本时 RSS 退化只告警，宽松上限
+      # 照常硬判）。冒烟门禁与会话后两个窗口共用（会话后窗口的主进程按基线的 gate.session_rss_main 判）
+      - name: 选基线
+        shell: bash
+        env:
+          OS_NAME: ${{ matrix.name }}
+        run: |
+          base="scripts/perf/baselines/$OS_NAME.json"
+          if [ "$RUNNER_OS" = macOS ]; then
+            major="$(sw_vers -productVersion | cut -d. -f1)"
+            if [ -f "scripts/perf/baselines/macos-$major.json" ]; then base="scripts/perf/baselines/macos-$major.json"; fi
+          fi
+          echo "基线：$base"
+          echo "PERF_BASELINE=$base" >> "$GITHUB_ENV"
+      # 冒烟 / 性能构建带 fake-llm；no-updater 配置避免缺私钥时报错。Linux / Windows --no-bundle 不打包；
+      # macOS 只打 .app（会话后 WebView 内存的测量要经 LaunchServices 启动才能精确归属 WebKit 进程，打 .app 只是复制）
+      - name: 构建（fake-llm，${{ env.PROFILE }}）
+        id: build
+        shell: bash
+        run: |
+          flags=(--features fake-llm --config src-tauri/tauri.no-updater.conf.json)
+          if [ "$RUNNER_OS" = macOS ]; then flags=(--bundles app "${flags[@]}"); else flags=(--no-bundle "${flags[@]}"); fi
+          if [ "$PROFILE" = debug ]; then flags=(--debug "${flags[@]}"); fi
+          pnpm tauri build "${flags[@]}"
+      - name: WISP_SMOKE
+        run: node scripts/perf/run-smoke.mjs --profile "${{ env.PROFILE }}" --out target/smoke-report.json
+      - name: smoke-gate（流程 / 次数 / 超时 / 卡死 / 窗口必过；macOS 与同构建类型基线比较，RSS 超 10% 失败，冷启动只告警）
+        shell: bash
+        run: node scripts/perf/smoke-gate.mjs target/smoke-report.json "$PERF_BASELINE" --ci
+      # 用过之后的 WebView 合计，两个窗口各启动一次 .app 采样（经 LaunchServices 启动 = 精确归属；
+      # 隔离 HOME、--autostart；measure-macos.sh 的测量设置（--settings preset）：更新检查关闭、日志级别 debug、空闲卸载取
+      # 新配置的默认值；预热 35 s → exercise（见 env EXERCISE）→ 静置 → 采样）：
+      #   ① 回收前（刚用过）：静置 5 s，采样终点钉在 exercise 结束后 32 s（--window-end；起点随脚本开销浮动，约 7–10 s）——
+      #      回收在最后一次隐藏后 45 s（约 exercise 后 43 s），余量约 11 s，与 runner 的快慢无关；
+      #   ② 回收后：静置 60 s、采样 60 s（约 exercise 后 63–125 s）。
+      # 两个窗口依赖面板回收时长 windows::manager::panel_recycle_after（macOS 45 s，native::PANEL_RECYCLE_AFTER，从最后一次
+      # 隐藏起算）。--expect-state 由应用日志核对：exercise 唤出过面板、采样窗口里面板已隐藏（debug 日志的面板事件）、窗口的
+      # 状态与预期一致——回收时长改了、回收被关掉、exercise 没生效或结束时面板还开着都直接失败；--expect-views：输入与剪贴板
+      # 两个视图都上屏过。--require-webview：WebView 必须精确归属、3 个进程都测到（Apple 虚拟机 2 个），否则失败。WebView 预算按
+      # WEBVIEW_GATE_HOT / WEBVIEW_GATE_RECYCLED（见 env，回收前 100 MiB 防退化上限 / 回收后 55 MiB）；主进程内存硬判：绝对预算
+      # 之外，按基线的 gate.session_rss_main（runner 实测的会话后主进程）判退化，并核对应用日志的 launch_env=true（Info.plist 的
+      # MallocSpaceEfficient=1 生效）；CPU / 唤醒只告警。WebView / CPU / 唤醒不和基线的空闲段比较（口径不同）。
+      # 两个窗口是独立的测量：上面的冒烟门禁失败时照样测（只要构建成功），一次运行拿到全部数据
+      - name: 会话后 WebView 内存 ① 回收前（macOS）
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: |
+          bash scripts/perf/measure-macos.sh --app target/release/bundle/macos/Wisp.app --warmup 35 \
+            --exercise "$EXERCISE" --settle 5 --idle 25 --window-end 32 --wakeups top \
+            --out target/perf-post-hot.json --log-out target/perf-post-hot.log
+          node scripts/perf/smoke-gate.mjs target/perf-post-hot.json "$PERF_BASELINE" --ci --require-webview \
+            --expect-state hot --expect-views input,clipboard --webview-gate "$WEBVIEW_GATE_HOT"
+      - name: 会话后 WebView 内存 ② 回收后（macOS）
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: |
+          bash scripts/perf/measure-macos.sh --app target/release/bundle/macos/Wisp.app --warmup 35 \
+            --exercise "$EXERCISE" --settle 60 --idle 60 --wakeups top \
+            --out target/perf-post-recycled.json --log-out target/perf-post-recycled.log
+          node scripts/perf/smoke-gate.mjs target/perf-post-recycled.json "$PERF_BASELINE" --ci --require-webview \
+            --expect-state recycled --expect-views input,clipboard --webview-gate "$WEBVIEW_GATE_RECYCLED"
+      - name: 会话后测量对照（摘要）
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: >-
+          node scripts/perf/compare-records.mjs --title "会话后 WebView 内存（${{ matrix.runner }}）"
+          "① 回收前=target/perf-post-hot.json" "② 回收后=target/perf-post-recycled.json"
+      # 打包结果的启动环境：.app 的 Info.plist 带 LSEnvironment 的 MallocSpaceEfficient=1、与源文件逐项一致。
+      # 静态核对，几秒钟；放在最后是为了失败时上面的测量照样跑完（运行时是否生效由两个会话后窗口的 smoke-gate 核对 launch_env）。
+      # release.yml 的 macOS 构建在上传之前跑同一个脚本
+      - name: 启动环境（macOS，Info.plist 的 LSEnvironment）
+        if: ${{ !cancelled() && runner.os == 'macOS' && steps.build.outcome == 'success' }}
+        run: bash scripts/release/verify-macos-launch-env.sh target/release/bundle/macos/Wisp.app
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-${{ matrix.name }}
+          path: |
+            target/smoke-report.json
+            target/smoke-report.log
+            target/smoke-run.log
+            target/perf-post-hot.json
+            target/perf-post-hot.log
+            target/perf-post-recycled.json
+            target/perf-post-recycled.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # 浏览器级用例：Linux runner 上的 Playwright 官方容器（浏览器与系统依赖都在镜像里，不用每次
+  # apt / 下载浏览器）。镜像版本必须与 apps/desktop 的 @playwright/test 一致（第一步核对，升级 Playwright 时一起改）。
+  # mock 生产构建后在 127.0.0.1:1479 上 preview，WebKit + Chromium 各跑一遍；CI 上失败的用例重试 1 次（记为 flaky）。
+  # 失败那一次的 trace / 截图在用例失败或有 flaky 时上传（e2e-summary.mjs 读 JSON 报告，把 flaky / 失败列进摘要与注解）
+  e2e:
+    name: e2e
+    needs: plan
+    if: needs.plan.outputs.e2e == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble
+      options: --ipc=host
+    env:
+      PLAYWRIGHT_IMAGE_VERSION: 1.64.0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          rust: 'false'
+          linux-deps: ''
+      - name: Playwright 版本与容器镜像一致
+        run: |
+          v="$(node -p "require('./apps/desktop/node_modules/@playwright/test/package.json').version")"
+          if [ "$v" != "$PLAYWRIGHT_IMAGE_VERSION" ]; then
+            echo "::error file=.github/workflows/ci.yml::@playwright/test 是 $v，e2e 作业的容器镜像是 v$PLAYWRIGHT_IMAGE_VERSION：把 container.image 与 PLAYWRIGHT_IMAGE_VERSION 改成 $v"
+            exit 1
+          fi
+      # 交互回归（拖拽中右键、纯竖直拖拽、过小选区、飞入共享元素、菜单换页、两区重新分配只朝一个方向……）
+      - name: 浏览器级用例（src/**/__e2e__，WebKit + Chromium）
+        id: e2e
+        run: pnpm -C apps/desktop exec playwright test
+      - name: flaky / 失败的用例（摘要）
+        id: e2e-summary
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/e2e-summary.mjs artifacts/e2e-report.json
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && (steps.e2e.outcome == 'failure' || steps.e2e-summary.outputs.flaky == 'true') }}
+        with:
+          name: e2e
+          # Playwright 的 outputDir（trace / 截图）与 JSON 报告（apps/desktop/playwright.config.ts）
+          path: artifacts/e2e*
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # 面板回收对照：Windows / Linux 的面板回收要不要打开（scripts/perf/README.md「面板回收对照」）。手动运行且勾选 panel_recycle 时
+  # Linux、Windows 各跑一次：release + fake-llm 构建（WISP_PANEL_RECYCLE_SECS 可覆盖回收时长），测量设置
+  # （更新检查关闭、日志级别 debug）、热身启动一次之后依次测「从未显示 / 用过之后（当前默认，不回收）/ 用过并回收（45 s）」
+  # 三段空闲（显式预热：Linux 60 s、Windows 40 s），每段都过 smoke-gate --require-webview，后两段再过 --expect-state /
+  # --expect-views；一段无效不中断，三段测完、各段判定写进摘要后才以非零退出。对照表写进摘要，记录与应用日志上传。Linux 在
+  # dbus-run-session + Xvfb 里跑，并由 scripts/ci/sni-watcher.py 提供最小托盘宿主（否则 Wisp 退化成打开设置窗口）；Windows
+  # 用 runner 的真实用户目录（measure-windows.ps1 -UseRealProfile：Windows 上无法隔离，runner 是一次性的）
+  panel-recycle:
+    name: panel-recycle (${{ matrix.name }})
+    needs: plan
+    if: needs.plan.outputs.panel-recycle == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            runner: ubuntu-22.04
+          - name: windows
+            runner: windows-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - name: 检出时保持 LF
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          linux-deps: smoke
+          cache-key: panel-recycle
+          cache-save: ${{ needs.plan.outputs.cache-save }}
+      - name: Linux 测量环境（python3-gi 给最小托盘宿主；xclip 给 exercise 灌剪贴板；schedstats 给精确的唤醒计数）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -qq --no-install-recommends python3-gi gir1.2-glib-2.0 xclip
+          sudo sysctl -w kernel.sched_schedstats=1
+      - name: 构建（release，fake-llm）
+        id: build
+        shell: bash
+        run: pnpm tauri build --no-bundle --features fake-llm --config src-tauri/tauri.no-updater.conf.json
+      - name: 测量（Linux：D-Bus 会话 + Xvfb + 最小托盘宿主）
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1920x1080x24' bash scripts/ci/panel-recycle-linux.sh
+      - name: 测量（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/ci/panel-recycle-windows.ps1
+      - name: 对照（摘要）
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: >-
+          node scripts/perf/compare-records.mjs --title "面板回收对照：${{ matrix.name }}"
+          "从未显示=target/panel-recycle/never.json" "用过之后（不回收，当前默认）=target/panel-recycle/used.json"
+          "用过并回收（45 s）=target/panel-recycle/recycled.json"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: panel-recycle-${{ matrix.name }}
+          path: target/panel-recycle
+          if-no-files-found: ignore
+          retention-days: 30
+
+  qa-shots:
+    name: qa-shots
+    needs: plan
+    if: needs.plan.outputs.qa == 'true'
+    runs-on: macos-15
+    # runner 上约 3000 张截图 + 流畅度 trace 用时约 53 分钟（Apple 虚拟机、3 vCPU）；虚拟机上截图与流畅度场景的时限另有放宽
+    # （scripts/qa/screenshots.ts 的 SHOT_TIMEOUT / PERF_SETTLE_TIMEOUT_VM），这里留出余量
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          rust: 'false'
+          linux-deps: ''
+      - name: Playwright 浏览器
+        run: pnpm -C apps/desktop exec playwright install webkit chromium
+      # --perf 要求四个流畅度场景都存在（缺失即失败，门禁不会因场景改名而悄悄消失）；截图照样上传。runner 是 Apple
+      # 虚拟机：流畅度不达标与 data-settled 超时只告警（阈值按真机定，流畅度以本机 `pnpm qa:shots --perf` 为准），场景缺失与
+      # 采样没有覆盖到负载仍然失败
+      - name: 截图矩阵（含 --perf 流畅度 trace）
+        run: pnpm qa:shots --perf
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: qa-shots
+          path: artifacts/qa
+          retention-days: 14

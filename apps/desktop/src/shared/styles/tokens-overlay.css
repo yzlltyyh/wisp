@@ -1,0 +1,12 @@
+/*
+ * 设计令牌 · Overlay 首帧子集。tokens.css 在开头 @import 本文件，
+ * 其他入口照常只引用 tokens.css；截图 Overlay 的入口只加载本文件（暗化层渐入需要的全部令牌），交互模块（select.ts，
+ * 动态加载）再把完整的 tokens.css 连同自己的样式一起注入——Overlay 入口 + 静态依赖 + CSS ≤ 15 KB。
+ * 时长与曲线放在 shared/motion/tokens.css（与 tokens.ts 同值，tokens.ts 是唯一来源）。
+ */
+@import '../motion/tokens.css';
+
+:root {
+  /* Overlay 暗化层（黑 45%），在 data-on 时由 0 渐入（presets.overlayDim） */
+  --dim-overlay: rgb(0 0 0 / 0.45);
+}

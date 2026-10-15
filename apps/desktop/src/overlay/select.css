@@ -1,0 +1,136 @@
+/*
+ * Overlay 交互样式，随 select.ts 动态加载。只用 tokens.css 的变量；选区、标签与
+ * 放大镜叠在任意屏幕内容上，用中性的深色底 + 白字，浅色 / 深色主题下一致。
+ * 拖拽与飞入只改 transform：选区边框的八段、四个把手、尺寸标签、暗化层挖洞的四块、飞入时裁出的那块像素都是独立的
+ * 合成层（will-change），每帧没有布局、没有整屏重绘。
+ */
+[data-overlay][data-pan] {
+  cursor: move;
+}
+[data-overlay][data-done] {
+  cursor: default;
+}
+.ov-sel,
+.ov-mag,
+.ov-piece {
+  right: auto;
+  bottom: auto;
+}
+/* 飞入时选中的那块像素：从选区原位以 translate + scale 飞向面板头部的缩略图，轻微的投影表示它被「拿起」 */
+.ov-piece {
+  transform-origin: 0 0;
+  will-change: transform;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.28);
+}
+.ov-sel {
+  width: 0;
+  height: 0;
+}
+/* 隐藏用 visibility：合成层一直在（显示 / 隐藏不重建图层、不布局） */
+.ov-sel[data-off],
+.ov-mag[data-off] {
+  visibility: hidden;
+}
+.ov-mag {
+  will-change: transform;
+}
+.ov-sel > *,
+.ov-band {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+/*
+ * 边框八段（外侧描边四段 + 强调色四段）与暗化带四块：100 × 100 px 的纯色方块（= geometry.ts 的 UNIT，分数缩放下也是整数个
+ * 设备像素），transform 缩放到位；粗细由 transform 给出（框选与窗口高亮之间切换时不布局）
+ */
+.ov-sel > b,
+.ov-band {
+  width: 100px;
+  height: 100px;
+}
+.ov-sel {
+  --ring: rgb(0 0 0 / 0.22);
+}
+.ov-e {
+  background: var(--accent);
+}
+.ov-ring {
+  background: var(--ring);
+}
+.ov-sel i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 1.5px var(--accent),
+    0 1px 3px rgb(0 0 0 / 0.35);
+}
+/* 窗口高亮没有把手；飞入时没有把手和尺寸标签（visibility：图层不重建、不布局） */
+.ov-sel[data-k='window'] i,
+[data-fly] .ov-sel i,
+[data-fly] .ov-size {
+  visibility: hidden;
+}
+.ov-size,
+.ov-coord {
+  contain: layout paint;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font: 500 var(--text-caption) / 18px var(--font-sans);
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: rgb(20 20 24 / 0.8);
+  white-space: nowrap;
+}
+/* 尺寸标签：transform 平移到选区左上角（右对齐时到右上角），这里只给相对那一点的偏移 */
+.ov-size {
+  top: auto;
+  bottom: 6px;
+  left: -1px;
+}
+.ov-sel[data-r] .ov-size {
+  left: auto;
+  right: -1px;
+}
+.ov-sel[data-in] .ov-size {
+  top: 6px;
+  bottom: auto;
+  left: 6px;
+}
+.ov-sel[data-in][data-r] .ov-size {
+  left: auto;
+  right: 6px;
+}
+/*
+ * 暗化层：交互模块加载后自身透明，由洞四周的四块（纯色方块，transform 缩放到位）铺出暗化；没有洞时上面一块铺满
+ * 整屏。四块一直显示，之后只改 transform
+ */
+.ov-band {
+  background: var(--dim-overlay);
+}
+.ov-dim[data-bands] {
+  background: transparent;
+}
+.ov-mag {
+  width: 112px;
+}
+.ov-lens {
+  display: block;
+  width: 112px;
+  height: 112px;
+  border-radius: 10px;
+  background: #000;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.55),
+    0 0 0 2px rgb(0 0 0 / 0.25),
+    0 8px 24px rgb(0 0 0 / 0.35);
+}
+.ov-coord {
+  display: block;
+  width: fit-content;
+  margin: 6px auto 0;
+}

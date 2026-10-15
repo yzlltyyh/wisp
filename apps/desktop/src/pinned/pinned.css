@@ -1,0 +1,102 @@
+/*
+ * 固定窗口：卡片视觉与面板一致，背景纯色（不用材质）。
+ * - macOS / Windows（shadow_margin = 0）：窗口的圆角、边框与阴影由系统提供，卡片铺满窗口、不画描边与阴影；
+ * - Linux（透明窗口，shadow_margin > 0）：卡片四周留阴影边距，自己画 --r-panel 圆角、内缘 hairline 与 --shadow-pinned。
+ * 「浮起」（pinLift）之后阴影层淡入：阴影不做 box-shadow 动画，而是带 --shadow-pinned 的伪元素 opacity 0→1。
+ */
+.pinned {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pinned[data-margin] {
+  inset: var(--shadow-margin);
+}
+
+.pinned-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 0;
+  background: var(--surface-solid);
+  box-shadow: var(--highlight-top);
+}
+/*
+ * 首帧测量时卡片按内容的自然高度排版（展开窗口按它定高）：不随窗口收缩（flex: none，可以比还没展开的窗口高），
+ * 交接之后铺满窗口
+ */
+.pinned-card[data-phase='preparing'] {
+  flex: none;
+}
+.pinned-card[data-phase='shown'] {
+  height: 100%;
+}
+.pinned[data-margin] .pinned-card {
+  border-radius: var(--r-panel);
+}
+/* 内缘 1 px 描边（与面板 Css 卡片一致，画在内容之上） */
+.pinned[data-margin] .pinned-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  pointer-events: none;
+}
+/* 浮起后的阴影层 */
+.pinned[data-margin] .pinned-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  box-shadow: var(--shadow-pinned);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+.pinned[data-margin] .pinned-card[data-lifted]::after {
+  opacity: 1;
+}
+
+/* 独立标题栏（视图没有把窗口控件并进自己的头部时）：36 px 整条拖拽区 */
+.pinned-header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 calc(var(--pad-panel-x) - 6px) 0 var(--pad-panel-x);
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.pinned-title {
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.pinned-spacer {
+  flex: 1;
+  align-self: stretch;
+}
+
+.pinned-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: var(--pad-panel-y) var(--pad-panel-x);
+}
+.pinned-card[data-phase='preparing'] .pinned-content {
+  flex: none;
+}
+
+/*
+ * 置顶开关：置顶时 Pin 用强调色、底色很淡（不是头部最显眼的元素）；关闭时 PinOff 描边、无底色。与底栏的复制图标
+ * （两个错位方块）外形区分得开
+ */
+.pinned-ontop[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+}

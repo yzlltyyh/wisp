@@ -1,0 +1,1 @@
+Translate the text inside <source_text> from {{source_lang}} into {{target_lang}}, then add the 词汇 and 要点 sections as specified.

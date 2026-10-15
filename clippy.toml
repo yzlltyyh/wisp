@@ -1,0 +1,6 @@
+# 测试代码允许 unwrap / expect（工作区 lints 中 unwrap_used = "warn"）
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+# IpcError 内含 Option<LlmError>（约 150 字节），超过默认 128 字节的 result_large_err 阈值；
+# 该结构是前后端共享的 IPC 载荷（形状由黄金样例固定），装箱会改变公开类型，因此把阈值放宽到 256 字节
+large-error-threshold = 256

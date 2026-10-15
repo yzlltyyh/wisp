@@ -1,0 +1,5 @@
+{
+  // 解决方案式配置：编辑器按引用找到各自的工程；类型检查见 package.json 的 typecheck 脚本
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]
+}

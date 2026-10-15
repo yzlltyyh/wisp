@@ -1,0 +1,56 @@
+{
+  "name": "@wisp/desktop",
+  "version": "0.1.1",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@12.3.4",
+  "engines": {
+    "node": "^22.22.2 || >=24.15",
+    "pnpm": ">=12.3.4"
+  },
+  "scripts": {
+    "dev": "vite",
+    "dev:mock": "vite --mode mock",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.node.json",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "3.14.14",
+    "@tauri-apps/api": "2.12.2",
+    "@tauri-apps/plugin-autostart": "2.7.0",
+    "@tauri-apps/plugin-dialog": "2.8.1",
+    "@tauri-apps/plugin-global-shortcut": "2.4.0",
+    "@tauri-apps/plugin-log": "2.10.0",
+    "@tauri-apps/plugin-opener": "2.7.0",
+    "@tauri-apps/plugin-os": "2.4.0",
+    "@tauri-apps/plugin-process": "2.4.0",
+    "@tauri-apps/plugin-updater": "2.13.2",
+    "lucide-react": "1.54.0",
+    "motion": "14.1.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zustand": "5.0.15"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0",
+    "@tailwindcss/vite": "4.3.3",
+    "@tauri-apps/cli": "2.12.1",
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/jest-dom": "7.0.1",
+    "@testing-library/react": "16.3.3",
+    "@testing-library/user-event": "14.6.7",
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "jsdom": "30.1.2",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.4",
+    "vitest": "5.0.3"
+  }
+}

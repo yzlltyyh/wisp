@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "record_text": true,
+  "record_rich_text": true,
+  "record_images": true,
+  "record_files": true,
+  "max_items": 1000,
+  "max_age_days": 30,
+  "max_text_bytes": 1048576,
+  "max_image_bytes": 20971520,
+  "excluded_apps": [
+    {
+      "os": "macos",
+      "app_id": "com.bitwarden.desktop",
+      "name": "Bitwarden"
+    }
+  ],
+  "secret_detection": true,
+  "secret_tray_flash": true,
+  "panel_position": "remember",
+  "paste_on": "double_click",
+  "show_hint_bar": true
+}

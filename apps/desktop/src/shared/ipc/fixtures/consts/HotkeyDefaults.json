@@ -1,0 +1,68 @@
+{
+  "macos": {
+    "translate_selection": {
+      "preferred": "Alt+KeyD",
+      "fallback": "Control+Alt+KeyD"
+    },
+    "translate_input": {
+      "preferred": "Alt+Shift+KeyD",
+      "fallback": "Alt+KeyA"
+    },
+    "ocr": {
+      "preferred": "Alt+KeyS",
+      "fallback": "Control+Alt+KeyS"
+    },
+    "ocr_translate": {
+      "preferred": "Alt+Shift+KeyS",
+      "fallback": "Control+Alt+Shift+KeyS"
+    },
+    "clipboard": {
+      "preferred": "Alt+KeyV",
+      "fallback": "Shift+Super+KeyV"
+    }
+  },
+  "windows": {
+    "translate_selection": {
+      "preferred": "Control+Alt+KeyD",
+      "fallback": "Alt+Shift+KeyD"
+    },
+    "translate_input": {
+      "preferred": "Control+Alt+Shift+KeyD",
+      "fallback": "Control+Alt+KeyA"
+    },
+    "ocr": {
+      "preferred": "Control+Alt+KeyS",
+      "fallback": "Alt+Shift+KeyS"
+    },
+    "ocr_translate": {
+      "preferred": "Control+Alt+Shift+KeyS",
+      "fallback": "Alt+Shift+KeyT"
+    },
+    "clipboard": {
+      "preferred": "Control+Alt+KeyV",
+      "fallback": "Alt+Shift+KeyV"
+    }
+  },
+  "linux": {
+    "translate_selection": {
+      "preferred": "Control+Alt+KeyD",
+      "fallback": "Alt+Super+KeyD"
+    },
+    "translate_input": {
+      "preferred": "Control+Alt+Shift+KeyD",
+      "fallback": "Control+Alt+KeyA"
+    },
+    "ocr": {
+      "preferred": "Control+Alt+KeyS",
+      "fallback": "Alt+Super+KeyS"
+    },
+    "ocr_translate": {
+      "preferred": "Control+Alt+Shift+KeyS",
+      "fallback": "Alt+Super+KeyT"
+    },
+    "clipboard": {
+      "preferred": "Control+Alt+KeyV",
+      "fallback": "Alt+Super+KeyV"
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "action": {
+    "translate_selection": "Translate selection",
+    "translate_input": "Type to translate",
+    "ocr": "Screenshot OCR",
+    "ocr_translate": "Screenshot translate",
+    "clipboard": "Clipboard"
+  },
+  "recorder": {
+    "placeholder": "Click to record",
+    "recording": "Press keys…",
+    "hint": "{esc} to cancel · {backspace} to clear",
+    "none": "Not set",
+    "default": "Default",
+    "restore": "Restore default",
+    "clear": "Clear",
+    "force": "Use anyway",
+    "test": "Test",
+    "test_waiting": "Press the shortcut to test…",
+    "test_received": "Received",
+    "modifier_required": "Use at least one modifier key",
+    "check_failed": "Couldn't check for conflicts. Try again",
+    "label": "Shortcut for {action}",
+    "label_value": "{label}: {combo}"
+  },
+  "state": {
+    "registered": "Active",
+    "fallback": "Using fallback",
+    "failed": "Failed to register",
+    "unbound": "Not set",
+    "suspended": "Paused",
+    "unavailable": "Not supported here"
+  },
+  "level": {
+    "forbidden": "Can't use",
+    "warning": "Possible conflict",
+    "info": "Note"
+  },
+  "conflict": {
+    "reserved": "{combo} is reserved by the system",
+    "self_duplicate": "Already used for “{action}”",
+    "static_app": "May conflict with a shortcut in {app}",
+    "registration": "Taken by another app",
+    "neighbor": "{app} also uses {combo}; pick one",
+    "layout": "May block typing characters on AltGr keyboard layouts",
+    "dead_key": "{combo} is an accent dead key and affects typing",
+    "single_letter": "A modifier plus one letter often clashes with app shortcuts",
+    "alt_letter": "Alt + letter clashes with menu access keys",
+    "win_key": "Win shortcuts are usually reserved by the system",
+    "shift_letter": "Shift + letter affects typing capitals",
+    "f12": "F12 is reserved for debuggers",
+    "system_taken": "Taken by a system shortcut. Change it in System Settings › Keyboard › Keyboard Shortcuts",
+    "invalid": "This shortcut isn't recognized. Try another one",
+    "bare_key": "A function key on its own is often used by apps",
+    "shift_key": "Shift alone with this key interferes with typing",
+    "rejected": "The system rejected this shortcut. Try another one",
+    "edit_key": "{combo} is a standard editing shortcut (copy, paste…) that Wisp also relies on",
+    "unusable": "This shortcut can't be used. Check it again",
+    "needs_confirm": "This shortcut may conflict. Confirm to use it anyway"
+  },
+  "reason": {
+    "duplicate": "Same as another shortcut",
+    "reserved": "Reserved by the system",
+    "system": "Taken by a system shortcut",
+    "taken": "Taken by another app",
+    "rejected": "The system rejected this shortcut",
+    "invalid": "Shortcut isn't recognized",
+    "both_unavailable": "Preferred and fallback shortcuts are both unavailable",
+    "recording": "Paused while recording a shortcut"
+  },
+  "ext": {
+    "need_input_monitoring": "Needs Input Monitoring permission",
+    "need_accessibility": "Needs Accessibility permission",
+    "unavailable": "Not supported here"
+  },
+  "copy_wait_ms": "Copy wait time"
+}

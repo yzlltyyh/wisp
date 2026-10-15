@@ -1,0 +1,111 @@
+{
+  "a11y": {
+    "panel": "Wisp 面板",
+    "content": "面板内容"
+  },
+  "view": {
+    "translate": "翻译",
+    "ocr": "文字识别",
+    "clipboard": "剪贴板",
+    "input": "输入翻译",
+    "toast": "提示"
+  },
+  "task": {
+    "translate": "翻译",
+    "polish": "润色",
+    "proofread": "校对",
+    "refine": "提升译文"
+  },
+  "status": {
+    "cancelled": "已取消",
+    "copied": "已复制",
+    "truncated": "输出达到上限，已截断",
+    "thinking_exhausted": "模型思考耗尽了输出额度",
+    "cached": "来自缓存",
+    "param_degraded": "部分参数不受支持，已自动调整",
+    "retried": "已自动重试",
+    "low_confidence": "语言检测可能不准确",
+    "tokens": "{input} → {output} tokens"
+  },
+  "stream": {
+    "changes": "改动",
+    "thinking": "思考中…",
+    "reviewing": "正在检查译文…",
+    "improving": "正在改进译文…"
+  },
+  "not_ready": {
+    "no_provider": {
+      "title": "还没有接入模型",
+      "detail": "接入 OpenAI、Anthropic、Gemini 或任意兼容服务后即可使用。",
+      "action": "去设置"
+    },
+    "no_default_model": {
+      "title": "还没有选择默认模型",
+      "detail": "在「模型与服务」里为{task}选择一个默认模型。",
+      "action": "去设置"
+    },
+    "no_vision_model": {
+      "title": "还没有能识别图片的模型",
+      "detail": "截图 OCR 需要支持图片的模型，请在设置中指定一个。",
+      "action": "去设置"
+    },
+    "permission": {
+      "accessibility": {
+        "title": "需要辅助功能权限才能读取选中文字",
+        "detail": "授权后即可划词翻译；在此之前可以用输入模式。"
+      },
+      "screen_recording": {
+        "title": "需要屏幕录制权限才能截图",
+        "detail": "授权后需要重新启动 Wisp 才能生效。"
+      },
+      "input_monitoring": {
+        "title": "需要输入监控权限",
+        "detail": "浮标、双击修饰键与鼠标按键触发依赖这项权限。"
+      },
+      "action": "前往系统设置",
+      "relaunch": "重新启动 Wisp"
+    },
+    "wayland_copy_first": {
+      "title": "请先复制，再触发翻译",
+      "detail": "Wayland 下无法直接读取选中的文字。"
+    },
+    "capture_failed": {
+      "title": "截图失败",
+      "detail": "截图没有完成，请再试一次。"
+    },
+    "elevated": {
+      "title": "无法读取管理员窗口中的文字",
+      "detail": "目标程序以管理员身份运行，Wisp 无权读取。可以先复制，再用输入模式翻译。"
+    },
+    "keychain_unavailable": {
+      "title": "系统凭据存储暂时不可用",
+      "detail": "API Key 只保存在本次运行中，重启后需要重新填写。"
+    },
+    "selection_unavailable": {
+      "title": "无法读取选中的文字",
+      "detail": "可以先复制，再用输入模式翻译。"
+    },
+    "retake": "重新截图"
+  },
+  "input_hint": {
+    "accessibility": "授予辅助功能权限后可直接读取选中文本",
+    "screen_recording": "授予屏幕录制权限后即可截图",
+    "input_monitoring": "授予输入监控权限后即可使用扩展触发",
+    "grant": "去授权",
+    "elevated": "目标程序以管理员身份运行，无法读取选中的文字。请先复制，再粘贴到这里",
+    "wayland_copy_first": "Wayland 下无法读取选区，请先复制，再粘贴到输入框",
+    "selection_unavailable": "无法读取选中的文字，请先复制，再粘贴到这里"
+  },
+  "dev": {
+    "latency": "延迟",
+    "selection": "取词",
+    "ready": "就绪",
+    "shown": "显示",
+    "first_token": "首 token",
+    "timeout": "就绪超时",
+    "frames": "帧间隔",
+    "dropped": "掉帧",
+    "js": "每帧 JS",
+    "p95": "p95"
+  }
+}

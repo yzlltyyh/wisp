@@ -1,0 +1,1 @@
+Translate the text inside <source_text> from {{source_lang}} into academic {{target_lang}}. Reply with the translation only.

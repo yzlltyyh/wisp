@@ -1,0 +1,39 @@
+{
+  "bindings": {
+    "translate_selection": "Alt+KeyD",
+    "clipboard": "none"
+  },
+  "bobber": {
+    "enabled": true
+  },
+  "double_tap": {
+    "enabled": true,
+    "key": "right_alt",
+    "interval_ms": 300
+  },
+  "mouse": {
+    "enabled": false,
+    "long_press": false,
+    "middle": {
+      "enabled": true,
+      "action": "translate_selection"
+    },
+    "back": {
+      "enabled": false,
+      "action": "clipboard"
+    },
+    "forward": {
+      "enabled": false,
+      "action": "ocr"
+    }
+  },
+  "app_keymaps": [
+    {
+      "os": "linux",
+      "app_id": "gnome-terminal-server",
+      "copy": "Control+Shift+KeyC",
+      "paste": "Control+Shift+KeyV"
+    }
+  ],
+  "copy_wait_ms": 150
+}

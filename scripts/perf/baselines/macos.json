@@ -1,0 +1,152 @@
+{
+  "schema": "wisp.perf/1",
+  "ts": "2026-10-13T05:27:48.970Z",
+  "os": "macos",
+  "os_version": "26.4",
+  "arch": "arm64",
+  "version": "0.1.0",
+  "build": "release",
+  "machine": "Mac17,2",
+  "idle": {
+    "duration_s": 600.2,
+    "samples": 601,
+    "memory_metric": "phys_footprint",
+    "rss_main": 13.3,
+    "rss_main_max": 13.5,
+    "rss_webview": 49.2,
+    "rss_webview_max": 49.4,
+    "webview_processes": 3,
+    "webview_attribution": "responsible",
+    "cpu_avg": 0.005,
+    "cpu_max": 1,
+    "cpu_webview_avg": 0.003,
+    "cpu_webview_max": 1.02,
+    "cpu_total_avg": 0.008,
+    "wakeups": 0.1,
+    "wakeups_webview": 0.02,
+    "wakeups_method": "top-idlew",
+    "notes": [
+      "采样期间出现过的 WebKit 进程：24024=GPU, 24025=Networking, 24026=WebContent",
+      "更新检查：本次运行没有发生（测量设置关闭了更新检查，或还没到启动后 30 s）",
+      "采样窗口里的用户活动：剪贴板轮询 活跃 0 s / 安静 22.7 s / 离开 577.5 s，复制 0 次"
+    ],
+    "launch_env": true,
+    "activity": {
+      "tiers_s": {
+        "active": 0,
+        "quiet": 22.7,
+        "away": 577.5,
+        "screens_idle": 0
+      },
+      "copies": 0,
+      "user_active_s": 0
+    }
+  },
+  "latency": {
+    "source": "log",
+    "metric": "prepare_to_shown_ms",
+    "count": 102,
+    "p50": 13,
+    "p95": 28,
+    "max": 74,
+    "mean": 16.97,
+    "ready_timeouts": 0,
+    "first_token_p50": 0,
+    "first_token_p95": 300,
+    "overlay_count": 0,
+    "overlay_p50": null,
+    "overlay_p95": null,
+    "overlay_max": null,
+    "pages": {
+      "recycled": {
+        "count": 1,
+        "p50": 56,
+        "p95": 56,
+        "max": 56,
+        "ready_timeouts": 0
+      },
+      "cold": {
+        "count": 16,
+        "p50": 196,
+        "p95": 270,
+        "max": 270,
+        "ready_timeouts": 0,
+        "window": {
+          "count": 16,
+          "p50": 39,
+          "p95": 49,
+          "max": 49
+        }
+      }
+    },
+    "split": {
+      "ready_to_window": {
+        "count": 17,
+        "p50": 0,
+        "p95": 10,
+        "max": 10
+      },
+      "ready_to_key": {
+        "count": 8,
+        "p50": 0,
+        "p95": 0,
+        "max": 0
+      },
+      "ready_to_shown": {
+        "count": 118,
+        "p50": 9,
+        "p95": 24,
+        "max": 44
+      }
+    },
+    "first_show": {
+      "count": 1,
+      "ready_timeouts": 0,
+      "not_shown": 0,
+      "max": 74
+    }
+  },
+  "smoke": {
+    "release": {
+      "ok": true,
+      "cold_start_ms": 171,
+      "panel_prewarm_ms": 328,
+      "rss_main": 30,
+      "rss_main_peak": 30,
+      "prepare_to_shown_p95": 26,
+      "trigger_to_shown_p95": 32,
+      "windows_end": 1,
+      "memory_metric": "phys_footprint",
+      "os_version": "26.4.0",
+      "rss_webview": null,
+      "rss_webview_peak": null,
+      "webview_attribution": null
+    },
+    "debug": {
+      "ok": true,
+      "cold_start_ms": 207,
+      "panel_prewarm_ms": 385,
+      "rss_main": 37.1,
+      "rss_main_peak": 37.1,
+      "prepare_to_shown_p95": 26,
+      "trigger_to_shown_p95": 32,
+      "windows_end": 1,
+      "memory_metric": "phys_footprint",
+      "os_version": "26.4.0",
+      "rss_webview": null,
+      "rss_webview_peak": null,
+      "webview_attribution": null
+    }
+  },
+  "notes": [
+    "macOS 本机基线（macOS 26.4 / Mac17,2）。CI 的 macos-15 runner 优先使用同目录的 macos-15.json；本文件在 runner 上只在缺少同一系统大版本的基线时使用，此时冒烟 RSS 与主进程的退化比较只告警，宽松上限照常判定。",
+    "空闲段：fake-llm 的 release .app（pnpm tauri build --bundles app --features fake-llm --config src-tauri/tauri.no-updater.conf.json，ad-hoc 签名），measure-macos.sh --app 经 LaunchServices 启动（webview_attribution = responsible，应用日志 launch_env=true，即 Info.plist 的 MallocSpaceEfficient=1 生效）、隔离 HOME、测量设置（更新检查关闭、日志级别 debug），预热 30 s、空闲 600 s，面板从未显示；屏幕解锁、无人操作（剪贴板轮询离开档 577.5 s、复制 0 次），后台有其他负载（1 分钟负载 4.1–9.1）。主进程 13.3 MiB（峰值 13.5）、WebView 49.2 MiB / 3 个进程、空闲 CPU 合计 0.008 %、唤醒 主进程 0.1 / WebView 0.02 次/s（top IDLEW）。主进程退化门限约 14.6 MiB。",
+    "gate.session_rss_main = 15.4：会话后窗口（带 idle.session 的记录）主进程内存的参考值，取 v0.1.0 发布构建在同一台机器上回收前 / 回收后两个窗口的较大者（回收前 15.4、回收后 15.2 MiB），门限约 16.9 MiB。",
+    "延迟段与冒烟段的测量条件：release 构建、单独的 identifier（io.github.yzlltyyh.wisp.perf），经 LaunchServices 启动、隔离 HOME、测量设置（更新检查关闭、日志级别 debug、空闲卸载关闭）；屏幕解锁，系统负载 4–7，延迟数字偏保守。",
+    "冒烟段：fake-llm 的 release / debug 构建经 run-smoke.mjs 启动；debug 取构建后的第二次运行（第一次运行包含首次启动的系统扫描，托盘就绪明显偏慢）。",
+    "延迟段：release 冒烟日志（100 次连续触发 + 首次翻译 + Overlay 5 次）与冷唤出测量（翻译 / 输入各 8 轮，每轮在面板已卸载、WebContent / GPU 进程退出至少 70 s 之后触发；Overlay 6 轮）。pages.cold.window 是卡片上屏（原生外壳），pages.cold 的分位数是内容首帧。"
+  ],
+  "gate": {
+    "session_rss_main": 15.4
+  }
+}

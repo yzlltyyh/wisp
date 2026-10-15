@@ -1,0 +1,4 @@
+data: {"id":"c-1","choices":[{"index":0,"delta":{"role":"assistant","content":"Hi"}}]}
+
+data: {"id":"c-1","choices":[{"index":0,"delta":{"content":" there"},"finish_reason":"stop"}]}
+

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wisp",
+  "version": "0.1.1",
+  "identifier": "io.github.yzlltyyh.wisp",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "panel",
+        "create": false,
+        "url": "panel.html",
+        "title": "Wisp",
+        "width": 420,
+        "height": 120,
+        "visible": false,
+        "focus": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "acceptFirstMouse": true,
+        "dragDropEnabled": false,
+        "noRedirectionBitmap": true,
+        "backgroundThrottling": "disabled"
+      },
+      {
+        "label": "settings",
+        "create": false,
+        "url": "settings.html",
+        "title": "Wisp",
+        "width": 760,
+        "height": 560,
+        "minWidth": 680,
+        "minHeight": 480,
+        "center": true,
+        "visible": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "onboarding",
+        "create": false,
+        "url": "settings.html",
+        "title": "Wisp",
+        "width": 640,
+        "height": 580,
+        "center": true,
+        "visible": false,
+        "resizable": false,
+        "maximizable": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "pinned",
+        "create": false,
+        "url": "pinned.html",
+        "title": "Wisp",
+        "width": 420,
+        "height": 240,
+        "minWidth": 320,
+        "minHeight": 120,
+        "visible": false,
+        "alwaysOnTop": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "acceptFirstMouse": true,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "overlay",
+        "create": false,
+        "url": "overlay.html",
+        "title": "Wisp",
+        "visible": false,
+        "focus": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "acceptFirstMouse": true,
+        "dragDropEnabled": false,
+        "noRedirectionBitmap": true,
+        "backgroundThrottling": "disabled"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' wisp: http://wisp.localhost data: blob:; connect-src ipc: http://ipc.localhost wisp: http://wisp.localhost; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self'; script-src 'self' http://localhost:1420; style-src 'self' 'unsafe-inline'; img-src 'self' wisp: http://wisp.localhost data: blob:; connect-src ipc: http://ipc.localhost wisp: http://wisp.localhost http://localhost:1420 ws://localhost:1420; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "dangerousDisableAssetCspModification": ["style-src"],
+      "freezePrototype": true
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis", "deb", "rpm", "appimage"],
+    "createUpdaterArtifacts": true,
+    "category": "Productivity",
+    "shortDescription": "LLM OCR, selection translation and clipboard history in one lightweight tray app",
+    "copyright": "Copyright © 2026 yzlltyyh",
+    "license": "MIT",
+    "homepage": "https://github.com/yzlltyyh/wisp",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "14.0",
+      "infoPlist": "Info.plist"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
+    "linux": {
+      "deb": {
+        "depends": ["libayatana-appindicator3-1", "libwebkit2gtk-4.1-0"]
+      },
+      "rpm": {
+        "depends": ["libayatana-appindicator-gtk3", "webkit2gtk4.1"]
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg5MENBODMyMjQ0OTJCQ0MKUldUTUswa2tNcWdNaVR0YXlRc2JOTXRKa1RPcGNVRFBzQ2tMbzg3ZkJSeFVLTTNZZG9ZbG1Ed2wK",
+      "endpoints": ["https://github.com/yzlltyyh/wisp/releases/latest/download/latest.json"],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

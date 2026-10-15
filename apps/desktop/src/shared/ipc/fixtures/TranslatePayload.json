@@ -1,0 +1,19 @@
+{
+  "source_text": "The quick brown fox jumps over the lazy dog.",
+  "request_id": null,
+  "task": "translate",
+  "style_id": "natural",
+  "detected_lang": "en",
+  "target_lang": "zh-CN",
+  "dict_mode": false,
+  "long_text": {
+    "chars": 5200,
+    "est_tokens": 1300,
+    "est_seconds": 12.5
+  },
+  "not_ready": {
+    "reason": "no_default_model",
+    "task": "translate"
+  },
+  "selection_method": null
+}

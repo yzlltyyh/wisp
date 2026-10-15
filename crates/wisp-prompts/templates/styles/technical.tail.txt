@@ -1,0 +1,1 @@
+Translate the text inside <source_text> from {{source_lang}} into {{target_lang}} as technical documentation. Reply with the translation only (plus the "→ " lines for error messages, if any).

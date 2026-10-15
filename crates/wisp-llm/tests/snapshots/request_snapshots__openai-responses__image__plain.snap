@@ -1,0 +1,38 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: image
+---
+{
+  "body": {
+    "input": [
+      {
+        "content": [
+          {
+            "detail": "high",
+            "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ",
+            "type": "input_image"
+          },
+          {
+            "text": "Transcribe the text.",
+            "type": "input_text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "instructions": "You are a translator.",
+    "max_output_tokens": 4096,
+    "model": "gpt-4.1",
+    "store": false,
+    "stream": true,
+    "temperature": 0.0
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "Bearer sk-test",
+    "content-type": "application/json",
+    "user-agent": "Wisp/test"
+  },
+  "method": "POST",
+  "target": "/v1/responses"
+}

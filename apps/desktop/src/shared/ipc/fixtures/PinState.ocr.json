@@ -1,0 +1,35 @@
+{
+  "kind": "ocr",
+  "source_text": "",
+  "result_text": "敏捷的棕色狐狸跳过了懒狗。",
+  "task": "translate",
+  "style_id": "natural",
+  "target_lang": "zh-CN",
+  "detected_lang": "en",
+  "request_id": "r-9",
+  "capture_id": "c-9",
+  "ocr_text": "The quick brown fox jumps over the lazy dog.",
+  "ocr_mode": "translate",
+  "show_source": false,
+  "status_line": null,
+  "dict_mode": true,
+  "model_ref": {
+    "provider_id": "openai-main",
+    "model_id": "gpt-5-mini"
+  },
+  "status": {
+    "model_label": "GPT-5 mini",
+    "elapsed_ms": null,
+    "usage": null,
+    "cached": true,
+    "cancelled": false,
+    "truncated": null
+  },
+  "thumb_url": "http://wisp.localhost/capture%2F9%2Fthumb",
+  "image_size": {
+    "width": 1280,
+    "height": 720
+  },
+  "expand_width": 640,
+  "on_top": false
+}

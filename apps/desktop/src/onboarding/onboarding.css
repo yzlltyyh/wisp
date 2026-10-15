@@ -1,0 +1,705 @@
+/*
+ * 引导窗口：640 × 580、不可缩放。版式以 design.onboarding-permissions（dz-onb / dz-stepper / dz-perm）为准：
+ * macOS 顶部 52 px 给交通灯（Overlay 标题栏），左右 40 px；步骤条 → 标题 → 内容 → 底栏。颜色只取令牌。
+ * 步骤条与底栏是固定外框：步骤条叠在内容区顶部（不占欢迎页的布局），各步自己在顶部让出它的高度。
+ */
+@layer components {
+  .ob-window {
+    --ob-stepper-h: 48px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: 24px 40px 0;
+    box-sizing: border-box;
+    color: var(--fg);
+    background: var(--window-bg);
+  }
+  .ob-window[data-os='macos'] {
+    padding-top: 48px;
+  }
+  .ob-drag {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 40px;
+  }
+  .ob-window:not([data-os='macos']) .ob-drag {
+    display: none;
+  }
+  .ob-stage {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .ob-step-host {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+  /* 步骤条的位置：内容区顶部，绝对定位（欢迎页没有步骤条，内容不会被它挤动） */
+  .ob-stepper-slot {
+    position: absolute;
+    top: 24px;
+    left: 40px;
+    right: 40px;
+    z-index: 2;
+  }
+  .ob-window[data-os='macos'] .ob-stepper-slot {
+    top: 48px;
+  }
+  .ob-step-host[data-stepper] > .ob-step {
+    padding-top: var(--ob-stepper-h);
+  }
+  .ob-loading {
+    padding: 24px 0;
+  }
+
+  /* 步骤条 */
+  .ob-stepper {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ob-stepper-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ob-step-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 6px 0 3px;
+    border: 0;
+    border-radius: 12px;
+    font-size: var(--text-meta);
+    color: var(--fg-2);
+    background: transparent;
+    transition:
+      background-color var(--dur-instant) var(--ease-standard),
+      color var(--dur-fast) var(--ease-standard);
+  }
+  .ob-step-pill:hover {
+    background: var(--fill-hover);
+  }
+  .ob-step-pill b {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    font-size: var(--text-caption);
+    font-weight: 600;
+    color: var(--fg-2);
+    box-shadow: inset 0 0 0 1px var(--hairline-strong);
+    /* 描边直接切换（不动画 box-shadow） */
+    transition:
+      background-color var(--dur-fast) var(--ease-standard),
+      color var(--dur-fast) var(--ease-standard);
+  }
+  .ob-step-pill[data-state='current'] {
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .ob-step-pill[data-state='current'] b {
+    color: var(--accent-fg);
+    background: var(--accent-fill);
+    box-shadow: none;
+  }
+  /* 真正完成的步骤：强调色底 + 对勾 */
+  .ob-step-pill[data-state='done'] b {
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    box-shadow: none;
+  }
+  /* 走过但没完成（跳过了）：中性的虚线空心圆，数字变淡——不画对勾 */
+  .ob-step-pill[data-state='skipped'] b {
+    color: var(--fg-3);
+    box-shadow: none;
+    outline: 1px dashed var(--hairline-strong);
+    outline-offset: -1px;
+  }
+  .ob-step-line {
+    width: 24px;
+    height: 1px;
+    background: var(--hairline-strong);
+    transition: background-color var(--dur-base) var(--ease-standard);
+  }
+  .ob-step-line[data-done] {
+    background: var(--accent);
+  }
+
+  /* 一步 */
+  .ob-step {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .ob-step-body {
+    flex: 1;
+    min-height: 0;
+    margin: 0 -40px;
+    padding: 0 40px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    /* 滚入视野时让出上下边缘渐隐的高度（被拒绝的 Key 字段滚入视野时，标签不会被渐隐条切掉一半） */
+    scroll-padding-top: 20px;
+    scroll-padding-bottom: 16px;
+  }
+  .ob-step-inner {
+    padding-bottom: 16px;
+  }
+  /* 还能往上 / 往下滚时，对应边缘渐隐（粘在滚动区上下的渐变条，不用 mask，滚动时不重绘内容） */
+  .ob-step-body::before,
+  .ob-step-body::after {
+    content: '';
+    position: sticky;
+    z-index: 1;
+    display: block;
+    height: 16px;
+    margin: 0 -40px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-standard);
+  }
+  .ob-step-body::before {
+    top: 0;
+    margin-bottom: -16px;
+    background: linear-gradient(var(--window-chrome-bg), transparent);
+  }
+  .ob-step-body::after {
+    bottom: 0;
+    margin-top: -16px;
+    background: linear-gradient(transparent, var(--window-chrome-bg));
+  }
+  .ob-step-body[data-edge='top']::before,
+  .ob-step-body[data-edge='both']::before,
+  .ob-step-body[data-edge='bottom']::after,
+  .ob-step-body[data-edge='both']::after {
+    opacity: 1;
+  }
+  .ob-title {
+    margin: 0;
+    font-size: var(--text-page);
+    line-height: var(--lh-page);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .ob-desc {
+    margin: 4px 0 20px;
+    font-size: var(--text-ui);
+    line-height: var(--lh-ui);
+    color: var(--fg-2);
+    text-wrap: pretty;
+  }
+  .ob-foot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: none;
+    min-height: 32px;
+    margin: 0 -40px;
+    padding: 14px 40px 20px;
+    box-shadow: inset 0 1px 0 var(--hairline);
+  }
+  /* 加载中 / 读取失败时底栏是空的：不画分隔线 */
+  .ob-foot:empty {
+    box-shadow: none;
+  }
+  /* 各步经 portal 放进来的按钮组（换步骤时随正文淡入，见 shared.tsx） */
+  .ob-foot-inner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+  /* 换步骤时正在淡出的旧按钮组：叠在原位（与 .ob-foot 的内边距一致），不参与排版、不可点 */
+  .ob-foot-inner[data-leaving] {
+    position: absolute;
+    inset: 14px 40px 20px;
+    pointer-events: none;
+  }
+  /* 「稍后设置」：链接样式，和右边的「跳过这一步」拉开区别；文字与内容列左缘对齐，悬停底色向外让出 */
+  .ob-later {
+    height: var(--h-control-lg);
+    margin-left: -8px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: var(--r-control);
+    font-size: var(--text-meta);
+    color: var(--fg-2);
+    background: transparent;
+    transition:
+      color var(--dur-instant) var(--ease-standard),
+      background-color var(--dur-instant) var(--ease-standard);
+  }
+  .ob-later:hover {
+    color: var(--fg);
+    background: var(--fill-hover);
+  }
+  /* 同一位置两个按钮的交叉淡入：叠在同一格，宽度按较宽的那个；隐藏的那个淡出后再 visibility: hidden */
+  .ob-swap {
+    display: inline-grid;
+  }
+  .ob-swap-slot {
+    display: flex;
+    justify-content: flex-end;
+    grid-area: 1 / 1;
+    transition:
+      opacity var(--dur-fast) var(--ease-standard),
+      visibility 0s linear 0s;
+  }
+  .ob-swap[data-active='a'] > [data-slot='b'],
+  .ob-swap[data-active='b'] > [data-slot='a'] {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity var(--dur-fast) var(--ease-standard),
+      visibility 0s linear var(--dur-fast);
+  }
+  /* 换步骤后焦点在标题上（读屏播报）：标题本身不画焦点环 */
+  .ob-window [data-step-title]:focus {
+    outline: none;
+  }
+  .ob-load-error {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 轻提示在底栏上方（不盖住底栏的按钮） */
+  .ob-window .st-notice-host {
+    bottom: 78px;
+  }
+  .ob-spacer {
+    flex: 1;
+  }
+  .ob-hint {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 14px 0 0;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+  .ob-hint[data-tone='success'] {
+    color: var(--success-text);
+  }
+  .ob-banner {
+    margin-bottom: 12px;
+  }
+  /* 标题一行、说明一行（不靠空格拼接：中文句号后再接空格会留出一大段空白） */
+  .ob-banner-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  /* 欢迎 */
+  .ob-welcome-body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 8px;
+    text-align: center;
+  }
+  /*
+   * 图标自带圆角方块下的柔和投影（app-icon.svg 的 #shadow），这里不再叠 CSS drop-shadow：WKWebView 对 <img> 的
+   * drop-shadow 会沿 SVG 画布边界画出一个 72×72 的矩形「底框」（深色模式下尤其明显）
+   */
+  .ob-welcome-icon {
+    width: 72px;
+    height: 72px;
+    margin-bottom: 16px;
+  }
+  .ob-welcome-title {
+    margin: 0;
+    font-size: var(--text-page);
+    line-height: var(--lh-page);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .ob-welcome-desc {
+    max-width: 420px;
+    margin: 6px 0 24px;
+    font-size: var(--text-ui);
+    line-height: var(--lh-ui);
+    color: var(--fg-2);
+    text-wrap: balance;
+    /* 居中的短说明：严格断行（开括号不留在行尾、句读不出现在行首）；不用 keep-all（WebKit 里配合 balance 会在「后面断行） */
+    word-break: normal;
+    line-break: strict;
+    overflow-wrap: anywhere;
+  }
+  .ob-features {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 460px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow: hidden;
+    border-radius: var(--r-card);
+    background: var(--group-bg);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+    text-align: left;
+  }
+  .ob-feature {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 56px;
+    padding: 8px 14px;
+    box-sizing: border-box;
+  }
+  .ob-feature + .ob-feature {
+    box-shadow: inset 0 1px 0 var(--hairline);
+  }
+  .ob-feature-icon {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    flex: none;
+    border-radius: var(--r-row);
+    color: var(--accent-text);
+    background: var(--accent-soft);
+  }
+  .ob-feature-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .ob-feature-text b {
+    font-size: var(--text-ui);
+    font-weight: 500;
+  }
+  .ob-feature-text span {
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+
+  /* 权限 */
+  .ob-perms {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ob-perm {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    border-radius: var(--r-card);
+    background: var(--group-bg);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+  }
+  /* 授权后的绿色描边：画在 ::after 上切 opacity（不动画 box-shadow） */
+  .ob-perm::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 40%, transparent);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-base) var(--ease-standard);
+  }
+  .ob-perm[data-granted]::after {
+    opacity: 1;
+  }
+  .ob-perm-icon {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    flex: none;
+    border-radius: var(--r-card);
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    transition:
+      background-color var(--dur-base) var(--ease-standard),
+      color var(--dur-base) var(--ease-standard);
+  }
+  .ob-perm[data-granted] .ob-perm-icon {
+    color: var(--success-text);
+    background: var(--success-soft);
+  }
+  .ob-perm-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  /* 标题 + 状态徽标：放不下时徽标整体换到标题下一行（不在徽标内部断行、不把标题挤成两行） */
+  .ob-perm-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 2px;
+  }
+  .ob-perm-text b {
+    font-size: var(--text-ui);
+    line-height: var(--lh-ui);
+    font-weight: 600;
+  }
+  .ob-perm-text > span:not(.ob-perm-title) {
+    margin-top: 2px;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+  .ob-perm-text .ob-perm-note {
+    color: var(--warning-text);
+  }
+  .ob-perm-actions {
+    display: inline-flex;
+    gap: 4px;
+    flex: none;
+    transition: opacity var(--dur-fast) var(--ease-standard);
+  }
+  /* 授权后按钮原地淡出：占位保留，卡片里的文字不重排 */
+  .ob-perm-actions[data-hidden] {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .ob-perm-badge {
+    display: inline-flex;
+  }
+
+  /* 接入模型 */
+  .ob-tiles {
+    grid-template-columns: 1fr 1fr;
+  }
+  /* 表单阶段的标题：服务头部（一级标题），与下面的卡片留出 16 px */
+  .ob-setup-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 4px 0 16px;
+  }
+  .ob-setup-logo {
+    width: 36px;
+    height: 36px;
+    border-radius: var(--r-card);
+    font-size: var(--text-title);
+  }
+  .ob-setup-title {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .ob-setup-title > span {
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+  .ob-defaults {
+    scroll-margin-bottom: 16px;
+  }
+  .ob-setup-card + .ob-setup-card,
+  .st-clip > .ob-setup-card {
+    margin-top: 12px;
+  }
+
+  /* 已配置的摘要 */
+  .ob-summary {
+    overflow: hidden;
+    border-radius: var(--r-card);
+    background: var(--group-bg);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+  }
+  .ob-summary-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    font-size: var(--text-ui);
+    font-weight: 500;
+    box-shadow: inset 0 -1px 0 var(--hairline);
+  }
+  .ob-summary-check {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    color: var(--success-text);
+    background: var(--success-soft);
+  }
+  .ob-summary-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: var(--h-row);
+    padding: 6px 14px;
+    box-sizing: border-box;
+  }
+  .ob-summary-row + .ob-summary-row {
+    box-shadow: inset 0 1px 0 var(--hairline);
+  }
+  .ob-summary-label {
+    font-size: var(--text-ui);
+    color: var(--fg-2);
+  }
+  .ob-summary-value {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    min-width: 0;
+  }
+  .ob-summary-value b {
+    font-family: var(--font-mono);
+    font-size: var(--text-meta);
+    font-weight: 500;
+  }
+  .ob-summary-value span {
+    font-size: var(--text-caption);
+    color: var(--fg-2);
+  }
+  /* 「再添加一个服务」：整行可点（+ 图标、右侧箭头），与上面各行同样的内边距 */
+  .ob-summary-add {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: var(--h-row);
+    padding: 6px 14px;
+    box-sizing: border-box;
+    border: 0;
+    font-size: var(--text-ui);
+    text-align: left;
+    color: var(--accent-text);
+    background: transparent;
+    box-shadow: inset 0 1px 0 var(--hairline);
+    transition: background-color var(--dur-instant) var(--ease-standard);
+  }
+  .ob-summary-add:hover {
+    background: var(--fill-hover);
+  }
+  .ob-summary-add:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* 试一试 */
+  .ob-sample-card {
+    padding: 14px 16px;
+    border-radius: var(--r-card);
+    background: var(--group-bg);
+    box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+  }
+  .ob-sample {
+    margin: 0;
+    font-size: var(--text-body);
+    line-height: var(--lh-body);
+    color: var(--fg);
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+  }
+  .ob-tasks {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ob-task {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 10px 10px 12px;
+    border-radius: var(--r-card);
+    transition: background-color var(--dur-base) var(--ease-standard);
+  }
+  /* 描边在 ::after 上：完成时淡出 opacity（不动画 box-shadow） */
+  .ob-task::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+    pointer-events: none;
+    transition: opacity var(--dur-base) var(--ease-standard);
+  }
+  .ob-task[data-done] {
+    background: var(--success-soft);
+  }
+  .ob-task[data-done]::after {
+    opacity: 0;
+  }
+  .ob-task-check {
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    border-radius: 50%;
+    font-size: var(--text-meta);
+    font-weight: 600;
+    color: var(--fg-2);
+    box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  }
+  .ob-task[data-done] .ob-task-check {
+    color: var(--accent-fg);
+    background: var(--success);
+    box-shadow: none;
+  }
+  .ob-task-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .ob-task-label {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    font-size: var(--text-ui);
+    line-height: 22px;
+  }
+  .ob-task-hint {
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+  .ob-task[data-done] .ob-task-hint {
+    color: var(--success-text);
+  }
+  .ob-task-hint[data-tone='warning'] {
+    color: var(--warning-text);
+  }
+  .ob-task-fix {
+    flex-basis: 100%;
+  }
+  .ob-task-fix .st-hotkey-row {
+    margin-top: 4px;
+    border-radius: var(--r-row);
+    background: var(--group-bg);
+  }
+  .ob-window .st-advice > .st-global-banner {
+    padding: 14px 0 0;
+  }
+}

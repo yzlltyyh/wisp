@@ -1,0 +1,6 @@
+{
+  "os": "linux",
+  "app_id": "gnome-terminal-server",
+  "copy": "Control+Shift+KeyC",
+  "paste": "Control+Shift+KeyV"
+}

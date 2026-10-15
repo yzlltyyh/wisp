@@ -1,0 +1,92 @@
+name: 问题报告 / Bug report
+description: Wisp 的行为与预期不符、崩溃或无法使用 / Something doesn't work as expected
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！提交前请先搜索[已有的 issue](https://github.com/yzlltyyh/wisp/issues)，并看一下 README 的[已知限制](https://github.com/yzlltyyh/wisp#已知限制)。
+        Thanks for reporting! Please search [existing issues](https://github.com/yzlltyyh/wisp/issues) and check the [known limitations](https://github.com/yzlltyyh/wisp/blob/main/README.en.md#known-limitations) first.
+
+        **不要贴出 API Key**；截图里出现 Key、个人信息或剪贴板内容时请先遮掉。安全问题请按 [SECURITY.md](https://github.com/yzlltyyh/wisp/blob/main/SECURITY.md) 私下报告。
+        **Never post your API key.** Blur keys, personal data, and clipboard contents in screenshots. Report security issues privately as described in [SECURITY.md](https://github.com/yzlltyyh/wisp/blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Wisp 版本 / Wisp version
+      description: 「设置 → 关于」/ Settings → About
+      placeholder: '0.1.1'
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台 / Platform
+      options:
+        - macOS (Apple Silicon)
+        - Windows (x64)
+        - Linux (x64) · X11
+        - Linux (x64) · Wayland
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: 系统版本 / OS version
+      description: 例如 macOS 15.5、Windows 11 24H2、Ubuntu 24.04 on Xorg（Linux 请注明桌面环境与安装方式：deb / rpm / AppImage）/ e.g. macOS 15.5, Windows 11 24H2, Ubuntu 24.04 on Xorg (on Linux, include the desktop and package type)
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及的功能 / Area
+      multiple: true
+      options:
+        - 划词翻译 / Selection translation
+        - 截图 OCR / Screenshot OCR
+        - 剪贴板 / Clipboard history
+        - 快捷键与触发 / Shortcuts and triggers
+        - 模型服务 / Model providers
+        - 设置与引导 / Settings and onboarding
+        - 安装与更新 / Install and updates
+        - 其他 / Other
+  - type: input
+    id: provider
+    attributes:
+      label: 模型服务与模型（与模型相关时）/ Provider and model (if relevant)
+      description: 协议与服务，例如「OpenAI Chat Completions · DeepSeek · deepseek-chat」；不要填写 Key / Protocol and service; no keys
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望的结果 / Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际的结果 / Actual behavior
+      description: 能附截图或录屏更好 / Screenshots or a screen recording help a lot
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断包 / Diagnostics
+      description: |
+        「设置 → 关于 → 诊断信息 → 导出诊断包」，把 zip 拖到这里。诊断包只含脱敏后的日志与设置、版本与系统信息，不含 API Key 与任何原文、译文、剪贴板内容（导出前可以解压检查）。复现前可以把「设置 → 通用 → 高级 → 日志级别」临时调到「调试」。
+        Settings → About → Diagnostics → Export diagnostics, then drag the zip here. It contains redacted logs and settings plus version and system info, but no API keys and none of your text or clipboard contents. Setting the log level to Debug before reproducing gives more detail.
+  - type: textarea
+    id: extra
+    attributes:
+      label: 其他信息 / Additional context
+      description: 只在特定应用里出现？更新之后才出现？多显示器、缩放比例、输入法等 / Only in certain apps? After an update? Multiple displays, scaling, input methods, etc.

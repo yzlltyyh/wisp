@@ -1,0 +1,925 @@
+/*
+ * 剪贴板视图。版式与 design.clipboard-* 视觉稿（panel/shell/design/design.css 的 .dz-clip*）一致：
+ * 去掉卡片内边距、行贴近卡片边缘；头部 48、提示条 36、分组标题 28、行 44 / 64。颜色只用令牌，动效只用 --dur-* / --ease-*。
+ * 面板内一律显式 px 高度（Native 帧模式下视口比卡片高，不用 100% / vh）。
+ */
+
+.clip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  margin: calc(-1 * var(--pad-panel-y)) calc(-1 * var(--pad-panel-x));
+}
+
+/* ---- 头部：大号无边框搜索 · 过滤 · ⋯ ---- */
+.clip-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 48px;
+  padding: 0 10px 0 16px;
+  box-sizing: border-box;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.clip-head .ui-search {
+  flex: 1;
+  min-width: 0;
+}
+/* 检索超过一瞬间才显示转圈（大多数检索 < 50 ms，不闪）：叠在放大镜的位置上，不占位——清除按钮与过滤 Chip 在
+   检索过程中一动不动。转圈先以透明挂载（data-on 之前），与放大镜在同一次样式计算里、同一时长与曲线交叉淡入 / 淡出 */
+.clip-head .ui-search {
+  position: relative;
+}
+.clip-spinner {
+  position: absolute;
+  top: 50%;
+  left: 2px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  color: var(--fg-2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.clip-spinner[data-on] {
+  opacity: 1;
+}
+.clip-head .ui-search > .ui-field-leading {
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.clip-head[data-spin] .ui-search > .ui-field-leading {
+  opacity: 0;
+}
+[data-reduced-motion='true'] :is(.clip-spinner, .clip-head .ui-search > .ui-field-leading) {
+  transition-duration: var(--dur-base);
+}
+
+/* 过滤 Chip：所有类型名叠在同一格里，宽度恒为最长的那个（Tab 循环切换时头部不横移）；文字在格子里居中，
+   较短的类型名（All / Text）两侧留白相等，选中 / 悬停的底色胶囊左右对称，下拉箭头仍贴在右侧 */
+.clip-filter-label {
+  display: inline-grid;
+  justify-items: center;
+  text-align: center;
+}
+.clip-filter-label > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+.clip-filter-label > [data-on] {
+  visibility: visible;
+}
+
+/* ---- 暂停横幅：条带高 = 8 + 横幅 40 + 4（列表自己还有 4 的首部留白），与 model.BANNER_HEIGHT 一致；
+   左右内缩 6 px，与行高亮对齐 ---- */
+.clip-banner {
+  flex: none;
+  height: 52px;
+  padding: 8px 6px 4px;
+  box-sizing: border-box;
+}
+
+/* ---- 列表区 ---- */
+.clip-body {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+}
+.clip-listwrap {
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+/* 全文预览打开：列表淡出（保留滚动位置），预览在同一块区域淡入；关闭时预览按 previewIn.exit 淡出、列表同时淡入 */
+.clip-listwrap[data-covered] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--dur-fast) var(--ease-standard),
+    visibility 0s linear var(--dur-fast);
+}
+/* 减少动效：≤ 100 ms 的纯淡入淡出（令牌只在减少动效时改了 --dur-base / --dur-slow，--dur-fast 仍是 140 ms） */
+[data-reduced-motion='true'] .clip-listwrap,
+[data-reduced-motion='true'] .clip-listwrap[data-covered] {
+  transition-duration: var(--dur-base);
+}
+[data-reduced-motion='true'] .clip-listwrap[data-covered] {
+  transition-delay: 0s, var(--dur-base);
+}
+/* 确认条浮在卡片底部时，列表在它上沿附近渐隐（被盖住的那一行不会被拦腰截断）。渐隐的深浅是注册过的数值属性，
+   与确认条内容的交叉淡入淡出同一时长（timing.crossfade，由视图写进 --clip-crossfade）、同一条曲线（进 standard，
+   出 exit），不会在第一帧整个加上或撤掉。遮罩只在确认条显示与淡出期间存在（data-dock-mask），平时列表不带遮罩
+   （滚动时不多一层合成）；不支持 @property 的引擎退回直接切换 */
+@property --clip-dock-fade {
+  syntax: '<number>';
+  inherits: false;
+  initial-value: 0;
+}
+.clip-body {
+  --clip-dock-fade: 0;
+  transition: --clip-dock-fade var(--clip-crossfade, var(--dur-fast)) var(--ease-exit);
+}
+.clip[data-dock-mask] .clip-body {
+  mask-image: linear-gradient(
+    to bottom,
+    var(--mask) calc(100% - 28px),
+    color-mix(in srgb, var(--mask) calc((1 - var(--clip-dock-fade)) * 100%), transparent)
+  );
+}
+.clip[data-dock-mask]:not([data-hint-bar]) .clip-body {
+  mask-image: linear-gradient(
+    to bottom,
+    var(--mask) calc(100% - 64px),
+    color-mix(in srgb, var(--mask) calc((1 - var(--clip-dock-fade)) * 100%), transparent)
+      calc(100% - 36px)
+  );
+}
+.clip:is([data-confirm], [data-status-docked]) .clip-body {
+  --clip-dock-fade: 1;
+  transition-timing-function: var(--ease-standard);
+}
+[data-reduced-motion='true'] .clip-body {
+  transition-duration: var(--dur-base);
+}
+/* 清空确认是模态的：列表不接收指针 */
+.clip[data-modal] .clip-listwrap {
+  pointer-events: none;
+}
+
+/* 滚动条是覆盖式的（ClipList 自绘）：原生滚动条不显示、不占宽度——Windows、macOS「始终显示滚动条」/ 接鼠标时
+   行与高亮离卡片两边同样是 6 px，行首图标与头部的放大镜、横幅、提示条对齐 */
+.clip-list.ui-scroll {
+  scrollbar-gutter: auto;
+  scrollbar-width: none;
+}
+.clip-list.ui-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.clip-listwrap {
+  position: relative;
+}
+.clip-scrollbar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+.clip-scrollbar:is([data-active], [data-near], [data-drag]):not([data-none]) {
+  opacity: 1;
+  transition-duration: var(--dur-fast);
+}
+.clip-thumb {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 6px;
+  border-radius: 3px;
+  background: var(--scrollbar-thumb);
+  transition:
+    width var(--dur-instant) var(--ease-standard),
+    background-color var(--dur-instant) var(--ease-standard);
+}
+.clip-scrollbar:is([data-active], [data-near], [data-drag]):not([data-none]) .clip-thumb {
+  pointer-events: auto;
+}
+.clip-scrollbar:is([data-near], [data-drag]) .clip-thumb {
+  width: 8px;
+  border-radius: 4px;
+  background: var(--scrollbar-thumb-hover);
+}
+[data-reduced-motion='true'] :is(.clip-scrollbar, .clip-thumb) {
+  transition-duration: var(--dur-base);
+}
+
+/* 被删除 / 清空的行的残影：留在原处淡出（ClipList），不接收指针 */
+.clip-ghost {
+  pointer-events: none;
+}
+
+/* 选中指示器（本视图自绘，见 ClipList）：挂在内容层的第一个子节点，画在行的下面 */
+.clip-indicator-host {
+  display: contents;
+}
+/* 位移时跨过其他行的那一行抬起来：压在上面、不透明底，文字不会与它经过的行叠印（选中时叠上选中色） */
+.clip-list .ui-vlist-row[data-lift] {
+  z-index: 1;
+}
+.clip-list .ui-vlist-row[data-lift] .ui-row {
+  background: var(--surface-raised);
+}
+.clip-list .ui-vlist-row[data-lift] .ui-row[data-selected] {
+  background: linear-gradient(var(--fill-selected), var(--fill-selected)), var(--surface-raised);
+}
+
+.clip-group {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 4px 14px 0;
+  box-sizing: border-box;
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+  font-weight: 600;
+  color: var(--fg-2);
+  user-select: none;
+}
+
+/* 行：默认光标（单击粘贴，不是链接） */
+.clip-row {
+  cursor: default;
+  user-select: none;
+}
+.clip-kind {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-control);
+  color: var(--fg-2);
+  background: var(--fill-control);
+}
+.clip-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+}
+.clip-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+}
+.clip-title-meta {
+  margin-left: 8px;
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+}
+/* 选中行上的次要文字（时间、角标）：对比度 ≥ 4.5:1（选中底色上 --fg-2 只有 4.4:1） */
+.clip-row[data-selected] .ui-row-trailing {
+  color: color-mix(in srgb, var(--fg) 80%, transparent);
+}
+/* 文件都已不存在：标题划线（文字仍用 --fg-2，读得清），行尾标「已不存在」 */
+.clip-row[data-missing] .ui-row-title {
+  color: var(--fg-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-3);
+}
+.clip-missing-tag {
+  font-size: var(--text-caption);
+  color: var(--warning-text);
+}
+/* 只有空白的正文：占位说明 */
+.clip-blank {
+  font-style: italic;
+  color: var(--fg-2);
+}
+/* 检索结果平铺时置顶项的图钉 */
+.clip-pin-mark {
+  display: inline-grid;
+  place-items: center;
+  color: var(--fg-3);
+}
+.clip-row[data-confirm] .ui-row-title {
+  color: var(--danger-text);
+}
+
+/* 行尾：时间与 ⌘n 角标叠在同一处，按住 ⌘ 时交叉淡入（显示前稍等一下，⌘C 这类一按即放的快捷键不会闪）。
+   角标绝对定位、不参与排版：它在视图显示后才补上，不能让行尾变宽、标题的截断位置跳动。
+   时间紧跟来源图标（间距 8，design.clipboard-list）：最小宽度只按两位数的短时间留（英文「14m」、中文「14 分钟」），
+   常见的时间来源图标排成一列，「3d」「5m」离图标也只多一位数字的宽度；比它宽的（「Oct 2」「just now」）向左撑开 */
+.clip-when {
+  position: relative;
+  display: inline-block;
+  min-width: 3.4ch;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+:root:lang(zh) .clip-when {
+  min-width: calc(2ch + 2.4em);
+}
+/* 来源图标：按住 ⌘ 显示角标时一起让出位置（Windows 的 Ctrl+1 角标比两位数的时间宽） */
+.clip-source {
+  display: inline-grid;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.clip[data-mod-held] .clip-row[data-badge] .clip-source {
+  opacity: 0;
+  transition-delay: var(--dur-slow);
+}
+.clip-time {
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.clip-badge {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.clip[data-mod-held] .clip-badge {
+  opacity: 1;
+  transition-delay: var(--dur-slow);
+}
+.clip[data-mod-held] .clip-when[data-badge] .clip-time {
+  opacity: 0;
+  transition-delay: var(--dur-slow);
+}
+[data-reduced-motion='true'] :is(.clip-time, .clip-badge, .clip-source) {
+  transition-duration: var(--dur-base);
+}
+
+/* ---- 悬停预览卡片（画在面板内部，左右内缩与行高亮同为 6 px；指针在卡片上慢下来时保持，退出动画期间不接收指针） ---- */
+.clip-hover {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: var(--r-menu);
+  color: var(--fg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-popover);
+  cursor: default;
+  user-select: none;
+}
+.clip-hover[data-exiting] {
+  pointer-events: none;
+}
+.clip-hover-body {
+  min-height: 0;
+  overflow: hidden;
+}
+.clip-hover-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.clip-hover-text[data-mono] {
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+}
+.clip-hover-text[data-loading] {
+  color: var(--fg-2);
+}
+.clip-hover-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+}
+.clip-hover-host {
+  font-weight: 600;
+}
+.clip-hover-url {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  color: var(--fg-2);
+  word-break: break-all;
+}
+.clip-hover-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}
+.clip-hover-meta-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-hover-key {
+  flex: none;
+}
+
+/* ---- 图片（缩略图打底，原图到达后淡入） ---- */
+.clip-image {
+  position: relative;
+  display: block;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--r-row);
+  background-color: var(--thumb-bg);
+  background-image: conic-gradient(
+    var(--checker) 25%,
+    transparent 0 50%,
+    var(--checker) 0 75%,
+    transparent 0
+  );
+  background-size: 12px 12px;
+}
+.clip-image::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+  pointer-events: none;
+}
+.clip-image img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-standard);
+}
+.clip-image img[data-loaded] {
+  opacity: 1;
+}
+
+/* ---- 文件列表 ---- */
+.clip-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+}
+.clip-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  min-width: 0;
+}
+.clip-file-icon {
+  flex: none;
+  color: var(--fg-2);
+}
+/* 全文预览里的文件行：类型图标放在 28 px 的圆角底上，与名称 + 路径两行垂直居中 */
+.clip-file-tile {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-control);
+  color: var(--fg-2);
+  background: var(--fill-control);
+}
+.clip-preview-files .clip-files {
+  gap: 6px;
+}
+.clip-preview-files .clip-file {
+  gap: 10px;
+  min-height: 32px;
+}
+.clip-preview-files .clip-file-more {
+  padding-left: 38px;
+}
+.clip-file-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.clip-file-name,
+.clip-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-file-path {
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}
+.clip-file-meta {
+  flex: none;
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+.clip-file[data-missing] {
+  color: var(--fg-2);
+}
+.clip-file[data-missing] .clip-file-name {
+  text-decoration: line-through;
+}
+.clip-file[data-missing] .clip-file-meta {
+  color: var(--warning-text);
+}
+.clip-file-more {
+  padding-left: 22px;
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+}
+
+/* ---- 颜色 ---- */
+.clip-color {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.clip-color-swatch {
+  display: block;
+  height: 40px;
+  border-radius: var(--r-row);
+  box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+}
+.clip-color-values {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+}
+.clip-color-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+}
+.clip-color-row dt {
+  width: 32px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--fg-2);
+}
+.clip-color-row dd {
+  flex: 1;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  user-select: text;
+}
+
+/* ---- 全文预览（占满列表区） ---- */
+.clip-preview {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+}
+.clip-preview[data-exiting] {
+  pointer-events: none;
+}
+.clip-preview-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 52px;
+  padding: 0 10px 0 16px;
+  box-sizing: border-box;
+}
+.clip-preview-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  min-width: 28px;
+  margin-right: 10px;
+}
+.clip-preview-title {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.clip-preview-kind,
+.clip-preview-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.clip-preview-kind {
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.clip-preview-sub {
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}
+.clip-preview-body {
+  padding: 0 16px 12px;
+  box-sizing: border-box;
+  user-select: text;
+}
+.clip-preview-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+.clip-preview-note {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 10px;
+  font-size: var(--text-caption);
+  color: var(--fg-2);
+  background: var(--fill-control);
+}
+.clip-preview-text {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--lh-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+.clip-preview-text[data-mono] {
+  font-family: var(--font-mono);
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+}
+/* 代码不折行：长行横向滚动，缩进结构保持对齐；还能往哪边滚，哪边就渐隐（覆盖式滚动条静止时不显示，靠渐隐提示） */
+.clip-preview-text[data-code] {
+  overflow-x: auto;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.clip-preview-text[data-fade-x='right'] {
+  mask-image: linear-gradient(to left, transparent, var(--mask) 16px);
+}
+.clip-preview-text[data-fade-x='left'] {
+  mask-image: linear-gradient(to right, transparent, var(--mask) 16px);
+}
+.clip-preview-text[data-fade-x='both'] {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    var(--mask) 16px,
+    var(--mask) calc(100% - 16px),
+    transparent
+  );
+}
+.clip-preview-text[data-loading] {
+  color: var(--fg-2);
+}
+.clip-preview-media {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding-top: 4px;
+}
+/* 全文预览里的图片与操作按钮和其他类型一样从正文的起点开始（不居中） */
+.clip-preview-media .clip-image {
+  margin: 0;
+}
+/*
+ * 内容短的预览（文件 / 链接 / 颜色）：在剩余区域里垂直居中，视觉中心略偏上（下方多留 28 px）；内容放不下时 min-height
+ * 不起作用，照常从顶部开始滚动
+ */
+.clip-preview-center {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding-bottom: 28px;
+  box-sizing: border-box;
+}
+.clip-preview-files,
+.clip-preview-link {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.clip-preview-site {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.clip-preview-globe {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.clip-preview-host {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--text-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 完整 URL：在 / ? & # = 之后优先折行（FullPreview 插入 <wbr>），超长的单段才任意折断 */
+.clip-preview-url {
+  margin: 0;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  color: var(--fg-2);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.clip-preview .clip-color-swatch {
+  height: 64px;
+}
+.clip-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ---- 底部浮层（确认条、轻提示）：铺满整张卡片的一层，长高时与提示条一起随卡片底边下移 ---- */
+.clip-footer-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+}
+
+/* ---- 行内二次确认：浮在卡片底部，离左右下三边都是 8 px（盖住提示条），从下往上展开 ---- */
+.clip-dock {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+.clip-dock > * {
+  pointer-events: auto;
+}
+.clip-dock .ui-confirm-clip {
+  border-radius: var(--r-row);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-popover);
+}
+/* 内边距上下对称（8）；左边是图标（12），右边是按钮的底色块（8），视觉上左右均衡 */
+.clip-dock .ui-confirm {
+  margin-top: 0;
+  padding: 8px 8px 8px 12px;
+}
+.clip-clear-message {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 2px;
+}
+.clip-keep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * ---- 轻提示：独立的停靠位，不压在列表行的文字上 ----
+ * 有提示条时停在提示条里（36 px 的条里垂直居中，临时盖住那几个静态的键位提示）；没有提示条时停在卡片底部，列表在它
+ * 上沿附近渐隐（与确认条同一个遮罩，data-dock-mask）。胶囊是浮起表面 + 浮层阴影，能悬停（暂停计时）
+ */
+.clip-status-dock {
+  position: absolute;
+  right: 0;
+  bottom: 10px;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.clip[data-hint-bar] .clip-status-dock {
+  bottom: 5px;
+}
+/* 轻提示停在提示条里时，键位提示让位（淡出），胶囊单独成一条，不和两侧的提示混在一起读 */
+.clip-hints {
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.clip[data-status-bar] .clip-hints {
+  opacity: 0;
+}
+.clip-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 32px);
+  height: 26px;
+  padding: 0 12px 0 9px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 13px;
+  font-size: var(--text-meta);
+  font-weight: 500;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--fg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-popover);
+  pointer-events: auto;
+}
+.clip-status-icon {
+  flex: none;
+  color: var(--success-text);
+}
+.clip-status[data-tone='error'] .clip-status-icon {
+  color: var(--danger-text);
+}
+.clip-status[data-tone='info'] .clip-status-icon {
+  color: var(--accent-text);
+}
+
+/* ---- 空状态 / 无结果：在列表区里垂直居中（design.clipboard-empty） ---- */
+.clip-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+.clip-empty .ui-empty-detail {
+  overflow-wrap: anywhere;
+}
+/* 中文说明按严格规则断行（开括号不留在行尾、句读不出现在行首；不用 keep-all，见 components.css 的 .ui-notready-detail） */
+:root:lang(zh) .clip-empty :is(.ui-empty-title, .ui-empty-detail) {
+  word-break: normal;
+  line-break: strict;
+}
+
+/* ---- 底部快捷键提示条：放不下时按优先级整项隐藏（hints.ts：必留 粘贴 · 纯文本 · 筛选 · 关闭）；量宽之前万一放不下，
+   多出的项整项换到第二行并被裁掉（不会出现半截提示） ---- */
+.clip-hints {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 10px;
+  height: 36px;
+  padding: 0 12px 0 14px;
+  box-sizing: border-box;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 var(--hairline);
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+  white-space: nowrap;
+  user-select: none;
+}
+.clip-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 36px;
+}
+.clip-hint .ui-kbd-key {
+  padding-inline: 3px;
+}
+.clip-hint .ui-kbd + .ui-kbd {
+  margin-left: -4px;
+}
+/* 放不下时按优先级整项隐藏（hints.ts，ResizeObserver 回调里设置） */
+.clip-hint[data-off] {
+  display: none;
+}
+/* 没有条目时提示条整体变淡（这些动作暂时用不了） */
+.clip-hints[data-dim] {
+  color: var(--fg-3);
+}
+.clip-hints[data-dim] .ui-kbd {
+  opacity: 0.6;
+}
+
+/*
+ * 剪贴板条目、全文预览与悬停卡片显示的都是用户的数据（文本、文件名、路径、URL、代码）：不加中英文自动间距
+ * （base.css 只给 UI 文案开），否则「季度报告.pdf」在 Chromium 里显示成「季度报告 .pdf」
+ */
+.clip-list,
+.clip-preview,
+.clip-hover {
+  text-autospace: no-autospace;
+}

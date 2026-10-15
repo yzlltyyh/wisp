@@ -1,0 +1,7 @@
+{
+  "launch_at_login": false,
+  "start_hidden": true,
+  "ui_language": "en-US",
+  "update_policy": "auto_install",
+  "developer_mode": true
+}

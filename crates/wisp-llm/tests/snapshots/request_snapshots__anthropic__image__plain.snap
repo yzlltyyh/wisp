@@ -1,0 +1,44 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: image
+---
+{
+  "body": {
+    "max_tokens": 4096,
+    "messages": [
+      {
+        "content": [
+          {
+            "source": {
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ",
+              "media_type": "image/png",
+              "type": "base64"
+            },
+            "type": "image"
+          },
+          {
+            "text": "Transcribe the text.",
+            "type": "text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "model": "claude-haiku-4-5",
+    "output_config": {
+      "effort": "medium"
+    },
+    "stream": true,
+    "system": "You are a translator."
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "anthropic-version": "2023-06-01",
+    "authorization": "Bearer sk-test",
+    "content-type": "application/json",
+    "user-agent": "Wisp/test",
+    "x-api-key": "sk-test"
+  },
+  "method": "POST",
+  "target": "/v1/messages"
+}

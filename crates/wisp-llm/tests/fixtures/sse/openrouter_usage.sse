@@ -1,0 +1,14 @@
+: OPENROUTER PROCESSING
+
+: OPENROUTER PROCESSING
+
+data: {"id":"gen-1","provider":"OpenAI","model":"openai/gpt-5","object":"chat.completion.chunk","created":1,"choices":[{"index":0,"delta":{"role":"assistant","content":"Bon"},"finish_reason":null,"native_finish_reason":null}]}
+
+data: {"id":"gen-1","choices":[{"index":0,"delta":{"role":"assistant","content":"jour","reasoning":null},"finish_reason":null}]}
+
+data: {"id":"gen-1","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":"stop","native_finish_reason":"stop"}]}
+
+data: {"id":"gen-1","choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}}
+
+data: [DONE]
+

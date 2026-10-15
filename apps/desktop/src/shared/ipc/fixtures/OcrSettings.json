@@ -1,0 +1,11 @@
+{
+  "default_mode": "paragraphs",
+  "max_edge_px": 2048,
+  "auto_copy": true,
+  "history": true,
+  "history_limit": 50,
+  "window_detect": true,
+  "fly_animation": true,
+  "direct_translate_transcribe": false,
+  "image_detail": "auto"
+}

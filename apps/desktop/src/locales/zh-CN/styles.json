@@ -1,0 +1,22 @@
+{
+  "natural": "自然",
+  "technical": "技术",
+  "academic": "学术",
+  "casual": "口语",
+  "learn": "学习",
+  "literal": "直译",
+  "desc": {
+    "natural": "通顺自然，贴近母语表达",
+    "technical": "术语准确，保留代码与专有名词",
+    "academic": "正式严谨，适合论文与报告",
+    "casual": "轻松口语，适合聊天与社交",
+    "learn": "附带词汇与语法讲解",
+    "literal": "逐句直译，便于对照原文"
+  },
+  "custom": "自定义风格",
+  "menu": {
+    "title": "翻译风格",
+    "edit": "编辑当前风格",
+    "hint": "{key} 快速切换"
+  }
+}

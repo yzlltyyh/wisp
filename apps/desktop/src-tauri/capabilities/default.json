@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Least privilege for every Wisp window: event listen/unlisten and window drag/close only (internal-toggle-maximize is what Tauri's data-tauri-drag-region double-click invokes; it is a no-op for non-maximizable windows). No core:default, which would also grant tray/menu/image/path/emit APIs to the WebView. Plugin JS APIs are never used; app commands are allowed by default because there is no app ACL manifest. Add a permission only together with the frontend code that needs it.",
+  "windows": ["panel", "settings", "onboarding", "pinned-*", "overlay-*"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-close"
+  ]
+}

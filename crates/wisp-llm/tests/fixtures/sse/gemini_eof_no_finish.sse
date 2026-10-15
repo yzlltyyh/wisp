@@ -1,0 +1,4 @@
+data: {"candidates":[{"content":{"parts":[{"text":"半句"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":1,"totalTokenCount":5},"modelVersion":"gemini-2.5-flash","responseId":"gem-eof"}
+
+data: {"candidates":[{"content":{"parts":[{"text":"话"}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":4,"candidatesTokenCount":2,"totalTokenCount":6},"modelVersion":"gemini-2.5-flash","responseId":"gem-eof"}
+

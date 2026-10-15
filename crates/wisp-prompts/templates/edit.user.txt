@@ -1,0 +1,5 @@
+<source_text>
+{{text}}
+</source_text>
+
+Edit the {{source_lang}} text inside <source_text> as specified. Reply with the edited text, then the --- line and the 改动 line.

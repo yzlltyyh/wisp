@@ -1,0 +1,50 @@
+[package]
+name = "wisp-capture"
+description = "Wisp 的屏幕捕获：多显示器并行截图、裁剪换算、缩放与编码"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# Wayland portal 截图（默认关）。ashpd 的 screenshot 接口在它自己的同名 feature 后面
+wayland = ["dep:ashpd", "ashpd/screenshot"]
+# Windows：GDI 截图出现整屏发白（xcap#130）时改用 Windows.Graphics.Capture（Win10 上有黄色捕获边框），默认关
+wgc = ["xcap/wgc"]
+
+[dependencies]
+wisp-types = { workspace = true }
+image = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+block2 = { workspace = true }
+# 预取结果到期后的一次性清理（dispatch_after，不常驻线程）
+dispatch2 = { workspace = true }
+parking_lot = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-core-graphics = { workspace = true }
+objc2-screen-capture-kit = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+xcap = { workspace = true }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Dwm",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_HiDpi",
+  "Win32_System_Threading",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { workspace = true }
+ashpd = { workspace = true, optional = true }
+
+[lints]
+workspace = true

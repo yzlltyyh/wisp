@@ -1,0 +1,9 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_inc","status":"in_progress"},"sequence_number":0}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"Part","sequence_number":1}
+
+event: response.incomplete
+data: {"type":"response.incomplete","response":{"id":"resp_inc","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":9,"output_tokens":16,"output_tokens_details":{"reasoning_tokens":12},"total_tokens":25}},"sequence_number":2}
+

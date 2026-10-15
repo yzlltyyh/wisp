@@ -1,0 +1,35 @@
+{
+  "label": "panel",
+  "os": "macos",
+  "os_version": "26.4",
+  "theme": "light",
+  "accent": "",
+  "reduce_motion": false,
+  "reduce_transparency": false,
+  "material": "native",
+  "frame_mode": "native",
+  "shadow_margin": 0.0,
+  "font_size": 14,
+  "ui_language": "en-US",
+  "dev": false,
+  "debug_build": false,
+  "route": null,
+  "prepare": {
+    "session_id": 12,
+    "view": "input",
+    "payload": {
+      "kind": "input",
+      "initial_text": "",
+      "target_lang": null,
+      "hint": {
+        "reason": "no_provider"
+      }
+    },
+    "width": 420.0,
+    "max_height": 569.4,
+    "placement": "center",
+    "origin_x": 210.0,
+    "focused": true,
+    "transition": "enter"
+  }
+}

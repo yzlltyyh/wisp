@@ -1,0 +1,1013 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`减少动效 > cardIn：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.22,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+      "y": 0,
+    },
+    "initial": {
+      "opacity": 0,
+      "y": 4,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+}
+`;
+
+exports[`减少动效 > collapse：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "exit": {
+      "height": 0,
+      "opacity": 0,
+      "transition": {
+        "duration": 0.14,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+  },
+  "reduced": {
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0,
+      },
+    },
+    "initial": false,
+    "transition": {
+      "duration": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > confirmIn：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "height": "auto",
+      "opacity": 1,
+      "transition": {
+        "height": {
+          "damping": 30,
+          "mass": 1,
+          "stiffness": 260,
+          "type": "spring",
+        },
+        "opacity": {
+          "duration": 0.12,
+          "ease": [
+            0.2,
+            0,
+            0,
+            1,
+          ],
+        },
+      },
+    },
+    "exit": {
+      "height": 0,
+      "opacity": 0,
+      "transition": {
+        "height": {
+          "damping": 30,
+          "mass": 1,
+          "stiffness": 260,
+          "type": "spring",
+        },
+        "opacity": {
+          "duration": 0.12,
+          "ease": [
+            0.4,
+            0,
+            1,
+            1,
+          ],
+        },
+      },
+    },
+    "initial": {
+      "height": 0,
+      "opacity": 0,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "height": "auto",
+      "opacity": 1,
+      "transition": {
+        "duration": 0,
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0,
+      },
+    },
+    "initial": false,
+    "transition": {
+      "duration": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > footerIn：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.14,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.14,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > iconSwap：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "scale": 1,
+      "transition": {
+        "duration": 0.08,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "scale": 0.8,
+      "transition": {
+        "duration": 0.08,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "scale": 0.8,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "scale": 1,
+      "transition": {
+        "duration": 0,
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0,
+      },
+    },
+    "initial": false,
+    "transition": {
+      "duration": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > menuIn：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "scale": 1,
+      "transition": {
+        "duration": 0.14,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "scale": 0.98,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+}
+`;
+
+exports[`减少动效 > pageSwitch：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.12,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.12,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0.3,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0.3,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+}
+`;
+
+exports[`减少动效 > popover：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "scale": 1,
+      "transition": {
+        "duration": 0.14,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "scale": 0.98,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+}
+`;
+
+exports[`减少动效 > previewIn：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "scale": 1,
+      "transition": {
+        "duration": 0.22,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+      "y": 0,
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "scale": 0.98,
+      "y": 4,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+}
+`;
+
+exports[`减少动效 > rowInsert：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.22,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+      "y": 0,
+    },
+    "initial": {
+      "opacity": 0,
+      "y": -4,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0,
+      },
+      "y": 0,
+    },
+    "initial": false,
+    "transition": {
+      "duration": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > rowIn：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "y": 0,
+    },
+    "initial": {
+      "opacity": 0,
+      "y": 4,
+    },
+    "transition": {
+      "duration": 0.08,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0,
+      },
+      "y": 0,
+    },
+    "initial": false,
+    "transition": {
+      "duration": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > sectionExpand：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "height": "auto",
+      "opacity": 1,
+      "transition": {
+        "height": {
+          "damping": 30,
+          "mass": 1,
+          "stiffness": 260,
+          "type": "spring",
+        },
+        "opacity": {
+          "duration": 0.12,
+          "ease": [
+            0.2,
+            0,
+            0,
+            1,
+          ],
+        },
+      },
+    },
+    "exit": {
+      "height": 0,
+      "opacity": 0,
+      "transition": {
+        "height": {
+          "damping": 30,
+          "mass": 1,
+          "stiffness": 260,
+          "type": "spring",
+        },
+        "opacity": {
+          "duration": 0.12,
+          "ease": [
+            0.4,
+            0,
+            1,
+            1,
+          ],
+        },
+      },
+    },
+    "initial": {
+      "height": 0,
+      "opacity": 0,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "height": "auto",
+      "opacity": 1,
+      "transition": {
+        "duration": 0,
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0,
+      },
+    },
+    "initial": false,
+    "transition": {
+      "duration": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > statusPulse：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "scale": 1,
+      "transition": {
+        "damping": 38,
+        "mass": 1,
+        "stiffness": 520,
+        "type": "spring",
+      },
+    },
+    "initial": {
+      "scale": 0.9,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "scale": 1,
+      "transition": {
+        "duration": 0,
+      },
+    },
+    "initial": false,
+    "transition": {
+      "duration": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > stepChrome：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "delay": 0.06,
+        "duration": 0.14,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+}
+`;
+
+exports[`减少动效 > toast：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.22,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+      "y": 0,
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.14,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "y": 4,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.1,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "transition": {
+      "duration": 0.1,
+      "ease": [
+        0.2,
+        0,
+        0,
+        1,
+      ],
+    },
+  },
+}
+`;
+
+exports[`减少动效 > tooltip：完整 / 减少两种模式 1`] = `
+{
+  "full": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.08,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.08,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+    },
+  },
+  "reduced": {
+    "animate": {
+      "opacity": 1,
+      "transition": {
+        "duration": 0.08,
+        "ease": [
+          0.2,
+          0,
+          0,
+          1,
+        ],
+      },
+    },
+    "exit": {
+      "opacity": 0,
+      "transition": {
+        "duration": 0.08,
+        "ease": [
+          0.4,
+          0,
+          1,
+          1,
+        ],
+      },
+    },
+    "initial": {
+      "opacity": 0,
+    },
+  },
+}
+`;
+
+exports[`减少动效 > 关键组件的首帧样式：完整模式有 y 位移，减少动效时直接到位 1`] = `
+{
+  "full": [
+    {
+      "cls": "ui-errorcard",
+      "style": "opacity: 0; transform: translateY(4px);",
+    },
+    {
+      "cls": "ui-banner",
+      "style": "opacity: 0; transform: translateY(-4px);",
+    },
+    {
+      "cls": "ui-empty",
+      "style": "opacity: 0; transform: translateY(4px);",
+    },
+    {
+      "cls": "ui-iconswap-item",
+      "style": "opacity: 1; transform: none;",
+    },
+  ],
+  "reduced": [
+    {
+      "cls": "ui-errorcard",
+      "style": "opacity: 0;",
+    },
+    {
+      "cls": "ui-banner",
+      "style": "opacity: 1; transform: none;",
+    },
+    {
+      "cls": "ui-empty",
+      "style": "opacity: 0;",
+    },
+    {
+      "cls": "ui-iconswap-item",
+      "style": "opacity: 1; transform: none;",
+    },
+  ],
+}
+`;

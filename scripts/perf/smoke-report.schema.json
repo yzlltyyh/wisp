@@ -1,0 +1,360 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yzlltyyh/wisp/scripts/perf/smoke-report.schema.json",
+  "title": "Wisp 冒烟报告（WISP_SMOKE=1 时应用的 app::smoke 写出的 smoke-report.json，schema = 1）",
+  "description": "字段以 apps/desktop/src-tauri/src/app/smoke.rs 为准；新增字段不影响校验（未列出的字段允许存在）。",
+  "type": "object",
+  "required": [
+    "schema",
+    "ok",
+    "failures",
+    "ts",
+    "os",
+    "version",
+    "debug_build",
+    "fake_llm",
+    "startup",
+    "panel_prewarm_ms",
+    "first_translate",
+    "triggers",
+    "settings_window",
+    "windows",
+    "rss_kb"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ts": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "os": {
+      "enum": ["macos", "windows", "linux"]
+    },
+    "os_version": {
+      "type": ["string", "null"]
+    },
+    "arch": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "debug_build": {
+      "type": "boolean"
+    },
+    "fake_llm": {
+      "type": "boolean"
+    },
+    "duration_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "log_file": {
+      "type": ["string", "null"]
+    },
+    "startup": {
+      "type": "object",
+      "required": ["tray_ready_ms", "stages"],
+      "properties": {
+        "tray_ready_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "stages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "ms"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ms": {
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "pre_main_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "内核创建进程到 run() 第一条语句的耗时（exec、dyld、静态初始化、首次运行的 Gatekeeper 扫描）；tray_ready_ms 等都从内核创建进程算起"
+        }
+      }
+    },
+    "panel_prewarm_ms": {
+      "type": ["number", "null"],
+      "minimum": 0
+    },
+    "first_translate": {
+      "type": ["object", "null"],
+      "required": ["shown_ms", "first_token_ms", "finished", "elapsed_ms"],
+      "properties": {
+        "shown_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "first_token_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "finished": {
+          "type": "boolean"
+        },
+        "elapsed_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "ready_timeout": {
+          "type": "boolean"
+        },
+        "prepare_to_shown_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "triggers": {
+      "type": "object",
+      "required": [
+        "count",
+        "shown",
+        "ready_timeouts",
+        "hangs",
+        "prepare_to_shown_ms",
+        "trigger_to_shown_ms"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ready_timeouts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hangs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prepare_to_shown_ms": {
+          "type": "object",
+          "required": ["p50", "p95", "max"],
+          "properties": {
+            "p50": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "p95": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "max": {
+              "type": ["number", "null"],
+              "minimum": 0
+            }
+          }
+        },
+        "trigger_to_shown_ms": {
+          "type": "object",
+          "required": ["p50", "p95", "max"],
+          "properties": {
+            "p50": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "p95": {
+              "type": ["number", "null"],
+              "minimum": 0
+            },
+            "max": {
+              "type": ["number", "null"],
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "settings_window": {
+      "type": "object",
+      "required": ["opened", "open_ms", "closed", "close_ms"],
+      "properties": {
+        "opened": {
+          "type": "boolean"
+        },
+        "open_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "closed": {
+          "type": "boolean"
+        },
+        "close_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "windows": {
+      "type": "object",
+      "required": ["peak", "end", "labels_end"],
+      "properties": {
+        "peak": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "labels_end": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "rss_kb": {
+      "type": "object",
+      "required": ["after_startup", "after_triggers", "end"],
+      "properties": {
+        "after_startup": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "after_triggers": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "end": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "memory_metric": {
+      "enum": ["rss", "phys_footprint", "working_set"],
+      "description": "rss_kb 的口径：macOS phys_footprint、Windows working_set、Linux rss；旧报告没有这个字段，按 rss"
+    },
+    "post_session_idle": {
+      "type": "object",
+      "description": "会话结束、窗口都隐藏 / 关闭之后静置的主进程空闲测量",
+      "required": ["seconds", "cpu_pct", "wakeups_per_s"],
+      "properties": {
+        "seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cpu_pct": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "wakeups_per_s": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "overlay": {
+      "type": ["object", "null"],
+      "required": ["count", "shown", "p50", "p95", "max"],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "shown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "p50": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "p95": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "max": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "webview": {
+      "type": ["object", "null"],
+      "description": "run-smoke.mjs 在冒烟期间按秒采样的 WebView 进程内存合计（应用自己不写这一段）。hot_kb = 会话后空闲（post_session_idle）那段时间里的中位数，即「刚用过（热）」的 WebView 合计；peak_kb = 全程峰值；口径同 memory_metric（macOS phys_footprint、Linux rss）。取不到时为 null，原因在 notes",
+      "required": [
+        "memory_metric",
+        "attribution",
+        "samples",
+        "hot_kb",
+        "peak_kb",
+        "processes",
+        "notes"
+      ],
+      "properties": {
+        "memory_metric": {
+          "enum": ["rss", "phys_footprint", "working_set"]
+        },
+        "attribution": {
+          "type": ["string", "null"]
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hot_samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hot_kb": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "peak_kb": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "processes": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      }
+    }
+  }
+}

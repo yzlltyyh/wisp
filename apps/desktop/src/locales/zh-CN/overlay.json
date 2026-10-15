@@ -1,0 +1,7 @@
+{
+  "a11y": {
+    "region": "截图选区：拖拽框选，单击选择窗口，Enter 确认，Esc 取消"
+  },
+  "size_pt": "{width} × {height} pt",
+  "size_px": "{width} × {height} px"
+}

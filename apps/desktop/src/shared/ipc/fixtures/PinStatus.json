@@ -1,0 +1,13 @@
+{
+  "model_label": "GPT-5 mini",
+  "elapsed_ms": 1240,
+  "usage": {
+    "input_tokens": 412,
+    "output_tokens": 96,
+    "reasoning_tokens": 0,
+    "total_tokens": 508
+  },
+  "cached": false,
+  "cancelled": false,
+  "truncated": "max_tokens"
+}

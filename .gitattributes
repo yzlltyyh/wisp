@@ -1,0 +1,15 @@
+# 全仓库文本一律以 LF 检出：黄金样例（fixtures/**）、快照、模板按字节比对，Windows 的
+# core.autocrlf=true 会把它们检出成 CRLF，golden / insta 等逐字节比对的测试随之失败。
+* text=auto eol=lf
+
+# 有意以 CRLF 行尾保存的夹具（wisp-llm 的 SSE 回放用例验证 \r\n 分行）：按原字节入库与检出，不做换行转换
+crates/wisp-llm/tests/fixtures/sse/*crlf*.sse -text
+
+# 二进制资源
+*.png binary
+*.icns binary
+*.ico binary
+*.jpg binary
+*.gif binary
+*.webp binary
+*.woff2 binary

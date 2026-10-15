@@ -1,0 +1,67 @@
+[
+  {
+    "code": "invalid_argument",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "not_found",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "not_ready",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "permission",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "platform",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "keychain",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "io",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "conflict",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "not_implemented",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "internal",
+    "message": "example",
+    "llm": null
+  },
+  {
+    "code": "llm",
+    "message": "RateLimited",
+    "llm": {
+      "code": "rate_limited",
+      "subcode": null,
+      "message": "Rate limit reached",
+      "retryable": true,
+      "hint": null,
+      "status": 429,
+      "url": null,
+      "retry_after_s": 20,
+      "upstream_request_id": null
+    }
+  }
+]

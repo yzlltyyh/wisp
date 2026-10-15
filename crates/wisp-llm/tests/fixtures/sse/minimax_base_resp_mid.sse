@@ -1,0 +1,6 @@
+data: {"id":"mm-2","choices":[{"index":0,"delta":{"role":"assistant","content":"敏捷的"}}],"created":1760000000,"model":"MiniMax-M2.7","object":"chat.completion.chunk","usage":null,"input_sensitive":false,"output_sensitive":false,"input_sensitive_type":0,"output_sensitive_type":0,"output_sensitive_int":0}
+
+data: {"id":"mm-2","choices":[{"index":0,"delta":{"content":"棕色"}}],"created":1760000000,"model":"MiniMax-M2.7","object":"chat.completion.chunk","usage":null,"input_sensitive":false,"output_sensitive":false,"input_sensitive_type":0,"output_sensitive_type":0,"output_sensitive_int":0}
+
+data: {"id":"mm-2","choices":null,"created":1760000000,"model":"MiniMax-M2.7","object":"chat.completion.chunk","usage":null,"input_sensitive":false,"output_sensitive":true,"input_sensitive_type":0,"output_sensitive_type":1,"output_sensitive_int":1,"base_resp":{"status_code":1027,"status_msg":"output new_sensitive"}}
+

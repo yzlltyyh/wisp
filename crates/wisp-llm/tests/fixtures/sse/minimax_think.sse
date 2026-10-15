@@ -1,0 +1,14 @@
+data: {"id":"mm-1","choices":[{"index":0,"delta":{"role":"assistant","content":"<thi"}}]}
+
+data: {"id":"mm-1","choices":[{"index":0,"delta":{"content":"nk>\n用户想要中文译文……"}}]}
+
+data: {"id":"mm-1","choices":[{"index":0,"delta":{"content":"</th"}}]}
+
+data: {"id":"mm-1","choices":[{"index":0,"delta":{"content":"ink>\n\n敏捷的"}}]}
+
+data: {"id":"mm-1","choices":[{"index":0,"delta":{"content":"棕色狐狸"}}]}
+
+data: {"id":"mm-1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":30,"completion_tokens":25,"total_tokens":55}}
+
+data: [DONE]
+

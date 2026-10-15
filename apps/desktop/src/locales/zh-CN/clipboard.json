@@ -1,0 +1,177 @@
+{
+  "a11y": {
+    "list": "剪贴板历史",
+    "search": "搜索剪贴板历史",
+    "filter": "按类型筛选，当前：{filter}",
+    "more": "更多操作",
+    "close_preview": "关闭预览",
+    "preview": "条目预览",
+    "unknown_app": "未知来源",
+    "pinned": "已置顶",
+    "actions": "操作"
+  },
+  "search": {
+    "placeholder": "搜索剪贴板历史"
+  },
+  "filter": {
+    "all": "全部",
+    "text": "文本",
+    "image": "图片",
+    "files": "文件",
+    "link": "链接",
+    "code": "代码",
+    "color": "颜色",
+    "menu": "按类型筛选"
+  },
+  "noun": {
+    "all": "条目",
+    "text": "文本",
+    "image": "图片",
+    "files": "文件",
+    "link": "链接",
+    "code": "代码",
+    "color": "颜色"
+  },
+  "group": {
+    "pinned": "置顶",
+    "recent": "最近"
+  },
+  "kind": {
+    "text": "文本",
+    "rich_text": "富文本",
+    "image": "图片",
+    "files": "文件",
+    "link": "链接",
+    "color": "颜色",
+    "code": "代码"
+  },
+  "meta": {
+    "lines_one": "{n} 行",
+    "lines_other": "{n} 行",
+    "files_one": "{n} 个文件",
+    "files_other": "{n} 个文件",
+    "dimensions": "{width} × {height}",
+    "search_prefix": "只检索前 {n} 字",
+    "truncated": "内容超出长度上限，只保存了前一部分",
+    "rendered_prefix": "这里只显示前 {n} 字，粘贴时是全文",
+    "formats": "带格式",
+    "missing": "已不存在",
+    "more_files_one": "还有 {n} 个文件",
+    "more_files_other": "还有 {n} 个文件",
+    "files_at_least": "{n}+ 个文件",
+    "blank_one": "（{n} 个空白字符）",
+    "blank_other": "（{n} 个空白字符）",
+    "blank_unknown": "（空白）"
+  },
+  "hint": {
+    "paste": "粘贴",
+    "plain": "纯文本",
+    "copy": "仅复制",
+    "pin": "置顶",
+    "delete": "删除",
+    "preview": "预览",
+    "back": "返回",
+    "browse": "上一条 / 下一条",
+    "actions": "操作",
+    "filter": "筛选",
+    "close": "关闭"
+  },
+  "action": {
+    "paste": "粘贴",
+    "paste_plain": "粘贴为纯文本",
+    "copy_only": "仅复制",
+    "preview": "预览",
+    "preview_macos": "快速预览",
+    "pin": "置顶",
+    "unpin": "取消置顶",
+    "delete": "删除",
+    "save_image": "图片另存为…",
+    "open_link": "打开链接",
+    "reveal": {
+      "macos": "在 Finder 中显示",
+      "windows": "在资源管理器中显示",
+      "linux": "在文件管理器中显示"
+    },
+    "translate": "翻译",
+    "clear": "清空历史…",
+    "pause": "暂停记录",
+    "resume": "恢复记录",
+    "settings": "剪贴板设置…",
+    "monospace": "等宽字体",
+    "copy_value": "复制"
+  },
+  "empty": {
+    "title": "复制点什么，它会出现在这里",
+    "detail": "用 {key} 复制的文字、图片和文件都会记下来",
+    "filtered": "还没有{kind}",
+    "filtered_detail": "按 {key} 切换到其他类型",
+    "show_all": "显示全部类型"
+  },
+  "no_result": {
+    "title": "没有匹配「{query}」的条目",
+    "detail": "换个关键词试试，中文一两个字也能搜到",
+    "detail_short": "少于 {min} 个字时只搜索最近 {limit} 条，输入 {min} 个字以上可以搜索全部历史",
+    "filtered": "当前只在{kind}里搜索"
+  },
+  "paused": {
+    "title": "剪贴板记录已暂停",
+    "resume": "恢复"
+  },
+  "recording": {
+    "disabled": "剪贴板记录已关闭，新复制的内容不会保存",
+    "open_settings": "打开设置",
+    "unavailable_title": "剪贴板历史不可用"
+  },
+  "history_too_new": "历史记录由更新版本的 Wisp 写入，当前版本无法读取；新的复制不会被记录",
+  "history_unavailable": "剪贴板历史暂时无法读取，新的复制不会被记录",
+  "watch_unavailable": "当前桌面环境无法记录剪贴板，新复制的内容不会保存",
+  "confirm": {
+    "delete_pinned": "再按一次 {key} 删除置顶项",
+    "delete": "删除",
+    "clear": "清空剪贴板历史？",
+    "keep_pinned": "保留置顶项",
+    "clear_action": "清空"
+  },
+  "status": {
+    "saved": "已保存图片",
+    "secret_skipped": "已跳过一条疑似密码或密钥的内容",
+    "gone": "这条记录已不存在",
+    "files_gone": "这些文件已不存在，可能已被移动或删除",
+    "image_gone": "图片文件已不存在",
+    "webview_unsupported": "当前会话里无法从剪贴板历史复制文件",
+    "failed": {
+      "paste": "粘贴失败，请再试一次",
+      "copy": "复制失败，请再试一次",
+      "pin": "置顶失败，请再试一次",
+      "unpin": "取消置顶失败，请再试一次",
+      "delete": "删除失败，请再试一次",
+      "clear": "清空失败，记录都还在",
+      "pause": "暂停记录失败，请再试一次",
+      "resume": "恢复记录失败，请再试一次",
+      "save_image": "图片没有保存，请再试一次",
+      "reveal": "没能打开文件所在位置",
+      "open_link": "没能打开链接",
+      "translate": "没能发起翻译，请再试一次",
+      "settings": "没能打开设置",
+      "search": "搜索失败，请再试一次",
+      "load": "没能加载更多记录"
+    }
+  },
+  "toast": {
+    "copied": "已复制",
+    "press_to_paste": "已复制，按 {key} 粘贴",
+    "press_after_close": "已复制，关闭提示后按 {key} 粘贴",
+    "reason": {
+      "wayland": "Wayland 下无法替你按下粘贴键",
+      "elevated": "目标应用以管理员身份运行，无法自动粘贴",
+      "target_gone": "原来的应用已经关闭",
+      "focus_timeout": "没能及时切回原来的应用",
+      "no_permission": "缺少自动粘贴所需的权限",
+      "no_permission_macos": "未授予辅助功能权限，无法自动粘贴"
+    },
+    "action": {
+      "allow_accessibility": "在「隐私与安全性 › 辅助功能」中允许 Wisp"
+    },
+    "open_settings": "打开辅助功能设置"
+  }
+}

@@ -1,0 +1,109 @@
+/*
+ * toast 视图：图标 + 主文案 + 原因说明。卡片宽度由 Rust 按内容估算（220–360），文案可以折成两行。
+ * 颜色只用令牌；出现动效由 presets.toast / statusPulse 驱动，这里没有动画。
+ */
+.toast {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: calc(-1 * var(--pad-panel-y) + 10px) calc(-1 * var(--pad-panel-x) + 14px);
+  cursor: default;
+  user-select: none;
+}
+/* 只有一行（「已复制」，或 manual 的「已复制，按 X 粘贴」）：卡片里居中 */
+.toast:is([data-reason='copy_only'], [data-reason='manual']) {
+  justify-content: center;
+  align-items: center;
+}
+.toast:is([data-reason='copy_only'], [data-reason='manual']) .toast-text {
+  flex: none;
+  padding-top: 0;
+}
+.toast-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--accent-text);
+}
+.toast-icon[data-tone='success'] {
+  color: var(--success-text);
+}
+.toast-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 1px;
+}
+.toast-title {
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+  color: var(--fg);
+  text-wrap: pretty;
+}
+.toast-key {
+  margin: 0 2px;
+  vertical-align: 1px;
+}
+.toast-detail {
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+  text-wrap: pretty;
+}
+/* 中文按严格规则断行（开括号不留在行尾、句读不出现在行首）；不用 keep-all（WebKit 里会在开括号后面断行），引用的名字
+   由 keepQuoted 整体不拆；极端情况下仍可折断，不会溢出 */
+:root:lang(zh) :is(.toast-title, .toast-detail, .toast-action) {
+  word-break: normal;
+  line-break: strict;
+  overflow-wrap: anywhere;
+}
+/* 可点按的 toast 的行动入口（macOS 缺少辅助功能权限：打开设置页）：强调色 + ↗（打开另一个应用），一眼看出可以点；
+   图标跟在最后一个字后面（折行时不会单独漂到右边） */
+.toast-action {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  font-weight: 500;
+  color: var(--accent-text);
+  text-wrap: pretty;
+}
+.toast-action-icon {
+  display: inline-block;
+  margin-left: 2px;
+  vertical-align: -2px;
+}
+/* 内容画在关闭按钮上面（按钮的悬停底色不盖住文字），指针仍然落在按钮上 */
+.toast-icon,
+.toast-text {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+/* 覆盖整张卡片的关闭按钮：点击即关闭；可点按的 toast 悬停时有底色 */
+.toast-dismiss {
+  position: absolute;
+  /* .toast 四周离卡片边 10 / 14 px，按钮伸出去铺满整张卡片 */
+  inset: -10px -14px;
+  z-index: 0;
+  padding: 0;
+  border: 0;
+  margin: 0;
+  border-radius: var(--r-panel);
+  background: transparent;
+  cursor: default;
+  appearance: none;
+  transition: background-color var(--dur-instant) var(--ease-standard);
+}
+.toast[data-actionable] .toast-dismiss:hover {
+  background: var(--fill-hover);
+}
+.toast[data-actionable] .toast-dismiss:active {
+  background: var(--fill-pressed);
+}

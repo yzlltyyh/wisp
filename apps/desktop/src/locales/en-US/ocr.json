@@ -1,0 +1,68 @@
+{
+  "a11y": {
+    "view": "Text recognition result",
+    "thumbnail": "Screenshot",
+    "expand_thumbnail": "Enlarge screenshot",
+    "collapse_thumbnail": "Collapse screenshot",
+    "text": "Recognized text",
+    "translation": "Translation",
+    "source": "Source transcription",
+    "style_menu": "Choose translation style",
+    "recognize_menu": "Recognition mode and model",
+    "back_to_menu": "Back to recognition menu",
+    "copy_text": "Copy recognized text",
+    "copy_translation": "Copy translation",
+    "copy_source": "Copy source",
+    "recognized": "Recognition complete",
+    "translated": "Translation complete"
+  },
+  "meta": {
+    "size_pt": "{width} × {height} pt",
+    "size_px": "{width} × {height} px",
+    "size_physical": "Captured at {width} × {height} pixels",
+    "failed": "Recognition failed",
+    "edited": "Edited"
+  },
+  "mode_hint": {
+    "lines": "Keeps line breaks",
+    "paragraphs": "Joins wrapped lines",
+    "markdown": "Headings & tables"
+  },
+  "menu": {
+    "modes": "Recognition mode",
+    "models": "Vision model",
+    "unknown_vision": "Image support not confirmed",
+    "no_models": "No vision models available",
+    "ocr_settings": "OCR settings…",
+    "retake": "Capture again",
+    "history": "Recognition history…"
+  },
+  "action": {
+    "recognize_again": "Recognize again",
+    "retranslate": "Translate again",
+    "source": "Source",
+    "switch_model": "Switch model",
+    "switch_mode": "Switch mode",
+    "raise_limit": "Raise limit"
+  },
+  "empty": {
+    "no_text": "No text detected",
+    "no_text_detail": "Switch mode or model, then try again.",
+    "no_result": "No text recognized",
+    "no_result_detail": "Switch model, or raise the output limit."
+  },
+  "confirm": {
+    "overwrite": "This replaces your edits",
+    "overwrite_action": "Recognize anyway"
+  },
+  "translation": {
+    "stale": "Source edited",
+    "source_title": "Source",
+    "transcribing": "Reading the source…"
+  },
+  "hint": {
+    "retrigger": "After switching it on in System Settings, relaunch Wisp, then press {key} to capture.",
+    "retrigger_plain": "After switching it on in System Settings, relaunch Wisp and capture again.",
+    "capture_backend_short": "Another screenshot tool may be busy, or the displays just changed."
+  }
+}

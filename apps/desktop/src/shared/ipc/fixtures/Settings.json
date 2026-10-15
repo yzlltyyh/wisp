@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "general": {
+    "launch_at_login": true,
+    "start_hidden": true,
+    "ui_language": "system",
+    "update_policy": "notify",
+    "developer_mode": false
+  },
+  "hotkeys": {
+    "bindings": {},
+    "bobber": {
+      "enabled": false
+    },
+    "double_tap": {
+      "enabled": false,
+      "key": null,
+      "interval_ms": 300
+    },
+    "mouse": {
+      "enabled": false,
+      "long_press": false,
+      "middle": {
+        "enabled": true,
+        "action": "translate_selection"
+      },
+      "back": {
+        "enabled": false,
+        "action": "clipboard"
+      },
+      "forward": {
+        "enabled": false,
+        "action": "ocr"
+      }
+    },
+    "app_keymaps": [],
+    "copy_wait_ms": 150
+  },
+  "providers": [],
+  "defaults": {
+    "translate": null,
+    "ocr": null
+  },
+  "translate": {
+    "primary_lang": "zh-CN",
+    "secondary_lang": "en",
+    "default_style": "natural",
+    "long_text_threshold": 3000,
+    "close_on_click_outside": true,
+    "close_on_mouse_leave": false,
+    "mouse_leave_px": 160,
+    "anchor": "selection",
+    "input_anchor": "cursor",
+    "cache_enabled": true,
+    "show_source_by_default": false
+  },
+  "ocr": {
+    "default_mode": "lines",
+    "max_edge_px": 2048,
+    "auto_copy": true,
+    "history": false,
+    "history_limit": 50,
+    "window_detect": true,
+    "fly_animation": true,
+    "direct_translate_transcribe": false,
+    "image_detail": "high"
+  },
+  "clipboard": {
+    "enabled": true,
+    "record_text": true,
+    "record_rich_text": true,
+    "record_images": true,
+    "record_files": true,
+    "max_items": 1000,
+    "max_age_days": null,
+    "max_text_bytes": 1048576,
+    "max_image_bytes": 20971520,
+    "excluded_apps": [
+      {
+        "os": "macos",
+        "app_id": "com.1password.1password",
+        "name": "1Password"
+      },
+      {
+        "os": "macos",
+        "app_id": "com.agilebits.onepassword7",
+        "name": "1Password 7"
+      },
+      {
+        "os": "macos",
+        "app_id": "com.bitwarden.desktop",
+        "name": "Bitwarden"
+      },
+      {
+        "os": "macos",
+        "app_id": "org.keepassxc.keepassxc",
+        "name": "KeePassXC"
+      },
+      {
+        "os": "macos",
+        "app_id": "com.apple.keychainaccess",
+        "name": "Keychain Access"
+      },
+      {
+        "os": "windows",
+        "app_id": "1password.exe",
+        "name": "1Password"
+      },
+      {
+        "os": "windows",
+        "app_id": "bitwarden.exe",
+        "name": "Bitwarden"
+      },
+      {
+        "os": "windows",
+        "app_id": "keepassxc.exe",
+        "name": "KeePassXC"
+      },
+      {
+        "os": "windows",
+        "app_id": "keepass.exe",
+        "name": "KeePass"
+      },
+      {
+        "os": "linux",
+        "app_id": "1password",
+        "name": "1Password"
+      },
+      {
+        "os": "linux",
+        "app_id": "bitwarden",
+        "name": "Bitwarden"
+      },
+      {
+        "os": "linux",
+        "app_id": "keepassxc",
+        "name": "KeePassXC"
+      }
+    ],
+    "secret_detection": true,
+    "secret_tray_flash": true,
+    "panel_position": "center",
+    "paste_on": "single_click",
+    "show_hint_bar": true
+  },
+  "appearance": {
+    "theme": "system",
+    "accent": "system",
+    "font_size": 14,
+    "translate_min_width": 360,
+    "translate_max_width": 520,
+    "clipboard_width": 420,
+    "max_height_ratio": 0.6,
+    "material": "system",
+    "reduce_motion": "system"
+  },
+  "advanced": {
+    "log_level": "info",
+    "webview_low_memory_when_hidden": true,
+    "unload_panel_after_idle_min": null
+  }
+}

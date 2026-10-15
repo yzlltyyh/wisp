@@ -1,0 +1,177 @@
+{
+  "a11y": {
+    "list": "Clipboard history",
+    "search": "Search clipboard history",
+    "filter": "Filter by type, current: {filter}",
+    "more": "More actions",
+    "close_preview": "Close preview",
+    "preview": "Item preview",
+    "unknown_app": "Unknown app",
+    "pinned": "Pinned",
+    "actions": "Actions"
+  },
+  "search": {
+    "placeholder": "Search clipboard history"
+  },
+  "filter": {
+    "all": "All",
+    "text": "Text",
+    "image": "Images",
+    "files": "Files",
+    "link": "Links",
+    "code": "Code",
+    "color": "Colors",
+    "menu": "Filter by type"
+  },
+  "noun": {
+    "all": "items",
+    "text": "text",
+    "image": "images",
+    "files": "files",
+    "link": "links",
+    "code": "code",
+    "color": "colors"
+  },
+  "group": {
+    "pinned": "Pinned",
+    "recent": "Recent"
+  },
+  "kind": {
+    "text": "Text",
+    "rich_text": "Rich text",
+    "image": "Image",
+    "files": "Files",
+    "link": "Link",
+    "color": "Color",
+    "code": "Code"
+  },
+  "meta": {
+    "lines_one": "{n} line",
+    "lines_other": "{n} lines",
+    "files_one": "{n} file",
+    "files_other": "{n} files",
+    "dimensions": "{width} × {height}",
+    "search_prefix": "Only the first {n} characters are searchable",
+    "truncated": "Too long — only the beginning was saved",
+    "rendered_prefix": "Showing the first {n} characters; pasting uses the full text",
+    "formats": "Formatted",
+    "missing": "Missing",
+    "more_files_one": "{n} more file",
+    "more_files_other": "{n} more files",
+    "files_at_least": "{n}+ files",
+    "blank_one": "({n} whitespace character)",
+    "blank_other": "({n} whitespace characters)",
+    "blank_unknown": "(blank)"
+  },
+  "hint": {
+    "paste": "Paste",
+    "plain": "Plain text",
+    "copy": "Copy only",
+    "pin": "Pin",
+    "delete": "Delete",
+    "preview": "Preview",
+    "back": "Back",
+    "browse": "Previous / next",
+    "actions": "Actions",
+    "filter": "Filter",
+    "close": "Close"
+  },
+  "action": {
+    "paste": "Paste",
+    "paste_plain": "Paste as plain text",
+    "copy_only": "Copy only",
+    "preview": "Preview",
+    "preview_macos": "Quick Look",
+    "pin": "Pin",
+    "unpin": "Unpin",
+    "delete": "Delete",
+    "save_image": "Save image as…",
+    "open_link": "Open link",
+    "reveal": {
+      "macos": "Show in Finder",
+      "windows": "Show in File Explorer",
+      "linux": "Show in file manager"
+    },
+    "translate": "Translate",
+    "clear": "Clear history…",
+    "pause": "Pause recording",
+    "resume": "Resume recording",
+    "settings": "Clipboard settings…",
+    "monospace": "Monospace",
+    "copy_value": "Copy"
+  },
+  "empty": {
+    "title": "Copy something and it will show up here",
+    "detail": "Text, images and files you copy with {key} are kept automatically",
+    "filtered": "No {kind} yet",
+    "filtered_detail": "Press {key} to switch to another type",
+    "show_all": "Show all types"
+  },
+  "no_result": {
+    "title": "Nothing matches “{query}”",
+    "detail": "Try another word — even one or two characters work",
+    "detail_short": "Searches shorter than {min} characters only cover the latest {limit} items — type {min} or more to search all history",
+    "filtered": "Searching {kind} only"
+  },
+  "paused": {
+    "title": "Clipboard recording is paused",
+    "resume": "Resume"
+  },
+  "recording": {
+    "disabled": "Clipboard recording is off; new copies aren’t saved",
+    "open_settings": "Open settings",
+    "unavailable_title": "Clipboard history unavailable"
+  },
+  "history_too_new": "The history was written by a newer Wisp and can’t be read by this version; new copies aren’t recorded",
+  "history_unavailable": "Clipboard history can’t be read right now; new copies aren’t recorded",
+  "watch_unavailable": "The clipboard can’t be recorded in this desktop session; new copies aren’t saved",
+  "confirm": {
+    "delete_pinned": "Press {key} again to delete this pinned item",
+    "delete": "Delete",
+    "clear": "Clear clipboard history?",
+    "keep_pinned": "Keep pinned items",
+    "clear_action": "Clear"
+  },
+  "status": {
+    "saved": "Image saved",
+    "secret_skipped": "Skipped something that looked like a password or key",
+    "gone": "This item no longer exists",
+    "files_gone": "These files no longer exist — they may have been moved or deleted",
+    "image_gone": "The image file no longer exists",
+    "webview_unsupported": "Files can’t be copied from clipboard history in this session",
+    "failed": {
+      "paste": "Couldn’t paste — please try again",
+      "copy": "Couldn’t copy — please try again",
+      "pin": "Couldn’t pin — please try again",
+      "unpin": "Couldn’t unpin — please try again",
+      "delete": "Couldn’t delete — please try again",
+      "clear": "Couldn’t clear history — nothing was removed",
+      "pause": "Couldn’t pause recording — please try again",
+      "resume": "Couldn’t resume recording — please try again",
+      "save_image": "The image wasn’t saved — please try again",
+      "reveal": "Couldn’t show the file",
+      "open_link": "Couldn’t open the link",
+      "translate": "Couldn’t start translating — please try again",
+      "settings": "Couldn’t open settings",
+      "search": "Search failed — please try again",
+      "load": "Couldn’t load more items"
+    }
+  },
+  "toast": {
+    "copied": "Copied",
+    "press_to_paste": "Copied — press {key} to paste",
+    "press_after_close": "Copied — press {key} after this closes",
+    "reason": {
+      "wayland": "Wayland doesn’t let Wisp press the paste key for you",
+      "elevated": "The target app runs as administrator, so Wisp can’t paste into it",
+      "target_gone": "The original app has quit",
+      "focus_timeout": "Couldn’t switch back to the original app in time",
+      "no_permission": "Wisp lacks the permission needed to paste for you",
+      "no_permission_macos": "Wisp needs Accessibility permission to paste for you"
+    },
+    "action": {
+      "allow_accessibility": "Allow Wisp in Privacy & Security › Accessibility"
+    },
+    "open_settings": "Open Accessibility settings"
+  }
+}

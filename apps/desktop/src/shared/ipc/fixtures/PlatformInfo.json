@@ -1,0 +1,36 @@
+{
+  "os": "macos",
+  "os_version": "26.4",
+  "arch": "aarch64",
+  "session": "native",
+  "capabilities": {
+    "global_hotkeys": {
+      "available": true,
+      "reason_key": null
+    },
+    "selection": {
+      "available": true,
+      "reason_key": null
+    },
+    "simulated_copy": {
+      "available": true,
+      "reason_key": null
+    },
+    "paste_inject": {
+      "available": true,
+      "reason_key": null
+    },
+    "capture_overlay": {
+      "available": true,
+      "reason_key": null
+    },
+    "clipboard_watch": {
+      "available": true,
+      "reason_key": null
+    },
+    "input_hooks": {
+      "available": false,
+      "reason_key": "errors.platform.input_monitoring_missing"
+    }
+  }
+}

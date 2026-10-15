@@ -1,0 +1,126 @@
+{
+  "schema": "wisp.perf/1",
+  "ts": "2026-10-10T08:20:00.000Z",
+  "os": "macos",
+  "os_version": "26.4",
+  "arch": "arm64",
+  "version": "0.1.0",
+  "build": "release",
+  "machine": "Mac15,6",
+  "idle": {
+    "duration_s": 600,
+    "samples": 601,
+    "rss_main": 33.8,
+    "rss_main_max": 34.1,
+    "rss_webview": 37.6,
+    "rss_webview_max": 38,
+    "webview_processes": 3,
+    "webview_attribution": "responsible",
+    "cpu_avg": 0.03,
+    "cpu_max": 0.9,
+    "cpu_webview_avg": 0.012,
+    "cpu_webview_max": 0.6,
+    "cpu_total_avg": 0.042,
+    "wakeups": 4.1,
+    "wakeups_webview": 0.2,
+    "wakeups_method": "top-idlew",
+    "notes": []
+  },
+  "latency": {
+    "source": "log",
+    "metric": "prepare_to_shown_ms",
+    "count": 100,
+    "p50": 16,
+    "p95": 24,
+    "max": 31,
+    "mean": 16.7,
+    "ready_timeouts": 0,
+    "first_token_p50": 310,
+    "first_token_p95": 420,
+    "overlay_count": 5,
+    "overlay_p50": 48,
+    "overlay_p95": 61,
+    "overlay_max": 64,
+    "pages": {
+      "warm": {
+        "count": 96,
+        "p50": 16,
+        "p95": 23,
+        "max": 31,
+        "ready_timeouts": 0
+      },
+      "recycled": {
+        "count": 3,
+        "p50": 22,
+        "p95": 26,
+        "max": 26,
+        "ready_timeouts": 0
+      },
+      "cold": {
+        "count": 1,
+        "p50": 118,
+        "p95": 118,
+        "max": 118,
+        "ready_timeouts": 0
+      }
+    },
+    "split": {
+      "ready_to_window": {
+        "count": 100,
+        "p50": 3,
+        "p95": 6,
+        "max": 9
+      },
+      "ready_to_key": {
+        "count": 20,
+        "p50": 9,
+        "p95": 17,
+        "max": 21
+      },
+      "ready_to_shown": {
+        "count": 100,
+        "p50": 8,
+        "p95": 14,
+        "max": 19
+      }
+    },
+    "first_show": {
+      "count": 1,
+      "ready_timeouts": 0,
+      "not_shown": 0,
+      "max": 22
+    }
+  },
+  "smoke": {
+    "release": {
+      "ok": true,
+      "cold_start_ms": 412,
+      "panel_prewarm_ms": 598,
+      "rss_main": 36.4,
+      "rss_main_peak": 36.4,
+      "prepare_to_shown_p95": 23,
+      "trigger_to_shown_p95": 29,
+      "windows_end": 1,
+      "memory_metric": "phys_footprint",
+      "rss_webview": 50.5,
+      "rss_webview_peak": 86,
+      "webview_attribution": "approx"
+    },
+    "debug": {
+      "ok": true,
+      "cold_start_ms": 150,
+      "panel_prewarm_ms": 264,
+      "rss_main": 128.8,
+      "rss_main_peak": 128.8,
+      "prepare_to_shown_p95": 35,
+      "trigger_to_shown_p95": 44,
+      "windows_end": 1,
+      "memory_metric": "phys_footprint"
+    }
+  },
+  "gate": {
+    "max_ready_timeouts": 0,
+    "regression": 0.1
+  },
+  "notes": ["样例：仅用于说明格式"]
+}

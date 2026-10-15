@@ -1,0 +1,75 @@
+{
+  "a11y": {
+    "view": "翻译结果",
+    "source": "原文",
+    "result": "译文",
+    "style_menu": "翻译风格",
+    "style_menu_current": "翻译风格：{name}",
+    "model_menu": "切换模型",
+    "swap_unavailable": "原文已是{lang}，交换方向不会改变结果"
+  },
+  "status": {
+    "waiting": "等待响应…",
+    "translating": "翻译中…",
+    "polishing": "润色中…",
+    "proofreading": "校对中…",
+    "reviewing": "正在检查译文…",
+    "improving": "正在改进译文…",
+    "no_improvement": "译文已无需改进",
+    "refined": "已提升",
+    "original": "原译文",
+    "copied_selection": "已复制选中内容",
+    "copied_source": "已复制原文",
+    "tokens": "输入 {input} · 输出 {output} tokens"
+  },
+  "notice": {
+    "raise_limit": "调高上限"
+  },
+  "exhausted": {
+    "title": "没有产出译文",
+    "detail": "可以重新生成、切换模型，或调高输出上限。"
+  },
+  "more": {
+    "polish": "润色",
+    "proofread": "校对",
+    "refine": "提升译文",
+    "refine_hint": "原文至少 40 词或 60 字",
+    "show_original": "查看原译文",
+    "show_refined": "查看提升后的译文",
+    "copy_source": "复制原文",
+    "switch_model": "切换模型",
+    "edit_style": "编辑当前风格",
+    "back_to_translate": "返回翻译"
+  },
+  "model": {
+    "back": "返回",
+    "default": "默认模型",
+    "default_hint": "按设置",
+    "none": "还没有可用的模型"
+  },
+  "task_title": {
+    "polish": "润色",
+    "proofread": "校对"
+  },
+  "long_text": {
+    "title": "这段文字比较长",
+    "detail": "{chars} · 约 {tokens} tokens",
+    "eta": "预计 {time}",
+    "truncate_warning": "超过 {limit}，译文可能被截断",
+    "continue": "继续翻译",
+    "cancel": "取消"
+  },
+  "input": {
+    "placeholder": "输入或粘贴文字…",
+    "newline": "换行",
+    "submit": "翻译"
+  },
+  "pinned": {
+    "on_top": "置顶",
+    "close": "关闭固定窗口",
+    "title": {
+      "translate": "翻译",
+      "ocr": "文字识别"
+    }
+  }
+}

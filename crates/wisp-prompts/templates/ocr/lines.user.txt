@@ -1,0 +1,1 @@
+Transcribe all text in this image line by line.

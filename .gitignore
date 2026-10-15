@@ -1,0 +1,39 @@
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 编辑器与本机工具的工作目录
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.claude/
+
+# Node / 前端
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Rust / Tauri（gen/schemas 由构建生成）
+target/
+src-tauri/gen/schemas/
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# 环境变量与凭据
+.env
+.env.*
+!.env.example
+
+# 前端工具缓存与测试、截图产物
+*.tsbuildinfo
+artifacts/
+playwright-report/
+test-results/
+
+# Python 字节码（scripts/perf、scripts/ci 下的辅助脚本）
+__pycache__/

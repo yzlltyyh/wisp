@@ -1,0 +1,84 @@
+{
+  "skip_all": "Set up later",
+  "skip_step": "Skip this step",
+  "steps_label": "Setup steps",
+  "step_done": " (done)",
+  "step_skipped": " (skipped)",
+  "window_label": "First-time setup",
+  "step": {
+    "welcome": "Welcome",
+    "permissions": "Permissions",
+    "model": "Connect a model",
+    "try": "Try it"
+  },
+  "welcome": {
+    "title": "Welcome to Wisp",
+    "description": "Select, capture or copy, press a shortcut, and the result appears right next to your cursor. Setup takes about a minute.",
+    "start": "Get started",
+    "feature_desc": {
+      "translate_selection": "Select text in any app and watch the translation stream in",
+      "ocr": "Drag over any part of the screen to recognize its text",
+      "clipboard": "Find anything you copied and paste it in one step"
+    }
+  },
+  "permissions": {
+    "title": "Grant two permissions",
+    "description": "macOS needs your permission for Wisp to read selected text and the screen.",
+    "privacy": "Wisp reads the selection or the screen only when you press a shortcut — never in the background.",
+    "all_set": "Both permissions are ready",
+    "granted": "Granted",
+    "denied": "Denied",
+    "not_granted": "Not allowed",
+    "open_again": "Open again",
+    "relaunch_hint": "Already switched it on in System Settings? Screen Recording takes effect after Wisp relaunches.",
+    "lost_title": "System permissions were reset by the update.",
+    "lost_detail": "In System Settings, select Wisp and remove it with “−”, then add it again — or turn the switch off and on.",
+    "accessibility": {
+      "title": "Accessibility",
+      "why": "Read the selected text and paste clipboard items back into apps"
+    },
+    "screen_recording": {
+      "title": "Screen Recording",
+      "why": "Screenshot OCR needs to read what’s on screen"
+    }
+  },
+  "model": {
+    "title": "Connect a model",
+    "description": "Translation and screenshot OCR run on the model you choose. Your API key stays in the system credential store.",
+    "openai_protocol": "Responses is OpenAI’s newer, recommended protocol; Chat is more widely compatible",
+    "key_hint": "Saved to the system credential store when you continue.",
+    "save": "Save and continue",
+    "configured": "Connected: {names}",
+    "add_another": "Add another service"
+  },
+  "try": {
+    "title": "Try it",
+    "description": "Try Wisp’s two main shortcuts on the text below.",
+    "sample": "Wisp stays out of your way: it idles at near-zero CPU, wakes in milliseconds, and streams the translation right next to your cursor.",
+    "task": {
+      "translate_selection": "Select the text above, then press",
+      "clipboard": "Open clipboard history with"
+    },
+    "task_nokey": {
+      "translate_selection": "Select the text above, then press the “Translate selection” shortcut",
+      "clipboard": "Press the “Clipboard” shortcut to open your clipboard history"
+    },
+    "hint": {
+      "translate_selection": "The panel appears next to the selection and the translation streams in",
+      "clipboard": "Everything you copied recently is here"
+    },
+    "done": "Done!",
+    "broken": "{issue}. Pick another shortcut below.",
+    "unbound": "No shortcut yet — record one below.",
+    "unavailable": "Global shortcuts aren’t available here — use “Try it now” instead.",
+    "fix": "Press a new combination to save it",
+    "try_now": "Try it now",
+    "more": "You can also press {combo} any time for screenshot OCR.",
+    "more_nokey": "You can also start screenshot OCR any time from the tray menu.",
+    "finish_done": "Start using Wisp",
+    "no_model": "No model is connected yet, so translation will fail.",
+    "go_model": "Connect a model",
+    "no_permission": "Accessibility isn’t granted yet. Wisp needs it to read selected text and paste in other apps.",
+    "go_permissions": "Grant access"
+  }
+}

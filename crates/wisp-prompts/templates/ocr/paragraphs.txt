@@ -1,0 +1,2 @@
+## Mode: paragraphs
+Join lines that belong to the same paragraph into a single line, removing end-of-line hyphenation inside English words (inter-\nface → interface). Separate paragraphs, headings, list items, table rows and distinct UI elements with one blank line. Keep list markers and numbering.

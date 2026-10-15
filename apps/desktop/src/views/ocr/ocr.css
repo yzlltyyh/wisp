@@ -1,0 +1,531 @@
+/*
+ * OCR 视图。版式对齐视觉稿 design.ocr-*（panel/shell/design/design.css 的 dz-header / dz-footer / dz-section /
+ * dz-ocr-*，那份只在 mock 里加载）：头部 / 底栏控件用 −6 px 外边距，让控件里的文字与正文左右对齐；展开区用
+ * hairline 分隔并延伸到卡片边缘。只用令牌。
+ *
+ * 高度（按内容的自然高度排版，不用 vh）：视图是 flex 列，面板里以卡片上限为 max-height（视图内联给出），
+ * 固定窗口里铺满窗口。内容放不下时由 flex 在同一次布局里分配——正文区（flex-shrink 权重 1000）先收缩到它的
+ * min-height（视图按 layoutFor().mainFloor 内联给出），之后才轮到展开区（权重 1）；正文与展开区的滚动容器跟着
+ * 收缩（min-height: 0），放不下的部分在框内滚动。两区之和始终等于可用高度：没有「先缩内容、外框随后才动」的空白。
+ */
+/*
+ * 层叠层的顺序与 Tailwind 4 产出的一致（properties → theme → base → components → utilities）。生产构建里视图的 CSS
+ * 分块可能排在 tailwind.css 之前加载：若这里第一个出现的是 `@layer components`，它会把 components 排到 base（含
+ * preflight 的 `* { margin: 0; padding: 0 }`）之前，整个面板的内边距、控件样式都会被重置盖掉
+ */
+@layer properties, theme, base, components, utilities;
+
+@layer components {
+  .ocr-view {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+  }
+  /* 固定窗口：铺满窗口（PinnedApp 的内容区是定高的 flex 子项），正文区长高填满，底栏贴底 */
+  .ocr-view[data-host='pinned'] {
+    height: 100%;
+  }
+  .ocr-top {
+    flex: none;
+  }
+  .ocr-body {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1000 auto;
+    contain: layout;
+  }
+  .ocr-view[data-host='pinned'] > .ocr-body {
+    flex-grow: 1;
+  }
+  .ocr-view[data-host='pinned'] > .ocr-body > .ocr-text {
+    flex-grow: 1;
+  }
+  /* 流式区与它的滚动容器跟着外层收缩（骨架、错误卡片、空状态不收缩） */
+  .ocr-run {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 auto;
+    min-height: 0;
+    contain: layout;
+  }
+  .ocr-run > .ui-stream {
+    flex: 0 1 auto;
+    min-height: 0;
+  }
+  .ocr-run > .ocr-wait {
+    flex: none;
+  }
+  /* 底栏 + 展开区：上方正文变矮时整体贴着卡片底边移动（FlipBox） */
+  .ocr-tail {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 auto;
+    min-height: 0;
+  }
+  .ocr-tail > * {
+    flex: none;
+  }
+
+  /* ---- 头部：缩略图 · 尺寸 / 模式 / 模型 · ✕ ---- */
+  .ocr-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 2px;
+    margin: -2px -6px 10px;
+    min-height: var(--h-control);
+  }
+  .ocr-media {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    min-width: 0;
+    margin: 2px 0 0 6px;
+  }
+  .ocr-head[data-bare] .ocr-media {
+    align-self: center;
+    margin-top: 0;
+  }
+  .ocr-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    padding-bottom: 2px;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .ocr-meta > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /*
+   * 「模式 · 模型」：窄面板上放不下时在两段之间换成两行（不在模型名中间断开）。每段前面都有一个分隔点，内层整体左移
+   * 一个分隔点的宽度、外层裁掉——任何一行行首的分隔点都看不见；单独一段仍放不下时省略号截断
+   */
+  .ocr-meta > .ocr-meta-status {
+    display: flex;
+    max-height: calc(2 * var(--lh-meta));
+    overflow: hidden;
+    white-space: normal;
+  }
+  .ocr-meta-segs {
+    display: flex;
+    flex-wrap: wrap;
+    min-width: 0;
+    margin-left: -14px;
+  }
+  .ocr-meta-seg {
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* 分隔点是装饰：替代文本为空，读屏不念（读屏用的「 · 」另有隐藏文本，见 OcrView 的 metaStatus）；不支持替代文本
+     语法的引擎退回第一条 */
+  .ocr-meta-seg::before {
+    content: '·';
+    content: '·' / '';
+    display: inline-block;
+    width: 14px;
+    text-align: center;
+    color: var(--fg-3);
+  }
+  /*
+   * 缩略图按钮：悬停 / 键盘聚焦 / 已放大时边框加深、角落淡入「放大」图标（--dur-instant，与 tooltip 同节奏），
+   * 不只靠 zoom-in 光标提示可以放大
+   */
+  .ocr-thumb-button {
+    position: relative;
+    flex: none;
+  }
+  .ocr-thumb-button::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: var(--r-row);
+    box-shadow: inset 0 0 0 1px transparent;
+    pointer-events: none;
+    transition: box-shadow var(--dur-instant) var(--ease-standard);
+  }
+  .ocr-thumb-button:is(:hover, :focus-visible, [data-open])::after {
+    box-shadow: inset 0 0 0 1px var(--hairline-strong);
+  }
+  .ocr-thumb-zoom {
+    position: absolute;
+    right: 4px;
+    bottom: 4px;
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    color: #fff;
+    background: rgb(0 0 0 / 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-instant) var(--ease-standard);
+  }
+  .ocr-thumb-button:is(:hover, :focus-visible, [data-open]) .ocr-thumb-zoom {
+    opacity: 1;
+  }
+  /* 整行文字的细条：等比铺满高度、左对齐，右侧渐隐表示后面还有 */
+  .ocr-thumb-strip img {
+    object-fit: cover;
+    object-position: left center;
+    mask-image: linear-gradient(to right, var(--mask) 72%, transparent);
+  }
+  /* 长截图：等比铺满宽度、顶端对齐，底部渐隐 */
+  .ocr-thumb-tall img {
+    object-fit: cover;
+    object-position: center top;
+    mask-image: linear-gradient(to bottom, var(--mask) 72%, transparent);
+  }
+  .ocr-title {
+    font-size: var(--text-ui);
+    line-height: var(--lh-ui);
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .ocr-spacer {
+    flex: 1;
+  }
+
+  /* 放大的截图：锚在缩略图下方的浮层（Popover preview），宽度与正文一致，不参与排版 */
+  .ocr-zoom-pop {
+    display: flex;
+    flex-direction: column;
+    width: calc(100% - 2 * var(--pad-panel-x));
+    max-width: none;
+    padding: 6px;
+    overflow: hidden;
+  }
+  .ocr-zoom {
+    display: flex;
+    flex: 0 1 auto;
+    min-height: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-control);
+    background: var(--fill-control);
+    cursor: zoom-out;
+  }
+  .ocr-zoom img {
+    display: block;
+    width: 100%;
+    min-height: 0;
+    height: auto;
+    object-fit: contain;
+    border-radius: var(--r-control);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+  }
+  .ocr-zoom:focus-visible {
+    outline: var(--focus-ring-width) solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* 直接翻译：语言条 · 风格 chip */
+  .ocr-subhead {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin: -4px -6px 8px;
+    min-height: var(--h-control);
+  }
+
+  /* ---- 正文 ---- */
+  .ocr-box {
+    contain: layout;
+  }
+  /*
+   * 可编辑的 OCR 文本：四周 5 / 6 px 内边距、等量负外边距抵消（文字仍与正文左右对齐、排版不动），聚焦时的底色与
+   * 1 px 强调色内环离文字有呼吸空间；可滚动方向的边缘渐隐与 StreamView 一致。
+   * 可见高度由 flex 决定：TextArea 按全文自然增高（它的内联高度只是 flex-basis），放不下时随正文区收缩，并且始终
+   * 可以在框内滚动（覆盖 TextArea 按行数上限写的内联 overflow）
+   */
+  .ocr-text.ui-textarea[data-variant] {
+    box-sizing: border-box;
+    flex: 0 1 auto;
+    min-height: 0;
+    width: calc(100% + 12px);
+    margin: -5px -6px;
+    padding: 5px 6px;
+    border-radius: var(--r-control);
+    overflow-y: auto !important;
+    white-space: pre-wrap;
+    transition: background-color var(--dur-instant) var(--ease-standard);
+  }
+  .ocr-text.ui-textarea[data-variant]:focus-visible {
+    background: var(--fill-control);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  .ocr-text[data-fade-top='true'] {
+    mask-image: linear-gradient(to bottom, transparent, var(--mask) 12px);
+  }
+  .ocr-text[data-fade-bottom='true'] {
+    mask-image: linear-gradient(to top, transparent, var(--mask) 12px);
+  }
+  .ocr-text[data-fade-top='true'][data-fade-bottom='true'] {
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      var(--mask) 12px,
+      var(--mask) calc(100% - 12px),
+      transparent
+    );
+  }
+  /* 重新识别 / 重新翻译时变淡的旧文字：与骨架同节奏的脉冲（减少动效时静止，base.css） */
+  .ocr-run[data-ghost] .ui-stream-body {
+    animation: wisp-pulse var(--pulse-period) var(--ease-pulse) infinite;
+  }
+  .ocr-wait-note {
+    margin: 6px 0 0;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+  /* 未就绪卡片：说明里的快捷键用键帽（NotReadyCard 的 detail 覆盖） */
+  .ocr-notready {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .ocr-hint-kbd {
+    margin: 0 2px;
+    vertical-align: baseline;
+  }
+
+  /* 编辑后重新识别的确认条：警示语调（会丢弃修改），确认按钮中性色 + ⌘R 提示。说明至少 12em：放不下时按钮组整体换到
+     第二行、靠右（与组件库 InlineConfirm 同一条规则，不把说明挤成一列窄条） */
+  .ocr-confirm-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 8px;
+    row-gap: 4px;
+    min-width: 0;
+  }
+  .ocr-confirm-text {
+    flex: 1 1 12em;
+    min-width: min(12em, 100%);
+    text-wrap-style: pretty;
+  }
+  .ocr-confirm-actions {
+    display: inline-flex;
+    flex: none;
+    gap: 4px;
+    margin-left: auto;
+  }
+
+  /* ---- 底栏：状态行 · 复制 · [翻译 | ▾] · [重新识别 | ▾] · 固定（控件组之间留 6 px，读得出是几组） ---- */
+  .ocr-footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 12px -6px -2px 0;
+    min-height: var(--h-control);
+  }
+  .ocr-actions {
+    display: inline-flex;
+    align-items: center;
+    flex: none;
+    gap: 6px;
+  }
+  .ocr-status.ui-status {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+  }
+  /*
+   * 状态行放不下时按段整体隐藏，绝不截断数字：各段与提示都不收缩，useStatusFit 量到溢出时依次加
+   * data-drop = 1 / 2 / 3（去掉 tokens → 耗时 → 模型名）；所有段都去掉后仍放不下，提示才以省略号截断（全文在 title）
+   */
+  .ocr-status .ui-status-parts {
+    flex: none;
+    overflow: visible;
+    text-overflow: clip;
+  }
+  .ocr-status .ui-status-note {
+    flex: none;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .ocr-status > .ui-toast-slot {
+    flex: none;
+  }
+  .ocr-status[data-drop='1'] .ui-status-part:last-child,
+  .ocr-status[data-drop='2'] .ui-status-part:nth-last-child(-n + 2),
+  .ocr-status[data-drop='3'] .ui-status-parts {
+    display: none;
+  }
+  .ocr-note-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /*
+   * 分体按钮：圆角胶囊，两半之间 1 px 分隔，两半的悬停底色在框内裁切。静止时不画外框（视觉稿的底栏是幽灵图标加
+   * 轻量 chip），悬停、聚焦、菜单打开、选中时才显示 hairline 外框；打开菜单时整个框是悬停色，展开译文时是选中色。
+   * 键盘焦点：**只在被聚焦的那一半**画与其他控件一致的 2 px 焦点环（画在内侧：外框裁切圆角），不改填充色——
+   * 浅强调色的填充只表示「译文区已展开」（选中态），两者不会混淆；Tab 在主操作与 ▾ 之间移动时焦点环跟着换半边
+   */
+  .ocr-split {
+    position: relative;
+    display: inline-flex;
+    align-items: stretch;
+    flex: none;
+    border-radius: var(--r-chip);
+    box-shadow: inset 0 0 0 1px transparent;
+    overflow: hidden;
+    isolation: isolate;
+    transition:
+      background-color var(--dur-instant) var(--ease-standard),
+      box-shadow var(--dur-instant) var(--ease-standard);
+  }
+  .ocr-split:is(:hover, :focus-within, [data-open]) {
+    box-shadow: inset 0 0 0 1px var(--hairline);
+  }
+  /* 两半（IconButton 可能包在 tooltip 的锚点里，所以用后代选择器）：外侧圆角与外框一致，焦点环沿着它画在内侧 */
+  .ocr-split :is(.ui-chip, .ui-iconbtn):focus-visible:not(:disabled) {
+    outline: var(--focus-ring-width) solid var(--accent);
+    outline-offset: calc(-1 * var(--focus-ring-width));
+  }
+  .ocr-split > .ui-chip,
+  .ocr-split > .ui-iconbtn {
+    border-radius: var(--r-chip) 0 0 var(--r-chip);
+  }
+  .ocr-split > .ui-chip {
+    padding-right: 7px;
+  }
+  .ocr-split .ocr-caret {
+    width: 24px;
+    border-radius: 0 var(--r-chip) var(--r-chip) 0;
+    color: var(--fg-3);
+    box-shadow: inset 1px 0 0 var(--hairline);
+  }
+  .ocr-split .ocr-caret:is(:hover, [data-open]):not(:disabled) {
+    color: var(--fg);
+  }
+  .ocr-split[data-open] {
+    background: var(--fill-hover);
+  }
+  .ocr-split[data-open] .ocr-caret {
+    background: transparent;
+  }
+  .ocr-split[data-selected] {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .ocr-split[data-selected] .ocr-caret {
+    color: var(--accent-text);
+    box-shadow: inset 1px 0 0 color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  .ocr-split[data-selected] > .ui-chip[data-selected] {
+    background: transparent;
+  }
+  .ocr-split[data-selected] > .ui-chip[data-selected]:hover {
+    background: var(--fill-hover);
+  }
+
+  /* ---- 展开区（译文 / 原文）：外层不带内外边距，折叠到 0 时不露出边距；随 flex 收缩（正文区收缩到下限之后） ---- */
+  .ocr-tail > .ocr-section {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    margin: 0 calc(-1 * var(--pad-panel-x));
+    contain: layout paint;
+  }
+  /* 收起：脱离排版留在原位淡出（卡片按高度跟随一次缩到位） */
+  .ocr-section[data-leaving='pop'] {
+    position: absolute;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+  }
+  .ocr-section[data-leaving='collapse'] {
+    pointer-events: none;
+  }
+  .ocr-section-inner {
+    display: flex;
+    flex-direction: column;
+    flex: 0 1 auto;
+    min-height: 0;
+    margin-top: 12px;
+    padding: 10px var(--pad-panel-x) 0;
+    box-shadow: inset 0 1px 0 var(--hairline);
+  }
+  .ocr-section-inner > * {
+    flex: none;
+  }
+  /* 区自身的高度在过渡（展开 / 折叠）：内容保持自然高度、被区裁住，不被 flex 压扁 */
+  .ocr-tail > .ocr-section[data-sizing] > .ocr-section-inner {
+    flex-shrink: 0;
+  }
+  /*
+   * 展开区正文的外层即滚动容器（流式区本身不滚动）：随 flex 收缩，放不下时框内滚动；可滚动方向的边缘渐隐与
+   * StreamView 一致（SmoothBox 同步 data-fade-*）
+   */
+  .ocr-section-inner > .ocr-box {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .ocr-section-inner > .ocr-box[data-fade-top='true'] {
+    mask-image: linear-gradient(to bottom, transparent, var(--mask) 12px);
+  }
+  .ocr-section-inner > .ocr-box[data-fade-bottom='true'] {
+    mask-image: linear-gradient(to top, transparent, var(--mask) 12px);
+  }
+  .ocr-section-inner > .ocr-box[data-fade-top='true'][data-fade-bottom='true'] {
+    mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      var(--mask) 12px,
+      var(--mask) calc(100% - 12px),
+      transparent
+    );
+  }
+  .ocr-section-head {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin: -2px -6px 6px;
+    min-height: var(--h-control);
+  }
+  .ocr-section-title {
+    padding: 0 6px;
+    font-size: var(--text-ui);
+    line-height: var(--lh-ui);
+    font-weight: 600;
+    color: var(--fg-2);
+  }
+  /* 区底状态行：从展开起就占一行（翻译中… → 结果淡入），完成时不再长高 */
+  .ocr-section-foot {
+    display: flex;
+    align-items: center;
+    margin: 6px -6px 0 0;
+    min-height: 24px;
+  }
+  .ocr-foot-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+  }
+  .ocr-foot-wait {
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-3);
+  }
+}

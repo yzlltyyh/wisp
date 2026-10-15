@@ -1,0 +1,75 @@
+{
+  "kind": "clipboard",
+  "page": {
+    "items": [
+      {
+        "item": {
+          "id": 128,
+          "kind": "text",
+          "created_at": 1760000000000,
+          "last_used_at": 1760000360000,
+          "use_count": 3,
+          "pinned": false,
+          "source": {
+            "id": "com.apple.Safari",
+            "name": "Safari",
+            "icon_url": "http://wisp.localhost/icon%2Fa1b2c3.png"
+          },
+          "preview": "The quick brown fox jumps over the lazy dog",
+          "char_count": 43,
+          "line_count": 1,
+          "truncated": false,
+          "image": null,
+          "files": null,
+          "link": null,
+          "color": null
+        },
+        "highlights": [
+          {
+            "start": 4,
+            "end": 9
+          }
+        ]
+      },
+      {
+        "item": {
+          "id": 129,
+          "kind": "image",
+          "created_at": 1760000100000,
+          "last_used_at": 1760000100000,
+          "use_count": 1,
+          "pinned": true,
+          "source": null,
+          "preview": "",
+          "char_count": null,
+          "line_count": null,
+          "truncated": false,
+          "image": {
+            "width": 1280,
+            "height": 720,
+            "bytes": 245760,
+            "thumb_url": "http://wisp.localhost/thumb%2Fd4e5f6.jpg"
+          },
+          "files": [
+            {
+              "path": "/Users/me/Desktop/report.pdf",
+              "name": "report.pdf",
+              "exists": true,
+              "size": 182044
+            }
+          ],
+          "link": "https://example.com/",
+          "color": "#3478F6"
+        },
+        "highlights": []
+      }
+    ],
+    "pinned_count": 1,
+    "next_offset": 50,
+    "query": "quick",
+    "filter": "all"
+  },
+  "paused": false,
+  "hint_bar": true,
+  "paste_on_double_click": false
+}

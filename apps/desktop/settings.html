@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 层叠层顺序必须最先声明：生产构建里视图的 CSS 分块可能排在 tailwind.css
+         之前，第一个出现的 `@layer components` 会把 components 排到 base（preflight）之前，整个面板的样式被重置 -->
+    <style>
+      @layer properties, theme, base, components, utilities;
+    </style>
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>Wisp</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/entries/settings.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,465 @@
+/*
+ * 高保真视觉稿 design.*（只在浏览器 mock 中加载）。这些类名是各视图与设置窗口参照的版式：
+ * 头部 / 正文 / 底栏的间距、对齐与控件尺寸以这里为准。颜色只取令牌；模拟系统窗口外框（交通灯等）的颜色除外。
+ */
+
+/* ---- 视图通用：头部、底栏 ----
+ * 头部与底栏的控件有 6 px 内边距（命中区 28），用 -6 px 外边距让控件里的文字 / 图标与正文左右对齐。 */
+.dz-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: -2px -6px 8px;
+  min-height: var(--h-control);
+}
+.dz-spacer {
+  flex: 1;
+}
+.dz-footer {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 12px -6px -2px 0;
+  min-height: var(--h-control);
+}
+.dz-footer .ui-status {
+  flex: 1;
+}
+.dz-title {
+  padding: 0 6px;
+  font-size: var(--text-ui);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* ---- 词典式 ---- */
+.dz-dict-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+.dz-dict-word {
+  font-size: var(--text-title);
+  line-height: var(--lh-title);
+  font-weight: 600;
+}
+.dz-dict-phon {
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+}
+.dz-dict-sense {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin-top: 8px;
+  font-size: var(--text-body);
+  line-height: var(--lh-body);
+}
+.dz-dict-sense .ui-badge {
+  margin-top: 3px;
+}
+.dz-dict-example {
+  grid-column: 2;
+  margin: 2px 0 0;
+  padding-left: 10px;
+  box-shadow: inset 2px 0 0 var(--hairline-strong);
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  color: var(--fg-2);
+}
+.dz-dict-example b {
+  font-weight: 500;
+  color: var(--fg);
+}
+
+/* ---- OCR ---- */
+.dz-ocr-media {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.dz-ocr-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 2px;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}
+.dz-ocr-text {
+  white-space: pre-wrap;
+}
+.dz-section {
+  margin: 12px calc(-1 * var(--pad-panel-x)) 0;
+  padding: 10px var(--pad-panel-x) 0;
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+
+/* ---- 剪贴板：去掉卡片内边距，列表行贴近卡片边缘（行内 6 px 缩进） ---- */
+.dz-clip {
+  display: flex;
+  flex-direction: column;
+  margin: calc(-1 * var(--pad-panel-y)) calc(-1 * var(--pad-panel-x));
+}
+.dz-clip-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 48px;
+  padding: 0 10px 0 16px;
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.dz-clip-head .ui-search {
+  flex: 1;
+}
+.dz-group {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 4px 14px 0;
+  box-sizing: border-box;
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+  font-weight: 600;
+  color: var(--fg-2);
+}
+.dz-kind {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-control);
+  color: var(--fg-2);
+  background: var(--fill-control);
+}
+.dz-kind-color {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+}
+.dz-clip-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+}
+/* 提示条：放不下的项整项换到第二行并被裁掉（不会出现半截提示） */
+.dz-hintbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 14px;
+  height: 36px;
+  padding: 0 16px;
+  box-sizing: border-box;
+  box-shadow: inset 0 1px 0 var(--hairline);
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.dz-hintbar > * {
+  height: 36px;
+}
+.dz-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---- 输入视图 ---- */
+.dz-input-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+}
+
+/* ---- 窗口外框（设置 / 引导视觉稿） ---- */
+html[data-window='design-page'],
+html[data-window='design-page'] body {
+  overflow: auto;
+  height: auto;
+}
+html[data-window='design-page'] #root {
+  position: relative !important;
+  transform: none !important;
+  visibility: visible !important;
+  width: auto !important;
+  height: auto !important;
+  overflow: visible !important;
+  z-index: 1;
+}
+.dz-stage {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 40px;
+  box-sizing: border-box;
+}
+.dz-window {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--surface-solid);
+  box-shadow:
+    0 0 0 0.5px var(--hairline-strong),
+    0 24px 64px var(--dim-overlay);
+  color: var(--fg);
+}
+[data-os='windows'] .dz-window {
+  border-radius: 8px;
+  flex-direction: column;
+}
+.dz-titlebar {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding-left: 12px;
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+  flex: none;
+}
+.dz-caption {
+  display: flex;
+  margin-left: auto;
+  height: 100%;
+}
+.dz-caption i {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 100%;
+  font-style: normal;
+  color: var(--fg);
+}
+/* 模拟 macOS 交通灯（系统窗口外框，不属于应用配色） */
+.dz-traffic {
+  position: absolute;
+  top: 18px;
+  left: 18px;
+  display: flex;
+  gap: 8px;
+  z-index: 1;
+}
+.dz-traffic i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ff5f57;
+  box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.12);
+}
+.dz-traffic i:nth-child(2) {
+  background: #febc2e;
+}
+.dz-traffic i:nth-child(3) {
+  background: #28c840;
+}
+.dz-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.dz-sidebar {
+  width: 200px;
+  flex: none;
+  padding: 52px 10px 16px;
+  box-sizing: border-box;
+  background: var(--fill-control);
+  box-shadow: inset -1px 0 0 var(--hairline);
+}
+[data-os='windows'] .dz-sidebar {
+  padding-top: 8px;
+  background: transparent;
+  box-shadow: none;
+}
+.dz-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--r-row);
+  font-size: var(--text-ui);
+  color: var(--fg);
+}
+.dz-nav .ui-icon {
+  color: var(--fg-2);
+}
+.dz-nav[data-active] {
+  background: var(--fill-selected);
+}
+.dz-nav[data-active] .ui-icon {
+  color: var(--accent-text);
+}
+.dz-content {
+  flex: 1;
+  min-width: 0;
+  padding: 28px 32px 32px;
+  overflow: auto;
+}
+.dz-page-title {
+  margin: 0;
+  font-size: var(--text-page);
+  line-height: var(--lh-page);
+  font-weight: 600;
+}
+.dz-page-desc {
+  margin: 4px 0 20px;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  color: var(--fg-2);
+}
+.dz-provider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: var(--h-row);
+  padding: 8px 12px;
+  box-sizing: border-box;
+}
+.dz-provider + .dz-provider {
+  box-shadow: inset 0 1px 0 var(--hairline);
+}
+.dz-provider-logo {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: var(--r-row);
+  font-size: var(--text-ui);
+  font-weight: 600;
+  color: var(--accent-fg);
+  background: var(--accent-fill);
+}
+.dz-provider-logo[data-tone='neutral'] {
+  color: var(--fg);
+  background: var(--fill-pressed);
+}
+.dz-provider-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dz-provider-text b {
+  font-size: var(--text-ui);
+  font-weight: 500;
+}
+.dz-provider-text span {
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+}
+.dz-url-preview {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+  color: var(--fg-2);
+  overflow-wrap: anywhere;
+}
+
+/* ---- 引导 ---- */
+.dz-onb {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 56px 40px 24px;
+  box-sizing: border-box;
+}
+[data-os='windows'] .dz-onb {
+  padding-top: 24px;
+}
+.dz-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 28px;
+  font-size: var(--text-meta);
+  color: var(--fg-2);
+}
+.dz-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.dz-step b {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--fg-2);
+  box-shadow: inset 0 0 0 1px var(--hairline-strong);
+}
+.dz-step[data-current] {
+  color: var(--fg);
+  font-weight: 500;
+}
+.dz-step[data-current] b {
+  color: var(--accent-fg);
+  background: var(--accent-fill);
+  box-shadow: none;
+}
+.dz-step-line {
+  width: 24px;
+  height: 1px;
+  background: var(--hairline-strong);
+}
+.dz-perm {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: var(--r-card);
+  background: var(--group-bg);
+  box-shadow: inset 0 0 0 0.5px var(--hairline-strong);
+}
+.dz-perm + .dz-perm {
+  margin-top: 12px;
+}
+.dz-perm-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--r-card);
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.dz-perm[data-granted] .dz-perm-icon {
+  color: var(--success-text);
+  background: var(--success-soft);
+}
+.dz-perm-text {
+  flex: 1;
+  min-width: 0;
+}
+.dz-perm-text b {
+  display: block;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  font-weight: 600;
+}
+.dz-perm-text span {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}
+.dz-onb-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 24px;
+}

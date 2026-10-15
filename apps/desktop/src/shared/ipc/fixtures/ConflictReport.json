@@ -1,0 +1,15 @@
+{
+  "combo": "Control+Alt+KeyD",
+  "display": "⌃⌥D",
+  "conflicts": [
+    {
+      "level": "warning",
+      "source": "static_app",
+      "message_key": "hotkeys.conflict.static_app",
+      "params": {
+        "app": "Rectangle"
+      }
+    }
+  ],
+  "acceptable": true
+}

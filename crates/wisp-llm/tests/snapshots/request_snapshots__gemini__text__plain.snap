@@ -1,0 +1,37 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: text
+---
+{
+  "body": {
+    "contents": [
+      {
+        "parts": [
+          {
+            "text": "Hello, world."
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "generationConfig": {
+      "maxOutputTokens": 556,
+      "temperature": 0.3
+    },
+    "systemInstruction": {
+      "parts": [
+        {
+          "text": "You are a translator."
+        }
+      ]
+    }
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "content-type": "application/json",
+    "user-agent": "Wisp/test",
+    "x-goog-api-key": "sk-test"
+  },
+  "method": "POST",
+  "target": "/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
+}

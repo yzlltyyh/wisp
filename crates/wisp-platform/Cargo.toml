@@ -1,0 +1,71 @@
+[package]
+name = "wisp-platform"
+description = "Wisp 的操作系统集成层：取词、粘贴、焦点、权限、剪贴板、钩子等 trait 及三端实现"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["mouse-hook"]
+# 扩展触发（浮标 / 双击修饰键 / 鼠标键）：发布版默认编入，运行时默认关闭（关闭时不安装任何钩子）
+mouse-hook = []
+# Wayland 降级支持（默认关）
+wayland = ["dep:wl-clipboard-rs", "dep:ashpd"]
+
+[dependencies]
+wisp-types = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+block2 = { workspace = true }
+dispatch2 = { workspace = true }
+objc2-foundation = { workspace = true }
+objc2-app-kit = { workspace = true }
+objc2-core-foundation = { workspace = true }
+objc2-core-graphics = { workspace = true }
+objc2-application-services = { workspace = true }
+objc2-quartz-core = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+png = { workspace = true }
+windows = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+  "Win32_UI_Accessibility",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_System_Threading",
+  "Win32_System_LibraryLoader",
+  "Win32_System_DataExchange",
+  "Win32_System_Memory",
+  "Win32_System_ProcessStatus",
+  "Win32_System_SystemServices",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Imaging",
+  "Win32_Storage_FileSystem",
+  "Win32_Security",
+  "Win32_UI_HiDpi",
+  "Win32_System_Registry",
+] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+png = { workspace = true }
+x11rb = { workspace = true }
+wl-clipboard-rs = { workspace = true, optional = true }
+ashpd = { workspace = true, optional = true }
+
+[lints]
+workspace = true

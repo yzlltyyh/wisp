@@ -1,0 +1,12 @@
+{
+  "change": "inserted",
+  "item": {
+    "id": 6,
+    "created_at": 1760000100000,
+    "mode": "lines",
+    "model": "GPT-5 mini",
+    "text": "Hello",
+    "thumb_url": null,
+    "image_url": null
+  }
+}

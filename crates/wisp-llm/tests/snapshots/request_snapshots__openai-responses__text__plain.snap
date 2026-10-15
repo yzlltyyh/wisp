@@ -1,0 +1,33 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: text
+---
+{
+  "body": {
+    "input": [
+      {
+        "content": [
+          {
+            "text": "Hello, world.",
+            "type": "input_text"
+          }
+        ],
+        "role": "user"
+      }
+    ],
+    "instructions": "You are a translator.",
+    "max_output_tokens": 556,
+    "model": "gpt-4.1",
+    "store": false,
+    "stream": true,
+    "temperature": 0.3
+  },
+  "headers": {
+    "accept": "text/event-stream",
+    "authorization": "Bearer sk-test",
+    "content-type": "application/json",
+    "user-agent": "Wisp/test"
+  },
+  "method": "POST",
+  "target": "/v1/responses"
+}

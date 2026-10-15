@@ -1,0 +1,11 @@
+{
+  "session_id": 7,
+  "origin": "hotkey",
+  "method": "ax",
+  "selection_ms": 18,
+  "prepare_ms": 22,
+  "ready_ms": 31,
+  "shown_ms": 48,
+  "first_token_ms": 420,
+  "ready_timeout": false
+}

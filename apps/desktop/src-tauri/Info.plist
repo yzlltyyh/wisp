@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 常驻托盘的 agent 应用：不进 Dock；设置 / 引导窗口存在期间由 WindowManager 临时切到 Regular（Accessory 应用的窗口不进 ⌘Tab，设置窗口被遮挡后只能从托盘找回） -->
+	<key>LSUIElement</key>
+	<true/>
+	<!-- 启动环境：MallocSpaceEfficient=1 让 macOS 26 的 malloc 及时归还释放的大块（空闲基线与截图之后的
+	     主进程更小）。经 LaunchServices 打开时生效；LaunchAgent 自启时由 app/autostart.rs 写进 EnvironmentVariables（两处须一致） -->
+	<key>LSEnvironment</key>
+	<dict>
+		<key>MallocSpaceEfficient</key>
+		<string>1</string>
+	</dict>
+</dict>
+</plist>

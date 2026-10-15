@@ -1,0 +1,11 @@
+{
+  "theme": "dark",
+  "accent": "#FF6B35",
+  "font_size": 14,
+  "translate_min_width": 360,
+  "translate_max_width": 520,
+  "clipboard_width": 420,
+  "max_height_ratio": 0.75,
+  "material": "solid",
+  "reduce_motion": "on"
+}
