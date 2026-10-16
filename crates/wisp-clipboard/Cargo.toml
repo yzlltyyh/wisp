@@ -10,6 +10,8 @@ publish = false
 
 [dependencies]
 wisp-types = { workspace = true }
+# 文字分类与跨行拼接的规则（「合并为一行」与 OCR 段落拼装共用）
+wisp-text = { workspace = true }
 # functions：用 Rust 覆盖内置 like()，让短查询与 FTS5 trigram 一样做 Unicode 大小写折叠（不引入新包）
 rusqlite = { workspace = true, features = ["functions"] }
 rusqlite_migration = { workspace = true }

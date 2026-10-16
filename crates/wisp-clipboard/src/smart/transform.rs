@@ -7,6 +7,7 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
+use wisp_text::script::is_east_asian;
 use wisp_types::{ClipKind, TransformId};
 
 use super::recognize::Url;
@@ -90,18 +91,10 @@ impl Transform for JoinLines {
     fn applies(&self, _: ClipKind, text: &str) -> bool {
         text.trim().contains('\n')
     }
-    /// 每行去掉首尾空白、跳过空行后合并。相邻两侧都是 CJK 字符时直接相连（中文断行不该多出空格），否则用一个空格
+    /// 每行去掉首尾空白、跳过空行后合并，跨行处的规则与 OCR 的段落拼装相同（[`wisp_text::lines::join_all`]）：
+    /// 中日文断行直接相连、韩文与西文补空格、行尾断词还原、中英之间按全文惯例
     fn apply(&self, text: &str) -> Result<String, TransformError> {
-        let mut out = String::with_capacity(text.len());
-        for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
-            if let (Some(a), Some(b)) = (out.chars().last(), line.chars().next())
-                && !(is_cjk(a) && is_cjk(b))
-            {
-                out.push(' ');
-            }
-            out.push_str(line);
-        }
-        Ok(out)
+        Ok(wisp_text::lines::join_all(text))
     }
 }
 
@@ -247,7 +240,7 @@ impl Transform for FullWidth {
     }
     /// 只对中日韩文字里夹着半角字母数字的内容出现：纯英文几乎不会需要全角，每条都列出来只会让菜单变长
     fn applies(&self, kind: ClipKind, text: &str) -> bool {
-        is_prose(kind) && text.chars().any(is_cjk) && text.chars().any(|c| to_full(c) != c)
+        is_prose(kind) && text.chars().any(is_east_asian) && text.chars().any(|c| to_full(c) != c)
     }
     fn apply(&self, text: &str) -> Result<String, TransformError> {
         Ok(text.chars().map(to_full).collect())
@@ -270,13 +263,6 @@ fn to_full(c: char) -> char {
         '!'..='~' => char::from_u32(c as u32 + 0xFEE0).unwrap_or(c),
         _ => c,
     }
-}
-
-/// 中日韩文字（汉字、假名、谚文、CJK 标点）
-fn is_cjk(c: char) -> bool {
-    matches!(c,
-        '\u{3000}'..='\u{303F}' | '\u{3040}'..='\u{30FF}' | '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}'
-        | '\u{AC00}'..='\u{D7AF}' | '\u{F900}'..='\u{FAFF}' | '\u{FF00}'..='\u{FFEF}')
 }
 
 // ---------------------------------------------------------------------------
@@ -699,16 +685,38 @@ mod tests {
 
     #[test]
     fn join_lines() {
-        assert_eq!(
-            run(TransformId::JoinLines, "first line\n  second line  \n\nthird"),
-            "first line second line third"
-        );
-        // 中文断行直接相连，中英之间留空格
-        assert_eq!(
-            run(TransformId::JoinLines, "这是一段被\n硬换行的中文\nwith English"),
-            "这是一段被硬换行的中文 with English"
-        );
+        for (input, want) in [
+            ("first line\n  second line  \n\nthird", "first line second line third"),
+            // 中日文断行直接相连
+            ("这是一段被\n硬换行的中文", "这是一段被硬换行的中文"),
+            ("クリップ\nボードにコピー", "クリップボードにコピー"),
+            // 韩文以空格分词，断行处补空格
+            ("클립보드에\n복사합니다.", "클립보드에 복사합니다."),
+            // 紧挨中文的破折号、省略号之后不多出空格
+            ("他说——\n我们走吧", "他说——我们走吧"),
+            ("等等……\n然后呢", "等等……然后呢"),
+            ("Wait…\nthen go", "Wait… then go"),
+            ("用半角标点写的中文,\n照样直接相连", "用半角标点写的中文,照样直接相连"),
+            // 行尾连字符：断词还原，复合词与编号保留连字符且不加空格
+            ("an inter-\nface", "an interface"),
+            ("COVID-\n19 and Wi-\nFi", "COVID-19 and Wi-Fi"),
+            ("from 2020-\n2021", "from 2020-2021"),
+            (
+                "see https://example.com/long-\npath",
+                "see https://example.com/long-path",
+            ),
+            // 中英之间断行：全文没有间隔空格时直接相连，有就补上
+            (
+                "这是一段被\n硬换行的中文\nwith English",
+                "这是一段被硬换行的中文with English",
+            ),
+            ("使用 Wisp 时会\nCPU 占用很低", "使用 Wisp 时会 CPU 占用很低"),
+        ] {
+            assert_eq!(run(TransformId::JoinLines, input), want, "{input:?}");
+            assert_ne!(want, input, "适用时结果与原文不同");
+        }
         not_applicable(TransformId::JoinLines, ClipKind::Text, "single line");
+        not_applicable(TransformId::JoinLines, ClipKind::Text, "  trailing newline\n");
     }
 
     #[test]
@@ -743,8 +751,10 @@ mod tests {
         let full = run(TransformId::FullWidth, s);
         assert_eq!(run(TransformId::HalfWidth, &full), s);
         not_applicable(TransformId::HalfWidth, ClipKind::Text, "plain ascii");
-        // 纯英文不提供全角
+        // 纯英文不提供全角；中日韩文字里夹着半角字符时提供（含韩文）
         not_applicable(TransformId::FullWidth, ClipKind::Text, "plain ascii");
+        assert_eq!(run(TransformId::FullWidth, "모델 A1"), "모델\u{3000}Ａ１");
+        assert_eq!(run(TransformId::FullWidth, "かな A"), "かな\u{3000}Ａ");
     }
 
     #[test]

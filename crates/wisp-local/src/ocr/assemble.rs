@@ -3,14 +3,14 @@
 //! - 按框的竖向重叠把行分到「视觉行」，行内按 x 排序；同一视觉行内相邻片段按间距决定是否插空格（CJK 之间不加）。
 //!   间距超过约两个字高的片段视为不同的栏（表格的单元格、并排的面板）：lines 模式用制表符隔开，paragraphs 模式各自成段。
 //! - lines：每个视觉行一行，保留相对缩进（左边界与主体左边界之差折算成空格，最多 8 个）；行间有明显空白时空一行。
-//! - paragraphs：相邻视觉行在行距 ≤ 1.5 × 行高、左边界接近、上一行接近右边界时合并为一段；英文行尾的连字符断词还原；
-//!   列表项另起一段。段与段之间空一行（与视觉模型的 paragraphs 模式相同）。
+//! - paragraphs：相邻视觉行在行距 ≤ 1.5 × 行高、左边界接近、上一行接近右边界时合并为一段，跨行处按
+//!   [`wisp_text::join::join_break`] 相连（断词还原、东亚文字直接相连、中英之间按全文惯例）；列表项另起一段。
+//!   段与段之间空一行（与视觉模型的 paragraphs 模式相同）。
 //! - 置信度低于 [`MIN_SCORE`] 的行丢弃。没有文字时输出 [`NO_TEXT`]（编排器的无文字判定照常生效）。
 //!
 //! 这里只管几何（分行、分栏、缩进、段落边界）；只看文字本身的规则（是否加空格、断词还原、列表项）在 [`wisp_text::join`]。
 
-use wisp_text::join::{join_line, needs_space, starts_list_item};
-use wisp_text::script::is_unspaced;
+use wisp_text::join::{MixedSpacing, join_break, needs_space, starts_list_item};
 use wisp_types::OcrMode;
 
 use super::TextLine;
@@ -92,6 +92,8 @@ pub fn to_paragraphs(lines: &[TextLine]) -> String {
         return NO_TEXT.to_owned();
     }
     let all: Vec<Segment> = rows.iter().flat_map(|r| r.segments.iter().cloned()).collect();
+    // 中英之间的断行补不补空格，看同一截图里其他地方怎么写
+    let spacing = MixedSpacing::infer(all.iter().map(|s| s.text.as_str()));
     let mut paragraphs: Vec<Paragraph> = Vec::new();
     // 仍可能接上下一行的段落（每一栏最多一个）
     let mut open: Vec<usize> = Vec::new();
@@ -105,7 +107,7 @@ pub fn to_paragraphs(lines: &[TextLine]) -> String {
                 .find(|&i| paragraphs[i].accepts(&seg, &all));
             match target {
                 Some(i) => {
-                    paragraphs[i].push(seg);
+                    paragraphs[i].push(seg, spacing);
                     continued.push(i);
                 }
                 None => {
@@ -328,19 +330,18 @@ impl Paragraph {
         !starts_list_item(&seg.text)
     }
 
-    fn push(&mut self, seg: Segment) {
-        join_line(&mut self.text, &seg.text);
+    fn push(&mut self, seg: Segment, spacing: MixedSpacing) {
+        join_break(&mut self.text, &seg.text, spacing);
         self.lines += 1;
         self.right = self.right.max(seg.x1);
         self.last = seg;
     }
 }
 
-/// 一个「字宽」：按片段宽度除以显示宽度估计，取中位数。显示宽度粗略地把不用空格分词的东亚文字（汉字、假名、
-/// 全角形式等）记 2、其余记 1，只用来折算缩进，谚文按 1 计带来的偏差可以接受
+/// 一个「字宽」：按片段宽度除以显示宽度估计，取中位数。只用来折算 lines 模式的缩进
 fn char_unit(rows: &[Row], h: f32) -> f32 {
     let unit = median(rows.iter().flat_map(|r| r.segments.iter()).filter_map(|s| {
-        let units: usize = s.text.chars().map(|c| if is_unspaced(c) { 2 } else { 1 }).sum();
+        let units: usize = s.text.chars().map(|c| if is_wide(c) { 2 } else { 1 }).sum();
         (units >= 4).then(|| (s.x1 - s.x0) / units as f32)
     }));
     if unit.is_finite() && unit > 0.5 {
@@ -348,6 +349,28 @@ fn char_unit(rows: &[Row], h: f32) -> f32 {
     } else {
         (h * 0.5).max(1.0)
     }
+}
+
+/// 估字宽时记作两个半角宽的字符：CJK 部首、CJK 符号与标点、假名、注音、汉字（基本区、扩展 A、扩展 B 及以后、
+/// 兼容汉字）、竖排标点，以及整个全角与半角形式区。
+///
+/// 只服务于 [`char_unit`]，刻意与拼接规则用的文字分类分开：拼接规则调整时，缩进的折算不跟着变。半角片假名记 2、
+/// 谚文记 1，与实际字宽有出入，但缩进只取整数个空格、字宽取各片段的中位数，影响可以接受
+fn is_wide(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x2E80..=0x2FDF      // CJK 部首
+            | 0x3000..=0x303F // CJK 符号与标点
+            | 0x3040..=0x30FF // 平假名、片假名
+            | 0x3100..=0x312F // 注音
+            | 0x31F0..=0x31FF // 片假名扩展
+            | 0x3400..=0x4DBF // 扩展 A
+            | 0x4E00..=0x9FFF // 基本汉字
+            | 0xF900..=0xFAFF // 兼容汉字
+            | 0xFE30..=0xFE4F // 竖排标点
+            | 0xFF00..=0xFFEF // 全角与半角形式
+            | 0x20000..=0x3134F // 扩展 B 及以后
+    )
 }
 
 /// 主体左边界：至少四分之一的行靠着的最左位置（避免个别靠左的行号、图标把整体都算成缩进）
@@ -470,6 +493,26 @@ mod tests {
         assert_eq!(
             to_paragraphs(&input),
             "常驻后台的工具首先要安静：空闲时几乎不占CPU，也不抢走焦点。\n\n1. 第一项\n\n2. 第二项"
+        );
+    }
+
+    #[test]
+    fn paragraphs_follow_the_screenshots_cjk_latin_spacing() {
+        let spaced = [
+            line("使用 Wisp 时，面板在光标旁弹出，支持", 10.0, 10.0, 480.0, 30.0),
+            line("OpenAI 等服务。", 10.0, 34.0, 150.0, 54.0),
+        ];
+        assert_eq!(
+            to_paragraphs(&spaced),
+            "使用 Wisp 时，面板在光标旁弹出，支持 OpenAI 等服务。"
+        );
+        let tight = [
+            line("使用Wisp时，面板在光标旁弹出，支持", 10.0, 10.0, 480.0, 30.0),
+            line("OpenAI等服务。", 10.0, 34.0, 150.0, 54.0),
+        ];
+        assert_eq!(
+            to_paragraphs(&tight),
+            "使用Wisp时，面板在光标旁弹出，支持OpenAI等服务。"
         );
     }
 

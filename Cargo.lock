@@ -7657,6 +7657,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "wisp-text",
  "wisp-types",
 ]
 
@@ -7846,6 +7847,9 @@ dependencies = [
 [[package]]
 name = "wisp-text"
 version = "0.1.1"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "wisp-types"

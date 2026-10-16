@@ -11,5 +11,8 @@ publish = false
 # 刻意不依赖任何 crate（包括 wisp-types）：其他 crate 都可以横向依赖它而不形成环，规则也能单独测试
 [dependencies]
 
+[dev-dependencies]
+proptest = { workspace = true }
+
 [lints]
 workspace = true

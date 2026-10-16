@@ -90,7 +90,7 @@ wisp-types  ←── 除 wisp-text 外的 crate 都依赖它（纯数据，只�
 wisp-text   ←── 需要共用文本规则的 crate 依赖它（确定性的纯文本规则，不依赖任何 crate）
 wisp-llm       → wisp-types
 wisp-prompts   → wisp-types（eval feature 另依赖 wisp-llm）
-wisp-clipboard → wisp-types
+wisp-clipboard → wisp-types、wisp-text
 wisp-capture   → wisp-types
 wisp-platform  → wisp-types
 wisp-sync      → wisp-types
@@ -103,7 +103,7 @@ crate 之间的横向依赖只允许指向 `wisp-types` 与 `wisp-text`（`wisp-
 | crate | 职责 | 不负责 |
 | --- | --- | --- |
 | `wisp-types` | 所有跨 crate、跨进程（IPC）与持久化用到的数据类型及其默认值；事件名常量；宽松的配置解析 | 业务逻辑 |
-| `wisp-text` | 只看文字本身、要在多处保持一致的确定性规则：字符按书写习惯分类（汉字、假名、全角形式不用空格分词，谚文与拉丁文一样用空格）；两段文字拼接时是否加空格、跨行续接与行尾断词还原、列表项判定（OCR 的文本行拼装使用） | 版面与几何（视觉行、分栏、缩进、段落边界由调用方判断）；I/O；任何依赖 |
+| `wisp-text` | 只看文字本身、要在多处保持一致的确定性规则：字符按书写习惯分类（汉字、假名、全角形式不用空格分词，谚文与拉丁文一样用空格）；两段文字拼接时是否加空格、跨行续接（行尾断词还原、东亚标点直接相连、中英之间按全文惯例补空格）、列表项判定（OCR 的文本行拼装与剪贴板「合并为一行」共用） | 版面与几何（视觉行、分栏、缩进、段落边界由调用方判断）；I/O；任何依赖 |
 | `wisp-llm` | OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 四种协议的请求构造与 SSE 流式解析；`<think>` 标签剥离；错误归一化；Base URL 规范化；模型列表与视觉能力判定；连接测试；参数降级与能力缓存；超时、重试、取消；16 ms 合并器；服务模板（含 PaddleOCR 的模板；`paddle_ocr` 协议只是服务商的标记，所有 LLM 路径对它直接返回「未配置」）；`chat_template_kwargs` 方式的关闭思考 | 提示词内容、Key 的存储；PaddleOCR 的请求（在 `wisp-local`） |
 | `wisp-prompts` | 内置风格与用户覆盖的合并；模板渲染；翻译、词典式、润色、校对、提升译文、OCR 的提示词装配；语言检测与翻译方向；术语匹配；token 估算；流式安全的后处理；缓存键；离线翻译（Index-Translate）的官方提示词格式（`PromptProfile::IndexTranslate`：单条 user 消息、中文语言名、术语与风格写成约束）；评测运行器（`eval` feature） | 发请求 |
 | `wisp-clipboard` | SQLite（WAL）的打开与迁移；记录管线（隐私规则 → 规范化 → 去重 → 验证码的到期时间 → 写入 → 缓存）；类型推断；疑似密钥检测与应用排除名单；FTS5 trigram 检索与高亮（含收藏的名称）；收藏与命名；保留策略与清理；图片与缩略图文件；最近条目的内存缓存；识别历史；`smart/` 下的智能识别：识别器注册表（`recognize.rs`，电话、邮箱、链接、验证码、单号、金额、证件号等，每种一个 `Recognizer` 实现并登记）、变换注册表（`transform.rs`，「粘贴为…」的各项，每种一个 `Transform`）与验证码检测（`otp.rs`，记录时据此定到期时间） | 读取系统剪贴板（属于平台层）；识别结果不落库，按需计算 |

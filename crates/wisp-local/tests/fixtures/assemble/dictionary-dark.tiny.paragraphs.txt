@@ -24,6 +24,6 @@ serendipity /,ser.an'dip.a.ti/ n.
 
 收敛 2. 意外之喜一偶然得到的好东西
 
-It was pure serendipity that we met.我们的相遇纯属机缘巧合。
+It was pure serendipity that we met. 我们的相遇纯属机缘巧合。
 
 GPT-5.4 mini · 716 ms · 53 tokens
