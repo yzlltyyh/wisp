@@ -197,6 +197,7 @@ const payload = (extra: Partial<OcrPayload> = {}): ViewProps<'ocr'>['payload'] =
   image_size: { width: 1280, height: 480 },
   target_lang: 'zh-CN',
   not_ready: null,
+  layout: 'keep',
   ...extra,
 })
 

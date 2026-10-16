@@ -12,7 +12,7 @@
 use std::collections::HashSet;
 
 use wisp_types::defaults::{self, ranges};
-use wisp_types::{Binding, LocalModelKind, ModelRef, OcrMode, Protocol, SETTINGS_SCHEMA_VERSION, Settings};
+use wisp_types::{Binding, LocalModelKind, ModelRef, OcrLayout, OcrMode, Protocol, SETTINGS_SCHEMA_VERSION, Settings};
 
 /// 修正的种类
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -238,6 +238,11 @@ fn check_ocr(s: &mut Settings, fixes: &mut Vec<Fix>) {
         // 默认模式只允许 lines / paragraphs / markdown；直接翻译只能由截图直接翻译触发
         o.default_mode = OcrMode::Lines;
         fixes.push(Fix::new("ocr.default_mode", FixKind::Reset));
+    }
+    if !o.layout.can_be_default() {
+        // 默认排版只允许原样 / 去掉空行：合并为一行会丢掉分段，只能在结果面板里按需切换
+        o.layout = OcrLayout::Keep;
+        fixes.push(Fix::new("ocr.layout", FixKind::Reset));
     }
     clamp_u32(&mut o.max_edge_px, ranges::OCR_MAX_EDGE_PX, "ocr.max_edge_px", fixes);
     clamp_u32(
@@ -595,10 +600,18 @@ mod tests {
         let mut s = Settings::default();
         s.appearance.accent = "#12345".to_owned();
         s.ocr.default_mode = OcrMode::Translate;
+        s.ocr.layout = OcrLayout::JoinLines;
         let fixes = check(&mut s);
         assert_eq!(s.appearance.accent, "system");
         assert_eq!(s.ocr.default_mode, OcrMode::Lines);
+        assert_eq!(s.ocr.layout, OcrLayout::Keep, "合并为一行不能作为默认排版");
+        assert!(fixes.iter().any(|f| f.path == "ocr.layout"));
         assert!(fixes.iter().all(Fix::is_lossy));
+        // 去掉空行可以设为默认
+        let mut s = Settings::default();
+        s.ocr.layout = OcrLayout::RemoveBlankLines;
+        assert!(check(&mut s).is_empty());
+        assert_eq!(s.ocr.layout, OcrLayout::RemoveBlankLines);
         for ok in ["system", "graphite", "#0a84ff", "#0A84FF"] {
             assert!(accent_is_valid(ok), "{ok}");
         }

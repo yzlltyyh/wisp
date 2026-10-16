@@ -171,6 +171,7 @@ export function createFixtures(boot: Boot) {
         default_mode: 'lines',
         max_edge_px: 2048,
         auto_copy: true,
+        layout: 'keep',
         history: false,
         history_limit: 50,
         window_detect: true,
@@ -697,6 +698,7 @@ export function createFixtures(boot: Boot) {
         image_size: { width: 1280, height: 480 },
         target_lang: 'zh-CN',
         not_ready: null,
+        layout: 'keep',
       }
     },
     clipboard(items: readonly ClipItemMeta[] = clipItems()): PanelPayload {

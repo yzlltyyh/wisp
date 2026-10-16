@@ -86,6 +86,10 @@ pub fn validate_pin_state(s: &PinState) -> Result<(), IpcError> {
     if let Some(status) = &s.status {
         check_len("state.status.model_label", &status.model_label, MAX_LABEL_BYTES)?;
     }
+    if let Some(layers) = &s.ocr_layers {
+        check_len("state.ocr_layers.raw", &layers.raw, MAX_TEXT_BYTES)?;
+        check_opt_len("state.ocr_layers.edit", layers.edit.as_deref(), MAX_TEXT_BYTES)?;
+    }
     Ok(())
 }
 
@@ -262,8 +266,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use wisp_types::{
-        DictMode, GlossaryEntry, HotkeyAction, Lang, ModelEntry, OcrMode, OverlaySelectionKind, PhysSize, PinKind,
-        PinStatus, Protocol, TaskKind,
+        DictMode, GlossaryEntry, HotkeyAction, Lang, ModelEntry, OcrLayers, OcrLayout, OcrMode, OverlaySelectionKind,
+        PhysSize, PinKind, PinStatus, Protocol, TaskKind,
     };
 
     use super::*;
@@ -457,6 +461,7 @@ mod tests {
             mode: OcrMode::Lines,
             model_ref: None,
             target_lang: None,
+            layout: None,
         };
         assert!(validate_ocr_req(&ocr).is_ok());
         assert!(is_invalid(validate_ocr_req(&OcrReq {
@@ -485,6 +490,7 @@ mod tests {
             image_size: None,
             expand_width: None,
             on_top: None,
+            ocr_layers: None,
         };
         assert!(validate_pin_state(&pin).is_ok());
         assert!(is_invalid(validate_pin_state(&PinState {
@@ -536,6 +542,32 @@ mod tests {
             st.model_label = "m".repeat(MAX_LABEL_BYTES + 1);
         }
         assert!(is_invalid(validate_pin_state(&long_label)));
+        // OCR 结果文字的三层：识别文本与编辑各自受正文上限约束
+        let layers = OcrLayers {
+            raw: "a\n\nb".to_owned(),
+            layout: OcrLayout::RemoveBlankLines,
+            edit: Some("a b".to_owned()),
+        };
+        let with_layers = PinState {
+            ocr_layers: Some(layers.clone()),
+            ..pin.clone()
+        };
+        assert!(validate_pin_state(&with_layers).is_ok());
+        for bad in [
+            OcrLayers {
+                raw: "a".repeat(MAX_TEXT_BYTES + 1),
+                ..layers.clone()
+            },
+            OcrLayers {
+                edit: Some("a".repeat(MAX_TEXT_BYTES + 1)),
+                ..layers
+            },
+        ] {
+            assert!(is_invalid(validate_pin_state(&PinState {
+                ocr_layers: Some(bad),
+                ..pin.clone()
+            })));
+        }
 
         assert!(
             validate_window_target(&WindowTarget::Settings {

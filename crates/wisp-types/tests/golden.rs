@@ -634,6 +634,7 @@ fn ocr_payload() -> OcrPayload {
         },
         target_lang: Lang::ZhCn,
         not_ready: None,
+        layout: OcrLayout::RemoveBlankLines,
     }
 }
 
@@ -688,6 +689,7 @@ fn pin_state() -> PinState {
         image_size: None,
         expand_width: None,
         on_top: None,
+        ocr_layers: None,
     }
 }
 
@@ -733,6 +735,15 @@ fn pin_state_ocr() -> PinState {
         }),
         expand_width: Some(640),
         on_top: Some(false),
+        ocr_layers: Some(ocr_layers()),
+    }
+}
+
+fn ocr_layers() -> OcrLayers {
+    OcrLayers {
+        raw: s("The quick brown fox\n\njumps over the lazy dog."),
+        layout: OcrLayout::RemoveBlankLines,
+        edit: Some(s("The quick brown fox jumps over the lazy dog.")),
     }
 }
 
@@ -1304,9 +1315,10 @@ fn all_samples() -> Samples {
         OcrReq {
             session_id: 9,
             capture_id: s("c-7"),
-            mode: OcrMode::Translate,
+            mode: OcrMode::Lines,
             model_ref: None,
             target_lang: Some(Lang::ZhCn),
+            layout: Some(OcrLayout::JoinLines),
         },
     );
     x.add(
@@ -1329,6 +1341,7 @@ fn all_samples() -> Samples {
     // 全部可缺省字段都填上的 OCR 固定状态（固定 TS 侧可缺省键的形状）
     x.add("PinState.ocr", pin_state_ocr());
     x.add("PinStatus", pin_status());
+    x.add("OcrLayers", ocr_layers());
     x.add(
         "WindowTarget.settings",
         WindowTarget::Settings {
@@ -1772,6 +1785,7 @@ fn all_samples() -> Samples {
         "T.Settings['ocr']",
         OcrSettings {
             default_mode: OcrMode::Paragraphs,
+            layout: OcrLayout::RemoveBlankLines,
             image_detail: ImageDetail::Auto,
             history: true,
             ..OcrSettings::default()
@@ -2060,7 +2074,7 @@ fn settings_default_matches_contract_example() {
         "app_keymaps": [], "copy_wait_ms": 150 },
       "providers": [], "defaults": { "translate": null, "ocr": null },
       "translate": { "primary_lang": "zh-CN", "secondary_lang": "en", "default_style": "natural", "long_text_threshold": 3000, "close_on_click_outside": true, "close_on_mouse_leave": false, "mouse_leave_px": 160, "anchor": "selection", "input_anchor": "cursor", "cache_enabled": true, "show_source_by_default": false },
-      "ocr": { "default_mode": "lines", "max_edge_px": 2048, "auto_copy": true, "history": false, "history_limit": 50, "window_detect": true, "fly_animation": true, "direct_translate_transcribe": false, "image_detail": "high" },
+      "ocr": { "default_mode": "lines", "max_edge_px": 2048, "auto_copy": true, "layout": "keep", "history": false, "history_limit": 50, "window_detect": true, "fly_animation": true, "direct_translate_transcribe": false, "image_detail": "high" },
       "clipboard": { "enabled": true, "record_text": true, "record_rich_text": true, "record_images": true, "record_files": true, "max_items": 1000, "max_age_days": null, "max_text_bytes": 1048576, "max_image_bytes": 20971520, "excluded_apps": [], "secret_detection": true, "secret_tray_flash": true, "panel_position": "center", "paste_on": "single_click", "show_hint_bar": true,
         "smart": { "contacts": true, "codes": true, "numbers": true, "identity": false, "otp_auto_delete": true } },
       "appearance": { "theme": "system", "accent": "system", "font_size": 14, "translate_min_width": 360, "translate_max_width": 520, "clipboard_width": 420, "max_height_ratio": 0.6, "material": "system", "reduce_motion": "system" },
@@ -2186,7 +2200,7 @@ fn clipboard_payload_optional_fields() {
 /// 合并安全的新字段——默认值不出现在 JSON 里（旧样例 / 旧前端不受影响），旧载荷照常反序列化
 #[test]
 fn optional_fields_are_omitted_by_default() {
-    // PinState：7 个新字段缺省时都不写出；旧载荷（没有这些键）反序列化为默认值
+    // PinState：8 个新字段缺省时都不写出；旧载荷（没有这些键）反序列化为默认值
     let plain = serde_json::to_value(pin_state()).expect("json");
     for key in [
         "dict_mode",
@@ -2196,6 +2210,7 @@ fn optional_fields_are_omitted_by_default() {
         "image_size",
         "expand_width",
         "on_top",
+        "ocr_layers",
     ] {
         assert!(plain.get(key).is_none(), "PinState.{key} 的默认值不应写出");
     }
@@ -2207,6 +2222,7 @@ fn optional_fields_are_omitted_by_default() {
     assert_eq!(v["expand_width"], 640);
     assert_eq!(v["on_top"], false, "Some(false) 照常写出（与缺省的 null 区分）");
     assert_eq!(v["status"]["cached"], true);
+    assert_eq!(v["ocr_layers"]["layout"], "remove_blank_lines");
     assert_eq!(roundtrip_value(&full), full);
 
     // WindowTarget：没有锚点时不写出 anchor 键（旧前端发来的 `{kind, section}` 照常解析）
@@ -2270,6 +2286,39 @@ fn optional_fields_are_omitted_by_default() {
     ] {
         assert_eq!(serde_json::to_value(r).expect("json"), name);
     }
+}
+
+/// OCR 排版的新字段：旧前端的请求、旧的载荷与旧的 settings.json 都能照常读入，缺省时取「原样」/ 设置里的默认值
+#[test]
+fn ocr_layout_fields_tolerate_old_data() {
+    // 旧前端的重新识别请求没有 layout：按设置里的默认排版
+    let old: OcrReq = serde_json::from_value(serde_json::json!({
+        "session_id": 3, "capture_id": "c-1", "mode": "lines", "model_ref": null, "target_lang": null
+    }))
+    .expect("old OcrReq");
+    assert_eq!(old.layout, None);
+    // 没有 layout 的 OcrPayload 按「原样」
+    let mut plain = serde_json::to_value(ocr_payload()).expect("json");
+    plain.as_object_mut().expect("object").remove("layout");
+    let back: OcrPayload = serde_json::from_value(plain).expect("old OcrPayload");
+    assert_eq!(back.layout, OcrLayout::Keep);
+    // 旧的 settings.json 没有 ocr.layout：取默认；写错的值只让这个字段退回默认，并记一条问题
+    let (old, issues) = parse_lenient::<OcrSettings>(r#"{ "default_mode": "paragraphs" }"#).expect("old ocr");
+    assert_eq!(old.layout, OcrLayout::Keep);
+    assert!(issues.is_empty(), "{issues:?}");
+    let (bad, issues) = parse_lenient::<OcrSettings>(r#"{ "layout": "Compact" }"#).expect("bad ocr");
+    assert_eq!(bad.layout, OcrLayout::Keep);
+    assert_eq!(issues.len(), 1);
+    // join_lines 是合法的取值（能否作为默认由设置服务的校验决定），宽松解析照常读入
+    let (join, issues) = parse_lenient::<OcrSettings>(r#"{ "layout": "join_lines" }"#).expect("join");
+    assert_eq!(join.layout, OcrLayout::JoinLines);
+    assert!(issues.is_empty());
+    // 旧的固定窗口状态没有 ocr_layers
+    let mut plain = serde_json::to_value(pin_state_ocr()).expect("json");
+    plain.as_object_mut().expect("object").remove("ocr_layers");
+    let back: PinState = serde_json::from_value(plain).expect("old PinState");
+    assert_eq!(back.ocr_layers, None);
+    assert_eq!(back.ocr_text, pin_state_ocr().ocr_text);
 }
 
 /// 新配置的平台默认值经 `Settings::for_os` 进入；`default()` 保持平台无关

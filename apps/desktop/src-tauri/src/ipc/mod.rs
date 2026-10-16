@@ -121,6 +121,7 @@ commands![
     cmd_stream::translate_start,
     cmd_stream::ocr_start,
     cmd_stream::capture_release,
+    cmd_stream::ocr_recopy,
     cmd_stream::trigger_action,
     // ---- Overlay----
     cmd_overlay::overlay_init,

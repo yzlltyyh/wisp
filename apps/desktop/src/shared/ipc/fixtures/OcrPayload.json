@@ -8,5 +8,6 @@
     "height": 312
   },
   "target_lang": "zh-CN",
-  "not_ready": null
+  "not_ready": null,
+  "layout": "remove_blank_lines"
 }

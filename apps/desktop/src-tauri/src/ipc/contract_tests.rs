@@ -65,6 +65,7 @@ const BOUNDED: &[&str] = &[
     "ClipFilter",
     "SendTarget",
     "TransformId",
+    "OcrLayout",
     "Protocol",
     "ResizeSpring",
     "OsKind",

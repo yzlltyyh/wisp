@@ -57,6 +57,8 @@ export function payloadOf(state: PinState): PanelPayload {
       image_size: state.image_size ?? { width: 0, height: 0 },
       target_lang: state.target_lang,
       not_ready: null,
+      // 固定窗口里的排版沿用面板交接时的那个；旧面板没有交接时按「原样」
+      layout: state.ocr_layers?.layout ?? 'keep',
     }
   }
   return {

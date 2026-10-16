@@ -13,6 +13,7 @@
 import { boot as bootInfo } from '../../boot'
 import type {
   ModelEntry,
+  OcrLayout,
   OcrMode,
   PanelPayload,
   PinState,
@@ -164,6 +165,8 @@ interface PayloadOptions {
   /** 截图的 id（未就绪时 Rust 还没有截图：空串） */
   captureId?: string
   mode?: OcrMode
+  /** 会话排版的初值（Rust 取设置里的默认排版；直接翻译恒为 keep），默认 keep */
+  layout?: OcrLayout
   requestId?: string | null
   notReady?: Extract<PanelPayload, { kind: 'ocr' }>['not_ready']
   size?: [number, number]
@@ -187,6 +190,7 @@ async function ocrPayload(ctx: MockContext, o: PayloadOptions = {}): Promise<Pan
     image_size: o.noThumb ? { width: 0, height: 0 } : { width: w, height: h },
     target_lang: 'zh-CN',
     not_ready: o.notReady ?? null,
+    layout: o.layout ?? 'keep',
   }
 }
 

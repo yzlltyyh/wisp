@@ -34,7 +34,7 @@ use crate::settings::SettingsService;
 use crate::state::Deps;
 
 use super::engine::{Engine, store_error};
-use super::paste::{PasteHost, PasteRequest};
+use super::paste::{CopyReceipt, PasteHost, PasteRequest};
 use super::port::{AppHost, Exec, Host, PoolExec, Port};
 use super::queue::QueueEnd;
 use super::texts::{self, Text};
@@ -411,8 +411,14 @@ impl ClipboardService {
 
     /// OCR 自动复制、复制按钮兜底；会正常进入历史（来源记为 Wisp）。**会阻塞**（同步写系统剪贴板，Windows 最长约 1.5 s），
     /// 在阻塞线程上调用。KDE Wayland 等写不了时原样返回平台错误（裸 key，前端 `useCopy` 据此退回 `navigator.clipboard`）
-    pub fn copy_text(&self, text: &str) -> Result<(), IpcError> {
+    pub fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError> {
         self.engine.copy_text(text)
+    }
+
+    /// OCR 切换排版后让剪贴板跟随：剪贴板仍是 `prev` 写入的内容时改写为 `text`、照常进入历史，并删掉 `prev` 新建、
+    /// 没有收藏的那一条；剪贴板已被别的复制改写时什么都不做，返回 None。**会阻塞**，在阻塞线程上调用
+    pub fn recopy_text(&self, prev: CopyReceipt, text: &str) -> Result<Option<CopyReceipt>, IpcError> {
+        self.engine.recopy_text(prev, text)
     }
 
     /// 供 OCR 历史使用。数据库还没打开时打开它（**会阻塞**）；历史不可用时为 None

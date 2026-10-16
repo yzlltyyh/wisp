@@ -28,7 +28,7 @@ use crate::hotkey::{Binding, HotkeyAction, ModifierKey};
 use crate::lang::{Lang, UiLanguage};
 use crate::llm::{Defaults, ImageDetail, Provider};
 use crate::local::{DownloadSource, LocalModelId};
-use crate::style::OcrMode;
+use crate::style::{OcrLayout, OcrMode};
 
 /// 当前 settings.json 的 schema 版本。v2 新增 `offline` 分组（v1 → v2 是恒等迁移）：版本号提上来，是为了让降级后的
 /// 旧版本把 `offline` 当作「更新版本的内容」原样保留，而不是写盘时丢掉
@@ -325,6 +325,9 @@ lenient_struct! {
         pub max_edge_px: u32,
         /// true
         pub auto_copy: bool,
+        /// "keep"：逐行 / 段落模式识别结果的默认排版（只允许 keep / remove_blank_lines，见 `OcrLayout::can_be_default`）。
+        /// 结果面板里可以随时切换，结构化与直接翻译不受影响
+        pub layout: OcrLayout,
         /// false
         pub history: bool,
         /// 50（10–500）
@@ -346,6 +349,7 @@ impl Default for OcrSettings {
             default_mode: OcrMode::Lines,
             max_edge_px: 2048,
             auto_copy: true,
+            layout: OcrLayout::Keep,
             history: false,
             history_limit: 50,
             window_detect: true,

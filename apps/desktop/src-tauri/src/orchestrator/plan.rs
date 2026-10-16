@@ -18,8 +18,8 @@ use wisp_prompts::{
 use wisp_types::defaults::OFFLINE_PROVIDER_ID;
 use wisp_types::{
     DictMode, Lang, LocalModelId, LocalModelKind, LongTextInfo, MaxTokensField, ModelCaps, ModelEntry, ModelRef,
-    NotReady, OcrMode, Protocol, Provider, Quirks, RequestId, Settings, StreamEvent, Style, TaskKind, ThinkingOff,
-    Timeouts, Vision, VisionSource,
+    NotReady, OcrLayout, OcrMode, Protocol, Provider, Quirks, RequestId, Settings, StreamEvent, Style, TaskKind,
+    ThinkingOff, Timeouts, Vision, VisionSource,
 };
 
 use super::captures::ModelKey;
@@ -519,6 +519,16 @@ pub fn default_ocr_mode(settings: &Settings) -> OcrMode {
     match settings.ocr.default_mode {
         OcrMode::Translate => OcrMode::Lines,
         m => m,
+    }
+}
+
+/// 设置里的默认排版（只允许 keep / remove_blank_lines；设置服务的校验已经拦下合并为一行，这里再兜一次底）
+pub fn default_ocr_layout(settings: &Settings) -> OcrLayout {
+    let layout = settings.ocr.layout;
+    if layout.can_be_default() {
+        layout
+    } else {
+        OcrLayout::Keep
     }
 }
 

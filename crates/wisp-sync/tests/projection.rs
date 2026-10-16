@@ -11,9 +11,9 @@ use wisp_sync::projection::{
 };
 use wisp_types::{
     AppKeymap, Binding, DoubleTapSettings, DownloadSource, ExcludedApp, GlossaryEntry, GlossaryFile, HotkeyAction,
-    Lang, LocalModelId, LogLevel, MaterialPref, ModelCaps, ModelEntry, ModelRef, ModifierKey, OsKind, Protocol,
-    Provider, ReasoningEffort, Settings, Style, StyleOverride, StylesFile, Timeouts, UiLanguage, Vision, VisionSource,
-    parse_lenient,
+    Lang, LocalModelId, LogLevel, MaterialPref, ModelCaps, ModelEntry, ModelRef, ModifierKey, OcrLayout, OsKind,
+    Protocol, Provider, ReasoningEffort, Settings, Style, StyleOverride, StylesFile, Timeouts, UiLanguage, Vision,
+    VisionSource, parse_lenient,
 };
 
 const ALL_OS: [OsKind; 3] = [OsKind::Macos, OsKind::Windows, OsKind::Linux];
@@ -1092,6 +1092,42 @@ fn glossary_terms_keep_local_order() {
 // ---------------------------------------------------------------------------------------------
 // 本版本不认识的内容
 // ---------------------------------------------------------------------------------------------
+
+/// 新增的设置字段（OCR 的默认排版 `ocr.layout`）自动成为一个全局寄存器：投影里有它，写到还没有这个字段的旧文档里照常
+/// 应用；不认识它的旧版本把它当作未知 key 推迟（同下面 `/ocr/not_yet_known` 的处理），升级后再应用
+#[test]
+fn new_settings_fields_are_registers_of_their_own() {
+    let mut s = Settings::for_os(OsKind::Macos);
+    s.ocr.layout = OcrLayout::RemoveBlankLines;
+    let doc = val(&s);
+    let p = project(ConfigDoc::Settings, &doc, OsKind::Macos);
+    assert_eq!(p["/ocr/layout"], json!("remove_blank_lines"));
+    assert_round_trip(ConfigDoc::Settings, &doc, OsKind::Macos);
+
+    // 旧版本写出的 settings.json（没有 ocr.layout）收到它
+    let mut old = val(&Settings::for_os(OsKind::Windows));
+    old["ocr"].as_object_mut().expect("ocr").remove("layout");
+    let out = unproject_detailed(
+        ConfigDoc::Settings,
+        &old,
+        &[set("/ocr/layout", json!("remove_blank_lines"))],
+        OsKind::Windows,
+    );
+    assert!(all_applied(&out.results));
+    let back: Settings = assert_parses(&out.value);
+    assert_eq!(back.ocr.layout, OcrLayout::RemoveBlankLines);
+    assert_eq!(back.ocr.auto_copy, s.ocr.auto_copy, "同组的其他字段不受影响");
+
+    // 本版本还不认识的同组字段：推迟，不写入
+    let out = unproject_detailed(
+        ConfigDoc::Settings,
+        &doc,
+        &[set("/ocr/not_yet_known", json!("x"))],
+        OsKind::Macos,
+    );
+    assert_eq!(out.results, [KeyApply::Deferred]);
+    assert_eq!(out.value, doc);
+}
 
 #[test]
 fn unknown_content_is_neither_projected_nor_applied() {

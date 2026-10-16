@@ -1091,7 +1091,8 @@ export const PanelPayload__ocr = {
     "height": 312
   },
   "target_lang": "zh-CN",
-  "not_ready": null
+  "not_ready": null,
+  "layout": "remove_blank_lines"
 } satisfies T.PanelPayload
 
 export const PanelPayload__clipboard = {
@@ -1297,7 +1298,8 @@ export const OcrPayload = {
     "height": 312
   },
   "target_lang": "zh-CN",
-  "not_ready": null
+  "not_ready": null,
+  "layout": "remove_blank_lines"
 } satisfies T.OcrPayload
 
 export const ClipboardPayload = {
@@ -1512,9 +1514,10 @@ export const TranslateReq = {
 export const OcrReq = {
   "session_id": 9,
   "capture_id": "c-7",
-  "mode": "translate",
+  "mode": "lines",
   "model_ref": null,
-  "target_lang": "zh-CN"
+  "target_lang": "zh-CN",
+  "layout": "join_lines"
 } satisfies T.OcrReq
 
 export const StartAck = {
@@ -1582,7 +1585,12 @@ export const PinState__ocr = {
     "height": 720
   },
   "expand_width": 640,
-  "on_top": false
+  "on_top": false,
+  "ocr_layers": {
+    "raw": "The quick brown fox\n\njumps over the lazy dog.",
+    "layout": "remove_blank_lines",
+    "edit": "The quick brown fox jumps over the lazy dog."
+  }
 } satisfies T.PinState
 
 export const PinStatus = {
@@ -1598,6 +1606,12 @@ export const PinStatus = {
   "cancelled": false,
   "truncated": "max_tokens"
 } satisfies T.PinStatus
+
+export const OcrLayers = {
+  "raw": "The quick brown fox\n\njumps over the lazy dog.",
+  "layout": "remove_blank_lines",
+  "edit": "The quick brown fox jumps over the lazy dog."
+} satisfies T.OcrLayers
 
 export const WindowTarget__settings = {
   "kind": "settings",
@@ -1763,6 +1777,7 @@ export const SettingsSnapshot = {
       "default_mode": "lines",
       "max_edge_px": 2048,
       "auto_copy": true,
+      "layout": "keep",
       "history": false,
       "history_limit": 50,
       "window_detect": true,
@@ -2693,6 +2708,7 @@ export const Settings = {
     "default_mode": "lines",
     "max_edge_px": 2048,
     "auto_copy": true,
+    "layout": "keep",
     "history": false,
     "history_limit": 50,
     "window_detect": true,
@@ -2929,6 +2945,7 @@ export const OcrSettings = {
   "default_mode": "paragraphs",
   "max_edge_px": 2048,
   "auto_copy": true,
+  "layout": "remove_blank_lines",
   "history": true,
   "history_limit": 50,
   "window_detect": true,

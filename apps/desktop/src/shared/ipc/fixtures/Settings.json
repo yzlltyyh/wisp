@@ -58,6 +58,7 @@
     "default_mode": "lines",
     "max_edge_px": 2048,
     "auto_copy": true,
+    "layout": "keep",
     "history": false,
     "history_limit": 50,
     "window_detect": true,

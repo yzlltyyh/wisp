@@ -4,7 +4,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::clip::TransformId;
 use crate::llm::ModelRef;
+use crate::macros::str_enum;
 
 /// 输出格式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize)]
@@ -182,6 +184,46 @@ pub enum OcrMode {
     Translate,
 }
 
+impl OcrMode {
+    /// 识别结果能否切换排版：只有逐行与段落。结构化结果里的空行与行尾两个空格是 Markdown 语法，直接翻译的输出是译文，
+    /// 两者都原样交付
+    pub const fn has_layout(self) -> bool {
+        matches!(self, Self::Lines | Self::Paragraphs)
+    }
+}
+
+str_enum! {
+    /// OCR 结果的排版：在识别文本上做的一次纯文本处理，只在逐行 / 段落模式下生效（[`OcrMode::has_layout`]）。
+    /// 每个选项都作用在识别文本本身，不叠加在上一次的排版结果上。除「原样」外，每个选项都是「粘贴为…」里的一种变换
+    /// （[`OcrLayout::transform`]），规则只有剪贴板变换注册表那一份
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize)]
+    pub enum OcrLayout {
+        /// 原样：保留识别出的换行与空行
+        #[default]
+        Keep = "keep",
+        /// 去掉空行，其余各行原样保留
+        RemoveBlankLines = "remove_blank_lines",
+        /// 合并为一行：会丢掉分段，只能在结果面板里按需切换，不能设为默认
+        JoinLines = "join_lines",
+    }
+}
+
+impl OcrLayout {
+    /// 对应的「粘贴为…」变换；「原样」不做处理，为 None
+    pub const fn transform(self) -> Option<TransformId> {
+        match self {
+            Self::Keep => None,
+            Self::RemoveBlankLines => Some(TransformId::RemoveBlankLines),
+            Self::JoinLines => Some(TransformId::JoinLines),
+        }
+    }
+
+    /// 能否作为设置里的默认排版。合并为一行会丢掉全部分段，每次识别都自动这样做容易误伤，所以只能按需切换
+    pub const fn can_be_default(self) -> bool {
+        !matches!(self, Self::JoinLines)
+    }
+}
+
 /// 文本任务类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -201,4 +243,32 @@ pub enum DictMode {
     Auto,
     Dictionary,
     Prose,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ocr_layouts_map_to_transforms_and_only_lossless_ones_can_be_default() {
+        for l in OcrLayout::ALL {
+            assert_eq!(serde_json::to_value(l).expect("json"), l.as_str());
+        }
+        assert_eq!(OcrLayout::default(), OcrLayout::Keep);
+        assert_eq!(OcrLayout::Keep.transform(), None);
+        // 除「原样」外，排版的取值就是对应变换的取值（前端与 `text_transform` 共用这一个 id）
+        for l in OcrLayout::ALL.into_iter().filter(|l| *l != OcrLayout::Keep) {
+            assert_eq!(l.transform().map(TransformId::as_str), Some(l.as_str()), "{l:?}");
+        }
+        let defaults: Vec<OcrLayout> = OcrLayout::ALL.into_iter().filter(|l| l.can_be_default()).collect();
+        assert_eq!(defaults, [OcrLayout::Keep, OcrLayout::RemoveBlankLines]);
+    }
+
+    #[test]
+    fn only_lines_and_paragraphs_have_a_layout() {
+        assert!(OcrMode::Lines.has_layout());
+        assert!(OcrMode::Paragraphs.has_layout());
+        assert!(!OcrMode::Markdown.has_layout());
+        assert!(!OcrMode::Translate.has_layout());
+    }
 }

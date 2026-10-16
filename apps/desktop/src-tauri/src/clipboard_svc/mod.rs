@@ -69,7 +69,7 @@ mod tests_smart;
 #[cfg(test)]
 mod tests_sync;
 
-pub use paste::{FLOAT_LABEL, PasteHost, PasteKind, PasteRequest, PasteSource};
+pub use paste::{CopyReceipt, FLOAT_LABEL, PasteHost, PasteKind, PasteRequest, PasteSource};
 pub use service::ClipboardService;
 pub use sync::{
     ClipRemoteChange, ClipRemoteClear, ClipSyncSink, OcrRemoteChange, OcrSuperseded, RemoteOutcome, Superseded,

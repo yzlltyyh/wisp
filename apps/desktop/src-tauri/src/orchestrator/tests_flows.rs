@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -17,7 +17,7 @@ use wisp_platform::{CaptureMethod, Selection, SelectionError, SelectionOpts, rea
 use wisp_prompts::GlossaryMatcher;
 use wisp_types::{
     AppRef, ClipFilter, ClipPage, ClipboardPayload, DictMode, ErrorCode, HideReason, HotkeyAction, KeychainState,
-    LlmError, LocalModelId, MonitorId, MonitorInfo, NotReady, NoticeKind, OcrMode, OcrReq, OverlayCommit,
+    LlmError, LocalModelId, MonitorId, MonitorInfo, NotReady, NoticeKind, OcrLayout, OcrMode, OcrReq, OverlayCommit,
     OverlayEndReason, OverlaySelectionKind, PanelPayload, PanelTransition, PanelView, PermissionKind, PermissionState,
     PhysPoint, PhysSize, Rect, Settings, StreamEvent, StreamPhase, Style, TaskKind, TranslateReq, Usage, WindowTarget,
 };
@@ -28,6 +28,7 @@ use super::engine::{Core, KEY_WAIT};
 use super::env::{EngineImage, EngineRequest, Env};
 use super::fsm::{Flow, Stage};
 use super::not_ready::OfflineStatus;
+use super::ocr::delivered_text;
 use super::plan::EngineRef;
 use super::plan::tests::{configured, model_ref};
 use super::registry::Outcome;
@@ -36,6 +37,8 @@ use super::{RequestCaller, RequestHost};
 use crate::app::perf::{PerfMarks, PerfStage};
 use crate::assets::AssetSource;
 use crate::bus::{Command, TriggerOrigin};
+use crate::clipboard_svc::CopyReceipt;
+use crate::clipboard_svc::smart::layout_text;
 use crate::error::IpcError;
 use crate::windows::{HiddenSet, OverlaySession, PanelShowRequest, PanelState};
 
@@ -103,6 +106,11 @@ struct FakeEnv {
     perf: Arc<PerfMarks>,
     finished: Mutex<Vec<u64>>,
     copies: Mutex<Vec<String>>,
+    /// 假的系统剪贴板：当前的 change_id（每次 `copy_text` 加一；测试里直接加一表示别的程序复制了东西）
+    clip_change: AtomicU64,
+    /// `copy_text` 新建的历史条目 id（1 起）；`recopy_text` 删掉的条目
+    clip_items: AtomicI64,
+    clip_removed: Mutex<Vec<i64>>,
     usage: Mutex<Vec<Usage>>,
     calls: Mutex<Vec<String>>,
     permission: Mutex<PermissionState>,
@@ -187,6 +195,9 @@ impl FakeEnv {
             perf: Arc::new(PerfMarks::new()),
             finished: Mutex::new(Vec::new()),
             copies: Mutex::new(Vec::new()),
+            clip_change: AtomicU64::new(100),
+            clip_items: AtomicI64::new(0),
+            clip_removed: Mutex::new(Vec::new()),
             usage: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
             permission: Mutex::new(PermissionState::Granted),
@@ -382,9 +393,23 @@ impl Env for FakeEnv {
     fn activate(&self, _: &AppRef) {
         self.call("activate");
     }
-    fn copy_text(&self, text: &str) -> Result<(), IpcError> {
+    fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError> {
         self.copies.lock().push(text.to_owned());
-        Ok(())
+        Ok(CopyReceipt {
+            change_id: self.clip_change.fetch_add(1, Ordering::SeqCst) + 1,
+            created: Some(self.clip_items.fetch_add(1, Ordering::SeqCst) + 1),
+        })
+    }
+    /// 剪贴板服务的跟随规则只模拟到「剪贴板没变才写、写了就删上一条」；收藏不删、内容相同时保留由剪贴板服务的用例覆盖
+    fn recopy_text(&self, prev: CopyReceipt, text: &str) -> Result<Option<CopyReceipt>, IpcError> {
+        if self.clip_change.load(Ordering::SeqCst) != prev.change_id {
+            return Ok(None);
+        }
+        let next = self.copy_text(text)?;
+        if let Some(old) = prev.created {
+            self.clip_removed.lock().push(old);
+        }
+        Ok(Some(next))
     }
     fn wayland(&self) -> bool {
         *self.wayland.lock()
@@ -1309,6 +1334,7 @@ async fn ocr_capture_commit_and_done() {
             mode: OcrMode::Markdown,
             model_ref: Some(model_ref("p", "vision")),
             target_lang: None,
+            layout: None,
         },
         RequestHost::Panel { session_id: session },
         again.clone(),
@@ -1325,6 +1351,7 @@ async fn ocr_capture_commit_and_done() {
                 mode: OcrMode::Lines,
                 model_ref: None,
                 target_lang: None,
+                layout: None,
             },
             pinned("other"),
             Collector::new(),
@@ -1498,6 +1525,7 @@ async fn direct_translate_two_step_caches_the_original() {
             mode: OcrMode::Paragraphs,
             model_ref: None,
             target_lang: None,
+            layout: None,
         },
         RequestHost::Panel { session_id: session },
         original.clone(),
@@ -1765,6 +1793,7 @@ async fn pinned_can_re_recognise_a_transferred_capture() {
                     mode: OcrMode::Markdown,
                     model_ref: None,
                     target_lang: None,
+                    layout: None,
                 },
                 host,
                 sink,
@@ -2037,6 +2066,7 @@ async fn view_original_requests_again_when_the_model_changes() {
                     mode: OcrMode::Paragraphs,
                     model_ref: model,
                     target_lang: None,
+                    layout: None,
                 },
                 host,
                 out.clone(),
@@ -2544,6 +2574,7 @@ async fn pinning_a_finished_ocr_keeps_its_capture_for_the_pinned_window() {
             mode: OcrMode::Markdown,
             model_ref: None,
             target_lang: None,
+            layout: None,
         },
         pinned("p1"),
         again.clone(),
@@ -2629,6 +2660,7 @@ async fn ocr_history_records_results_and_replaces_re_recognition() {
                     mode,
                     model_ref: None,
                     target_lang: None,
+                    layout: None,
                 },
                 RequestHost::Panel { session_id: session },
                 sink.clone(),
@@ -2961,6 +2993,7 @@ async fn direct_translation_with_offline_models_stays_on_this_device() {
             mode: OcrMode::Paragraphs,
             model_ref: None,
             target_lang: None,
+            layout: None,
         },
         RequestHost::Panel { session_id: session },
         original.clone(),
@@ -2978,6 +3011,7 @@ async fn direct_translation_with_offline_models_stays_on_this_device() {
             mode: OcrMode::Translate,
             model_ref: None,
             target_lang: None,
+            layout: None,
         },
         RequestHost::Panel { session_id: session },
         again.clone(),
@@ -3248,6 +3282,7 @@ async fn translating_again_in_the_panel_checks_the_second_step_first() {
             mode: OcrMode::Translate,
             model_ref: None,
             target_lang: None,
+            layout: None,
         },
         RequestHost::Panel { session_id: session },
         again.clone(),
@@ -3274,6 +3309,7 @@ async fn translating_again_in_the_panel_checks_the_second_step_first() {
             mode: OcrMode::Paragraphs,
             model_ref: None,
             target_lang: None,
+            layout: None,
         },
         RequestHost::Panel { session_id: session },
         original.clone(),
@@ -3283,4 +3319,200 @@ async fn translating_again_in_the_panel_checks_the_second_step_first() {
     until("recognised", WAIT, || original.terminal().is_some()).await;
     assert!(matches!(original.terminal(), Some(StreamEvent::Done { .. })));
     assert_eq!(env.engine_count(), 2);
+}
+
+/// 交付文本只在逐行 / 段落模式、不是直接翻译的截图时排版；结构化、直接翻译（包括它的「查看原文」）原样交付
+#[test]
+fn delivered_text_lays_out_only_lines_and_paragraphs_outside_direct_translation() {
+    let raw = "第一段\n\n第二段";
+    let deliver = |mode, direct, layout| delivered_text(raw.to_owned(), mode, direct, layout);
+    assert_eq!(
+        deliver(OcrMode::Lines, false, OcrLayout::RemoveBlankLines),
+        "第一段\n第二段"
+    );
+    assert_eq!(
+        deliver(OcrMode::Paragraphs, false, OcrLayout::JoinLines),
+        "第一段第二段"
+    );
+    assert_eq!(deliver(OcrMode::Lines, false, OcrLayout::Keep), raw);
+    for layout in OcrLayout::ALL {
+        assert_eq!(deliver(OcrMode::Markdown, false, layout), raw, "{layout:?}");
+        assert_eq!(deliver(OcrMode::Translate, true, layout), raw, "{layout:?}");
+        assert_eq!(
+            deliver(OcrMode::Paragraphs, true, layout),
+            raw,
+            "直接翻译的「查看原文」：{layout:?}"
+        );
+    }
+}
+
+/// 识别完成时的交付：自动复制与识别历史是同一份 `layout(R)`（R 是流式结果的全文，视图累积的就是它，切换排版时交给
+/// `text_transform` 的也是它）；重新识别时视图带回的排版优先于设置，旧前端不带时按设置；结构化不排版
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ocr_delivers_the_session_layout_to_the_clipboard_and_history() {
+    let mut settings = configured();
+    settings.ocr.layout = OcrLayout::RemoveBlankLines;
+    settings.ocr.history = true;
+    let (env, core) = setup(settings);
+    let raw = "第一段\n\n第二段\n第三行";
+    env.llm_outputs.lock().insert("ocr", raw.to_owned());
+    let (payload, session, sink) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    assert_eq!(payload.layout, OcrLayout::RemoveBlankLines, "会话排版的初值取设置");
+    assert_eq!(sink.text(), raw, "流式显示的是识别文本本身");
+    let laid = layout_text(raw.to_owned(), OcrLayout::RemoveBlankLines);
+    assert_eq!(laid, "第一段\n第二段\n第三行");
+    until("auto copy", WAIT, || env.copies.lock().len() == 1).await;
+    until("recorded", WAIT, || env.ocr_history.lock().len() == 1).await;
+    assert_eq!(env.copies.lock()[0], laid);
+    assert_eq!(env.ocr_history.lock()[0].text, laid);
+    let crop = core.captures.crop(&payload.capture_id).expect("crop");
+    until("receipt", WAIT, || crop.copied().is_some()).await;
+
+    let rerun = |mode: OcrMode, layout: Option<OcrLayout>| {
+        let core = Arc::clone(&core);
+        let capture_id = payload.capture_id.clone();
+        async move {
+            let sink = Collector::new();
+            core.ocr_start(
+                OcrReq {
+                    session_id: session,
+                    capture_id,
+                    mode,
+                    model_ref: None,
+                    target_lang: None,
+                    layout,
+                },
+                RequestHost::Panel { session_id: session },
+                sink.clone(),
+            )
+            .await
+            .expect("ocr_start");
+            until("re-recognised", WAIT, || sink.terminal().is_some()).await;
+            assert_eq!(sink.text(), raw);
+        }
+    };
+    // 视图带回会话里的排版：合并为一行不能设为默认，但会话里可以选
+    rerun(OcrMode::Lines, Some(OcrLayout::JoinLines)).await;
+    until("copied again", WAIT, || env.copies.lock().len() == 2).await;
+    until("recorded again", WAIT, || env.ocr_history.lock().len() == 2).await;
+    let joined = layout_text(raw.to_owned(), OcrLayout::JoinLines);
+    assert_eq!(joined, "第一段第二段第三行");
+    assert_eq!(env.copies.lock()[1], joined);
+    assert_eq!(env.ocr_history.lock()[1].text, joined);
+    // 旧前端不带排版：按设置
+    rerun(OcrMode::Paragraphs, None).await;
+    until("copied a third time", WAIT, || env.copies.lock().len() == 3).await;
+    assert_eq!(env.copies.lock()[2], laid);
+    // 结构化：空行是 Markdown 语法，不排版
+    rerun(OcrMode::Markdown, Some(OcrLayout::RemoveBlankLines)).await;
+    until("markdown copied", WAIT, || env.copies.lock().len() == 4).await;
+    until("markdown recorded", WAIT, || env.ocr_history.lock().len() == 4).await;
+    assert_eq!(env.copies.lock()[3], raw);
+    assert_eq!(env.ocr_history.lock()[3].text, raw);
+}
+
+/// 切换排版后剪贴板跟随（`ocr_recopy`）：剪贴板仍是这张截图上次自动复制的内容时写入，替换上一次新建的历史条目、
+/// 换上新的回执；期间别的程序复制过东西就不再跟随
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ocr_recopy_follows_only_while_the_clipboard_still_holds_the_auto_copy() {
+    let (env, core) = setup(configured());
+    env.llm_outputs.lock().insert("ocr", "第一段\n\n第二段".to_owned());
+    let (payload, _, _) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    let cap = payload.capture_id.clone();
+    let crop = core.captures.crop(&cap).expect("crop");
+    until("auto copy", WAIT, || crop.copied().is_some()).await;
+    let first = crop.copied().expect("receipt");
+    assert_eq!(first.created, Some(1));
+    let recopy = |text: &str| core.ocr_recopy(&RequestCaller::Panel, &cap, text.to_owned());
+
+    // 切换为「去掉空行」：写入，替换第 1 条
+    assert!(recopy("第一段\n第二段").await.expect("recopy"));
+    assert_eq!(env.copies.lock().last().map(String::as_str), Some("第一段\n第二段"));
+    assert_eq!(*env.clip_removed.lock(), [1]);
+    let second = crop.copied().expect("receipt");
+    assert_eq!(second.created, Some(2));
+    assert_ne!(second.change_id, first.change_id);
+    // 切回原样：替换的是第 2 条，历史里始终只留一条
+    assert!(recopy("第一段\n\n第二段").await.expect("recopy"));
+    assert_eq!(*env.clip_removed.lock(), [1, 2]);
+
+    // 别的程序复制了东西：剪贴板与历史都不动，回执也不变
+    env.clip_change.fetch_add(1, Ordering::SeqCst);
+    let copies = env.copies.lock().len();
+    let receipt = crop.copied();
+    assert!(!recopy("第一段\n第二段").await.expect("recopy"));
+    assert_eq!(env.copies.lock().len(), copies);
+    assert_eq!(env.clip_removed.lock().len(), 2);
+    assert_eq!(crop.copied(), receipt);
+    // 不存在的截图：与条件不满足一样
+    assert!(
+        !core
+            .ocr_recopy(&RequestCaller::Panel, "c-404", "x".to_owned())
+            .await
+            .expect("unknown capture")
+    );
+}
+
+/// 自动复制关着、截图已经固定到窗口里、直接翻译的截图：切换排版都不写剪贴板
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ocr_recopy_never_writes_without_auto_copy_from_pinned_windows_or_for_direct_translation() {
+    // 自动复制关着：识别完不复制，切换也不写
+    let mut settings = configured();
+    settings.ocr.auto_copy = false;
+    let (env, core) = setup(settings);
+    let (payload, _, _) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert!(
+        !core
+            .ocr_recopy(&RequestCaller::Panel, &payload.capture_id, "x".to_owned())
+            .await
+            .expect("recopy")
+    );
+    assert!(env.copies.lock().is_empty());
+
+    // 识别完成、自动复制之后才关掉：同样不写
+    let (env, core) = setup(configured());
+    let (payload, _, _) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    let cap = payload.capture_id.clone();
+    let crop = core.captures.crop(&cap).expect("crop");
+    until("auto copy", WAIT, || crop.copied().is_some()).await;
+    let mut off = (*env.settings()).clone();
+    off.ocr.auto_copy = false;
+    *env.settings.lock() = Arc::new(off);
+    assert!(
+        !core
+            .ocr_recopy(&RequestCaller::Panel, &cap, "x".to_owned())
+            .await
+            .expect("recopy")
+    );
+    *env.settings.lock() = Arc::new(configured());
+
+    // 固定到窗口之后：面板与固定窗口都不能带动剪贴板
+    core.transfer_to_pinned(payload.request_id.as_deref().expect("request"), "p1");
+    let p1 = RequestCaller::Pinned {
+        pinned_id: "p1".to_owned(),
+    };
+    for caller in [RequestCaller::Panel, p1] {
+        assert!(
+            !core.ocr_recopy(&caller, &cap, "x".to_owned()).await.expect("recopy"),
+            "{caller:?}"
+        );
+    }
+    assert_eq!(env.copies.lock().len(), 1, "只有识别完成时的那一次");
+    assert!(env.clip_removed.lock().is_empty());
+
+    // 直接翻译：会话排版恒为原样，不自动复制，也不跟随
+    let mut settings = configured();
+    settings.ocr.layout = OcrLayout::RemoveBlankLines;
+    let (env, core) = setup(settings);
+    let (payload, _, _) = capture_and_wait(&env, &core, HotkeyAction::OcrTranslate).await;
+    assert_eq!(payload.mode, OcrMode::Translate);
+    assert_eq!(payload.layout, OcrLayout::Keep);
+    assert!(
+        !core
+            .ocr_recopy(&RequestCaller::Panel, &payload.capture_id, "x".to_owned())
+            .await
+            .expect("recopy")
+    );
+    assert!(env.copies.lock().is_empty());
 }

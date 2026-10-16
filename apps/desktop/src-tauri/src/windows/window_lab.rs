@@ -1171,6 +1171,7 @@ fn lab_pin_state() -> PinState {
         image_size: None,
         expand_width: None,
         on_top: None,
+        ocr_layers: None,
     }
 }
 
@@ -2589,6 +2590,7 @@ pub fn spawn(app: tauri::AppHandle) {
             image_size: None,
             expand_width: None,
             on_top: None,
+            ocr_layers: None,
         };
         match wm.pin_from_session(s2, pin.clone(), false) {
             Ok(id) => {

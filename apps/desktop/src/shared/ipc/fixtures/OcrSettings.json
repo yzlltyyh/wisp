@@ -2,6 +2,7 @@
   "default_mode": "paragraphs",
   "max_edge_px": 2048,
   "auto_copy": true,
+  "layout": "remove_blank_lines",
   "history": true,
   "history_limit": 50,
   "window_detect": true,

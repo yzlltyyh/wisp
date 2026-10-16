@@ -351,6 +351,11 @@ export interface GlossaryFile {
   entries: GlossaryEntry[]
 }
 export type OcrMode = 'lines' | 'paragraphs' | 'markdown' | 'translate'
+/**
+ * OCR 结果的排版（只在 lines / paragraphs 下生效）：除 keep 外取值与对应的 TransformId 相同，
+ * 显示文本经 `text_transform` 由 Rust 计算。join_lines 不能设为默认
+ */
+export type OcrLayout = 'keep' | 'remove_blank_lines' | 'join_lines'
 export type TaskKind = 'translate' | 'polish' | 'proofread' | 'refine'
 export type DictMode = 'auto' | 'dictionary' | 'prose'
 export interface PromptPreview {
@@ -682,6 +687,11 @@ export interface OcrPayload {
   image_size: PhysSize
   target_lang: Lang
   not_ready: NotReady | null
+  /**
+   * 本次会话排版的初值（设置里的默认排版；直接翻译恒为 keep）。识别完成时自动复制与识别历史按它处理
+   * （只在 lines / paragraphs 下）；切换后重新识别时经 `OcrReq.layout` 带回
+   */
+  layout: OcrLayout
 }
 export interface ClipboardPayload {
   page: ClipPage
@@ -812,6 +822,8 @@ export interface OcrReq {
   mode: OcrMode
   model_ref: ModelRef | null
   target_lang: Lang | null
+  /** 会话里当前的排版（自动复制与识别历史按它处理）；缺省 / null = 设置里的默认排版 */
+  layout?: OcrLayout | null
 }
 export interface StartAck {
   /** 已登记的请求；`long_text` 非 null 时请求没有发出，为空串 */
@@ -844,7 +856,7 @@ export interface PinState {
   show_source: boolean
   status_line: string | null
   // ---- 以下字段在 Rust 侧 `skip_serializing_if`，缺省 = 默认值。
-  // 前 5 个由面板视图在 `panel_pin` 时填写；后 2 个由 Rust 在 `pinned_init` 返回时填写（panel_pin 传入的值被忽略）
+  // expand_width / on_top 由 Rust 在 `pinned_init` 返回时填写（panel_pin 传入的值被忽略），其余由面板视图在 `panel_pin` 时填写
   /** 词典模式（固定窗口里换风格 / 重新生成时沿用）；缺省 = false */
   dict_mode?: boolean
   /** 本次结果实际使用的模型；缺省 / null = 按默认模型 */
@@ -859,6 +871,16 @@ export interface PinState {
   expand_width?: number | null
   /** Rust 填写：窗口当前是否置顶；缺省 / null = 旧 Rust（退回前端自己的初值） */
   on_top?: boolean | null
+  /** OCR：结果文字的三层（识别文本、排版、编辑）；缺省 / null = 按 ocr_text 显示（翻译、旧前端） */
+  ocr_layers?: OcrLayers | null
+}
+/** 固定窗口里 OCR 结果文字的三层：显示 edit，没有编辑时显示按 layout 处理过的 raw */
+export interface OcrLayers {
+  /** 识别文本（流式结果全文，未排版） */
+  raw: string
+  layout: OcrLayout
+  /** 用户编辑后的文字；没有编辑时为 null */
+  edit: string | null
 }
 /** 固定窗口的结构化状态行（`PinState.status`）：与面板 StatusLine 的各段一一对应 */
 export interface PinStatus {
@@ -1125,6 +1147,8 @@ export interface OcrSettings {
   /** 默认 2048（512–4096） */
   max_edge_px: number
   auto_copy: boolean
+  /** 逐行 / 段落模式的默认排版：只允许 keep / remove_blank_lines，默认 keep */
+  layout: OcrLayout
   history: boolean
   /** 默认 50（10–500） */
   history_limit: number

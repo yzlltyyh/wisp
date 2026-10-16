@@ -132,6 +132,22 @@ fn copies_pins_deletes_and_clears_notify_the_sink() {
     r.engine.delete(a.id, false).expect("删除");
     assert!(sink.take().is_empty());
 
+    // OCR 切换排版后的跟随：替换掉的那一条经正常的删除路径通知同步
+    let first = r.engine.copy_text("第一段\n\n第二段").expect("复制");
+    let replaced = hash(&r, first.created.expect("新建"));
+    sink.take();
+    let next = r
+        .engine
+        .recopy_text(first, "第一段\n第二段")
+        .expect("跟随")
+        .expect("写入");
+    let added = hash(&r, next.created.expect("新建"));
+    assert_eq!(
+        sink.take(),
+        vec![SinkCall::Content(added), SinkCall::Delete(replaced)],
+        "先写新内容，再删被取代的那一条"
+    );
+
     r.engine.clear(true).expect("清空");
     assert_eq!(sink.take(), vec![SinkCall::Clear(true)]);
     r.engine.clear(false).expect("清空");

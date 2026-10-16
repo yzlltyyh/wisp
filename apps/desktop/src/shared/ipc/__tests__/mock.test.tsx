@@ -97,6 +97,15 @@ describe('mock 默认命令', () => {
     })
   })
 
+  it('ocr_recopy 跟随自动复制的开关；默认排版为原样', async () => {
+    const snap = await api.settingsGet()
+    expect(snap.settings.ocr.layout).toBe('keep')
+    await expect(api.ocrRecopy('cap-1', '第一段\n第二段')).resolves.toBe(true)
+    await api.settingsPatch({ ocr: { auto_copy: false } })
+    await expect(api.ocrRecopy('cap-1', '第一段\n第二段')).resolves.toBe(false)
+    await api.settingsPatch({ ocr: { auto_copy: true } })
+  })
+
   it('translate_start 立即开始流并经通道推送', async () => {
     const events: StreamEvent[] = []
     const ack = await api.translateStart(

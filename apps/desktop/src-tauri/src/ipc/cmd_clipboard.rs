@@ -445,7 +445,7 @@ pub async fn clipboard_copy_text(app_state: State<'_, AppState>, text: String) -
     check_len("text", &text, MAX_TEXT_BYTES)?;
     // copy_text 同步写系统剪贴板（Windows 的 OpenClipboard 重试最长约 1.5 s）：放进阻塞线程池，不占 tokio worker
     let clipboard = Arc::clone(&app_state.clipboard);
-    tauri::async_runtime::spawn_blocking(move || clipboard.copy_text(&text))
+    tauri::async_runtime::spawn_blocking(move || clipboard.copy_text(&text).map(drop))
         .await
         .map_err(|e| IpcError::internal(format!("copy task failed: {e}")))?
 }

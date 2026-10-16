@@ -13,7 +13,7 @@ use crate::llm::{ModelRef, RequestId, TruncateReason, Usage};
 use crate::local::{LocalModelId, OfflineSummary};
 use crate::perm::{PermissionKind, PermissionSet};
 use crate::settings::Settings;
-use crate::style::{DictMode, OcrMode, Style, TaskKind};
+use crate::style::{DictMode, OcrLayout, OcrMode, Style, TaskKind};
 use crate::sync::SyncStatus;
 
 /// 面板视图
@@ -158,6 +158,11 @@ pub struct OcrPayload {
     pub image_size: PhysSize,
     pub target_lang: Lang,
     pub not_ready: Option<NotReady>,
+    /// 本次会话排版的初值（设置里的默认排版；直接翻译的截图恒为 keep）。这次识别完成时，自动复制与识别历史用的就是
+    /// 按它处理过的文本（只在逐行 / 段落模式下处理，见 `OcrMode::has_layout`）；视图切换排版后，重新识别时经
+    /// `OcrReq.layout` 带回
+    #[serde(default)]
+    pub layout: OcrLayout,
 }
 
 /// 剪贴板视图
@@ -312,6 +317,9 @@ pub struct OcrReq {
     pub mode: OcrMode,
     pub model_ref: Option<ModelRef>,
     pub target_lang: Option<Lang>,
+    /// 会话里当前的排版：识别完成时自动复制与识别历史按它处理（与视图显示的一致）。缺省 / null = 设置里的默认排版
+    #[serde(default)]
+    pub layout: Option<OcrLayout>,
 }
 
 /// 流式请求的确认
@@ -354,8 +362,8 @@ pub struct PinState {
     pub show_source: bool,
     pub status_line: Option<String>,
     // ---- 以下字段全部 `#[serde(default, skip_serializing_if = …)]`，
-    // 默认值不出现在 JSON 里（旧样例与旧前端不受影响）；TS 镜像写成可缺省的键。前 5 个由面板视图在 `panel_pin` 时填写，
-    // 后 2 个由 Rust 在 `pinned_init` 返回时填写（`panel_pin` 传入的值被忽略）
+    // 默认值不出现在 JSON 里（旧样例与旧前端不受影响）；TS 镜像写成可缺省的键。`expand_width` / `on_top` 由 Rust 在
+    // `pinned_init` 返回时填写（`panel_pin` 传入的值被忽略），其余由面板视图在 `panel_pin` 时填写
     /// 词典模式（翻译视图的 `dict_mode`，固定窗口里换风格 / 重新生成时沿用）
     #[serde(default, skip_serializing_if = "is_false")]
     pub dict_mode: bool,
@@ -379,6 +387,21 @@ pub struct PinState {
     /// 取代前端 localStorage 记住的初值
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_top: Option<bool>,
+    /// OCR：结果文字的三层（识别文本、排版、编辑），由面板视图在 `panel_pin` 时填写，固定窗口据此继续切换排版、
+    /// 区分「已编辑」。没有时（翻译、旧前端）固定窗口按 `ocr_text` 显示
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr_layers: Option<OcrLayers>,
+}
+
+/// 固定窗口里 OCR 结果文字的三层（`PinState.ocr_layers`）：显示的是 `edit`，没有编辑时是 `layout` 处理过的 `raw`
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OcrLayers {
+    /// 识别文本（流式结果的全文，未排版）
+    pub raw: String,
+    /// 当前的排版
+    pub layout: OcrLayout,
+    /// 用户编辑后的文字；没有编辑时为 null
+    pub edit: Option<String>,
 }
 
 /// 固定窗口的结构化状态行（`PinState.status`）：与面板 StatusLine 的各段一一对应

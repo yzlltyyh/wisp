@@ -1,4 +1,4 @@
-//! 粘贴流程与 `copy_text`。
+//! 粘贴流程与 `copy_text`（以及 OCR 切换排版后让剪贴板跟随的 `recopy_text`）。
 //!
 //! # 统一管线
 //! 所有粘贴都是一个 [`PasteRequest`]，经 [`Engine::paste`] 走同一个状态机，按两个维度分支：
@@ -56,7 +56,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use wisp_clipboard::{ClipStore, smart};
+use wisp_clipboard::{ClipStore, IngestOutcome, smart};
 use wisp_platform::common::keymap::{self, KeyChoice};
 use wisp_platform::{PasteError, PlatformError, SuppressRange, WriteOpts, reason};
 use wisp_types::{
@@ -73,6 +73,40 @@ use super::port::PASTE_HIDE_WAIT;
 
 /// 自身写入的抑制时长（与取词回退的抑制 ttl 相同；Windows 的去抖最长 250 ms，覆盖得住）
 pub const SELF_WRITE_TTL: Duration = Duration::from_millis(300);
+
+/// `copy_text` 的回执：OCR 自动复制把它记在截图上，切换排版后据此判断剪贴板还是不是这次写入的内容、该替换历史里的哪一条
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CopyReceipt {
+    /// 写入后系统剪贴板的 change_id
+    pub change_id: u64,
+    /// 这次写入在剪贴板历史里新建的条目。内容早已在历史里（只是移到顶部）、没有在记录（暂停、关闭）、被跳过或记录
+    /// 失败时为 None——那样的条目不是这次复制产生的，切换排版时不能删
+    pub created: Option<i64>,
+}
+
+/// 一次自身写入在历史里的结果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Recorded {
+    /// 新建了这一条
+    Created(i64),
+    /// 内容已在历史里，这一条被移到顶部
+    Touched(i64),
+}
+
+impl Recorded {
+    fn id(self) -> i64 {
+        match self {
+            Self::Created(id) | Self::Touched(id) => id,
+        }
+    }
+
+    fn created(self) -> Option<i64> {
+        match self {
+            Self::Created(id) => Some(id),
+            Self::Touched(_) => None,
+        }
+    }
+}
 
 /// 埋点里的发键方式名（`perf paste method=…`）
 pub(crate) fn paste_method(os: OsKind) -> &'static str {
@@ -679,8 +713,42 @@ impl Engine {
         }
     }
 
-    /// 把文本写入系统剪贴板并照常进入历史（OCR 自动复制、复制按钮）。**会阻塞**（Windows 写剪贴板最长约 1.5 s）
-    pub(crate) fn copy_text(&self, text: &str) -> Result<(), IpcError> {
+    /// 把文本写入系统剪贴板并照常进入历史（OCR 自动复制、复制按钮），返回这次写入的回执。**会阻塞**（Windows 写剪贴板
+    /// 最长约 1.5 s）
+    pub(crate) fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError> {
+        let (change_id, recorded) = self.write_and_record(text)?;
+        Ok(CopyReceipt {
+            change_id,
+            created: recorded.and_then(Recorded::created),
+        })
+    }
+
+    /// OCR 切换排版后的剪贴板跟随：系统剪贴板仍是 `prev` 那次写入的内容（`change_id` 没变，期间没有别的复制）时改写为
+    /// `text`，照常进入历史；`prev` 新建的那一条随后经正常的删除路径删掉（同步随之传播删除），历史里只留现在这一版。
+    /// 收藏过的不删（命名即收藏，存储层保证有名称的条目一定是收藏）。新文本没能进入历史（暂停、被隐私规则跳过、
+    /// 记录失败）时也不删：只删不增会让这次识别从历史里消失，旧条目留在回执上，下一次跟随时再替换。
+    /// 剪贴板已被别的复制改写时什么都不做，返回 None。**会阻塞**
+    pub(crate) fn recopy_text(&self, prev: CopyReceipt, text: &str) -> Result<Option<CopyReceipt>, IpcError> {
+        if self.port.clipboard().change_id() != prev.change_id {
+            return Ok(None);
+        }
+        let (change_id, recorded) = self.write_and_record(text)?;
+        let created = match (prev.created, recorded) {
+            // 内容相同只会 touch 上一次新建的那一条：它仍是自动复制出来的，继续记在回执上
+            (Some(old), Some(r)) if r.id() == old => Some(old),
+            (Some(old), Some(r)) => {
+                self.discard_copied(old);
+                r.created()
+            }
+            (Some(old), None) => Some(old),
+            (None, r) => r.and_then(Recorded::created),
+        };
+        Ok(Some(CopyReceipt { change_id, created }))
+    }
+
+    /// 写入剪贴板、抑制这次变更并记进历史；返回写入后的 change_id 与历史里记下的条目（没有在记录、被跳过或记录失败时为
+    /// None）
+    fn write_and_record(&self, text: &str) -> Result<(u64, Option<Recorded>), IpcError> {
         let change = self
             .port
             .paste()
@@ -690,7 +758,7 @@ impl Engine {
             ttl: SELF_WRITE_TTL,
         });
         if !self.recording() {
-            return Ok(());
+            return Ok((change, None));
         }
         // 监听方会因 from_wisp 跳过这次变更，由这里直接记录（来源记为 Wisp 自己）
         let raw = RawClipboard {
@@ -699,10 +767,25 @@ impl Engine {
             text: Some(text.to_owned()),
             ..RawClipboard::default()
         };
-        if let Err(e) = self.ingest(&raw) {
-            log::info!("record copied text failed: {}", e.message);
+        let recorded = match self.ingest(&raw) {
+            Ok(IngestOutcome::Inserted(meta)) => Some(Recorded::Created(meta.id)),
+            Ok(IngestOutcome::Touched(meta)) => Some(Recorded::Touched(meta.id)),
+            Ok(IngestOutcome::Skipped(_)) => None,
+            Err(e) => {
+                log::info!("record copied text failed: {}", e.message);
+                None
+            }
+        };
+        Ok((change, recorded))
+    }
+
+    /// 删掉一条被新版本取代的自动复制条目；收藏过的保留，已经不在了视为删掉
+    fn discard_copied(&self, id: i64) {
+        match self.delete(id, false) {
+            Ok(()) => log::debug!("replaced copy removed id={id}"),
+            Err(e) if e.code == IpcErrorCode::Conflict => log::debug!("replaced copy kept as a favorite id={id}"),
+            Err(e) => log::info!("removing the replaced copy failed id={id}: {}", e.message),
         }
-        Ok(())
     }
 
     /// 只复制时把焦点还给原应用（Windows / X11；macOS 的面板是非激活的，什么都不用做）。Windows 上同样只认记录的那个、

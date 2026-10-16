@@ -31,5 +31,10 @@
     "height": 720
   },
   "expand_width": 640,
-  "on_top": false
+  "on_top": false,
+  "ocr_layers": {
+    "raw": "The quick brown fox\n\njumps over the lazy dog.",
+    "layout": "remove_blank_lines",
+    "edit": "The quick brown fox jumps over the lazy dog."
+  }
 }

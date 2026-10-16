@@ -315,6 +315,7 @@ mod tests {
             image_size: None,
             expand_width: None,
             on_top: None,
+            ocr_layers: None,
         }
     }
 

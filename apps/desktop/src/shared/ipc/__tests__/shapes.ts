@@ -175,6 +175,11 @@ const OcrMode = enumOf<T.OcrMode>()('OcrMode', {
   markdown: 1,
   translate: 1,
 })
+const OcrLayout = enumOf<T.OcrLayout>()('OcrLayout', {
+  keep: 1,
+  remove_blank_lines: 1,
+  join_lines: 1,
+})
 const TaskKind = enumOf<T.TaskKind>()('TaskKind', {
   translate: 1,
   polish: 1,
@@ -486,6 +491,7 @@ const OcrPayloadFields: Fields<T.OcrPayload> = {
   image_size: ref('PhysSize'),
   target_lang: Lang,
   not_ready: nul(ref('NotReady')),
+  layout: OcrLayout,
 }
 const ClipboardPayloadFields: Fields<T.ClipboardPayload> = {
   page: ref('ClipPage'),
@@ -733,6 +739,7 @@ export const registry = {
     entries: arr(ref('GlossaryEntry')),
   }),
   OcrMode,
+  OcrLayout,
   TaskKind,
   DictMode,
   PromptPreview: obj<T.PromptPreview>()('PromptPreview', { system: str, user: str }),
@@ -1002,6 +1009,7 @@ export const registry = {
     mode: OcrMode,
     model_ref: nul(modelRef),
     target_lang: nul(Lang),
+    layout: opt(nul(OcrLayout)),
   }),
   StartAck: obj<T.StartAck>()('StartAck', {
     request_id: str,
@@ -1030,6 +1038,12 @@ export const registry = {
     image_size: opt(nul(ref('PhysSize'))),
     expand_width: opt(nul(num)),
     on_top: opt(nul(bool)),
+    ocr_layers: opt(nul(ref('OcrLayers'))),
+  }),
+  OcrLayers: obj<T.OcrLayers>()('OcrLayers', {
+    raw: str,
+    layout: OcrLayout,
+    edit: nul(str),
   }),
   PinStatus: obj<T.PinStatus>()('PinStatus', {
     model_label: str,
@@ -1222,6 +1236,7 @@ export const registry = {
     default_mode: OcrMode,
     max_edge_px: num,
     auto_copy: bool,
+    layout: OcrLayout,
     history: bool,
     history_limit: num,
     window_detect: bool,

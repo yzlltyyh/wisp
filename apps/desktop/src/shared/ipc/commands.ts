@@ -48,6 +48,9 @@ export interface CommandMap extends OverlayCommandMap {
   translate_start: { args: { req: T.TranslateReq }; ret: T.StartAck }
   ocr_start: { args: { req: T.OcrReq }; ret: T.StartAck }
   capture_release: { args: { capture_id: string }; ret: void }
+  // 切换排版后让剪贴板跟随：自动复制开着、调用方是面板、不是直接翻译、系统剪贴板仍是这张截图上次自动复制的内容时
+  // 写入（照常进入历史并替换上次新建、未收藏的那一条），返回是否写入。「没有编辑」由调用方保证
+  ocr_recopy: { args: { capture_id: string; text: string }; ret: boolean }
   trigger_action: {
     args: { action: T.HotkeyAction; text: string | null; origin: T.ActionOrigin }
     ret: void
@@ -226,6 +229,7 @@ export const COMMAND_NAMES = [
   'translate_start',
   'ocr_start',
   'capture_release',
+  'ocr_recopy',
   'trigger_action',
   'overlay_init',
   'overlay_ready',
@@ -440,6 +444,9 @@ export function ocrStart(req: T.OcrReq, onEvent: StreamListener) {
 }
 export function captureRelease(capture_id: string) {
   return call('capture_release', { capture_id })
+}
+export function ocrRecopy(capture_id: string, text: string) {
+  return call('ocr_recopy', { capture_id, text })
 }
 /**
  * 前端发起的全局动作。`text` 为 null 时等同按下该动作的快捷键（引导页「试一试」）；

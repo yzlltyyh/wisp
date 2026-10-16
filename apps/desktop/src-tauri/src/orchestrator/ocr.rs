@@ -1,5 +1,6 @@
 //! OCR / 直接翻译流程：截图前隐藏窗口 → capture_all → 创建 Overlay → commit → 裁剪和编码 → 请求 → 飞入；
-//! 运行时视觉能力回写（wisp-llm 按请求结果经 CapsStore 写回）；OCR 自动复制；
+//! 运行时视觉能力回写（wisp-llm 按请求结果经 CapsStore 写回）；识别完成时的交付（按会话的排版自动复制、写识别历史）与
+//! 切换排版后的剪贴板跟随；
 //! 直接翻译的「查看原文」与两次调用模式；前端发起的重新识别（`ocr_start`）。
 //!
 //! **截图段与屏幕栅栏**：「隐藏自己的窗口 → 截图 → 登记会话 → 建 Overlay → 原生冻结帧的首次显示」在屏幕栅栏的独占段里
@@ -40,12 +41,12 @@ use wisp_capture::{CaptureError, Frame, RgbaImage, WindowRect};
 use wisp_llm::{CancellationToken, Purpose, Secret, UserContent};
 use wisp_prompts::PostKind;
 use wisp_types::{
-    Anchor, AppRef, DictMode, ErrorCode, LlmError, MonitorId, NotReady, OcrMode, OcrPayload, OcrReq, OverlayCommit,
-    OverlayCommitAck, OverlayEndReason, OverlayInit, OverlayMode, PanelPayload, PanelTransition, PanelView,
-    PermissionKind, PermissionState, PhysSize, Protocol, RequestId, Settings, StartAck, StreamEvent, TaskKind,
+    Anchor, AppRef, DictMode, ErrorCode, LlmError, MonitorId, NotReady, OcrLayout, OcrMode, OcrPayload, OcrReq,
+    OverlayCommit, OverlayCommitAck, OverlayEndReason, OverlayInit, OverlayMode, PanelPayload, PanelTransition,
+    PanelView, PermissionKind, PermissionState, PhysSize, Protocol, RequestId, Settings, StartAck, StreamEvent,
+    TaskKind,
 };
 
-use super::RequestHost;
 use super::captures::{Crop, CropImage, ENCODE_WAIT, Encoded, thumb_path};
 use super::engine::{
     Core, KeyFetch, KeySource, OfflineSnapshot, ScreenHold, Trigger, blocking, log_dispatched, not_ready_error,
@@ -56,14 +57,17 @@ use super::env::{EngineImage, EngineRequest};
 use super::fsm::{Event, Flow, Stage};
 use super::not_ready;
 use super::plan::{
-    EngineRef, OcrTarget, TextInput, adapt_for, build_ocr_prompt, default_ocr_mode, plan_text, resolve_style,
+    EngineRef, OcrTarget, TextInput, adapt_for, build_ocr_prompt, default_ocr_layout, default_ocr_mode, plan_text,
+    resolve_style,
 };
 use super::registry::{Lane, OpenSpec, Owner, PumpEnd, Sink, pump};
 use super::translate::TextJob;
+use super::{RequestCaller, RequestHost};
 use crate::app::perf::PerfStage;
 use crate::assets::{CaptureVariant, capture_asset_path};
 use crate::bus::TriggerOrigin;
 use crate::clipboard_svc::ocr_history::OcrRecord;
+use crate::clipboard_svc::smart::layout_text;
 use crate::error::IpcError;
 use crate::windows::{AnchorSource, HiddenSet, OverlaySession, PanelShowRequest};
 
@@ -157,6 +161,8 @@ pub(super) struct OcrJob {
     pub(super) token: CancellationToken,
     pub(super) target: OcrTarget,
     pub(super) mode: OcrMode,
+    /// 会话的排版：识别完成时交付的文本按它处理（[`delivered_text`]）
+    pub(super) layout: OcrLayout,
     /// 直接翻译的目标语言
     pub(super) target_lang: wisp_types::Lang,
     pub(super) crop: Arc<Crop>,
@@ -699,6 +705,11 @@ impl Core {
             image_size: PhysSize { width: 0, height: 0 },
             target_lang: settings.translate.primary_lang,
             not_ready: Some(nr),
+            layout: if direct {
+                OcrLayout::Keep
+            } else {
+                default_ocr_layout(&settings)
+            },
         };
         let req = PanelShowRequest {
             view: PanelView::Ocr,
@@ -958,6 +969,12 @@ impl Core {
         } else {
             target.effective_mode(default_ocr_mode(&settings))
         };
+        // 直接翻译不排版（包括它的「查看原文」）：会话的排版恒为原样
+        let layout = if direct {
+            OcrLayout::Keep
+        } else {
+            default_ocr_layout(&settings)
+        };
         let lane = if direct { Lane::OcrTranslate } else { Lane::Ocr };
         let id = self.registry.new_id();
         let token = self.registry.open(
@@ -1007,6 +1024,7 @@ impl Core {
                 two_step: two_step(&settings, &target, direct),
                 target,
                 mode: ocr_mode,
+                layout,
                 target_lang,
                 crop: Arc::clone(&crop),
                 run: Some(run),
@@ -1061,6 +1079,7 @@ impl Core {
             image_size: crop.size,
             target_lang,
             not_ready: None,
+            layout,
         };
         let req = PanelShowRequest {
             view: PanelView::Ocr,
@@ -1350,26 +1369,58 @@ impl Core {
         let end = self.ocr_pipeline(&job, key).await;
         // 离线引擎的像素只为这一次识别保留（取消、失败的路径同样释放）
         job.crop.drop_pixels();
-        self.record_ocr_history(&job, &end);
+        self.deliver(&job, &end);
         self.request_ended(job.run, job.trace, &end);
     }
 
-    /// OCR 历史（默认关闭）：请求以 Done 结束、识别出了文字时，把结果（translate 模式是
-    /// 译文；两次调用的直接翻译同样是译文——这类条目不提供「重新翻译」）、原图（送模型时的编码，
-    /// 与请求共用内存）、缩略图（编码截图时从裁剪帧生成的，没有时由存储层从原图生成）、模式与模型显示名交给剪贴板服务
-    /// 记下。同一张截图同一模式的重新识别取代上一条：序号在这里（请求结束时）同步领取，「读要取代的条目 → 写库 → 记下
-    /// 新条目」在后台任务里由 `Crop::record_history` 串行完成——两次重新识别的写库即使交错，也不会留下两条。
-    /// 缓存命中的「查看原文」不经这里（没有发请求）。写入在阻塞线程上进行，不拖慢请求的收尾
-    fn record_ocr_history(self: &Arc<Self>, job: &OcrJob, end: &PumpEnd) {
-        if !matches!(end, PumpEnd::Done { no_text: false, .. })
-            || job.token.is_cancelled()
-            || !self.env.settings().ocr.history
-        {
+    /// 识别完成时的交付：请求以 Done 结束、识别出了文字时，算一次交付的文本（[`delivered_text`]），自动复制与识别历史
+    /// 都用这一份——剪贴板、历史与视图显示的是同一版。
+    /// - 自动复制（`ocr.auto_copy`；译文与直接翻译的截图不复制）：来源 Wisp，正常进入剪贴板历史；写入与回执在截图的
+    ///   复制锁里完成，切换排版后的跟随（[`Core::ocr_recopy`]）据回执核对剪贴板；
+    /// - 识别历史（`ocr.history`，请求没被取消时）：见 [`Core::record_ocr_history`]
+    fn deliver(self: &Arc<Self>, job: &OcrJob, end: &PumpEnd) {
+        if !matches!(end, PumpEnd::Done { no_text: false, .. }) {
             return;
         }
-        let Some(text) = self.registry.text(&job.id).filter(|t| !t.trim().is_empty()) else {
+        let settings = self.env.settings();
+        let copy = settings.ocr.auto_copy && job.mode != OcrMode::Translate && !job.crop.direct;
+        let history = settings.ocr.history && !job.token.is_cancelled();
+        if !copy && !history {
+            return;
+        }
+        let Some(raw) = self.registry.text(&job.id).filter(|t| !t.trim().is_empty()) else {
             return;
         };
+        let text = delivered_text(raw, job.mode, job.crop.direct, job.layout);
+        match (copy, history) {
+            (true, true) => {
+                self.auto_copy(job, text.clone());
+                self.record_ocr_history(job, text);
+            }
+            (true, false) => self.auto_copy(job, text),
+            (false, _) => self.record_ocr_history(job, text),
+        }
+    }
+
+    /// 自动复制交付的文本（阻塞线程上进行，不拖慢请求的收尾）
+    fn auto_copy(&self, job: &OcrJob, text: String) {
+        let env = Arc::clone(&self.env);
+        let crop = Arc::clone(&job.crop);
+        let id = job.id.clone();
+        tauri::async_runtime::spawn_blocking(move || match crop.auto_copy(|| env.copy_text(&text)) {
+            Ok(()) => log::debug!("request {id}: OCR result copied"),
+            Err(e) => log::warn!("request {id}: auto copy failed: {}", e.message),
+        });
+    }
+
+    /// OCR 历史（默认关闭）：把交付的文本（translate 模式是
+    /// 译文；两次调用的直接翻译同样是译文——这类条目不提供「重新翻译」）、原图（送模型时的编码，
+    /// 与请求共用内存）、缩略图（编码截图时从裁剪帧生成的，没有时由存储层从原图生成）、模式与模型显示名交给剪贴板服务
+    /// 记下。之后切换排版、编辑都不改写它（同步的键含正文，改写会在远端留下一删一增）。
+    /// 同一张截图同一模式的重新识别取代上一条：序号在这里（请求结束时）同步领取，「读要取代的条目 → 写库 → 记下
+    /// 新条目」在后台任务里由 `Crop::record_history` 串行完成——两次重新识别的写库即使交错，也不会留下两条。
+    /// 缓存命中的「查看原文」不经这里（没有发请求）。写入在阻塞线程上进行，不拖慢请求的收尾
+    fn record_ocr_history(self: &Arc<Self>, job: &OcrJob, text: String) {
         let image = match job.crop.wait(Duration::ZERO) {
             CropImage::Ready(enc) => Some(Arc::clone(&enc.bytes)),
             CropImage::Pending | CropImage::Failed => None,
@@ -1427,21 +1478,12 @@ impl Core {
             if let (Some(u), OcrTarget::Llm(r)) = (usage, &job.target) {
                 self.env.record_usage(&r.provider.id, &r.model.id, u);
             }
-            let text = self.registry.text(&job.id).unwrap_or_default();
-            if !no_text && !text.trim().is_empty() {
-                let settings = self.env.settings();
-                if job.mode == OcrMode::Paragraphs && job.crop.direct {
-                    // 直接翻译的「查看原文」：连同模型缓存下来，再次切换时不重复请求
-                    job.crop.set_transcript(job.target.model_key(), text.clone());
-                }
-                if settings.ocr.auto_copy && job.mode != OcrMode::Translate && !job.crop.direct {
-                    // 识别完成后自动复制（来源 Wisp，正常进入剪贴板历史）
-                    let env = Arc::clone(&self.env);
-                    let id = job.id.clone();
-                    tauri::async_runtime::spawn_blocking(move || match env.copy_text(&text) {
-                        Ok(()) => log::debug!("request {id}: OCR result copied"),
-                        Err(e) => log::warn!("request {id}: auto copy failed: {}", e.message),
-                    });
+            if !no_text && job.mode == OcrMode::Paragraphs && job.crop.direct {
+                // 直接翻译的「查看原文」：连同模型缓存下来（识别文本本身，不排版），再次切换时不重复请求。
+                // 自动复制与识别历史在请求结束时统一交付（[`Core::deliver`]）
+                let text = self.registry.text(&job.id).unwrap_or_default();
+                if !text.trim().is_empty() {
+                    job.crop.set_transcript(job.target.model_key(), text);
                 }
             }
         }
@@ -1810,6 +1852,8 @@ impl Core {
                         two_step: req.mode == OcrMode::Translate && !target.can_translate(),
                         target,
                         mode: req.mode,
+                        // 视图带回会话里当前的排版，交付的文本与视图显示的一致；旧前端不带时按设置
+                        layout: req.layout.unwrap_or_else(|| default_ocr_layout(&settings)),
                         target_lang,
                         crop,
                         run: None,
@@ -1830,6 +1874,50 @@ impl Core {
             width: None,
             long_text: None,
         })
+    }
+
+    /// 面板里切换排版后让剪贴板跟随（`ocr_recopy`）：以下条件都满足才写入，返回是否写入。
+    /// - 自动复制开着，调用方是面板、截图仍归面板（固定窗口里切换排版不带动剪贴板），不是直接翻译的截图；
+    /// - 这张截图自动复制过，且系统剪贴板的 change_id 仍等于那次写入的回执——期间没有别的复制（包括用户在别处复制、
+    ///   Wisp 自己的粘贴）。
+    ///
+    /// 写入照常进入剪贴板历史，上一次自动复制新建、没有收藏的那一条随之删掉（剪贴板服务的 `recopy_text`），历史里只留
+    /// 一条。「用户没有编辑」由视图判断（编辑过的文字不会走到这里）。截图不存在或属于别的窗口时与条件不满足一样返回
+    /// false
+    pub async fn ocr_recopy(
+        self: &Arc<Self>,
+        caller: &RequestCaller,
+        capture_id: &str,
+        text: String,
+    ) -> Result<bool, IpcError> {
+        if *caller != RequestCaller::Panel || !self.env.settings().ocr.auto_copy {
+            return Ok(false);
+        }
+        let Some(crop) = self
+            .captures
+            .crop(capture_id)
+            .filter(|c| !c.direct && caller.may_access(&c.owner()))
+        else {
+            log::debug!("ocr_recopy {capture_id}: no such panel capture");
+            return Ok(false);
+        };
+        let env = Arc::clone(&self.env);
+        let copied = blocking(move || crop.recopy(|prev| env.recopy_text(prev, &text)))
+            .await
+            .ok_or_else(|| IpcError::internal("recopy task failed"))??;
+        log::debug!("ocr_recopy {capture_id}: copied={copied}");
+        Ok(copied)
+    }
+}
+
+/// 识别完成时交付的文本：逐行 / 段落模式按会话的排版处理识别文本（注册表里流式结果的全文），结构化、直接翻译的截图
+/// （包括它的「查看原文」）原样交付。排版与视图切换排版时调用的 `text_transform` 是同一个函数，输入也相同（视图累积的
+/// 正是这些 Delta），所以自动复制的文本与视图显示的逐字一致
+pub(super) fn delivered_text(raw: String, mode: OcrMode, direct: bool, layout: OcrLayout) -> String {
+    if mode.has_layout() && !direct {
+        layout_text(raw, layout)
+    } else {
+        raw
     }
 }
 

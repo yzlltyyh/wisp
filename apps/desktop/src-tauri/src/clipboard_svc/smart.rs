@@ -26,7 +26,7 @@ use lru::LruCache;
 use parking_lot::Mutex;
 use wisp_clipboard::otp_expired;
 use wisp_clipboard::smart::{self, RecognizeOpts, TransformError};
-use wisp_types::{ClipInspect, ClipKind, ClipPage, ClipboardChanged, SmartSettings, TransformId};
+use wisp_types::{ClipInspect, ClipKind, ClipPage, ClipboardChanged, OcrLayout, SmartSettings, TransformId};
 
 use crate::error::IpcError;
 
@@ -97,6 +97,23 @@ pub(crate) fn transform_text(text: String, id: TransformId) -> Result<String, Ip
         Ok(out) => Ok(out),
         Err(TransformError::NotApplicable) => Ok(text),
         Err(e) => Err(IpcError::invalid_argument(e.to_string())),
+    }
+}
+
+/// OCR 结果的排版：执行排版对应的变换，与 [`transform_text`]（前端切换排版时调用的 `text_transform`）走同一条路径、
+/// 同样按文本条目对待，同样的输入逐字得到同样的结果——识别完成时自动复制的文本因此与视图显示的一致。「原样」与变换
+/// 不适用时原样返回；排版只动空白与换行，不会失败，万一失败也按原文交付（日志只有变换的原因，不含正文）
+pub(crate) fn layout_text(text: String, layout: OcrLayout) -> String {
+    let Some(id) = layout.transform() else {
+        return text;
+    };
+    match smart::apply(id, ClipKind::Text, &text) {
+        Ok(out) => out,
+        Err(TransformError::NotApplicable) => text,
+        Err(e) => {
+            log::warn!("ocr layout {} failed: {e}", layout.as_str());
+            text
+        }
     }
 }
 
@@ -239,9 +256,9 @@ mod tests {
     use std::path::Path;
 
     use serde::ser::{Serialize, SerializeMap, Serializer};
-    use wisp_types::{SmartSettings, TransformId};
+    use wisp_types::{OcrLayout, SmartSettings, TransformId};
 
-    use super::{inspect_text, transform_text};
+    use super::{inspect_text, layout_text, transform_text};
 
     #[test]
     fn transform_text_returns_the_input_when_not_applicable() {
@@ -257,6 +274,27 @@ mod tests {
         ] {
             assert_eq!(transform_text(text.to_owned(), id).expect("不适用不是错误"), text);
         }
+    }
+
+    /// OCR 排版与前端切换排版时的 `text_transform` 逐字一致：识别完成时自动复制、写进识别历史的文本就是视图显示的那一版
+    #[test]
+    fn ocr_layouts_match_text_transform() {
+        for &text in CASE_INPUTS {
+            assert_eq!(layout_text(text.to_owned(), OcrLayout::Keep), text);
+            for layout in OcrLayout::ALL {
+                let Some(id) = layout.transform() else { continue };
+                assert_eq!(
+                    layout_text(text.to_owned(), layout),
+                    transform_text(text.to_owned(), id).expect("变换"),
+                    "{layout:?} 对 {text:?}"
+                );
+            }
+        }
+        assert_eq!(
+            layout_text("第一段\n\n第二段".to_owned(), OcrLayout::RemoveBlankLines),
+            "第一段\n第二段"
+        );
+        assert_eq!(layout_text("单独一行".to_owned(), OcrLayout::JoinLines), "单独一行");
     }
 
     /// 浏览器 mock 的变换样例表的输入：每种变换适用与不适用的情形，以及识别结果常见的排版（逐行、段落、中日韩、行尾

@@ -186,6 +186,12 @@ export function installDefaults(d: DefaultsDeps): void {
     return { request_id: id, width: null }
   })
   r.handle('capture_release', () => undefined)
+  // 与 Rust 一致的前提：自动复制开着、调用方是面板（固定窗口里切换排版不带动剪贴板）。mock 没有系统剪贴板，
+  // 视为期间没有别的复制；不记进剪贴板历史（mock 的历史只是界面数据）
+  r.handle('ocr_recopy', ({ text }) => {
+    if (text.length > 1024 * 1024) throw mockError('invalid_argument', 'text exceeds 1048576 bytes')
+    return state.settings.ocr.auto_copy && windowKindOf(boot.label) === 'panel'
+  })
   r.handle('trigger_action', ({ action, text, origin }) => {
     if (text !== null && action !== 'translate_selection' && action !== 'translate_input') {
       throw mockError(

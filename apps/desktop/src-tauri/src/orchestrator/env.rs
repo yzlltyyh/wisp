@@ -32,6 +32,7 @@ use super::backend::Backend;
 use super::not_ready::OfflineStatus;
 use super::plan::{EngineRef, is_offline};
 use crate::app::perf::PerfMarks;
+use crate::clipboard_svc::CopyReceipt;
 use crate::clipboard_svc::ocr_history::OcrRecord;
 use crate::error::IpcError;
 use crate::settings::SettingsService;
@@ -75,8 +76,11 @@ pub trait Env: Send + Sync + 'static {
     fn read_selection(&self, opts: &SelectionOpts) -> Result<Selection, SelectionError>;
     /// 交还焦点（**阻塞**）
     fn activate(&self, app: &AppRef);
-    /// 写剪贴板（会进入历史；**阻塞**）
-    fn copy_text(&self, text: &str) -> Result<(), IpcError>;
+    /// 写剪贴板（会进入历史；**阻塞**）。回执是写入后的 change_id 与这次写入新建的历史条目
+    fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError>;
+    /// 剪贴板仍是 `prev` 写入的内容时改写为 `text`（照常进入历史），并删掉 `prev` 新建、没有收藏的那一条；剪贴板已被
+    /// 别的复制改写时什么都不做，返回 None（**阻塞**）
+    fn recopy_text(&self, prev: CopyReceipt, text: &str) -> Result<Option<CopyReceipt>, IpcError>;
     /// 当前是否是 Wayland 会话
     fn wayland(&self) -> bool;
     /// 解析后的「减少动效」（**阻塞**：macOS 读系统偏好）
@@ -316,9 +320,16 @@ impl Env for TauriEnv {
         }
     }
 
-    fn copy_text(&self, text: &str) -> Result<(), IpcError> {
+    fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError> {
         match self.state() {
             Some(state) => state.clipboard.copy_text(text),
+            None => Err(IpcError::internal("app state is not ready")),
+        }
+    }
+
+    fn recopy_text(&self, prev: CopyReceipt, text: &str) -> Result<Option<CopyReceipt>, IpcError> {
+        match self.state() {
+            Some(state) => state.clipboard.recopy_text(prev, text),
             None => Err(IpcError::internal("app state is not ready")),
         }
     }

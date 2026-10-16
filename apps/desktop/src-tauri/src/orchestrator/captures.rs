@@ -20,6 +20,7 @@ use wisp_types::{MonitorId, OcrMode, PhysSize};
 
 use super::registry::Owner;
 use crate::assets::{Asset, AssetSource, CaptureVariant, parse_capture_path};
+use crate::clipboard_svc::CopyReceipt;
 use crate::error::IpcError;
 
 /// 缩略图 / 请求等待编码完成的上限
@@ -87,6 +88,9 @@ pub struct Crop {
     /// （之后的重新识别从编码字节解码）
     pixels: Mutex<Pixels>,
     pixels_ready: Condvar,
+    /// 这张截图最近一次自动复制（或切换排版后跟随）的回执。「写剪贴板 → 记下回执」整个在这把锁里完成（只在阻塞线程上
+    /// 持有）：跟随时核对的总是这张截图最近一次写进剪贴板的那一版，两次写入不会交错成「回执是旧的、剪贴板是新的」
+    copied: Mutex<Option<CopyReceipt>>,
 }
 
 /// 裁剪图的像素
@@ -248,6 +252,38 @@ impl Crop {
     pub fn thumb(&self) -> Option<Arc<Vec<u8>>> {
         self.thumb.lock().clone()
     }
+
+    /// 识别完成时的自动复制（**阻塞**，在阻塞线程上调用）：在复制锁里写入并记下回执。写入失败时回执保持原样
+    pub fn auto_copy(&self, write: impl FnOnce() -> Result<CopyReceipt, IpcError>) -> Result<(), IpcError> {
+        let mut g = self.copied.lock();
+        *g = Some(write()?);
+        Ok(())
+    }
+
+    /// 切换排版后让剪贴板跟随（**阻塞**）：这张截图自动复制过时，在复制锁里把上次的回执交给 `write`，它写入了就换成新的
+    /// 回执。返回是否写入；还没有自动复制过（关闭了自动复制、识别还没完成）时不写
+    pub fn recopy(
+        &self,
+        write: impl FnOnce(CopyReceipt) -> Result<Option<CopyReceipt>, IpcError>,
+    ) -> Result<bool, IpcError> {
+        let mut g = self.copied.lock();
+        let Some(prev) = *g else {
+            return Ok(false);
+        };
+        match write(prev)? {
+            Some(next) => {
+                *g = Some(next);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// 上次自动复制的回执（测试用）
+    #[cfg(test)]
+    pub fn copied(&self) -> Option<CopyReceipt> {
+        *self.copied.lock()
+    }
 }
 
 /// 当前 Overlay 会话的冻结帧
@@ -316,6 +352,7 @@ impl CaptureStore {
             thumb: Mutex::new(None),
             pixels: Mutex::new(Pixels::None),
             pixels_ready: Condvar::new(),
+            copied: Mutex::new(None),
         });
         self.crops.lock().insert(id, Arc::clone(&crop));
         crop

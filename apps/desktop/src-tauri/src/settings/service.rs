@@ -2235,6 +2235,8 @@ pub(crate) mod tests {
             json!({"appearance": {"accent": "#zzz"}}),
             json!({"hotkeys": {"bindings": {"ocr": "Alt+Nope"}}}),
             json!({"providers": [{"id": "x"}]}),
+            // 合并为一行只能在结果面板里按需切换，不能设为默认排版
+            json!({"ocr": {"layout": "join_lines"}}),
         ] {
             let err = svc.patch(bad.clone()).expect_err("invalid");
             assert_eq!(err.code, IpcErrorCode::InvalidArgument, "{bad}");
