@@ -246,6 +246,8 @@ str_enum! {
     pub enum TransformId {
         /// 合并为一行
         JoinLines = "join_lines",
+        /// 去掉空行（只含空白的行），其余各行原样保留
+        RemoveBlankLines = "remove_blank_lines",
         /// 去掉首尾空白
         Trim = "trim",
         Upper = "upper",

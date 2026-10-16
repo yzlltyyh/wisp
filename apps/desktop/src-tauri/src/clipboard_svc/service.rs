@@ -25,7 +25,7 @@ use tauri_plugin_opener::OpenerExt;
 use wisp_clipboard::BlobKind;
 use wisp_types::{
     ClipDragData, ClipFilter, ClipInspect, ClipItemDetail, ClipItemMeta, ClipPage, ClipboardPayload, ClipboardSettings,
-    OcrHistoryItem, OsKind, PasteOn, PasteOutcome, QueueStatus, SendTarget, SourceApp,
+    OcrHistoryItem, OsKind, PasteOn, PasteOutcome, QueueStatus, SendTarget, SourceApp, TransformId,
 };
 
 use crate::bus::{Bus, Command, TriggerOrigin};
@@ -190,6 +190,14 @@ impl ClipboardService {
         tauri::async_runtime::spawn_blocking(move || super::smart::inspect_text(&text, &smart))
             .await
             .map_err(|e| IpcError::internal(format!("inspect task failed: {e}")))
+    }
+
+    /// 对纯文本执行一种「粘贴为…」变换（识别结果的排版等），不适用时原样返回。JSON 重排与合并行都要扫完整段（最长
+    /// 1 MB）：放进阻塞线程池
+    pub async fn text_transform(&self, text: String, transform: TransformId) -> Result<String, IpcError> {
+        tauri::async_runtime::spawn_blocking(move || super::smart::transform_text(text, transform))
+            .await
+            .map_err(|e| IpcError::internal(format!("transform task failed: {e}")))?
     }
 
     /// 剪贴板视图的载荷（面板打开、悬浮剪贴板就绪时）：先取首页（可能顺带打开数据库），再读历史状态——打开失败 / 库来自

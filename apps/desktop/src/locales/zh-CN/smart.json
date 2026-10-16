@@ -14,6 +14,7 @@
   },
   "transform": {
     "join_lines": "合并为一行",
+    "remove_blank_lines": "去掉空行",
     "trim": "去掉首尾空白",
     "upper": "全部大写",
     "lower": "全部小写",

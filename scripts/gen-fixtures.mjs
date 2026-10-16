@@ -18,6 +18,8 @@
  *   `tests/consts.rs`，取自 `EntityKind::ALL` / `TransformId::ALL`）——前端测试拿它比对类型联合与展示注册表；
  * - `consts/BuiltinStyles.json`：6 个内置风格（wisp-prompts `tests/fixtures_consts.rs`）——浏览器 mock 的 `styles()`；
  * - `consts/SettingsSections.json` / `consts/SettingsAnchors.json`：设置分组与分组内锚点（wisp-desktop `app::sections`）；
+ * - `consts/TransformCases.json`：若干代表性文字 × 适用的每种「粘贴为…」变换的结果（wisp-desktop `clipboard_svc::smart`，
+ *   与 `text_inspect` / `text_transform` 同一套函数）——浏览器 mock 的 `text_transform` 只查这张表，不自己实现变换；
  * - `desktop/IpcError.json`：命令错误的形状（wisp-desktop `error::tests::golden_ipc_error`，前端 golden.test.ts 校验键集合）。
  */
 import assert from 'node:assert/strict'
@@ -61,6 +63,12 @@ export const GENERATORS = [
       `${FIXTURES}/consts/SettingsSections.json`,
       `${FIXTURES}/consts/SettingsAnchors.json`,
     ],
+  },
+  {
+    name: '文本变换样例',
+    source: 'apps/desktop/src-tauri/src/clipboard_svc/smart.rs',
+    cargo: ['-p', 'wisp-desktop', '--lib', 'clipboard_svc::smart::'],
+    outputs: [`${FIXTURES}/consts/TransformCases.json`],
   },
   {
     name: '命令错误（IpcError）',

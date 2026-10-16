@@ -1,0 +1,134 @@
+[
+  {
+    "text": "第一段，被\n硬换行的中文。\n\n第二段。",
+    "transforms": {
+      "join_lines": "第一段，被硬换行的中文。第二段。",
+      "remove_blank_lines": "第一段，被\n硬换行的中文。\n第二段。",
+      "half_width": "第一段,被\n硬换行的中文。\n\n第二段。"
+    }
+  },
+  {
+    "text": "Wisp 是常驻后台的轻量桌面工具。\n\n划词翻译、截图 OCR、剪贴板历史。",
+    "transforms": {
+      "join_lines": "Wisp 是常驻后台的轻量桌面工具。划词翻译、截图 OCR、剪贴板历史。",
+      "remove_blank_lines": "Wisp 是常驻后台的轻量桌面工具。\n划词翻译、截图 OCR、剪贴板历史。",
+      "upper": "WISP 是常驻后台的轻量桌面工具。\n\n划词翻译、截图 OCR、剪贴板历史。",
+      "lower": "wisp 是常驻后台的轻量桌面工具。\n\n划词翻译、截图 ocr、剪贴板历史。",
+      "title": "Wisp 是常驻后台的轻量桌面工具。\n\n划词翻译、截图 Ocr、剪贴板历史。",
+      "full_width": "Ｗｉｓｐ　是常驻后台的轻量桌面工具。\n\n划词翻译、截图　ＯＣＲ、剪贴板历史。"
+    }
+  },
+  {
+    "text": "第一行\n第二行\n第三行",
+    "transforms": {
+      "join_lines": "第一行第二行第三行"
+    }
+  },
+  {
+    "text": "first line\n  second line  \n\nthird",
+    "transforms": {
+      "join_lines": "first line second line third",
+      "remove_blank_lines": "first line\n  second line  \nthird",
+      "trim": "first line\nsecond line\n\nthird",
+      "upper": "FIRST LINE\n  SECOND LINE  \n\nTHIRD",
+      "title": "First Line\n  Second Line  \n\nThird"
+    }
+  },
+  {
+    "text": "클립보드에\n복사합니다.",
+    "transforms": {
+      "join_lines": "클립보드에 복사합니다.",
+      "full_width": "클립보드에\n복사합니다．"
+    }
+  },
+  {
+    "text": "COVID-\n19 and Wi-\nFi in 2020-\n2021",
+    "transforms": {
+      "join_lines": "COVID-19 and Wi-Fi in 2020-2021",
+      "upper": "COVID-\n19 AND WI-\nFI IN 2020-\n2021",
+      "lower": "covid-\n19 and wi-\nfi in 2020-\n2021",
+      "title": "Covid-\n19 And Wi-\nFi In 2020-\n2021"
+    }
+  },
+  {
+    "text": "fn main() {\n    let x = 1;\n\n    x\n}",
+    "transforms": {
+      "join_lines": "fn main() { let x = 1; x }",
+      "remove_blank_lines": "fn main() {\n    let x = 1;\n    x\n}",
+      "trim": "fn main() {\nlet x = 1;\n\nx\n}",
+      "upper": "FN MAIN() {\n    LET X = 1;\n\n    X\n}",
+      "title": "Fn Main() {\n    Let X = 1;\n\n    X\n}"
+    }
+  },
+  {
+    "text": "a\r\n\r\nb\r\n",
+    "transforms": {
+      "join_lines": "a b",
+      "remove_blank_lines": "a\r\nb\r\n",
+      "trim": "a\n\nb",
+      "upper": "A\r\n\r\nB\r\n",
+      "title": "A\r\n\r\nB\r\n"
+    }
+  },
+  {
+    "text": "\n\n  hello world  \n\n",
+    "transforms": {
+      "remove_blank_lines": "  hello world  \n",
+      "trim": "hello world",
+      "upper": "\n\n  HELLO WORLD  \n\n",
+      "title": "\n\n  Hello World  \n\n"
+    }
+  },
+  {
+    "text": "Hello World",
+    "transforms": {
+      "upper": "HELLO WORLD",
+      "lower": "hello world"
+    }
+  },
+  {
+    "text": "型号 A1 版",
+    "transforms": {
+      "lower": "型号 a1 版",
+      "full_width": "型号　Ａ１　版"
+    }
+  },
+  {
+    "text": "ＡＢＣ　１２３",
+    "transforms": {
+      "lower": "ａｂｃ　１２３",
+      "title": "Ａｂｃ　１２３",
+      "half_width": "ABC 123"
+    }
+  },
+  {
+    "text": "{\"z\":1,\"a\":[1,2]}",
+    "transforms": {
+      "upper": "{\"Z\":1,\"A\":[1,2]}",
+      "title": "{\"Z\":1,\"A\":[1,2]}",
+      "json_pretty": "{\n  \"z\": 1,\n  \"a\": [\n    1,\n    2\n  ]\n}"
+    }
+  },
+  {
+    "text": "{\n  \"a\": 1\n}",
+    "transforms": {
+      "join_lines": "{ \"a\": 1 }",
+      "trim": "{\n\"a\": 1\n}",
+      "upper": "{\n  \"A\": 1\n}",
+      "title": "{\n  \"A\": 1\n}",
+      "json_minify": "{\"a\":1}"
+    }
+  },
+  {
+    "text": "see https://example.com/p?id=7&utm_source=x#top",
+    "transforms": {
+      "upper": "SEE HTTPS://EXAMPLE.COM/P?ID=7&UTM_SOURCE=X#TOP",
+      "title": "See Https://Example.Com/P?Id=7&Utm_Source=X#Top",
+      "strip_tracking": "see https://example.com/p?id=7#top"
+    }
+  },
+  {
+    "text": "没有可用的变换。",
+    "transforms": {}
+  }
+]

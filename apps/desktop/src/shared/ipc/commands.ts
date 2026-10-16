@@ -74,6 +74,7 @@ export interface CommandMap extends OverlayCommandMap {
   clipboard_paste_many: { args: { ids: number[]; mode: T.PasteMode }; ret: T.PasteOutcome }
   clipboard_inspect: { args: { id: number }; ret: T.ClipInspect }
   text_inspect: { args: { text: string }; ret: T.ClipInspect }
+  text_transform: { args: { text: string; transform: T.TransformId }; ret: string }
   clipboard_pin: { args: { id: number; pinned: boolean }; ret: T.ClipItemMeta }
   clipboard_set_name: { args: { id: number; name: string | null }; ret: T.ClipItemMeta }
   clipboard_set_favorites_collapsed: { args: { collapsed: boolean }; ret: void }
@@ -240,6 +241,7 @@ export const COMMAND_NAMES = [
   'clipboard_paste_many',
   'clipboard_inspect',
   'text_inspect',
+  'text_transform',
   'clipboard_pin',
   'clipboard_set_name',
   'clipboard_set_favorites_collapsed',
@@ -491,6 +493,13 @@ export function clipboardInspect(id: number) {
 /** 纯文本（OCR 结果）的识别结果 */
 export function textInspect(text: string) {
   return call('text_inspect', { text })
+}
+/**
+ * 对一段纯文本执行「粘贴为…」变换（OCR 结果的排版等），按文本条目对待，与 `textInspect` 列出的变换一致。
+ * 不适用时原样返回输入：比较前后是否相同即知有没有变化
+ */
+export function textTransform(text: string, transform: T.TransformId) {
+  return call('text_transform', { text, transform })
 }
 export function clipboardPin(id: number, pinned: boolean) {
   return call('clipboard_pin', { id, pinned })

@@ -1,5 +1,6 @@
 [
   "join_lines",
+  "remove_blank_lines",
   "trim",
   "upper",
   "lower",

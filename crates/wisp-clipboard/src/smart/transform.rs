@@ -34,6 +34,7 @@ pub trait Transform: Sync {
 /// 全部变换（与 `TransformId::ALL` 一一对应，顺序即菜单顺序）
 pub static TRANSFORMS: &[&dyn Transform] = &[
     &JoinLines,
+    &RemoveBlankLines,
     &Trim,
     &Upper,
     &Lower,
@@ -95,6 +96,22 @@ impl Transform for JoinLines {
     /// 中日文断行直接相连、韩文与西文补空格、行尾断词还原、中英之间按全文惯例
     fn apply(&self, text: &str) -> Result<String, TransformError> {
         Ok(wisp_text::lines::join_all(text))
+    }
+}
+
+struct RemoveBlankLines;
+
+impl Transform for RemoveBlankLines {
+    fn id(&self) -> TransformId {
+        TransformId::RemoveBlankLines
+    }
+    /// 文中有空行时（开头与结尾的空行也算）；判断不分配，遇到第一个空行就停
+    fn applies(&self, _: ClipKind, text: &str) -> bool {
+        wisp_text::lines::has_blank_lines(text)
+    }
+    /// 删掉只含空白的行，其余各行连同换行符原样保留（[`wisp_text::lines::remove_blank_lines`]）
+    fn apply(&self, text: &str) -> Result<String, TransformError> {
+        Ok(wisp_text::lines::remove_blank_lines(text))
     }
 }
 
@@ -720,6 +737,30 @@ mod tests {
     }
 
     #[test]
+    fn remove_blank_lines() {
+        assert_eq!(
+            run(
+                TransformId::RemoveBlankLines,
+                "第一段。\n\n第二段。\n \u{3000}\n第三段。"
+            ),
+            "第一段。\n第二段。\n第三段。"
+        );
+        // 留下的行原样：缩进、行尾空白与 \r\n 都不动（与「去掉首尾空白」分工）
+        assert_eq!(
+            run(TransformId::RemoveBlankLines, "  a \r\n\r\n\tb\r\n"),
+            "  a \r\n\tb\r\n"
+        );
+        // 代码条目同样提供
+        assert_eq!(
+            apply(TransformId::RemoveBlankLines, ClipKind::Code, "fn a() {}\n\nfn b() {}"),
+            Ok("fn a() {}\nfn b() {}".to_owned())
+        );
+        // 末尾的一个换行符不是空行
+        not_applicable(TransformId::RemoveBlankLines, ClipKind::Text, "a\nb\n");
+        not_applicable(TransformId::RemoveBlankLines, ClipKind::Text, "single line");
+    }
+
+    #[test]
     fn trim() {
         assert_eq!(run(TransformId::Trim, "\n\n  a  \n\u{3000}b\t\n\n  c\n\n"), "a\nb\n\nc");
         not_applicable(TransformId::Trim, ClipKind::Text, "a\nb");
@@ -874,6 +915,16 @@ mod tests {
                 TransformId::Trim,
                 TransformId::Upper,
                 TransformId::Lower
+            ]
+        );
+        assert_eq!(
+            applicable(ClipKind::Text, "Hello\n\nworld"),
+            [
+                TransformId::JoinLines,
+                TransformId::RemoveBlankLines,
+                TransformId::Upper,
+                TransformId::Lower,
+                TransformId::Title
             ]
         );
         assert_eq!(applicable(ClipKind::Code, "{\"a\":1}"), [TransformId::JsonPretty]);

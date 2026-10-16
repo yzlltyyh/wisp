@@ -3,7 +3,8 @@
 //!
 //! # 检视
 //! 按需计算、不落库。[`Engine::inspect`] 按条目内容的 hash 缓存最近 [`INSPECT_CACHE`] 条：内容不可变，同一个 hash
-//! 的结果只取决于识别设置，设置一变整个缓存作废（[`InspectCache`]）。纯文本（识别结果等）用 [`inspect_text`]，不缓存。
+//! 的结果只取决于识别设置，设置一变整个缓存作废（[`InspectCache`]）。纯文本（识别结果等）用 [`inspect_text`]，不缓存；
+//! 对纯文本执行它列出的变换用 [`transform_text`]（结果交回前端显示或复制，同样不缓存、不写日志）。
 //!
 //! # 验证码到期
 //! - 排程：一次性的 [`Exec::after`](super::port::Exec::after)，不是周期定时器。打开数据库时、记录或接收了带过期时间的
@@ -24,8 +25,8 @@ use std::time::Duration;
 use lru::LruCache;
 use parking_lot::Mutex;
 use wisp_clipboard::otp_expired;
-use wisp_clipboard::smart::{self, RecognizeOpts};
-use wisp_types::{ClipInspect, ClipKind, ClipPage, ClipboardChanged, SmartSettings};
+use wisp_clipboard::smart::{self, RecognizeOpts, TransformError};
+use wisp_types::{ClipInspect, ClipKind, ClipPage, ClipboardChanged, SmartSettings, TransformId};
 
 use crate::error::IpcError;
 
@@ -86,6 +87,17 @@ impl InspectCache {
 /// 纯文本（识别结果、片段）的检视：按文本条目对待
 pub(crate) fn inspect_text(text: &str, smart: &SmartSettings) -> ClipInspect {
     smart::inspect(ClipKind::Text, text, &RecognizeOpts::from(smart))
+}
+
+/// 纯文本的变换（识别结果的排版等）：与 [`inspect_text`] 一样按文本条目对待，所以列出的变换都能在这里执行。
+/// 不适用时原样返回输入——调用方比较前后是否相同就知道有没有变化，不必先检视一次。
+/// 错误信息只有变换的原因，不含正文
+pub(crate) fn transform_text(text: String, id: TransformId) -> Result<String, IpcError> {
+    match smart::apply(id, ClipKind::Text, &text) {
+        Ok(out) => Ok(out),
+        Err(TransformError::NotApplicable) => Ok(text),
+        Err(e) => Err(IpcError::invalid_argument(e.to_string())),
+    }
 }
 
 /// 到期删除失败后至少隔这么久再试（毫秒）
@@ -219,5 +231,119 @@ impl Engine {
             page.next_offset = page.next_offset.map(|o| o.saturating_sub(shift));
             self.spawn(|e| e.expire_codes());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use serde::ser::{Serialize, SerializeMap, Serializer};
+    use wisp_types::{SmartSettings, TransformId};
+
+    use super::{inspect_text, transform_text};
+
+    #[test]
+    fn transform_text_returns_the_input_when_not_applicable() {
+        assert_eq!(
+            transform_text("段一\n\n段二".to_owned(), TransformId::RemoveBlankLines).expect("变换"),
+            "段一\n段二"
+        );
+        for (text, id) in [
+            ("single line", TransformId::JoinLines),
+            ("a\nb\n", TransformId::RemoveBlankLines),
+            ("{\"a\": ", TransformId::JsonPretty),
+            ("全是中文", TransformId::Upper),
+        ] {
+            assert_eq!(transform_text(text.to_owned(), id).expect("不适用不是错误"), text);
+        }
+    }
+
+    /// 浏览器 mock 的变换样例表的输入：每种变换适用与不适用的情形，以及识别结果常见的排版（逐行、段落、中日韩、行尾
+    /// 连字符、`\r\n`、首尾空行）。mock 不自己实现变换，只认这里的输入；界面场景要在 mock 里看到准确结果时把文字补进来
+    const CASE_INPUTS: &[&str] = &[
+        "第一段，被\n硬换行的中文。\n\n第二段。",
+        "Wisp 是常驻后台的轻量桌面工具。\n\n划词翻译、截图 OCR、剪贴板历史。",
+        "第一行\n第二行\n第三行",
+        "first line\n  second line  \n\nthird",
+        "클립보드에\n복사합니다.",
+        "COVID-\n19 and Wi-\nFi in 2020-\n2021",
+        "fn main() {\n    let x = 1;\n\n    x\n}",
+        "a\r\n\r\nb\r\n",
+        "\n\n  hello world  \n\n",
+        "Hello World",
+        "型号 A1 版",
+        "ＡＢＣ\u{3000}１２３",
+        "{\"z\":1,\"a\":[1,2]}",
+        "{\n  \"a\": 1\n}",
+        "see https://example.com/p?id=7&utm_source=x#top",
+        "没有可用的变换。",
+    ];
+
+    /// 样例表的一行：输入，以及适用的每种变换（菜单顺序）的结果。不在表里的变换即不适用（`text_transform` 原样返回）
+    struct Case {
+        text: &'static str,
+        transforms: Vec<(TransformId, String)>,
+    }
+
+    impl Serialize for Case {
+        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            // 变换按菜单顺序写出：serde_json 的 Map 默认按键排序，这里逐项写出以保留顺序
+            struct Outputs<'a>(&'a [(TransformId, String)]);
+            impl Serialize for Outputs<'_> {
+                fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                    let mut map = serializer.serialize_map(Some(self.0.len()))?;
+                    for (id, out) in self.0 {
+                        map.serialize_entry(id.as_str(), out)?;
+                    }
+                    map.end()
+                }
+            }
+            let mut map = serializer.serialize_map(Some(2))?;
+            map.serialize_entry("text", self.text)?;
+            map.serialize_entry("transforms", &Outputs(&self.transforms))?;
+            map.end()
+        }
+    }
+
+    /// 写出 / 比对 `fixtures/consts/TransformCases.json`：浏览器 mock 的 `text_transform` 只查这张表，「粘贴为…」遇到表里的
+    /// 文字也按它列出；结果来自与命令相同的 [`inspect_text`] / [`transform_text`]。`UPDATE_GOLDEN=1` 时重写
+    #[test]
+    fn golden_transform_cases() {
+        let smart = SmartSettings::default();
+        let cases: Vec<Case> = CASE_INPUTS
+            .iter()
+            .map(|&text| {
+                let listed = inspect_text(text, &smart).transforms;
+                let mut transforms = Vec::new();
+                for id in TransformId::ALL {
+                    let out = transform_text(text.to_owned(), id).expect("样例里的变换不应出错");
+                    // 检视列出的变换恰好是会改变内容的那些：前端据「结果与原文是否相同」判断有没有变化
+                    assert_eq!(listed.contains(&id), out != text, "{id:?} 对 {text:?}");
+                    if out != text {
+                        transforms.push((id, out));
+                    }
+                }
+                Case { text, transforms }
+            })
+            .collect();
+        let used: Vec<TransformId> = TransformId::ALL
+            .into_iter()
+            .filter(|id| cases.iter().any(|c| c.transforms.iter().any(|(t, _)| t == id)))
+            .collect();
+        assert_eq!(used, TransformId::ALL, "每种变换至少在一条样例里适用");
+
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/shared/ipc/fixtures/consts/TransformCases.json");
+        let expected = format!("{}\n", serde_json::to_string_pretty(&cases).expect("序列化失败"));
+        if std::env::var("UPDATE_GOLDEN").is_ok_and(|v| !v.is_empty() && v != "0") {
+            std::fs::create_dir_all(path.parent().expect("父目录")).expect("创建目录失败");
+            std::fs::write(&path, &expected).expect("写入失败");
+            return;
+        }
+        let actual = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            actual == expected,
+            "fixtures/consts/TransformCases.json 与 Rust 的变换不一致（确认后 UPDATE_GOLDEN=1 cargo test -p wisp-desktop --lib clipboard_svc::smart::，或 node scripts/gen-fixtures.mjs）"
+        );
     }
 }

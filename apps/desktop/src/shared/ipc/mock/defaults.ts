@@ -34,7 +34,7 @@ import {
   type MockOffline,
 } from './localModels'
 import type { MockRouter } from './router'
-import { mockInspect } from './smart'
+import { mockInspect, mockTransform } from './smart'
 import { textStream, type MockStreams } from './streams'
 import { createSyncState, installSyncDefaults, type MockSync } from './sync'
 import { mockError } from './types'
@@ -262,6 +262,10 @@ export function installDefaults(d: DefaultsDeps): void {
     )
   })
   r.handle('text_inspect', ({ text }) => mockInspect('text', text))
+  r.handle('text_transform', ({ text, transform }) => {
+    if (text.length > 1024 * 1024) throw mockError('invalid_argument', 'text exceeds 1048576 bytes')
+    return mockTransform(text, transform)
+  })
   r.handle('clipboard_pin', ({ id, pinned }) => {
     const item = findClip(id)
     item.pinned = pinned

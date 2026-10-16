@@ -138,6 +138,7 @@ commands![
     cmd_clipboard::clipboard_paste_many,
     cmd_clipboard::clipboard_inspect,
     cmd_clipboard::text_inspect,
+    cmd_clipboard::text_transform,
     cmd_clipboard::clipboard_pin,
     cmd_clipboard::clipboard_set_name,
     cmd_clipboard::clipboard_set_favorites_collapsed,

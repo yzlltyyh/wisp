@@ -177,6 +177,18 @@ pub async fn text_inspect(app_state: State<'_, AppState>, text: String) -> Resul
     app_state.clipboard.text_inspect(text).await
 }
 
+/// 对纯文本执行一种「粘贴为…」变换（识别结果的排版等），结果交回前端显示或复制：与 `text_inspect` 一样按文本条目对待。
+/// 不适用时原样返回输入（调用方比较前后即知有没有变化）；结果不进历史，内容不写日志
+#[tauri::command(rename_all = "snake_case")]
+pub async fn text_transform(
+    app_state: State<'_, AppState>,
+    text: String,
+    transform: TransformId,
+) -> Result<String, IpcError> {
+    check_len("text", &text, MAX_TEXT_BYTES)?;
+    app_state.clipboard.text_transform(text, transform).await
+}
+
 /// 收藏 / 取消收藏
 #[tauri::command(rename_all = "snake_case")]
 pub async fn clipboard_pin(app_state: State<'_, AppState>, id: i64, pinned: bool) -> Result<ClipItemMeta, IpcError> {
