@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{OsKind, PlatformInfo};
-use crate::clip::{ClipPage, CopiedReason};
+use crate::clip::{ClipFilter, ClipPage, CopiedReason, QueueStatus};
 use crate::geom::{MonitorId, MonitorInfo, PhysSize, Rect};
 use crate::hotkey::{ExtTriggerStatus, HotkeyAction, HotkeyStatus, HotkeyTarget};
 use crate::lang::Lang;
@@ -76,6 +76,10 @@ pub struct ToastPayload {
     pub reason: CopiedReason,
     /// 当前平台 / 目标应用实际的粘贴键显示串，如 "⌘V"、"Ctrl+Shift+V"
     pub paste_key: String,
+    /// 连续粘贴的进度：给出时 toast 显示「连续粘贴 · 2 / 5」与下一次要按的粘贴键（`reason` 不再显示）。
+    /// 普通的粘贴结果省略（TS：`queue?: QueueStatus | null`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<QueueStatus>,
 }
 
 /// 翻译视图
@@ -160,6 +164,24 @@ pub struct ClipboardPayload {
     /// （TS：`recording?: ClipboardRecording`，缺省 = `{ state: 'recording' }`）
     #[serde(default, skip_serializing_if = "ClipboardRecording::is_recording")]
     pub recording: ClipboardRecording,
+    /// 列表顶部的「收藏」分组已折叠（本机状态，存 state.json；Rust 的高度估算同样按它计算）。展开时省略
+    /// （TS：`favorites_collapsed?: boolean`，缺省 = false）
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub favorites_collapsed: bool,
+    /// 连续粘贴不可用的原因（i18n key：`errors.platform.*`，例如 Wayland 会话不能拦下粘贴键）：视图据此把「连续粘贴」
+    /// 置灰并说明。可用时省略（TS：`queue_unavailable?: string | null`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_unavailable: Option<String>,
+}
+
+/// 悬浮剪贴板的初始状态：从面板交接时继承查询、筛选与光标，置顶状态取 state.json 里记住的值
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipFloatInit {
+    pub query: String,
+    pub filter: ClipFilter,
+    pub selected_id: Option<i64>,
+    pub on_top: bool,
+    pub payload: ClipboardPayload,
 }
 
 /// 剪贴板监听状态（`ClipboardPayload.recording`）
@@ -789,9 +811,11 @@ pub mod event {
     pub const SYNC_STATUS: &str = "sync:status";
     /// `()`（null）→ settings：术语表在设置窗口之外被改动（同步、手改文件）。术语编辑器没有未保存的编辑时重新读取
     pub const GLOSSARY_CHANGED: &str = "glossary:changed";
+    /// `QueueStatus` → panel、悬浮剪贴板：连续粘贴的进度与结束
+    pub const CLIPBOARD_QUEUE: &str = "clipboard:queue";
 
     /// 全部事件名（顺序与 events.ts 的 `EVENT_NAMES` 一致）
-    pub const ALL: [&str; 19] = [
+    pub const ALL: [&str; 20] = [
         PANEL_PREPARE,
         PANEL_HIDE_REQUEST,
         PANEL_FOCUS_CHANGED,
@@ -811,5 +835,6 @@ pub mod event {
         OCR_HISTORY_CHANGED,
         SYNC_STATUS,
         GLOSSARY_CHANGED,
+        CLIPBOARD_QUEUE,
     ];
 }

@@ -17,6 +17,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use wisp_clipboard::{ClipStore, OcrSyncItem, RemoteItem, RemoteOcr, SyncItem, SyncSource};
+use wisp_sync::model::PinValue;
 use wisp_sync::model::keys::{self, ClipKey, OcrKey};
 use wisp_sync::projection::{self, ConfigDoc};
 use wisp_sync::{
@@ -285,6 +286,12 @@ impl DesktopStore {
 
     // ---------- 剪贴板 ----------
 
+    /// 「同步验证码」（只属于本机）是否打开。关闭时本机的验证码条目不发布（导出与加入时的枚举都跳过），其他设备的也不
+    /// 导入（剪贴板服务的远端应用接口按同一个开关拒收）
+    fn sync_codes(&self) -> bool {
+        self.settings.get().sync.content.verification_codes
+    }
+
     fn export_clip(&self, key: &str) -> Result<Option<Exported>, LocalError> {
         let Some(ClipKey::Content(hash)) = keys::parse_clip(key) else {
             return Ok(None);
@@ -293,14 +300,21 @@ impl DesktopStore {
         let item = store
             .sync_export(&hash)
             .map_err(|_| LocalError::Failed("clipboard export"))?;
-        Ok(item.map(|item| clip_exported(item, self.os)))
+        let codes = self.sync_codes();
+        Ok(item
+            .filter(|item| codes || !is_code(item.otp, item.pinned))
+            .map(|item| clip_exported(item, self.os)))
     }
 
     fn enumerate_clip(&self) -> Result<Vec<LocalEntry>, LocalError> {
         let (_, store) = self.clip()?;
         let rows = store.sync_rows().map_err(|_| LocalError::Failed("clipboard rows"))?;
+        let codes = self.sync_codes();
         let mut out = Vec::with_capacity(rows.len());
-        for row in rows.into_iter().filter(|r| r.kind != ClipKind::Files) {
+        for row in rows
+            .into_iter()
+            .filter(|r| r.kind != ClipKind::Files && (codes || !is_code(r.otp, r.pinned)))
+        {
             out.push(LocalEntry {
                 key: keys::clip_content(&row.hash),
                 value: None,
@@ -309,9 +323,13 @@ impl DesktopStore {
                 element: true,
             });
             if row.pinned {
+                let value = PinValue {
+                    pin: true,
+                    name: row.name.clone(),
+                };
                 out.push(LocalEntry {
                     key: keys::clip_pin(&row.hash),
-                    value: Some(Value::Bool(true)),
+                    value: Some(value.to_value()),
                     item_ms: Some(row.last_used_at),
                     is_default: false,
                     element: true,
@@ -343,12 +361,15 @@ impl DesktopStore {
                     hash,
                     value,
                     pinned,
+                    name,
                     blobs,
-                } => match remote_item(hash, &value, pinned, &blobs) {
+                } => match remote_item(hash, &value, pinned, name, &blobs) {
                     Ok(item) => run.push((i, vec![ClipRemoteChange::Upsert(item)])),
                     Err(result) => results[i] = result,
                 },
-                RemoteChange::ClipPin { hash, pinned } => run.push((i, vec![ClipRemoteChange::Pin { hash, pinned }])),
+                RemoteChange::ClipPin { hash, pinned, name } => {
+                    run.push((i, vec![ClipRemoteChange::Pin { hash, pinned, name }]));
+                }
                 RemoteChange::ClipDelete { hashes } => run.push((
                     i,
                     hashes
@@ -598,11 +619,18 @@ fn str_of(value: &Value, field: &str) -> Option<String> {
     value.get(field).and_then(Value::as_str).map(str::to_owned)
 }
 
-/// 记录的值 → 剪贴板服务的远端条目。类型是本版本不认识的（更新的版本写的）推迟，升级后再试；缺字段的拒收
+/// 本机条目是不是会到期的验证码（记录时识别为验证码、且没有被收藏：收藏的是用户明确要保留的，按普通收藏同步）
+fn is_code(otp: bool, pinned: bool) -> bool {
+    otp && !pinned
+}
+
+/// 记录的值 → 剪贴板服务的远端条目。类型是本版本不认识的（更新的版本写的）推迟，升级后再试；缺字段的拒收。
+/// `pinned` / `name` 来自 `p/` 寄存器（名称只在收藏时有意义），验证码的过期时间来自值里的 `exp`
 fn remote_item(
     hash: [u8; 32],
     value: &Value,
     pinned: Option<bool>,
+    name: Option<String>,
     blobs: &[SpooledBlob],
 ) -> Result<RemoteItem, KeyApply> {
     let kind = value
@@ -639,6 +667,8 @@ fn remote_item(
         image_path: spooled(blobs, &BlobRole::Image),
         source,
         truncated: value.get("truncated").and_then(Value::as_bool).unwrap_or(false),
+        name: name.filter(|_| pinned == Some(true)),
+        expires_at: value.get("exp").and_then(Value::as_i64),
     })
 }
 
@@ -662,7 +692,8 @@ fn remote_ocr(id: String, value: &Value, blobs: &[SpooledBlob]) -> Result<Remote
     })
 }
 
-/// 本机条目 → 记录的值（`{kind, created_at, last_used_at, text?, html?, rtf_b64?, image?, src?, truncated}`）与原图
+/// 本机条目 → 记录的值（`{kind, created_at, last_used_at, text?, html?, rtf_b64?, image?, src?, truncated, exp?}`）与原图。
+/// `exp` 是验证码条目的绝对过期时间：所有设备按同一时刻删除，收到时已经过期的不导入
 fn clip_exported(item: SyncItem, os: OsKind) -> Exported {
     let mut value = Map::new();
     value.insert("kind".into(), json!(item.kind));
@@ -697,6 +728,9 @@ fn clip_exported(item: SyncItem, os: OsKind) -> Exported {
         );
     }
     value.insert("truncated".into(), Value::Bool(item.truncated));
+    if let Some(exp) = item.expires_at {
+        value.insert("exp".into(), json!(exp));
+    }
     Exported {
         value: Value::Object(value),
         blobs,
@@ -803,20 +837,32 @@ mod tests {
                     app_name: "App".into(),
                 }),
                 truncated: true,
+                name: Some("Home".into()),
+                expires_at: Some(9_000),
+                otp: true,
             },
             OsKind::Macos,
         );
         assert_eq!(exported.value["src"]["os"], "macos");
-        let item = remote_item(hash, &exported.value, Some(true), &[]).expect("item");
+        // 验证码的过期时间随值同步；名称不在 `c/` 的值里（属于 `p/`）
+        assert_eq!(exported.value["exp"], 9_000);
+        assert!(exported.value.get("name").is_none());
+        let item = remote_item(hash, &exported.value, Some(true), Some("Home".into()), &[]).expect("item");
         assert_eq!(item.kind, ClipKind::RichText);
         assert_eq!(item.rtf.as_deref(), Some(&[1u8, 2, 3][..]));
         assert_eq!(item.source.map(|s| s.app_name), Some("App".to_owned()));
         assert!(item.truncated);
         assert_eq!(item.pinned, Some(true));
+        assert_eq!(item.name.as_deref(), Some("Home"));
+        assert_eq!(item.expires_at, Some(9_000));
+        // 名称只属于收藏：没有收藏状态（保留本机）或取消收藏时不带名称
+        let item = remote_item(hash, &exported.value, None, Some("Home".into()), &[]).expect("item");
+        assert_eq!(item.name, None);
         assert_eq!(
             remote_item(
                 hash,
                 &json!({"kind": "hologram", "created_at": 1, "last_used_at": 1}),
+                None,
                 None,
                 &[]
             )
@@ -825,8 +871,15 @@ mod tests {
             "新版本的类型留到升级后"
         );
         assert_eq!(
-            remote_item(hash, &json!({"kind": "text"}), None, &[]).err(),
+            remote_item(hash, &json!({"kind": "text"}), None, None, &[]).err(),
             Some(KeyApply::Evicted)
         );
+    }
+
+    #[test]
+    fn only_unpinned_verification_codes_count_as_codes() {
+        assert!(is_code(true, false));
+        assert!(!is_code(true, true), "收藏的验证码按普通收藏同步");
+        assert!(!is_code(false, false));
     }
 }

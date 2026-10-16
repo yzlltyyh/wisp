@@ -9,7 +9,10 @@
 //! - `port`：核心对外部世界的两个接口——平台（`Port`，生产实现就是 `wisp_platform::Platform`）与宿主（`Host`：
 //!   窗口、事件、托盘、设置、埋点），单测用 mock 驱动；
 //! - `watch`：监听回调 → 工作任务的转交与「读取失败退避重试」；
-//! - [`paste`]：粘贴的状态机（阶段 × 事件、单飞、按面板会话去重）与 `copy_text`；
+//! - `drag`：拖出条目时的拖拽数据（与粘贴同一个口径）；
+//! - [`paste`]：统一的粘贴管线（来源 × 宿主，阶段 × 事件的状态机、单飞、按面板会话去重）与 `copy_text`；
+//! - `queue`：连续粘贴——队列进行中拦下粘贴键，每按一次写入下一条再重放这次按键；
+//! - `smart`：智能识别的接入——条目检视的缓存、验证码条目的到期删除；
 //! - `outbox`：`clipboard:changed` 的投递（视图 ready 之后才推送，准备中的排队）；
 //! - [`icons`]：来源应用图标；
 //! - [`files`]：文件条目的 exists 检查（页面交给前端之前，有时限）与「仍存在的文件」；
@@ -34,6 +37,7 @@
 //! 用户的明确操作里（另存为图片读的是 Wisp 自己的 blob）。被隐私规则拦下的复制不留任何痕迹（不取图标、不发事件）。
 
 pub mod assets;
+pub(crate) mod drag;
 pub(crate) mod engine;
 pub mod files;
 pub mod icons;
@@ -41,9 +45,11 @@ pub mod ocr_history;
 pub(crate) mod outbox;
 pub mod paste;
 pub(crate) mod port;
+pub(crate) mod queue;
 pub mod retention;
 pub(crate) mod running;
 pub mod service;
+pub(crate) mod smart;
 pub mod sync;
 pub(crate) mod texts;
 pub(crate) mod watch;
@@ -51,10 +57,19 @@ pub(crate) mod watch;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_float;
+#[cfg(test)]
 mod tests_flow;
+#[cfg(test)]
+mod tests_paste;
+#[cfg(test)]
+mod tests_queue;
+#[cfg(test)]
+mod tests_smart;
 #[cfg(test)]
 mod tests_sync;
 
+pub use paste::{FLOAT_LABEL, PasteHost, PasteRequest, PasteSource};
 pub use service::ClipboardService;
 pub use sync::{
     ClipRemoteChange, ClipRemoteClear, ClipSyncSink, OcrRemoteChange, OcrSuperseded, RemoteOutcome, Superseded,

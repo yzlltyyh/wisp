@@ -2,12 +2,13 @@
 import { describe, expect, it } from 'vitest'
 import { hiddenHints, type HintSize } from '../hints'
 
-// 显示顺序：粘贴 · 纯文本 · 仅复制 · 置顶 · 删除 · 预览 · 操作 · 筛选 · 关闭；优先级同 ClipboardView 的 HintBar
+// 显示顺序：粘贴 · 纯文本 · 仅复制 · 置顶 · 删除 · 预览 · 操作 · 筛选 · 关闭；优先级同注册表里各操作的提示
+// （actions.test 核对注册表给出的就是这一组优先级）
 const ORDER: ReadonlyArray<readonly [string, number]> = [
   ['paste', 0],
   ['plain', 1],
   ['copy', 4],
-  ['pin', 6],
+  ['favorite', 6],
   ['delete', 5],
   ['preview', 7],
   ['actions', 8],
@@ -33,7 +34,7 @@ describe('hiddenHints', () => {
   it('窄宽度：必留 粘贴 / 纯文本 / 筛选 / 关闭，其余按 仅复制 → 删除 → 置顶 → 预览 → 操作 让位', () => {
     // 4 × 50 + 3 × 10 = 230；再放仅复制 290、删除 350；置顶要 410 > 394
     const hidden = hiddenHints(items({}), 394, 10)
-    expect([...hidden].sort()).toEqual(['actions', 'pin', 'preview'])
+    expect([...hidden].sort()).toEqual(['actions', 'favorite', 'preview'])
   })
 
   it('严格按优先级：前一项放不下之后，更短的低优先级项也不显示', () => {

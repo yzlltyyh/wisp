@@ -136,14 +136,14 @@
       calc(100% - 36px)
   );
 }
-.clip:is([data-confirm], [data-status-docked]) .clip-body {
+.clip:is([data-confirm], [data-status-docked], [data-chips]) .clip-body {
   --clip-dock-fade: 1;
   transition-timing-function: var(--ease-standard);
 }
 [data-reduced-motion='true'] .clip-body {
   transition-duration: var(--dur-base);
 }
-/* 清空确认是模态的：列表不接收指针 */
+/* 清空确认与命名条是模态的：列表不接收指针 */
 .clip[data-modal] .clip-listwrap {
   pointer-events: none;
 }
@@ -232,6 +232,55 @@
   color: var(--fg-2);
   user-select: none;
 }
+/* 「收藏」分组的标题是折叠按钮：外观与普通分组标题相同（文字与「最近」对齐），折叠时跟着条数，箭头在最后、随折叠转向 */
+.clip-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  cursor: default;
+}
+.clip-group-toggle:hover {
+  color: var(--fg);
+}
+.clip-group-chevron {
+  color: var(--fg-3);
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.clip-group-toggle[data-collapsed] .clip-group-chevron {
+  transform: rotate(-90deg);
+}
+.clip-group-count {
+  font-weight: 500;
+  color: var(--fg-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 收藏分组末尾的「查看全部 N 个收藏」 */
+.clip-more {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 14px;
+  box-sizing: border-box;
+}
+.clip-more-button {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  font-size: var(--text-caption);
+  line-height: var(--lh-caption);
+  font-weight: 500;
+  color: var(--accent-text);
+  background: none;
+  cursor: default;
+}
+.clip-more-button:hover {
+  text-decoration: underline;
+}
 
 /* 行：默认光标（单击粘贴，不是链接） */
 .clip-row {
@@ -281,11 +330,52 @@
   font-style: italic;
   color: var(--fg-2);
 }
-/* 检索结果平铺时置顶项的图钉 */
-.clip-pin-mark {
+/* 检索结果平铺时收藏的星标 */
+.clip-fav-mark {
   display: inline-grid;
   place-items: center;
-  color: var(--fg-3);
+  color: var(--warning);
+}
+/* 收藏的名称：加粗在前，预览变淡跟在后面（同一行里截断） */
+.clip-name {
+  margin-right: 6px;
+  font-weight: 600;
+}
+.clip-name-preview {
+  color: var(--fg-2);
+}
+/* 验证码的删除倒计时（只是说明，不抢行内的注意力） */
+.clip-otp-tag {
+  font-size: var(--text-caption);
+  color: var(--accent-text);
+  white-space: nowrap;
+}
+/* 多选：行首的选择序号叠在类型图标 / 缩略图的左上角，被选择的行带强调色淡底（光标仍由滑动指示器画） */
+.clip-lead {
+  position: relative;
+  display: inline-grid;
+}
+.clip-mark {
+  position: absolute;
+  top: -5px;
+  left: -5px;
+  display: grid;
+  place-items: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-fg);
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 1.5px var(--surface-solid);
+}
+.clip-row[data-marked] {
+  background: var(--accent-soft);
 }
 .clip-row[data-confirm] .ui-row-title {
   color: var(--danger-text);
@@ -765,6 +855,36 @@
   pointer-events: none;
 }
 
+/* ---- 芯片条：光标所在条目识别出的片段，浮在列表底部（提示条上方，离左右 8 px）；放不下时横向滚动 ---- */
+.clip-chips-dock {
+  position: absolute;
+  right: 8px;
+  bottom: 4px;
+  left: 8px;
+  display: flex;
+  justify-content: flex-start;
+  pointer-events: none;
+}
+.clip[data-hint-bar] .clip-chips-dock {
+  bottom: 40px;
+}
+.clip-chips-float {
+  padding: 4px;
+  border-radius: var(--r-row);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-popover);
+  pointer-events: auto;
+}
+/* 预览里的芯片：跟在内容里，不浮起、可以折行 */
+.clip-chips-inline {
+  flex-wrap: wrap;
+  padding: 0 0 8px;
+  overflow: visible;
+}
+.clip-hover .clip-chips-inline {
+  padding: 0 12px 8px;
+}
+
 /* ---- 行内二次确认：浮在卡片底部，离左右下三边都是 8 px（盖住提示条），从下往上展开 ---- */
 .clip-dock {
   position: absolute;
@@ -800,6 +920,22 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+/* 命名条：与确认条同一个停靠位与外观 */
+.clip-rename {
+  border-radius: var(--r-row);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-popover);
+}
+.clip-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+}
+.clip-rename-row .ui-field {
+  flex: 1;
+  min-width: 0;
 }
 
 /*

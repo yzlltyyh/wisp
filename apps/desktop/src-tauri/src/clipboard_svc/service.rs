@@ -20,13 +20,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
 
 use tauri_plugin_opener::OpenerExt;
 use wisp_clipboard::BlobKind;
 use wisp_types::{
-    AppRef, ClipFilter, ClipItemDetail, ClipItemMeta, ClipPage, ClipboardSettings, OcrHistoryItem, OsKind, PasteMode,
-    PasteOutcome, SendTarget, SourceApp,
+    ClipDragData, ClipFilter, ClipInspect, ClipItemDetail, ClipItemMeta, ClipPage, ClipboardPayload, ClipboardSettings,
+    OcrHistoryItem, OsKind, PasteOn, PasteOutcome, QueueStatus, SendTarget, SourceApp,
 };
 
 use crate::bus::{Bus, Command, TriggerOrigin};
@@ -35,7 +34,9 @@ use crate::settings::SettingsService;
 use crate::state::Deps;
 
 use super::engine::{Engine, store_error};
+use super::paste::{PasteHost, PasteRequest};
 use super::port::{AppHost, Exec, Host, PoolExec, Port};
+use super::queue::QueueEnd;
 use super::texts::{self, Text};
 use super::{assets, retention, watch};
 
@@ -158,26 +159,104 @@ impl ClipboardService {
         self.blocking(move |e| e.detail(id)).await?
     }
 
-    /// 写入 → 抑制 → touch → panel_hide_now(Paste)（立即隐藏、无退出动画，等窗口离屏 ≤ 100 ms）→ paste_into(target)；
-    /// 结果为 Copied{reason} 时调用 windows.panel_show_toast（在阻塞线程上），⌘↩ 仅复制也显示「已复制」。
-    /// `target` 是命令层在隐藏之前取到的剪贴板会话的 `prev_app`（None = 不知道原应用，只复制并提示）；按键发出后
-    /// `perf.paste(method, selected_at, Instant::now())`。
+    /// 统一的粘贴管线（`paste.rs`）：按来源写入（带自写抑制）→ touch 来源条目 → 按宿主交接 → 发键。面板宿主立即隐藏面板
+    /// （无退出动画，等窗口离屏 ≤ 100 ms）、只复制时弹 toast；悬浮窗不隐藏、先交还键盘焦点；按键发出后记
+    /// `perf.paste(method, selected_at, …)`。
     ///
     /// 单飞：粘贴进行中再来的请求、同一面板会话的第二次粘贴、面板已不显示剪贴板视图时的请求都返回 `conflict`
     /// （不写入、不 touch、不 toast），前端静默忽略即可
-    pub async fn paste(
-        &self,
-        id: i64,
-        mode: PasteMode,
-        target: Option<AppRef>,
-        selected_at: Instant,
-    ) -> Result<PasteOutcome, IpcError> {
-        self.blocking(move |e| e.paste(id, mode, target, selected_at)).await?
+    pub async fn paste(&self, req: PasteRequest) -> Result<PasteOutcome, IpcError> {
+        self.blocking(move |e| e.paste(req)).await?
     }
 
-    /// 置顶 / 取消置顶
+    /// 收藏 / 取消收藏
     pub async fn pin(&self, id: i64, pinned: bool) -> Result<ClipItemMeta, IpcError> {
         self.blocking(move |e| e.pin(id, pinned)).await?
+    }
+
+    /// 给收藏命名（`name` 已清理；None 清除名称）。命名即收藏
+    pub async fn set_name(&self, id: i64, name: Option<String>) -> Result<ClipItemMeta, IpcError> {
+        self.blocking(move |e| e.set_name(id, name.as_deref())).await?
+    }
+
+    /// 条目的检视：识别出的片段与可用的「粘贴为…」变换（最近 8 条有缓存）
+    pub async fn inspect(&self, id: i64) -> Result<ClipInspect, IpcError> {
+        self.blocking(move |e| e.inspect(id)).await?
+    }
+
+    /// 纯文本的检视（识别结果等，按当前的识别设置）。识别只扫前 16 KB，JSON 变换要看整段：放进阻塞线程池
+    pub async fn text_inspect(&self, text: String) -> Result<ClipInspect, IpcError> {
+        let smart = self.settings.get().clipboard.smart;
+        tauri::async_runtime::spawn_blocking(move || super::smart::inspect_text(&text, &smart))
+            .await
+            .map_err(|e| IpcError::internal(format!("inspect task failed: {e}")))
+    }
+
+    /// 剪贴板视图的载荷（面板打开、悬浮剪贴板就绪时）：先取首页（可能顺带打开数据库），再读历史状态——打开失败 / 库来自
+    /// 更新版本时横幅随这一次载荷就出现。**会阻塞**（首页可能要打开数据库）
+    pub fn payload(&self, settings: &wisp_types::Settings) -> ClipboardPayload {
+        let page = self.first_page();
+        let (unavailable, recording) = self.history_state();
+        ClipboardPayload {
+            page,
+            paused: self.paused(),
+            hint_bar: settings.clipboard.show_hint_bar,
+            paste_on_double_click: settings.clipboard.paste_on == PasteOn::DoubleClick,
+            unavailable: unavailable.map(str::to_owned),
+            recording,
+            favorites_collapsed: self.favorites_collapsed(),
+            queue_unavailable: self.engine.queue_unavailable(),
+        }
+    }
+
+    /// 拖出条目时的拖拽数据（`drag.rs`）
+    pub async fn drag_data(&self, ids: Vec<i64>) -> Result<ClipDragData, IpcError> {
+        self.blocking(move |e| e.drag_data(&ids)).await?
+    }
+
+    /// 连续粘贴（`queue.rs`）：立即经调用窗口的宿主粘贴第一条，之后每按一次粘贴键粘贴下一条
+    pub async fn queue_start(
+        &self,
+        ids: Vec<i64>,
+        host: PasteHost,
+        selected_at: std::time::Instant,
+    ) -> Result<QueueStatus, IpcError> {
+        self.blocking(move |e| e.queue_start(ids, host, selected_at)).await?
+    }
+
+    /// 结束连续粘贴（没有进行中的队列时什么都不做）
+    pub async fn queue_cancel(&self) -> Result<(), IpcError> {
+        self.blocking(|e| e.queue_end(QueueEnd::Cancelled)).await
+    }
+
+    /// 结束连续粘贴，不等它卸载完（托盘菜单：在主线程上调用，不能阻塞）
+    pub fn queue_cancel_later(&self) {
+        let engine = Arc::clone(&self.engine);
+        drop(tauri::async_runtime::spawn_blocking(move || {
+            engine.queue_end(QueueEnd::Cancelled)
+        }));
+    }
+
+    /// 全局 Esc：有进行中的连续粘贴就结束它，返回是否处理了。**会阻塞**（卸载钩子）
+    pub fn queue_escape(&self) -> bool {
+        self.engine.queue_escape()
+    }
+
+    /// 连续粘贴的进度（托盘状态行用；没有进行中的队列时为 None）。不阻塞
+    pub fn queue_status(&self) -> Option<QueueStatus> {
+        self.engine.queue_status()
+    }
+
+    /// 列表顶部的「收藏」分组是否折叠（本机状态，state.json）
+    pub fn favorites_collapsed(&self) -> bool {
+        self.settings.state().read(|s| s.clipboard_favorites_collapsed)
+    }
+
+    /// 折叠 / 展开「收藏」分组：合并写盘（连点几次只写一次）
+    pub fn set_favorites_collapsed(&self, collapsed: bool) {
+        self.settings
+            .state_arc()
+            .update_deferred(move |s| s.clipboard_favorites_collapsed = collapsed);
     }
 
     /// 删除；置顶项要求 force（前端负责二次确认）
@@ -271,8 +350,10 @@ impl ClipboardService {
         .map_err(|e| IpcError::internal(format!("open link task failed: {e}")))?
     }
 
-    /// 送翻译 / OCR。翻译：文本条目经总线以 `TriggerOrigin::Clipboard` 发起（编排器用 crossfade 在同一面板里显示）；
-    /// 图片送 OCR 需要编排器提供「对已有图片做 OCR」的入口，尚未提供
+    /// 送翻译 / 识别文字，都经总线以 `TriggerOrigin::Clipboard` 发起（编排器用 crossfade 在同一面板里显示）。
+    /// - 翻译：文本条目的正文；
+    /// - 识别文字：图片条目的原图，在阻塞线程里读出并解码之后交给编排器，与截图 OCR 走同一段启动流程（重新识别、
+    ///   识别历史、缩略图都沿用）。原图丢了或解码失败时在这里返回错误，不打开面板
     pub async fn send_to(&self, id: i64, target: SendTarget) -> Result<(), IpcError> {
         match target {
             SendTarget::Translate => {
@@ -288,7 +369,35 @@ impl ClipboardService {
                 });
                 Ok(())
             }
-            SendTarget::Ocr => Err(IpcError::not_implemented("clipboard image to OCR")),
+            SendTarget::Ocr => {
+                let detail = self.require_detail(id).await?;
+                let key = detail
+                    .image_url
+                    .as_deref()
+                    .and_then(|u| u.strip_prefix("img/"))
+                    .ok_or_else(|| IpcError::invalid_argument("clipboard item is not an image"))?;
+                let store = self
+                    .engine
+                    .ready_store()
+                    .ok_or_else(|| IpcError::not_found("clipboard history unavailable"))?;
+                let path = store.blob_path(BlobKind::Img, key);
+                let image = tauri::async_runtime::spawn_blocking(move || {
+                    let bytes = std::fs::read(&path).map_err(|_| IpcError::not_found("clipboard image is missing"))?;
+                    wisp_capture::decode_image(&bytes).map_err(|e| IpcError::internal(e.to_string()))
+                })
+                .await
+                .map_err(|e| IpcError::internal(format!("image decode task failed: {e}")))??;
+                log::info!(
+                    "clipboard image sent to OCR id={id} {}x{}",
+                    image.width(),
+                    image.height()
+                );
+                self.bus.send(Command::OcrImage {
+                    image,
+                    origin: TriggerOrigin::Clipboard,
+                });
+                Ok(())
+            }
         }
     }
 

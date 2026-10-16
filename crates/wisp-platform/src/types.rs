@@ -6,6 +6,9 @@ use std::time::Duration;
 
 use wisp_types::{Anchor, AppRef, HotkeyAction, ModifierKey, MonitorId, MouseButtonKind, PermissionKind, Point};
 
+pub use crate::common::combo::KeyChord;
+use crate::common::combo::Modifiers;
+
 /// 取词路径
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CaptureMethod {
@@ -206,18 +209,66 @@ pub struct MouseSpec {
     pub forward: Option<HotkeyAction>,
 }
 
+/// 连续粘贴期间要拦下的粘贴键：平台默认的 ⌘V / Ctrl+V，加上按键映射表里各应用的粘贴键（终端的 Ctrl+Shift+V 等），
+/// 去重后最多 [`PasteKeys::MAX`] 组。固定容量、可按值复制：钩子规格按值传递，钩子回调里只做 O(1) 的比较
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PasteKeys([Option<KeyChord>; PasteKeys::MAX]);
+
+impl PasteKeys {
+    /// 最多几组（默认键 + 映射表里不同的粘贴键；再多的忽略并记日志）
+    pub const MAX: usize = 4;
+
+    /// 按给出的顺序去重收下前 [`Self::MAX`] 组
+    pub fn new(chords: impl IntoIterator<Item = KeyChord>) -> Self {
+        let mut out = [None; Self::MAX];
+        let mut n = 0;
+        let mut dropped = 0usize;
+        for c in chords {
+            if out[..n].contains(&Some(c)) {
+                continue;
+            }
+            if n == Self::MAX {
+                dropped += 1;
+                continue;
+            }
+            out[n] = Some(c);
+            n += 1;
+        }
+        if dropped > 0 {
+            log::info!("paste keys: {dropped} extra combo(s) ignored (at most {})", Self::MAX);
+        }
+        Self(out)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0[0].is_none()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = KeyChord> + '_ {
+        self.0.iter().flatten().copied()
+    }
+
+    /// 修饰键集合与主键都相同的那一组（修饰键必须完全一致：Ctrl+V 不匹配 Ctrl+Shift+V）
+    pub fn find(&self, modifiers: Modifiers, code: &str) -> Option<KeyChord> {
+        self.iter().find(|c| c.modifiers == modifiers && c.code == code)
+    }
+}
+
 /// 钩子安装规格（多项共用一个钩子线程）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HookSpec {
     pub bobber: bool,
     pub double_tap: Option<DoubleTapSpec>,
     pub mouse: Option<MouseSpec>,
+    /// 连续粘贴：拦下这些粘贴键（不让目标应用收到），发出 [`InputSignal::PasteKey`]，由上层写好下一条之后经
+    /// `InputHooks::replay_paste` 重放。只在队列进行中安装；Wisp 自己注入的按键（带 Wisp 标记）一律放行
+    pub paste_keys: PasteKeys,
 }
 
 impl HookSpec {
     /// 是否什么都不需要监听（此时不应安装任何钩子）
     pub fn is_empty(&self) -> bool {
-        !self.bobber && self.double_tap.is_none() && self.mouse.is_none()
+        !self.bobber && self.double_tap.is_none() && self.mouse.is_none() && self.paste_keys.is_empty()
     }
 }
 
@@ -249,6 +300,13 @@ pub enum InputSignal {
         button: MouseButtonKind,
         action: HotkeyAction,
     },
+    /// 用户按下了 `HookSpec::paste_keys` 里的一组键，这次按键已被拦下（目标应用没有收到）。macOS / Windows 在按下时
+    /// 发出；X11 在抬起时发出（被动抓取在按键抬起之前一直独占键盘，重放必须等它结束）
+    PasteKey {
+        chord: KeyChord,
+    },
+    /// 会话被锁定、或切到了安全桌面（锁屏、Windows 的 UAC）：连续粘贴应当立即结束。只发给装了 `paste_keys` 的订阅
+    SessionLocked,
 }
 
 /// 钩子安装失败

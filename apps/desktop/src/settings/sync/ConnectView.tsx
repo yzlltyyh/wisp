@@ -721,6 +721,7 @@ const DEFAULT_CONTENT: SyncContent = {
   clipboard: true,
   images: true,
   ocr_history: true,
+  verification_codes: true,
 }
 
 /** 同步密码输入框：设置时可以显示明文（生成的密码需要看清、存进密码管理器） */

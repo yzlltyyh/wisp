@@ -32,10 +32,10 @@ use objc2::runtime::{AnyObject, Bool, NSObject};
 use objc2::{AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSAutoresizingMaskOptions, NSBezierPath, NSColor, NSEvent, NSEventMask, NSEventModifierFlags,
-    NSEventType, NSImage, NSImageResizingMode, NSPopUpMenuWindowLevel, NSResponder, NSScreen, NSStatusWindowLevel,
-    NSTrackingArea, NSTrackingAreaOptions, NSUserInterfaceItemIdentification, NSView, NSVisualEffectBlendingMode,
-    NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
-    NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowStyleMask,
+    NSEventType, NSFloatingWindowLevel, NSImage, NSImageResizingMode, NSNormalWindowLevel, NSPopUpMenuWindowLevel,
+    NSResponder, NSScreen, NSStatusWindowLevel, NSTrackingArea, NSTrackingAreaOptions,
+    NSUserInterfaceItemIdentification, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
+    NSVisualEffectView, NSWindow, NSWindowButton, NSWindowCollectionBehavior, NSWindowOrderingMode, NSWindowStyleMask,
 };
 use objc2_core_graphics::CGColor;
 use objc2_foundation::{NSEdgeInsets, NSObjectProtocol, NSPoint, NSRect, NSRunLoop, NSRunLoopCommonModes, NSSize};
@@ -205,9 +205,13 @@ pub fn template_overrides<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
 ) -> tauri::WebviewWindowBuilder<'a, R, M> {
     match (kind, frame_mode) {
         (super::TemplateKind::Panel, wisp_types::FrameMode::Native) => builder.shadow(true).focused(false),
-        (super::TemplateKind::Panel | super::TemplateKind::Overlay | super::TemplateKind::Pinned, _) => {
-            builder.focused(false)
-        }
+        (
+            super::TemplateKind::Panel
+            | super::TemplateKind::Overlay
+            | super::TemplateKind::Pinned
+            | super::TemplateKind::Floating,
+            _,
+        ) => builder.focused(false),
         (super::TemplateKind::Regular, _) => builder,
     }
 }
@@ -228,6 +232,17 @@ mod panel_class {
         panel!(WispOverlayPanel {
             config: {
                 // Overlay 成为 key 以接收键盘（Esc、方向键），但不激活应用
+                can_become_key_window: true,
+                can_become_main_window: false,
+                is_floating_panel: true,
+                hides_on_deactivate: false
+            }
+        })
+
+        panel!(WispFloatPanel {
+            config: {
+                // 悬浮剪贴板：搜索时要成为 key（打字），平时点击不成为 key（见 float_attach 的 becomesKeyOnlyIfNeeded）；
+                // 从不激活应用，切到别的应用时也不隐藏
                 can_become_key_window: true,
                 can_become_main_window: false,
                 is_floating_panel: true,
@@ -1282,6 +1297,148 @@ pub fn pinned_show(window: &tauri::WebviewWindow, restore_minimized: bool) -> Re
 /// 立即隐藏 pinned（截图前，不播放动画）
 pub fn pinned_hide(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
     on_main_sync(window, |_, _, ns| ns.orderOut(None))
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 悬浮剪贴板
+
+/// 交还键盘焦点时等悬浮窗不再是 key 的上限（激活目标应用一步；还不行再强制退出 key 一步）
+const FLOAT_YIELD_WAIT: Duration = Duration::from_millis(100);
+/// 强制退出 key 之后再等的上限
+const FLOAT_RESIGN_WAIT: Duration = Duration::from_millis(50);
+/// 等待期间查一次的间隔
+const FLOAT_YIELD_POLL: Duration = Duration::from_millis(5);
+
+/// 悬浮剪贴板转为非激活 NSPanel（`WispFloatPanel`）：保留模板的有标题窗口（`titleBarStyle: Overlay`，系统圆角、阴影与
+/// 边缘缩放），隐藏交通灯；`becomesKeyOnlyIfNeeded`——点击列表不让它成为 key（粘贴键直接落进目标应用），只有搜索框
+/// 显式要焦点时才成为 key（[`float_set_focusable`]）；置顶用 `NSFloatingWindowLevel`（3），不用面板的 25（会盖住其他应用
+/// 的菜单）；所有空间与全屏应用旁都能出现。窗口创建后、显示前调用
+pub fn float_attach(window: &tauri::WebviewWindow, on_top: bool) -> Result<(), IpcError> {
+    on_main_sync(window, move |mtm, window, _| -> Result<(), IpcError> {
+        let panel = window.to_panel::<panel_class::WispFloatPanel<tauri::Wry>>()?;
+        if let Err(e) = panel.add_style_mask(NSWindowStyleMask::NonactivatingPanel) {
+            log::warn!("floating clipboard style mask: {e}");
+        }
+        panel.set_becomes_key_only_if_needed(true);
+        panel.set_collection_behavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces | NSWindowCollectionBehavior::FullScreenAuxiliary,
+        );
+        // to_panel 换了 isa，重新取一次
+        let ns = ns_window(window, mtm)?;
+        ns.setLevel(float_level(on_top));
+        for b in [
+            NSWindowButton::CloseButton,
+            NSWindowButton::MiniaturizeButton,
+            NSWindowButton::ZoomButton,
+        ] {
+            if let Some(button) = ns.standardWindowButton(b) {
+                button.setHidden(true);
+            }
+        }
+        Ok(())
+    })?
+}
+
+fn float_level(on_top: bool) -> isize {
+    if on_top {
+        NSFloatingWindowLevel
+    } else {
+        NSNormalWindowLevel
+    }
+}
+
+/// 置顶 / 取消置顶（窗口层级；不经 tao，它不知道这个窗口已经换成了面板）
+pub fn float_set_on_top(window: &tauri::WebviewWindow, on_top: bool) -> Result<(), IpcError> {
+    on_main_sync(window, move |_, _, ns| ns.setLevel(float_level(on_top)))
+}
+
+/// 搜索框要打字：成为 key（非激活面板成为 key 不激活应用）。`false`（Esc 交还焦点）：是 key 时退出 key——
+/// orderOut + orderFrontRegardless 在同一个 CA 事务里，键盘焦点回到原来的应用，窗口看不到闪烁
+pub fn float_set_focusable(window: &tauri::WebviewWindow, focusable: bool) -> Result<(), IpcError> {
+    on_main_sync(window, move |_, _, ns| {
+        if !ns.isVisible() {
+            return;
+        }
+        if focusable && !ns.isKeyWindow() {
+            // 第一响应者要是 WKWebView：按键才进得了搜索框
+            make_key_with_webview(ns);
+        } else if !focusable && ns.isKeyWindow() {
+            ns.orderOut(None);
+            ns.orderFrontRegardless();
+        }
+    })
+}
+
+/// 发粘贴键之前把键盘焦点交还目标应用（悬浮窗是 key 时，发出的 ⌘V 会落进它自己）：
+/// 1. 不是 key：什么都不用做；
+/// 2. 协作式激活目标应用，等悬浮窗不再是 key（≤ [`FLOAT_YIELD_WAIT`]）；
+/// 3. 还是 key：同一个主线程回调里 orderOut + orderFrontRegardless（窗口离屏即交出 key，同一个 CA 事务里重新上屏，看不到
+///    闪烁），再等 ≤ [`FLOAT_RESIGN_WAIT`]。
+///
+/// 返回悬浮窗是否已不再是 key（false 时调用方只复制、不发键）。**会阻塞**（主线程往返，总共最多约 160 ms）
+pub fn float_yield(window: &tauri::WebviewWindow, target: &wisp_types::AppRef) -> bool {
+    let is_key = |w: &tauri::WebviewWindow| on_main_sync(w, |_, _, ns| ns.isKeyWindow()).ok();
+    match is_key(window) {
+        Some(false) => return true,
+        Some(true) => {}
+        // 主线程不响应：不知道焦点在哪，保守地只复制
+        None => return false,
+    }
+    if let Some(pid) = target.pid.and_then(|p| i32::try_from(p).ok()) {
+        let activated = on_main_sync(window, move |_, _, _| {
+            objc2_app_kit::NSRunningApplication::runningApplicationWithProcessIdentifier(pid).is_some_and(|app| {
+                #[allow(deprecated)]
+                app.activateWithOptions(objc2_app_kit::NSApplicationActivationOptions::empty())
+            })
+        });
+        if matches!(activated, Ok(true)) && wait_not_key(window, FLOAT_YIELD_WAIT, is_key) {
+            return true;
+        }
+    }
+    let resigned = on_main_sync(window, |_, _, ns| {
+        if ns.isKeyWindow() {
+            ns.orderOut(None);
+            ns.orderFrontRegardless();
+        }
+    });
+    resigned.is_ok() && wait_not_key(window, FLOAT_RESIGN_WAIT, is_key)
+}
+
+/// 每 [`FLOAT_YIELD_POLL`] 查一次，直到窗口不再是 key 或到达上限
+fn wait_not_key(
+    window: &tauri::WebviewWindow,
+    cap: Duration,
+    is_key: impl Fn(&tauri::WebviewWindow) -> Option<bool>,
+) -> bool {
+    let deadline = Instant::now() + cap;
+    loop {
+        if is_key(window) == Some(false) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(FLOAT_YIELD_POLL);
+    }
+}
+
+/// 交接：同一个主线程回调里把悬浮窗放到 `rect`、不激活地上屏，并把面板 orderOut（同一个 CA 事务，没有空帧）
+pub fn float_handoff(
+    float: &tauri::WebviewWindow,
+    panel: Option<&tauri::WebviewWindow>,
+    rect: Rect,
+) -> Result<(), IpcError> {
+    pinned_handoff(float, panel, rect, None, false)
+}
+
+/// 不激活地上屏（截图后恢复、再次打开已存在的悬浮窗）
+pub fn float_show(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
+    pinned_show(window, true)
+}
+
+/// 立即离屏（截图前）
+pub fn float_hide(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
+    pinned_hide(window)
 }
 
 // ---------------------------------------------------------------------------------------------------------------

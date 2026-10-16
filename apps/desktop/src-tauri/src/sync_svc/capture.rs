@@ -13,7 +13,7 @@ use std::sync::{Arc, mpsc};
 
 use parking_lot::Mutex;
 use serde_json::{Value, json};
-use wisp_sync::model::keys;
+use wisp_sync::model::{PinValue, keys};
 use wisp_sync::projection::ConfigDoc;
 use wisp_sync::{Clock, Domain, Hlc, JournalEntry, JournalValue};
 
@@ -252,12 +252,16 @@ impl ClipSyncSink for Capturer {
         }
     }
 
-    fn pin(&self, hash: [u8; 32], pinned: bool) {
+    fn favorite(&self, hash: [u8; 32], pinned: bool, name: Option<&str>) {
         if self.clip_on() {
+            let value = PinValue {
+                pin: pinned,
+                name: name.map(str::to_owned),
+            };
             self.record(
                 Domain::Clip,
                 keys::clip_pin(&hash),
-                JournalValue::Set(Value::Bool(pinned)),
+                JournalValue::Set(value.to_value()),
                 CaptureKey::Clip(hash),
             );
         }

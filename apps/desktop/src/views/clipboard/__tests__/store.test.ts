@@ -261,3 +261,48 @@ describe('行缓存', () => {
     expect(rowsOf(store).every((r) => r.type === 'item')).toBe(true)
   })
 })
+
+describe('收藏、多选与检视', () => {
+  it('载荷里收藏折叠：光标落在第一条列出来的条目（不是藏起来的收藏）；折叠是行缓存的输入，标记不是', () => {
+    const s = initialState(payload(sample(), { favorites_collapsed: true }), NOW)
+    expect(s.favoritesCollapsed).toBe(true)
+    expect(s.selectedId).toBe(3)
+    const store = createClipStore(payload(sample()), NOW)
+    const a = rowsOf(store)
+    store.setState({ marks: [sample()[2]!] })
+    expect(rowsOf(store)).toBe(a)
+    store.setState({ favoritesCollapsed: true })
+    expect(rowsOf(store)).not.toBe(a)
+    expect(rowsOf(store).some((r) => r.key === 1)).toBe(false)
+  })
+
+  it('收藏视图平铺；过滤在本地先收窄（按 pinned，不按类型）', () => {
+    const s = apply(base(), { filter: 'favorite' })
+    expect(ids(s)).toEqual([1, 2])
+    const store = createClipStore(payload(sample()), NOW)
+    store.setState({ filter: 'favorite' })
+    expect(rowsOf(store).map((r) => r.key)).toEqual([1, 2])
+  })
+
+  it('标记随条目变化：updated 换成新的元数据，removed 去掉；cleared（保留收藏）只留收藏', () => {
+    const items = sample()
+    const s = apply(base(), { marks: [items[2]!, items[0]!] })
+    const renamed = { ...items[0]!, name: '地址' }
+    const a = { ...s, ...applyChange(s, { change: 'updated', item: renamed }) }
+    expect(a.marks.map((m) => m.name ?? null)).toEqual([null, '地址'])
+    const b = { ...a, ...removeFromLists(a, 3) }
+    expect(b.marks.map((m) => m.id)).toEqual([1])
+    const c = { ...s, ...applyChange(s, { change: 'cleared', keep_pinned: true }) }
+    expect(c.marks.map((m) => m.id)).toEqual([1])
+  })
+
+  it('删除多选的确认：其中任何一条被移走都撤掉确认；检视结果随条目移除', () => {
+    const s = apply(base(), {
+      confirm: { kind: 'delete', id: 1, ids: [1, 4] },
+      inspect: { id: 4, result: { entities: [], transforms: [] } },
+    })
+    const next = { ...s, ...removeFromLists(s, 4) }
+    expect(next.confirm).toBeNull()
+    expect(next.inspect).toBeNull()
+  })
+})

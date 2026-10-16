@@ -70,11 +70,8 @@ fn fake_key(x: &X11, press: bool, code: Keycode) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-/// 抬起所有仍被按住的修饰键
-pub(crate) fn release_held_modifiers(x: &X11) -> Result<(), String> {
-    let Some(map) = keymap(x) else {
-        return Ok(());
-    };
+/// 当前按住的修饰键：(keycode, 第 1 列的 keysym)
+fn held_modifiers(x: &X11, map: &KeyMap) -> Result<Vec<(Keycode, u32)>, String> {
     let keys = x
         .conn
         .query_keymap()
@@ -82,6 +79,7 @@ pub(crate) fn release_held_modifiers(x: &X11) -> Result<(), String> {
         .reply()
         .map_err(|e| e.to_string())?
         .keys;
+    let mut out = Vec::new();
     for (byte_idx, byte) in keys.iter().enumerate() {
         if *byte == 0 {
             continue;
@@ -93,16 +91,42 @@ pub(crate) fn release_held_modifiers(x: &X11) -> Result<(), String> {
             let Ok(code) = u8::try_from(byte_idx * 8 + bit) else {
                 continue;
             };
-            if keysym::is_modifier(map.keysym(code, 0)) {
-                fake_key(x, false, code)?;
+            let sym = map.keysym(code, 0);
+            if keysym::is_modifier(sym) {
+                out.push((code, sym));
             }
         }
+    }
+    Ok(out)
+}
+
+/// 抬起所有仍被按住的修饰键
+pub(crate) fn release_held_modifiers(x: &X11) -> Result<(), String> {
+    let Some(map) = keymap(x) else {
+        return Ok(());
+    };
+    for (code, _) in held_modifiers(x, &map)? {
+        fake_key(x, false, code)?;
     }
     Ok(())
 }
 
 /// 发送组合键：按下修饰键 → 按下主键 → 抬起主键 → 抬起修饰键（逆序）
 pub(crate) fn send_combo(x: &Arc<X11>, combo: &Combo) -> Result<(), String> {
+    send_combo_with(x, combo, &[])
+}
+
+/// 重放用户刚按下的组合（连续粘贴）：用户仍按着的修饰键不再模拟按下与抬起（见 [`keysym::modifiers_to_press`]），
+/// 也不抬起别的修饰键——按键本来就是用户按的
+#[cfg(feature = "mouse-hook")]
+pub(crate) fn replay_combo(x: &Arc<X11>, combo: &Combo) -> Result<(), String> {
+    let map = keymap(x).ok_or("keyboard mapping unavailable")?;
+    let held: Vec<u32> = held_modifiers(x, &map)?.into_iter().map(|(_, sym)| sym).collect();
+    send_combo_with(x, combo, &held)
+}
+
+/// 发送组合键；`held` 是用户正按着的修饰键（同一种的不再模拟）
+fn send_combo_with(x: &Arc<X11>, combo: &Combo, held: &[u32]) -> Result<(), String> {
     let main =
         crate::common::combo::x11_keysym(&combo.code).ok_or_else(|| format!("unsupported key {}", combo.code))?;
     let map = keymap(x).ok_or("keyboard mapping unavailable")?;
@@ -130,6 +154,7 @@ pub(crate) fn send_combo(x: &Arc<X11>, combo: &Combo) -> Result<(), String> {
     if needs_shift && !mods.contains(&XK_SHIFT_L) {
         mods.push(XK_SHIFT_L);
     }
+    let mods = keysym::modifiers_to_press(&mods, held);
     let mut mod_codes = Vec::with_capacity(mods.len());
     for m in &mods {
         let (code, _) = map

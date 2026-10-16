@@ -7,14 +7,22 @@
     "close_preview": "Close preview",
     "preview": "Item preview",
     "unknown_app": "Unknown app",
-    "pinned": "Pinned",
-    "actions": "Actions"
+    "favorite": "Favorite",
+    "actions": "Actions",
+    "back": "Back to actions",
+    "chips": "Detected items",
+    "marked": "Selected, {n}",
+    "favorites_one": "Favorites, {n} item",
+    "favorites_other": "Favorites, {n} items",
+    "rename": "Favorite name",
+    "drag": "Drag into another app to drop the content"
   },
   "search": {
     "placeholder": "Search clipboard history"
   },
   "filter": {
     "all": "All",
+    "favorite": "Favorites",
     "text": "Text",
     "image": "Images",
     "files": "Files",
@@ -25,6 +33,7 @@
   },
   "noun": {
     "all": "items",
+    "favorite": "favorites",
     "text": "text",
     "image": "images",
     "files": "files",
@@ -33,8 +42,9 @@
     "color": "colors"
   },
   "group": {
-    "pinned": "Pinned",
-    "recent": "Recent"
+    "pinned": "Favorites",
+    "recent": "Recent",
+    "more": "Show all {n} favorites"
   },
   "kind": {
     "text": "Text",
@@ -61,31 +71,46 @@
     "files_at_least": "{n}+ files",
     "blank_one": "({n} whitespace character)",
     "blank_other": "({n} whitespace characters)",
-    "blank_unknown": "(blank)"
+    "blank_unknown": "(blank)",
+    "otp_expires": "Code · deleted in {n} min",
+    "otp_soon": "Code · deleting soon"
   },
   "hint": {
     "paste": "Paste",
     "plain": "Plain text",
     "copy": "Copy only",
-    "pin": "Pin",
+    "favorite": "Favorite",
     "delete": "Delete",
     "preview": "Preview",
     "back": "Back",
     "browse": "Previous / next",
     "actions": "Actions",
     "filter": "Filter",
-    "close": "Close"
+    "close": "Close",
+    "paste_merged": "Paste all",
+    "clear_marks": "Deselect",
+    "choose": "Choose",
+    "queue": "Sequence",
+    "leave": "Back to app"
   },
   "action": {
     "paste": "Paste",
+    "paste_merged": "Paste all",
     "paste_plain": "Paste as plain text",
+    "paste_plain_merged": "Paste all as plain text",
     "copy_only": "Copy only",
+    "copy_merged": "Copy all",
+    "paste_as": "Paste as",
     "preview": "Preview",
     "preview_macos": "Quick Look",
-    "pin": "Pin",
-    "unpin": "Unpin",
+    "favorite": "Add to favorites",
+    "unfavorite": "Remove from favorites",
+    "name": "Name…",
+    "rename": "Rename…",
+    "extract": "Extract",
     "delete": "Delete",
     "save_image": "Save image as…",
+    "ocr": "Recognize text",
     "open_link": "Open link",
     "reveal": {
       "macos": "Show in Finder",
@@ -98,13 +123,22 @@
     "resume": "Resume recording",
     "settings": "Clipboard settings…",
     "monospace": "Monospace",
-    "copy_value": "Copy"
+    "copy_value": "Copy",
+    "float": "Float",
+    "collapse_favorites": "Collapse favorites",
+    "expand_favorites": "Expand favorites",
+    "queue": "Paste in sequence",
+    "queue_unavailable": "Paste in sequence (not supported in this session)",
+    "queue_cancel": "Stop pasting in sequence",
+    "on_top": "Keep on top",
+    "close": "Close"
   },
   "empty": {
     "title": "Copy something and it will show up here",
     "detail": "Text, images and files you copy with {key} are kept automatically",
     "filtered": "No {kind} yet",
     "filtered_detail": "Press {key} to switch to another type",
+    "favorites_detail": "Press {key} on an item to add it. Favorites are never cleaned up automatically.",
     "show_all": "Show all types"
   },
   "no_result": {
@@ -126,12 +160,46 @@
   "history_unavailable": "Clipboard history can’t be read right now; new copies aren’t recorded",
   "watch_unavailable": "The clipboard can’t be recorded in this desktop session; new copies aren’t saved",
   "confirm": {
-    "delete_pinned": "Press {key} again to delete this pinned item",
+    "delete_pinned": "Press {key} again to delete this favorite",
+    "delete_many": "Press {key} again to delete {n} selected items, including favorites",
     "delete": "Delete",
     "clear": "Clear clipboard history?",
     "clear_synced": "Clear clipboard history? Items on your other devices will be cleared too.",
-    "keep_pinned": "Keep pinned items",
+    "keep_pinned": "Keep favorites",
     "clear_action": "Clear"
+  },
+  "rename": {
+    "placeholder": "Name this favorite",
+    "hint": "Leave empty to remove the name"
+  },
+  "chip": {
+    "label": "{kind}: {value}",
+    "tip": "Click to paste, {alt}-click to copy"
+  },
+  "entity": {
+    "otp": "Verification code",
+    "phone": "Phone",
+    "email": "Email",
+    "url": "Link",
+    "tracking": "Tracking number",
+    "order": "Order number",
+    "amount": "Amount",
+    "datetime": "Date and time",
+    "ip": "IP address",
+    "id_card": "ID number",
+    "bank_card": "Card number"
+  },
+  "transform": {
+    "join_lines": "Join lines",
+    "trim": "Trim whitespace",
+    "upper": "Uppercase",
+    "lower": "Lowercase",
+    "title": "Title case",
+    "half_width": "Half-width",
+    "full_width": "Full-width",
+    "json_pretty": "Format JSON",
+    "json_minify": "Minify JSON",
+    "strip_tracking": "Remove tracking parameters"
   },
   "status": {
     "saved": "Image saved",
@@ -143,19 +211,23 @@
     "failed": {
       "paste": "Couldn’t paste — please try again",
       "copy": "Couldn’t copy — please try again",
-      "pin": "Couldn’t pin — please try again",
-      "unpin": "Couldn’t unpin — please try again",
+      "favorite": "Couldn’t add to favorites — please try again",
+      "unfavorite": "Couldn’t remove from favorites — please try again",
+      "rename": "The name wasn’t saved — please try again",
       "delete": "Couldn’t delete — please try again",
       "clear": "Couldn’t clear history — nothing was removed",
       "pause": "Couldn’t pause recording — please try again",
       "resume": "Couldn’t resume recording — please try again",
       "save_image": "The image wasn’t saved — please try again",
+      "ocr": "Couldn’t recognize text in the image — please try again",
       "reveal": "Couldn’t show the file",
       "open_link": "Couldn’t open the link",
       "translate": "Couldn’t start translating — please try again",
       "settings": "Couldn’t open settings",
       "search": "Search failed — please try again",
-      "load": "Couldn’t load more items"
+      "load": "Couldn’t load more items",
+      "float": "Couldn’t open the floating clipboard",
+      "queue": "Couldn’t start pasting in sequence — please try again"
     }
   },
   "toast": {
@@ -174,5 +246,15 @@
       "allow_accessibility": "Allow Wisp in Privacy & Security › Accessibility"
     },
     "open_settings": "Open Accessibility settings"
+  },
+  "queue": {
+    "progress": "Pasting in sequence · {index} / {total}",
+    "next": "Press {key} for the next one · Esc to stop",
+    "done": "Finished pasting in sequence",
+    "stopped": "Stopped pasting in sequence"
+  },
+  "float": {
+    "title": "Floating clipboard",
+    "unavailable": "The floating clipboard was closed"
   }
 }

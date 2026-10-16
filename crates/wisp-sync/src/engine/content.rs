@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 use super::RetentionPolicy;
 use crate::hlc::Hlc;
-use crate::model::{ClearValue, Domain, outranks};
+use crate::model::{ClearValue, Domain, PinValue, outranks};
 use crate::replica::{ContentView, Row};
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
@@ -22,13 +22,23 @@ pub(super) fn beats(a: &Row, clear: Option<&Row>) -> bool {
     }
 }
 
-/// 置顶寄存器的有效值：早于「清空全部」的置顶已随条目一起被清掉，不再算数（之后再次复制的条目是未置顶的）
-pub(super) fn pinned(p: Option<&Row>, view: &ContentView) -> Option<bool> {
+/// 收藏寄存器的值本身（不看清空）：`p/<hash>` 的值可以是 bool 或 `{pin, name?}`（[`PinValue`]）
+pub(super) fn pin_value(p: &Row) -> Option<PinValue> {
+    p.json().as_ref().and_then(PinValue::parse)
+}
+
+/// 收藏寄存器的有效值：早于「清空全部」的收藏已随条目一起被清掉，不再算数（之后再次复制的条目是未收藏的，名称也不再有效）
+pub(super) fn favorite(p: Option<&Row>, view: &ContentView) -> Option<PinValue> {
     let p = p.filter(|p| !p.tomb)?;
     if !beats(p, view.clear_all.as_ref()) {
-        return Some(false);
+        return Some(PinValue::default());
     }
-    p.json().and_then(|v| v.as_bool())
+    pin_value(p)
+}
+
+/// 收藏寄存器的有效收藏状态（见 [`favorite`]）
+pub(super) fn pinned(p: Option<&Row>, view: &ContentView) -> Option<bool> {
+    favorite(p, view).map(|v| v.pin)
 }
 
 /// 剪贴板条目是否存在（见模块说明）
@@ -175,6 +185,31 @@ mod tests {
         view.clear_all = Some(row("@clear/all", 25, "b", Some(serde_json::json!({"wall_ms": 0}))));
         assert!(!clip_alive(&c, Some(&pin_before), &view));
         assert_ne!(clear_sig(&view), clear_sig(&ContentView::default()));
+    }
+
+    #[test]
+    fn favorite_values_carry_names_until_a_clear_all() {
+        let c = row("c/x", 10, "a", Some(Value::Null));
+        let mut view = ContentView::default();
+        let named = row("p/x", 15, "a", Some(serde_json::json!({"pin": true, "name": "Home"})));
+        assert_eq!(
+            favorite(Some(&named), &view),
+            Some(PinValue {
+                pin: true,
+                name: Some("Home".into())
+            })
+        );
+        assert_eq!(pinned(Some(&named), &view), Some(true));
+        // 对象形态的收藏同样让条目躲过「清空（保留收藏）」
+        view.clear_unpinned = Some(row("@clear/unpinned", 20, "b", Some(serde_json::json!({"wall_ms": 0}))));
+        assert!(clip_alive(&c, Some(&named), &view));
+        // 「清空全部」之前的收藏连同名称一起失效
+        view.clear_all = Some(row("@clear/all", 25, "b", Some(serde_json::json!({"wall_ms": 0}))));
+        assert_eq!(favorite(Some(&named), &view), Some(PinValue::default()));
+        // 墓碑与看不懂的值：没有寄存器
+        assert_eq!(favorite(Some(&row("p/x", 30, "a", None)), &view), None);
+        let odd = row("p/x", 30, "a", Some(serde_json::json!("pinned")));
+        assert_eq!(favorite(Some(&odd), &ContentView::default()), None);
     }
 
     #[test]

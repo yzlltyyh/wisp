@@ -1,10 +1,11 @@
 /**
  * Space 全文预览：占满列表区（列表淡出、保留滚动位置），presets.previewIn 进入与退出（视图的
- * AnimatePresence 播放退出，与列表淡入重叠，没有空白帧）。
+ * AnimatePresence 播放退出，与列表淡入重叠，没有空白帧）。头部的工具按钮（等宽）、正文下方的按钮（图片另存为、
+ * 在 Finder 中显示、打开链接）与颜色值的复制都来自操作注册表，按条目类型自动取舍。
  * 键盘（Esc / Space 返回、↑↓ 切换条目、PageUp / PageDown 滚动、Tab / ⇧Tab 在预览的按钮之间移动焦点）由视图的
  * overlay 作用域处理。↑↓ 换条目时外壳不重播进入动效，但滚动位置、等宽开关、「第一处命中滚到中间」都按新条目重新开始。
  */
-import { ExternalLink, FolderOpen, Globe, ImageDown, WholeWord, X } from 'lucide-react'
+import { Globe, X } from 'lucide-react'
 import { m, useIsPresent } from 'motion/react'
 import {
   Fragment,
@@ -15,15 +16,18 @@ import {
   type ReactNode,
   type Ref,
 } from 'react'
-import type { ClipHit, ClipItemDetail, OsKind } from '../../../shared/ipc/types'
+import type { ClipHit, ClipItemDetail } from '../../../shared/ipc/types'
 import { formatNumber } from '../../../shared/i18n/format'
 import { useT, type TFunction } from '../../../shared/i18n/useT'
 import { usePreset } from '../../../shared/motion/presets'
 import { Button, Icon, IconButton, ScrollArea } from '../../../shared/ui'
+import type { ActionCtx, ActionEntry, ActionSource, ClipRunner } from '../actions'
 import { ClipLeading } from '../ClipRow'
 import { fullTime } from '../format'
 import { findMatches, formatHex, hostOf, PREVIEW_RENDER_CHARS, SEARCH_PREFIX_CHARS } from '../model'
-import type { ClipActions } from '../useClipboard'
+import type { ClipStore } from '../store'
+import type { ClipCommands } from '../useClipboard'
+import { EntityChips } from './Chips'
 import { ColorInfo, FileList, ImageView, metaParts, toRgba, useDetail } from './parts'
 
 export interface FullPreviewProps {
@@ -33,8 +37,12 @@ export interface FullPreviewProps {
   /** 列表区高度（预览占满它） */
   height: number
   now: number
-  os: OsKind
-  actions: ClipActions
+  /** 数据命令：详情 */
+  cmd: ClipCommands
+  /** 操作注册表：头部工具、正文下方的按钮、关闭键 */
+  runner: ClipRunner
+  /** 识别出的片段（芯片）读 store 里的检视结果 */
+  store: ClipStore
   onClose(): void
   /** 内容滚动容器（PageUp / PageDown） */
   scrollRef?: Ref<HTMLDivElement>
@@ -65,22 +73,30 @@ export function FullPreview({
   query,
   height,
   now,
-  os,
-  actions,
+  cmd,
+  runner,
+  store,
   onClose,
   scrollRef,
 }: FullPreviewProps) {
   const t = useT()
   const it = hit.item
-  const detail = useDetail(actions, it.id, true)
+  const detail = useDetail(cmd, it.id, true)
   const motion = usePreset('previewIn')
   const present = useIsPresent()
   // 等宽开关跟随条目：换条目时回到该类型的默认值（代码等宽，其余比例字体）
   const [monoState, setMonoState] = useState({ id: it.id, mono: it.kind === 'code' })
   if (monoState.id !== it.id) setMonoState({ id: it.id, mono: it.kind === 'code' })
   const mono = monoState.id === it.id ? monoState.mono : it.kind === 'code'
-  const textual = it.kind === 'text' || it.kind === 'rich_text' || it.kind === 'code'
   const files = detail?.files ?? it.files ?? []
+  // 注册表的上下文：作用于预览的条目（文件存在性以详情里的完整列表为准），等宽开关由预览自己提供
+  const ctxFor = (source: ActionSource): ActionCtx => ({
+    ...runner.ctx(source, null),
+    target: detail?.files ? { ...it, files: detail.files } : it,
+    preview: { mono, setMono: (on) => setMonoState({ id: it.id, mono: on }) },
+  })
+  const tools = runner.entries('preview_tools', ctxFor('preview_tools'), t)
+  const buttons = runner.entries('preview_actions', ctxFor('preview_actions'), t)
   const sub = [it.source?.name, fullTime(it.last_used_at, now)].filter(Boolean).join(' · ')
   const bodyHeight = Math.max(0, height - PREVIEW_HEAD_HEIGHT)
 
@@ -104,20 +120,24 @@ export function FullPreview({
           </span>
           <span className="clip-preview-sub">{sub}</span>
         </span>
-        {textual ? (
-          <IconButton
-            icon={WholeWord}
-            label={t('clipboard.action.monospace')}
-            active={mono}
-            aria-pressed={mono}
-            onClick={() => setMonoState({ id: it.id, mono: !mono })}
-            data-testid="clip-preview-mono"
-          />
-        ) : null}
+        {tools.map((e) =>
+          e.icon ? (
+            <IconButton
+              key={e.id}
+              icon={e.icon}
+              label={e.label}
+              shortcut={e.shortcut}
+              active={e.checked}
+              disabled={e.disabled}
+              onClick={e.run}
+              data-testid={`clip-preview-${e.id}`}
+            />
+          ) : null,
+        )}
         <IconButton
           icon={X}
           label={t('clipboard.a11y.close_preview')}
-          shortcut="Space"
+          shortcut={runner.shortcut('preview', 'preview')}
           onClick={onClose}
           data-testid="clip-preview-close"
         />
@@ -130,15 +150,16 @@ export function FullPreview({
         maxHeight={bodyHeight}
         data-testid="clip-preview-body"
       >
+        <EntityChips store={store} runner={runner} id={it.id} />
         <PreviewBody
           hit={hit}
           detail={detail}
           query={query}
           mono={mono}
           bodyHeight={bodyHeight}
-          os={os}
           t={t}
-          actions={actions}
+          buttons={buttons}
+          copyLabel={runner.label('copy_value', t)}
         />
       </ScrollArea>
     </m.section>
@@ -166,24 +187,46 @@ function previewTitle(
   return [t(`clipboard.kind.${it.kind}`), ...metaParts(it, t)].join(' · ')
 }
 
+/** 正文下方的操作按钮（注册表按条目类型给出：图片另存为、在 Finder 中显示、打开链接） */
+function ActionButtons({ entries }: { entries: readonly ActionEntry[] }) {
+  if (entries.length === 0) return null
+  return (
+    <div className="clip-preview-actions">
+      {entries.map((e) => (
+        <Button
+          key={e.id}
+          size="sm"
+          variant="secondary"
+          icon={e.icon}
+          disabled={e.disabled}
+          onClick={e.run}
+        >
+          {e.label}
+        </Button>
+      ))}
+    </div>
+  )
+}
+
 function PreviewBody({
   hit,
   detail,
   query,
   mono,
   bodyHeight,
-  os,
   t,
-  actions,
+  buttons,
+  copyLabel,
 }: {
   hit: ClipHit
   detail: ClipItemDetail | null | undefined
   query: string
   mono: boolean
   bodyHeight: number
-  os: OsKind
   t: TFunction
-  actions: ClipActions
+  buttons: readonly ActionEntry[]
+  /** 颜色值的复制按钮的标签 */
+  copyLabel: string
 }) {
   const it = hit.item
   const box = useRef<HTMLDivElement>(null)
@@ -200,16 +243,7 @@ function PreviewBody({
           {width > 0 ? (
             <ImageView item={it} detail={detail} maxWidth={width} maxHeight={bodyHeight - 64} />
           ) : null}
-          <div className="clip-preview-actions">
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={ImageDown}
-              onClick={() => actions.saveImage(it.id)}
-            >
-              {t('clipboard.action.save_image')}
-            </Button>
-          </div>
+          <ActionButtons entries={buttons} />
         </div>
       )
     case 'files': {
@@ -218,17 +252,7 @@ function PreviewBody({
         <Centered bodyHeight={bodyHeight}>
           <div className="clip-preview-files">
             <FileList files={files} total={files.length} t={t} showPath />
-            <div className="clip-preview-actions">
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={FolderOpen}
-                disabled={files.length > 0 && files.every((f) => !f.exists)}
-                onClick={() => actions.reveal(it.id)}
-              >
-                {t(`clipboard.action.reveal.${os}`)}
-              </Button>
-            </div>
+            <ActionButtons entries={buttons} />
           </div>
         </Centered>
       )
@@ -236,7 +260,7 @@ function PreviewBody({
     case 'color':
       return it.color ? (
         <Centered bodyHeight={bodyHeight}>
-          <ColorInfo value={it.color} t={t} copy />
+          <ColorInfo value={it.color} copyLabel={copyLabel} />
         </Centered>
       ) : null
     case 'link': {
@@ -256,16 +280,7 @@ function PreviewBody({
             <p className="clip-preview-url" data-testid="clip-preview-url">
               <Marked text={link} query={query} breakUrl />
             </p>
-            <div className="clip-preview-actions">
-              <Button
-                size="sm"
-                variant="secondary"
-                icon={ExternalLink}
-                onClick={() => actions.openLink(it.id)}
-              >
-                {t('clipboard.action.open_link')}
-              </Button>
-            </div>
+            <ActionButtons entries={buttons} />
           </div>
         </Centered>
       )

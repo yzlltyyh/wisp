@@ -10,6 +10,8 @@
  * - → 在带「›」的项上进入下一页，← 返回上一页；
  * - 子页顶部的返回行「‹ 视觉模型」：‹ 在前导列里，标题与条目文字左对齐，无障碍名称由调用方给（「返回识别菜单」）；
  * - 打开时在定位完成（浮层可见）之后才把焦点移进菜单；关闭后焦点还在退场的菜单里 / 落到 body 时还给触发器。
+ * - 锚点可以是触发器元素，也可以是一个固定矩形（右键菜单的指针位置，与 Menu 相同）；锚在矩形上时没有触发器，
+ *   关闭后焦点还给 `returnFocus`。
  */
 import { ChevronLeft } from 'lucide-react'
 import { AnimatePresence, m, useAnimationControls, useIsPresent } from 'motion/react'
@@ -53,10 +55,19 @@ export interface MenuPage {
   'data-testid'?: string
 }
 
+/** 固定矩形锚点（视口坐标；右键菜单的指针位置用宽高为 0 的矩形） */
+export interface PointAnchor {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 export interface PagedMenuProps {
   open: boolean
   onClose: () => void
-  anchor: RefObject<HTMLElement | null>
+  /** 触发器元素，或固定矩形（以指针为锚的右键菜单） */
+  anchor: RefObject<HTMLElement | null> | PointAnchor
   /** 关闭后把焦点还给它（默认还给锚点元素） */
   returnFocus?: RefObject<HTMLElement | null>
   page: MenuPage
@@ -64,12 +75,28 @@ export interface PagedMenuProps {
   direction: 1 | -1
   side?: Side
   align?: Align
+  /** 放不下时翻到另一侧（默认 true；调用方自己算好了位置时传 false，与 Menu 相同） */
+  flip?: boolean
+  /**
+   * 打开时高亮哪一项：first（键盘打开）/ none（指针打开，悬停才高亮，与 Menu 相同）。换页之后总是高亮新页的第一项
+   */
+  initialActive?: 'first' | 'none'
   minWidth?: number
   /** 菜单本体的附加样式类 */
   className?: string
 }
 
 const isItem = (e: MenuEntry): e is MenuItemEntry => e.type === undefined || e.type === 'item'
+
+/** 锚点元素（矩形锚点没有元素） */
+function anchorElement(anchor: PagedMenuProps['anchor']): HTMLElement | null {
+  return 'current' in anchor ? anchor.current : null
+}
+
+/** 锚点在视口里的矩形 */
+function anchorRect(anchor: PagedMenuProps['anchor']): PointAnchor | null {
+  return 'current' in anchor ? (anchor.current?.getBoundingClientRect() ?? null) : anchor
+}
 
 /** 返回行占用的下标（-1）；条目从 0 开始 */
 const BACK = -1
@@ -104,11 +131,21 @@ export function PagedMenu({
   direction,
   side = 'bottom',
   align = 'start',
+  flip = true,
+  initialActive: initialMode = 'first',
   minWidth,
   className,
 }: PagedMenuProps) {
   const reduced = useReducedMotionPref()
-  const floating = useFloating({ open, anchor, side, align, offset: MENU_OFFSET, reserve: true })
+  const floating = useFloating({
+    open,
+    anchor,
+    side,
+    align,
+    flip,
+    offset: MENU_OFFSET,
+    reserve: true,
+  })
   const box = useRef<HTMLDivElement>(null)
   const sizer = useAnimationControls()
   const boundary = useFloatingBoundary()
@@ -134,7 +171,7 @@ export function PagedMenu({
     (reason: 'select' | 'escape' | 'outside' | 'tab' | 'blur') => {
       onClose()
       if (reason === 'outside' || reason === 'blur') return
-      ;(returnFocus?.current ?? anchor.current)?.focus({ preventScroll: true })
+      ;(returnFocus?.current ?? anchorElement(anchor))?.focus({ preventScroll: true })
     },
     [onClose, returnFocus, anchor],
   )
@@ -143,7 +180,7 @@ export function PagedMenu({
   const top = floating.style.top
   useLayoutEffect(() => {
     if (!open || !placed || floating.side !== 'top') return setAnchorBottom(null)
-    const a = anchor.current?.getBoundingClientRect()
+    const a = anchorRect(anchor)
     if (!a) return
     const edge = boundary?.container?.getBoundingClientRect().bottom ?? window.innerHeight
     setAnchorBottom(Math.round(edge - (a.top - MENU_OFFSET)))
@@ -170,7 +207,7 @@ export function PagedMenu({
     const focused = document.activeElement
     const inMenu = focused instanceof Node && box.current?.contains(focused) === true
     if (inMenu || !focused || focused === document.body)
-      (returnFocus?.current ?? anchor.current)?.focus({ preventScroll: true })
+      (returnFocus?.current ?? anchorElement(anchor))?.focus({ preventScroll: true })
   }, [open, returnFocus, anchor])
 
   // 换页：高亮新页的初始项；容器从旧高度过渡到新高度，锚定的一边不动
@@ -179,7 +216,8 @@ export function PagedMenu({
     if (!open || !el) return
     const prev = shown.current
     if (prev?.key === page.key) return
-    setActive(initialActive(page))
+    // 指针打开的第一页不预先高亮（悬停才高亮）；进入子页 / 返回时高亮新页的第一项
+    setActive(!prev && initialMode === 'none' ? -2 : initialActive(page))
     // 过渡起点：正在过渡时取当前可见的高度，否则取上一页稳定时的高度
     const from = sizing.current ? el.offsetHeight : (prev?.height ?? 0)
     sizer.stop()
@@ -218,7 +256,7 @@ export function PagedMenu({
     if (!open) return
     const onPointer = (e: PointerEvent) => {
       const target = e.target as Node
-      if (floating.ref.current?.contains(target) || anchor.current?.contains(target)) return
+      if (floating.ref.current?.contains(target) || anchorElement(anchor)?.contains(target)) return
       close('outside')
     }
     const onBlur = () => close('blur')
@@ -250,7 +288,8 @@ export function PagedMenu({
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
-        setActive((a) => nextEnabled(page, a + 1, 1))
+        // 没有高亮项（指针打开、指针离开过）时从第一项开始
+        setActive((a) => nextEnabled(page, a < BACK ? (page.back ? BACK : 0) : a + 1, 1))
         return
       case 'ArrowUp':
         e.preventDefault()

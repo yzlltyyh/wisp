@@ -1,0 +1,22 @@
+{
+  "id": 130,
+  "kind": "text",
+  "created_at": 1760000000000,
+  "last_used_at": 1760000360000,
+  "use_count": 3,
+  "pinned": true,
+  "source": {
+    "id": "com.apple.Safari",
+    "name": "Safari",
+    "icon_url": "http://wisp.localhost/icon%2Fa1b2c3.png"
+  },
+  "preview": "ssh deploy@203.0.113.7 -p 2222",
+  "char_count": 30,
+  "line_count": 1,
+  "truncated": false,
+  "image": null,
+  "files": null,
+  "link": null,
+  "color": null,
+  "name": "Staging server"
+}

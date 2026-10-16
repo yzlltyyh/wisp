@@ -9,7 +9,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
-use super::content::{beats, clear_sig, clear_wall_ms, clip_alive, item_ms, ocr_alive, pinned};
+use super::content::{beats, clear_sig, clear_wall_ms, clip_alive, favorite, item_ms, ocr_alive, pin_value, pinned};
 use super::cx::{Cx, blocking, remove_quietly};
 use super::pull::{open_key_value, refetch};
 use super::{ApplyOutcome, KeyApply, LocalStore, RemoteChange, SpooledBlob};
@@ -17,7 +17,7 @@ use crate::crypto;
 use crate::error::{LocalError, SyncError};
 use crate::hlc::Hlc;
 use crate::layout;
-use crate::model::{BlobRef, BlobRole, Domain, Record, parse_hex32};
+use crate::model::{BlobRef, BlobRole, Domain, PinValue, Record, parse_hex32};
 use crate::remote::Remote;
 use crate::replica::{self, ContentView, JournalEntry, JournalValue, Row};
 
@@ -238,8 +238,8 @@ struct Upsert {
     hash: Option<[u8; 32]>,
     item: Row,
     pin: Option<Row>,
-    /// 置顶寄存器的有效值（`None` = 没有寄存器，保持本机）
-    pinned: Option<bool>,
+    /// 收藏寄存器的有效值（`None` = 没有寄存器，保持本机的收藏状态与名称）
+    favorite: Option<PinValue>,
 }
 
 /// 逐条计算剪贴板变更
@@ -309,9 +309,8 @@ async fn apply_clip<R: Remote, L: LocalStore + ?Sized>(cx: &mut Cx<'_, R, L>) ->
                     republish.push(format!("c/{h}"));
                 }
                 let materialized = c.is_applied() && !c.gone;
-                // 「清空全部」让更早的置顶失效：寄存器没变，但本机条目的置顶状态要跟着变
-                let neutralized = eval_all
-                    && p.is_some_and(|p| !p.tomb && p.json().and_then(|v| v.as_bool()) != pinned(Some(p), &view));
+                // 「清空全部」让更早的收藏失效：寄存器没变，但本机条目的收藏状态（与名称）要跟着变
+                let neutralized = eval_all && p.is_some_and(|p| !p.tomb && pin_value(p) != favorite(Some(p), &view));
                 if materialized || c.evicted_t == Some(c.t) || c.missing_t == Some(c.t) {
                     if let Some(p) = dirty_pin.or(p.filter(|_| neutralized)) {
                         if materialized && !p.tomb {
@@ -323,7 +322,7 @@ async fn apply_clip<R: Remote, L: LocalStore + ?Sized>(cx: &mut Cx<'_, R, L>) ->
                                 hash: Some(hash),
                                 item: c.clone(),
                                 pin: Some(p.clone()),
-                                pinned: Some(true),
+                                favorite: favorite(Some(p), &view),
                             });
                         } else {
                             marks.push(mark_of(p));
@@ -336,7 +335,7 @@ async fn apply_clip<R: Remote, L: LocalStore + ?Sized>(cx: &mut Cx<'_, R, L>) ->
                         hash: Some(hash),
                         item: c.clone(),
                         pin: p.cloned(),
-                        pinned: pinned(p, &view),
+                        favorite: favorite(p, &view),
                     });
                 }
             }
@@ -375,9 +374,11 @@ async fn apply_clip<R: Remote, L: LocalStore + ?Sized>(cx: &mut Cx<'_, R, L>) ->
         changes.push(RemoteChange::ClipDelete { hashes: delete_hashes });
     }
     for (hash, p, _) in &pin_changes {
+        let fav = favorite(Some(p), &view).unwrap_or_default();
         changes.push(RemoteChange::ClipPin {
             hash: *hash,
-            pinned: pinned(Some(p), &view).unwrap_or(false),
+            pinned: fav.pin,
+            name: fav.name,
         });
     }
     let remote_clears: Vec<Row> = clears.iter().filter(|r| r.dev != own && !r.tomb).cloned().collect();
@@ -419,7 +420,7 @@ async fn apply_clip<R: Remote, L: LocalStore + ?Sized>(cx: &mut Cx<'_, R, L>) ->
                         hash: Some(*hash),
                         item: c.clone(),
                         pin: Some(p.clone()),
-                        pinned: Some(true),
+                        favorite: favorite(Some(p), &view),
                     });
                 }
                 (Some(KeyApply::Applied | KeyApply::Evicted), _) => done.push(mark_of(p)),
@@ -492,7 +493,7 @@ async fn apply_ocr<R: Remote, L: LocalStore + ?Sized>(cx: &mut Cx<'_, R, L>) -> 
                 hash: None,
                 item: o.clone(),
                 pin: None,
-                pinned: None,
+                favorite: None,
             });
         }
     }
@@ -607,7 +608,8 @@ async fn run_upserts<R: Remote, L: LocalStore + ?Sized>(
                         Some(hash) => RemoteChange::ClipUpsert {
                             hash,
                             value,
-                            pinned: up.pinned,
+                            pinned: up.favorite.as_ref().map(|f| f.pin),
+                            name: up.favorite.and_then(|f| f.name),
                             blobs,
                         },
                         None => RemoteChange::OcrUpsert {

@@ -109,6 +109,8 @@ pub fn template_overrides<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
     let _ = frame_mode;
     match kind {
         super::TemplateKind::Pinned => builder.decorations(false).shadow(true),
+        // 悬浮剪贴板：外观同 pinned；常驻不可激活（tao 的 FOCUSABLE 关闭 = `WS_EX_NOACTIVATE`），点击条目不夺前台
+        super::TemplateKind::Floating => builder.decorations(false).shadow(true).focusable(false),
         super::TemplateKind::Panel | super::TemplateKind::Regular | super::TemplateKind::Overlay => builder,
     }
 }
@@ -969,6 +971,106 @@ pub fn pinned_show(window: &tauri::WebviewWindow, restore_minimized: bool) -> Re
 pub fn pinned_hide(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
     let w = window.clone();
     Ok(on_main_sync(window, move |_| w.hide())??)
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 悬浮剪贴板
+//
+// 窗口由 tao 管理（用户会拖动、缩放，置顶开关也走 tao），不可激活经 tao 的 FOCUSABLE 标志表达（`WS_EX_NOACTIVATE`）：
+// 直接改 GWL_EXSTYLE 会在 tao 下一次按自己的标志重写样式时被抹掉。
+
+/// 悬浮剪贴板的平台属性：Win11 DWM 圆角；不可激活来自模板覆盖的 `focusable(false)`，置顶来自创建参数
+pub fn float_attach(window: &tauri::WebviewWindow, on_top: bool) -> Result<(), IpcError> {
+    let _ = on_top;
+    on_main_sync(window, |hwnd| set_corner_preference(hwnd, DWMWCP_ROUND))
+}
+
+/// 置顶 / 取消置顶
+pub fn float_set_on_top(window: &tauri::WebviewWindow, on_top: bool) -> Result<(), IpcError> {
+    Ok(window.set_always_on_top(on_top)?)
+}
+
+/// 搜索框要打字：临时可激活并取得前台；`false` 时恢复不可激活（只改样式，不交出前台：悬浮窗仍在前台时由
+/// `WindowManager::float_focus` 把前台还给打字之前的应用，粘贴时由 `paste_into` 交还目标应用）
+pub fn float_set_focusable(window: &tauri::WebviewWindow, focusable: bool) -> Result<(), IpcError> {
+    let w = window.clone();
+    on_main_sync(window, move |hwnd| -> Result<(), IpcError> {
+        w.set_focusable(focusable)?;
+        if focusable {
+            bring_to_foreground(hwnd);
+        }
+        Ok(())
+    })?
+}
+
+/// 发粘贴键之前：悬浮窗在前台（搜索框打过字）时恢复不可激活，前台的交还由随后的 `paste_into` 完成（它按记录的目标窗口
+/// 激活并等它到前台）；不在前台时什么都不用做。总是返回 true
+pub fn float_yield(window: &tauri::WebviewWindow, target: &wisp_types::AppRef) -> bool {
+    let _ = target;
+    let w = window.clone();
+    let result = on_main_sync(window, move |hwnd| {
+        // SAFETY: 只读查询
+        if unsafe { GetForegroundWindow() } == hwnd
+            && let Err(e) = w.set_focusable(false)
+        {
+            log::warn!("floating clipboard set_focusable(false) failed: {e}");
+        }
+    });
+    if let Err(e) = result {
+        log::warn!("floating clipboard yield: {}", e.message);
+    }
+    true
+}
+
+/// 不激活地显示（在 UI 线程上调用）：窗口本来就不可激活（`WS_EX_NOACTIVATE`）；万一系统仍把前台给了它（不同 Windows
+/// 版本对 NOACTIVATE 窗口的激活规则不完全一致），立即交还给原来的前台窗口（与 pinned 的做法相同）。最小化的还原
+fn show_float_without_activation(win: &tauri::WebviewWindow, hwnd: HWND) -> Result<(), IpcError> {
+    // SAFETY: 只读查询
+    let prev = unsafe { GetForegroundWindow() };
+    if win.is_minimized()? {
+        win.unminimize()?;
+    }
+    win.show()?;
+    // SAFETY: 只读查询
+    let now = unsafe { GetForegroundWindow() };
+    if now == hwnd && !prev.is_invalid() && prev != hwnd && !is_own_window(prev) {
+        // SAFETY: 本进程刚取得前台，有权交还
+        let _ = unsafe { SetForegroundWindow(prev) };
+    }
+    Ok(())
+}
+
+/// 交接：同一个 UI 线程回调里把悬浮窗放到位（隐藏状态下定位并核对，[`place`]）、不激活地显示，再隐藏面板（不出现空帧）
+pub fn float_handoff(
+    float: &tauri::WebviewWindow,
+    panel: Option<&tauri::WebviewWindow>,
+    rect: Rect,
+) -> Result<(), IpcError> {
+    let target = px(rect);
+    let panel = panel.cloned();
+    let float_win = float.clone();
+    on_main_sync(float, move |hwnd| -> Result<(), IpcError> {
+        place(hwnd, target)?;
+        show_float_without_activation(&float_win, hwnd)?;
+        if let Some(panel) = panel {
+            match hwnd_of(&panel) {
+                Ok(p) => hide_window(p),
+                Err(e) => log::warn!("hide panel during float handoff: {}", e.message),
+            }
+        }
+        Ok(())
+    })?
+}
+
+/// 不激活地显示（截图后恢复、再次打开已存在的悬浮窗）
+pub fn float_show(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
+    let w = window.clone();
+    on_main_sync(window, move |hwnd| show_float_without_activation(&w, hwnd))?
+}
+
+/// 立即隐藏（截图前）：经 tao 同步执行，之后的 `show()` 才会真的显示
+pub fn float_hide(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
+    pinned_hide(window)
 }
 
 // ---------------------------------------------------------------------------------------------------------------

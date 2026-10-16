@@ -28,7 +28,7 @@ use crate::crypto::{self, Keys, MasterKey};
 use crate::error::{LocalError, SyncError};
 use crate::hlc::{Hlc, wall_now_ms};
 use crate::layout::{self, VAULT_FILE};
-use crate::model::{Domain, FORMAT_VERSION, VaultHeader, keys, parse_hex32};
+use crate::model::{Domain, FORMAT_VERSION, PinValue, VaultHeader, keys, parse_hex32};
 use crate::remote::{DirCache, Remote};
 use crate::replica::{self, JournalEntry, JournalValue, Row};
 
@@ -304,12 +304,13 @@ pub(super) async fn join_content<R: Remote, L: LocalStore + ?Sized>(
         })
         .await?;
     let own = cx.own.clone();
-    // 本机置顶状态（加入时也发布 `p`）
+    // 本机收藏状态（加入时也发布 `p`）。值是 `{"pin": bool, "name"?: string}` 对象，按 `PinValue` 解析：
+    // 只认裸 bool 会把全部收藏当成未收藏，重新加入时被「清空（保留收藏）」删掉
     let local_pins: HashMap<String, bool> = entries
         .iter()
         .filter_map(|e| {
             let h = e.key.strip_prefix("p/")?;
-            Some((h.to_string(), e.value.as_ref()?.as_bool()?))
+            Some((h.to_string(), PinValue::parse(e.value.as_ref()?)?.pin))
         })
         .collect();
     let mut journal = Vec::new();

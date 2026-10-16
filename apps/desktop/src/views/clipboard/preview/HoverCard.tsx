@@ -9,6 +9,7 @@
  * （`clipboard_get` 只能取全文，整段经 IPC 传过来再解析会在主线程上卡一下），同样用元数据里的预览。
  */
 import { m, useIsPresent } from 'motion/react'
+import { useStore } from 'zustand'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { resolveAssetUrl } from '../../../shared/ipc'
 import type { ClipHit } from '../../../shared/ipc/types'
@@ -16,9 +17,13 @@ import { relativeTime } from '../../../shared/i18n/relativeTime'
 import { useT } from '../../../shared/i18n/useT'
 import { usePreset } from '../../../shared/motion/presets'
 import { AppIcon, Kbd } from '../../../shared/ui'
+import type { ClipRunner } from '../actions'
 import { blankLabel } from '../ClipRow'
+import { hasTextBody } from '../kinds'
 import { firstLines, hostOf, isBlank, LARGE_TEXT_CHARS } from '../model'
-import type { ClipActions } from '../useClipboard'
+import type { ClipStore } from '../store'
+import type { ClipCommands } from '../useClipboard'
+import { EntityChips } from './Chips'
 import { ColorInfo, FileList, ImageView, metaParts, useDetail, useHead } from './parts'
 
 export interface HoverCardProps {
@@ -29,7 +34,11 @@ export interface HoverCardProps {
   /** 列表区高度 */
   areaHeight: number
   now: number
-  actions: ClipActions
+  cmd: ClipCommands
+  /** 角落里「Space 打开预览」的按键来自注册表 */
+  runner: ClipRunner
+  /** 识别出的片段（芯片）读 store 里的检视结果 */
+  store: ClipStore
 }
 
 /** 卡片与行、与列表区边缘的间距 */
@@ -40,15 +49,15 @@ const IMAGE_MAX = 200
 /** 文本卡片显示的行数（前 3 行） */
 const TEXT_LINES = 3
 
-const TEXT_KINDS = new Set(['text', 'rich_text', 'code'])
-
 export function HoverCard({
   hit,
   anchorTop,
   anchorBottom,
   areaHeight,
   now,
-  actions,
+  cmd,
+  runner,
+  store,
 }: HoverCardProps) {
   const t = useT()
   const it = hit.item
@@ -61,9 +70,14 @@ export function HoverCard({
   const present = useIsPresent()
   // 图片要原图（大图）；多行文本要正文开头（单行的预览已经够 3 行；很长的正文不取，见文件头）；其余类型用元数据就够
   const multiline =
-    TEXT_KINDS.has(it.kind) && (it.line_count ?? 1) > 1 && (it.char_count ?? 0) <= LARGE_TEXT_CHARS
-  const detail = useDetail(actions, it.id, it.kind === 'image')
-  const head = useHead(actions, it.id, multiline)
+    hasTextBody(it.kind) && (it.line_count ?? 1) > 1 && (it.char_count ?? 0) <= LARGE_TEXT_CHARS
+  const detail = useDetail(cmd, it.id, it.kind === 'image')
+  const head = useHead(cmd, it.id, multiline)
+  const previewKey = runner.shortcut('preview')
+  // 芯片的个数只用来在它们出现时重新定位（芯片本身由 EntityChips 读 store）
+  const chips = useStore(store, (s) =>
+    s.inspect?.id === it.id ? s.inspect.result.entities.length : 0,
+  )
   const motion = usePreset('popover')
 
   // 定位：先按自然高度量一次，再决定放在行的上方还是下方
@@ -81,9 +95,9 @@ export function HoverCard({
     setPos((p) =>
       p.top === next.top && p.maxHeight === next.maxHeight && p.side === next.side ? p : next,
     )
-    // 详情（正文 / 原图）到达后内容高度会变，需要重新定位
+    // 详情（正文 / 原图）、芯片到达后内容高度会变，需要重新定位
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
-  }, [anchorTop, anchorBottom, areaHeight, detail, head])
+  }, [anchorTop, anchorBottom, areaHeight, detail, head, chips])
 
   const meta = metaParts(it, t)
   return (
@@ -111,6 +125,7 @@ export function HoverCard({
           loading={multiline && head === undefined}
         />
       </div>
+      <EntityChips store={store} runner={runner} id={it.id} />
       <div className="clip-hover-meta">
         <AppIcon
           src={it.source?.icon_url ? resolveAssetUrl(it.source.icon_url) : null}
@@ -121,9 +136,11 @@ export function HoverCard({
             .filter(Boolean)
             .join(' · ')}
         </span>
-        <span className="clip-hover-key">
-          <Kbd combo="Space" variant="cap" />
-        </span>
+        {previewKey ? (
+          <span className="clip-hover-key">
+            <Kbd combo={previewKey} variant="cap" />
+          </span>
+        ) : null}
       </div>
     </m.div>
   )
@@ -149,7 +166,7 @@ function HoverBody({
       // 元数据最多带前 5 个文件，总数未知：不显示「还有 N 个」（元信息里写「5+ 个文件」）
       return <FileList files={item.files ?? []} t={t} />
     case 'color':
-      return item.color ? <ColorInfo value={item.color} t={t} /> : null
+      return item.color ? <ColorInfo value={item.color} /> : null
     case 'link': {
       const link = item.link ?? item.preview
       const host = hostOf(link)

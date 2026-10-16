@@ -14,7 +14,7 @@ use super::tests::{ICON_64, Rig, rig};
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SinkCall {
     Content([u8; 32]),
-    Pin([u8; 32], bool),
+    Favorite([u8; 32], bool, Option<String>),
     Delete([u8; 32]),
     Clear(bool),
     OcrAdd(String),
@@ -35,8 +35,10 @@ impl ClipSyncSink for RecordingSink {
     fn content(&self, hash: [u8; 32]) {
         self.0.lock().push(SinkCall::Content(hash));
     }
-    fn pin(&self, hash: [u8; 32], pinned: bool) {
-        self.0.lock().push(SinkCall::Pin(hash, pinned));
+    fn favorite(&self, hash: [u8; 32], pinned: bool, name: Option<&str>) {
+        self.0
+            .lock()
+            .push(SinkCall::Favorite(hash, pinned, name.map(str::to_owned)));
     }
     fn delete(&self, hash: [u8; 32]) {
         self.0.lock().push(SinkCall::Delete(hash));
@@ -92,6 +94,8 @@ fn remote_text(text: &str, last_used_at: i64, pinned: Option<bool>) -> RemoteIte
             app_name: "Remote".into(),
         }),
         truncated: false,
+        name: None,
+        expires_at: None,
     }
 }
 
@@ -117,9 +121,9 @@ fn copies_pins_deletes_and_clears_notify_the_sink() {
     );
 
     r.engine.pin(a.id, true).expect("置顶");
-    assert_eq!(sink.take(), vec![SinkCall::Pin(ha, true)]);
+    assert_eq!(sink.take(), vec![SinkCall::Favorite(ha, true, None)]);
     r.engine.pin(a.id, false).expect("取消置顶");
-    assert_eq!(sink.take(), vec![SinkCall::Pin(ha, false)]);
+    assert_eq!(sink.take(), vec![SinkCall::Favorite(ha, false, None)]);
 
     // 删除：hash 在删除之前取
     r.engine.delete(a.id, false).expect("删除");
@@ -290,17 +294,28 @@ fn remote_items_land_in_the_cache_and_are_pushed_without_echo() {
 
     // 远端置顶本机已有的条目：touched（前端按新的排序键移动它）
     let h = hash(&r, local.id);
-    let out = r
-        .engine
-        .apply_remote_batch(vec![ClipRemoteChange::Pin { hash: h, pinned: true }], None);
+    let out = r.engine.apply_remote_batch(
+        vec![ClipRemoteChange::Pin {
+            hash: h,
+            pinned: true,
+            name: None,
+        }],
+        None,
+    );
     assert_eq!(out, vec![RemoteOutcome::Applied]);
     match r.events().as_slice() {
         [ClipboardChanged::Touched { item }] => assert!(item.id == local.id && item.pinned),
         other => panic!("{other:?}"),
     }
     // 状态没变：不推送
-    r.engine
-        .apply_remote_batch(vec![ClipRemoteChange::Pin { hash: h, pinned: true }], None);
+    r.engine.apply_remote_batch(
+        vec![ClipRemoteChange::Pin {
+            hash: h,
+            pinned: true,
+            name: None,
+        }],
+        None,
+    );
     assert!(r.events().is_empty());
     // 远端删除：removed
     let out = r
@@ -315,10 +330,12 @@ fn remote_items_land_in_the_cache_and_are_pushed_without_echo() {
             ClipRemoteChange::Pin {
                 hash: [9; 32],
                 pinned: true,
+                name: None,
             },
             ClipRemoteChange::Pin {
                 hash: [9; 32],
                 pinned: false,
+                name: None,
             },
             ClipRemoteChange::Delete { hash: [9; 32] },
         ],
@@ -552,6 +569,8 @@ fn remote_images_get_a_background_thumbnail() {
         image_path: item.image.as_ref().map(|i| i.path.clone()),
         source: None,
         truncated: false,
+        name: None,
+        expires_at: None,
     };
     let out = b
         .engine
@@ -668,4 +687,180 @@ fn remote_ocr_respects_the_local_limit() {
     let out = r.engine.apply_remote_ocr(vec![OcrRemoteChange::Upsert(old)], None);
     assert_eq!(out, vec![RemoteOutcome::Evicted], "排在上限之外：不插入");
     assert_eq!(store(&r).ocr_sync_rows().expect("rows").len(), 10);
+}
+
+// ---------- 收藏命名与验证码 ----------
+
+/// 一条会被识别为验证码的消息
+const CODE: &str = "Your verification code is 482915\nDo not share it.";
+
+#[test]
+fn names_and_expired_codes_notify_the_sink() {
+    let r = rig();
+    let sink = with_sink(&r);
+    let a = r.copy_text(101, "Guest network: wisp-guest");
+    let ha = hash(&r, a.id);
+    let code = r.copy_text(102, CODE);
+    let hc = hash(&r, code.id);
+    assert_eq!(sink.take(), vec![SinkCall::Content(ha), SinkCall::Content(hc)]);
+    // 命名即收藏：`p/` 的值带着名称
+    r.engine.set_name(a.id, Some("Wi-Fi")).expect("命名");
+    assert_eq!(sink.take(), vec![SinkCall::Favorite(ha, true, Some("Wi-Fi".into()))]);
+    r.engine.set_name(a.id, None).expect("清除名称");
+    assert_eq!(sink.take(), vec![SinkCall::Favorite(ha, true, None)]);
+
+    // 验证码到期删除不通知同步：每台设备按同步过去的过期时间各自删除。发出删除记录会压过另一台设备在到期前的收藏
+    r.host.now.store(
+        code.expires_at.expect("过期时间") + 1,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    r.exec.fire_timers();
+    assert!(!r.ids().contains(&code.id), "本机照常删除");
+    assert_eq!(sink.take(), vec![]);
+}
+
+#[test]
+fn favoriting_a_code_republishes_its_content() {
+    let r = rig();
+    let sink = with_sink(&r);
+    let code = r.copy_text(102, CODE);
+    let hc = hash(&r, code.id);
+    let note = r.copy_text(103, "plain note");
+    let hn = hash(&r, note.id);
+    sink.take();
+    // 「同步验证码」关闭时验证码的内容没有发布：收藏时补发内容，其他设备才取得到
+    r.engine.pin(code.id, true).expect("收藏");
+    assert_eq!(
+        sink.take(),
+        vec![SinkCall::Favorite(hc, true, None), SinkCall::Content(hc)]
+    );
+    r.engine.pin(code.id, false).expect("取消收藏");
+    assert_eq!(sink.take(), vec![SinkCall::Favorite(hc, false, None)]);
+    // 普通条目的内容早已发布，只写收藏
+    r.engine.pin(note.id, true).expect("收藏");
+    assert_eq!(sink.take(), vec![SinkCall::Favorite(hn, true, None)]);
+}
+
+#[test]
+fn a_remote_favorite_brings_back_a_code_that_expired_here() {
+    let r = rig();
+    let code = r.copy_text(102, CODE);
+    let hc = hash(&r, code.id);
+    // 本机睡眠醒来：先到期删除（不发布删除）……
+    r.host.now.store(
+        code.expires_at.expect("过期时间") + 1,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    r.exec.fire_timers();
+    assert!(!r.ids().contains(&code.id));
+    // ……再收到另一台设备在到期前的收藏：报告「未接收」，同步层据此取回内容，以收藏导入、不再过期
+    let out = r.engine.apply_remote_batch(
+        vec![ClipRemoteChange::Pin {
+            hash: hc,
+            pinned: true,
+            name: None,
+        }],
+        None,
+    );
+    assert_eq!(out, vec![RemoteOutcome::Evicted]);
+    let mut item = remote_text(CODE, T0, Some(true));
+    item.hash = hc;
+    item.expires_at = code.expires_at;
+    let out = r.engine.apply_remote_batch(vec![ClipRemoteChange::Upsert(item)], None);
+    assert_eq!(out, vec![RemoteOutcome::Applied]);
+    let back = r.top();
+    assert!(back.pinned && back.expires_at.is_none(), "{back:?}");
+}
+
+#[test]
+fn remote_favorites_carry_their_names_into_the_cache() {
+    let r = rig();
+    let local = r.copy_text(101, "Guest network: wisp-guest");
+    r.copy_text(102, "newer");
+    r.events();
+    let h = hash(&r, local.id);
+    let named = |name: Option<&str>| ClipRemoteChange::Pin {
+        hash: h,
+        pinned: true,
+        name: name.map(str::to_owned),
+    };
+    assert_eq!(
+        r.engine.apply_remote_batch(vec![named(Some("Wi-Fi"))], None),
+        vec![RemoteOutcome::Applied]
+    );
+    match r.events().as_slice() {
+        [ClipboardChanged::Touched { item }] => {
+            assert!(item.pinned);
+            assert_eq!(item.name.as_deref(), Some("Wi-Fi"));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(r.top().name.as_deref(), Some("Wi-Fi"));
+    // 只改名：同样推送（前端更新行内的名称）
+    r.engine.apply_remote_batch(vec![named(Some("Office"))], None);
+    assert_eq!(r.events().len(), 1);
+    assert_eq!(r.top().name.as_deref(), Some("Office"));
+    // 状态没变：不推送
+    r.engine.apply_remote_batch(vec![named(Some("Office"))], None);
+    assert!(r.events().is_empty());
+    // 远端插入一条带名称的收藏
+    let mut item = remote_text("remote named", T0 + 5, Some(true));
+    item.name = Some("Remote".into());
+    r.engine.apply_remote_batch(vec![ClipRemoteChange::Upsert(item)], None);
+    let page = r.engine.first_page();
+    let remote = page
+        .items
+        .iter()
+        .find(|h| h.item.preview == "remote named")
+        .expect("插入");
+    assert_eq!(remote.item.name.as_deref(), Some("Remote"));
+}
+
+#[test]
+fn remote_codes_follow_the_local_switch_and_expire_here_too() {
+    let r = rig();
+    r.copy_text(100, "local");
+    let now = r.host.now.load(std::sync::atomic::Ordering::SeqCst);
+    let code = |text: &str, exp: Option<i64>| {
+        let mut item = remote_text(text, now, None);
+        item.expires_at = exp;
+        ClipRemoteChange::Upsert(item)
+    };
+    // 「同步验证码」关闭：其他设备的验证码不导入（带过期时间的、按正文识别出来的都算）
+    r.set_settings(|s| s.sync.content.verification_codes = false);
+    let out = r.engine.apply_remote_batch(
+        vec![
+            code("Your verification code is 771203", Some(now + 60_000)),
+            code("Your verification code is 552901", None),
+            code("ordinary text", None),
+        ],
+        None,
+    );
+    assert_eq!(
+        out,
+        vec![RemoteOutcome::Evicted, RemoteOutcome::Evicted, RemoteOutcome::Applied]
+    );
+    // 打开：导入，并按记录里的绝对时间到期删除
+    r.set_settings(|s| s.sync.content.verification_codes = true);
+    let out = r
+        .engine
+        .apply_remote_batch(vec![code("Your verification code is 771203", Some(now + 60_000))], None);
+    assert_eq!(out, vec![RemoteOutcome::Applied]);
+    let page = r.engine.first_page();
+    let imported = page
+        .items
+        .iter()
+        .find(|h| h.item.preview.contains("771203"))
+        .expect("导入")
+        .item
+        .clone();
+    assert_eq!(imported.expires_at, Some(now + 60_000));
+    r.host.now.store(now + 60_001, std::sync::atomic::Ordering::SeqCst);
+    r.exec.fire_timers();
+    assert!(!r.ids().contains(&imported.id));
+    // 已经过期的不导入
+    let out = r
+        .engine
+        .apply_remote_batch(vec![code("Your verification code is 330021", Some(now + 1))], None);
+    assert_eq!(out, vec![RemoteOutcome::Evicted]);
 }

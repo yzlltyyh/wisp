@@ -4,15 +4,21 @@
  * 每个场景 `{ id, label, view, setup(ctx) }`，id 以 `clipboard.` 开头；用 `?scenario=<id>` 打开，配合 `theme` / `os` /
  * `lang` / `reduced` 参数覆盖浅色 / 深色、mac / win、中英文与减少动效。
  *
- * - 数据：`ClipDb` 是一个小的「Rust 侧」替身——按 Rust 的顺序（置顶在前、最近使用在前）分页、检索（大小写不敏感的
- *   子串；命中在预览之外时给出以 … 开头的上下文片段，与 Rust 的检索一致）、详情、粘贴（只复制时按 Rust 的做法显示
- *   toast 视图）、置顶、删除、清空、暂停，并推送 `clipboard:changed`；
+ * - 数据：`ClipDb` 是一个小的「Rust 侧」替身——按 Rust 的顺序（收藏在前、最近使用在前）分页、检索（大小写不敏感的
+ *   子串，收藏的名称也能搜到；命中在预览之外时给出以 … 开头的上下文片段，与 Rust 的检索一致）、详情、粘贴（整条 / 变换
+ *   后 / 片段 / 多条合并；只复制时按 Rust 的做法显示 toast 视图）、检视（mock/smart.ts 的正则近似）、收藏与命名、删除、
+ *   清空、暂停，并推送 `clipboard:changed`；
  * - 交互：场景用真实的 DOM 事件驱动视图（键盘事件走统一的键盘路由，指针事件走列表的事件委托），截图前等动效结束；
  * - `clipboard.scroll-10k` 是流畅度场景（`pnpm qa:shots --perf`）：1 万条混合行高（44 / 64）+ 分组标题，连续滚动之后按住 ↓，期间
  *   断言 DOM 行节点数 ≤ 可视行数 × 3 + 分组标题数、没有原图请求，结果写在 `<html data-qa-*>` 上；
- * - `clipboard.paste-toast-*`：每个 `CopiedReason` 一个 toast 场景（中英文由 `lang` 参数切换）。
+ * - `clipboard.paste-toast-*`：每个 `CopiedReason` 一个 toast 场景（中英文由 `lang` 参数切换）；
+ * - 收藏、芯片、多选、「粘贴为…」、命名：`clipboard.favorites-*`、`clipboard.chips-otp`、`clipboard.multi-select`、
+ *   `clipboard.paste-as`、`clipboard.rename`；
+ * - 悬浮剪贴板与连续粘贴：`clipboard.float`、`clipboard.float-queue`（clipfloat 入口）、`clipboard.queue-start`、
+ *   `clipboard.queue-toast`。
  */
-import { startOfDay } from '../../../../views/clipboard/model'
+import { matchesFilter, startOfDay } from '../../../../views/clipboard/model'
+import { mockInspect } from '../smart'
 import type {
   ClipboardPayload,
   ClipFilter,
@@ -24,6 +30,8 @@ import type {
   CopiedReason,
   FileRef,
   PanelPayload,
+  PasteMode,
+  PasteOutcome,
   SourceApp,
 } from '../../types'
 import { appIcon, thumbnail } from '../fixtures'
@@ -51,6 +59,10 @@ interface Seed {
   color?: string
   use?: number
   truncated?: boolean
+  /** 收藏的名称 */
+  name?: string
+  /** 验证码：多少分钟后在本机自动删除 */
+  expiresIn?: number
 }
 
 function apps(os: string) {
@@ -263,13 +275,9 @@ function toMeta(seed: Seed, id: number): ClipItemMeta {
     files: seed.files?.slice(0, 5) ?? null,
     link: seed.link ?? null,
     color: seed.color ?? null,
+    ...(seed.name ? { name: seed.name } : {}),
+    ...(seed.expiresIn !== undefined ? { expires_at: seed.at + seed.expiresIn * MINUTE } : {}),
   }
-}
-
-function matches(kind: ClipKind, filter: ClipFilter): boolean {
-  if (filter === 'all') return true
-  if (filter === 'text') return kind === 'text' || kind === 'rich_text'
-  return kind === filter
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +317,7 @@ class ClipDb {
   }
 
   page(offset: number, limit: number, filter: ClipFilter): ClipPage {
-    const all = this.sorted().filter((it) => matches(it.kind, filter))
+    const all = this.sorted().filter((it) => matchesFilter(it, filter))
     return {
       items: all.slice(offset, offset + limit).map((item) => ({ item, highlights: [] })),
       pinned_count: all.filter((it) => it.pinned).length,
@@ -323,7 +331,7 @@ class ClipDb {
     const q = query.trim().toLowerCase()
     const hits: ClipHit[] = []
     for (const item of this.sorted()) {
-      if (!matches(item.kind, filter)) continue
+      if (!matchesFilter(item, filter)) continue
       const hit = this.match(item, q)
       if (hit) hits.push(hit)
       if (hits.length >= limit) break
@@ -337,10 +345,14 @@ class ClipDb {
     }
   }
 
-  /** 命中在预览里时高亮预览；在预览之外时给出以 … 开头的上下文片段（≤ 200 字），高亮针对片段 */
+  /**
+   * 命中在预览里时高亮预览；在预览之外时给出以 … 开头的上下文片段（≤ 200 字），高亮针对片段；收藏的名称命中时不带
+   * 高亮（名称的高亮由前端按查询词计算）
+   */
   private match(item: ClipItemMeta, q: string): ClipHit | null {
     const at = item.preview.toLowerCase().indexOf(q)
     if (at >= 0) return { item, highlights: [{ start: at, end: at + q.length }] }
+    if (item.pinned && item.name?.toLowerCase().includes(q)) return { item, highlights: [] }
     const full = compact(this.texts.get(item.id) ?? '')
     const pos = full.toLowerCase().indexOf(q)
     if (pos < 0) return null
@@ -380,6 +392,22 @@ class ClipDb {
     }
   }
 
+  /** Rust：粘贴时立即隐藏面板；只复制时在原位置以 toast 视图提示 */
+  private pasted(ids: readonly number[], mode: PasteMode): PasteOutcome {
+    for (const id of ids) {
+      const item = this.find(id)
+      item.last_used_at = Date.now()
+      item.use_count += 1
+      this.ctx.emit('clipboard:changed', { change: 'touched', item: { ...item } })
+    }
+    this.ctx.requestHide('paste')
+    if (mode === 'copy_only') {
+      this.ctx.after(260, () => showToast(this.ctx, 'copy_only'))
+      return { type: 'copied', reason: 'copy_only' }
+    }
+    return { type: 'pasted' }
+  }
+
   /** 实时插入一条（相当于用户在别处复制了内容） */
   insert(seed: Seed): void {
     const meta = this.add(seed)
@@ -394,25 +422,38 @@ class ClipDb {
       return this.search(query, filter, limit)
     })
     ctx.handle('clipboard_get', ({ id }) => this.detail(id))
-    ctx.handle('clipboard_paste', ({ id, mode }) => {
+    ctx.handle('clipboard_paste', ({ id, mode }) => this.pasted([id], mode))
+    // 片段与合并粘贴：结果不进历史，只更新来源条目的最近使用时间
+    ctx.handle('clipboard_paste_text', ({ from, mode }) =>
+      this.pasted(from === null ? [] : [from], mode),
+    )
+    ctx.handle('clipboard_paste_many', ({ ids, mode }) => this.pasted(ids, mode))
+    ctx.handle('clipboard_inspect', ({ id }) => {
       const item = this.find(id)
-      item.last_used_at = Date.now()
-      item.use_count += 1
-      ctx.emit('clipboard:changed', { change: 'touched', item: { ...item } })
-      // Rust：粘贴时立即隐藏面板；只复制时在原位置以 toast 视图提示
-      ctx.requestHide('paste')
-      if (mode === 'copy_only') {
-        ctx.after(260, () => showToast(ctx, 'copy_only'))
-        return { type: 'copied', reason: 'copy_only' }
-      }
-      return { type: 'pasted' }
+      const binary = item.kind === 'image' || item.kind === 'files'
+      return mockInspect(item.kind, binary ? null : (this.texts.get(id) ?? item.preview))
     })
     ctx.handle('clipboard_pin', ({ id, pinned }) => {
       this.fail('clipboard_pin')
       const item = this.find(id)
       item.pinned = pinned
+      // 与 Rust 一致：收藏去掉验证码的到期时间，取消收藏去掉名称
+      if (pinned) delete item.expires_at
+      else delete item.name
       return { ...item }
     })
+    ctx.handle('clipboard_set_name', ({ id, name }) => {
+      this.fail('clipboard_set_name')
+      const item = this.find(id)
+      const clean = name?.trim() ?? ''
+      if (clean) {
+        item.name = clean
+        item.pinned = true
+        delete item.expires_at
+      } else delete item.name
+      return { ...item }
+    })
+    ctx.handle('clipboard_set_favorites_collapsed', () => undefined)
     ctx.handle('clipboard_delete', ({ id, force }) => {
       this.fail('clipboard_delete')
       const item = this.find(id)
@@ -466,7 +507,7 @@ function isMac(): boolean {
 function press(
   key: string,
   code: string,
-  mods: { mod?: boolean; shift?: boolean; repeat?: boolean } = {},
+  mods: { mod?: boolean; shift?: boolean; alt?: boolean; repeat?: boolean } = {},
 ): void {
   const mac = isMac()
   const init: KeyboardEventInit = {
@@ -475,6 +516,7 @@ function press(
     bubbles: true,
     cancelable: true,
     shiftKey: !!mods.shift,
+    altKey: !!mods.alt,
     metaKey: !!mods.mod && mac,
     ctrlKey: !!mods.mod && !mac,
     repeat: !!mods.repeat,
@@ -548,6 +590,26 @@ function hoverEl(row: HTMLElement | null): void {
   row.dispatchEvent(new PointerEvent('pointermove', init))
 }
 
+/** 单击第 n 行（可带修饰键：⌘ / Ctrl 切换标记、⇧ 扩展选择） */
+function clickRow(n: number, mods: { mod?: boolean; shift?: boolean } = {}): void {
+  const row = rowEl(n)
+  if (!row) return
+  const r = row.getBoundingClientRect()
+  const mac = isMac()
+  row.dispatchEvent(
+    new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: r.left + r.width * 0.5,
+      clientY: r.top + r.height / 2,
+      metaKey: !!mods.mod && mac,
+      ctrlKey: !!mods.mod && !mac,
+      shiftKey: !!mods.shift,
+    }),
+  )
+}
+
 function contextMenuOn(n: number): void {
   const row = rowEl(n)
   if (!row) return
@@ -579,6 +641,55 @@ function steps(ctx: MockContext, list: readonly (readonly [number, () => void])[
     at += delay
     ctx.after(at, fn)
   }
+}
+
+// ---------------------------------------------------------------------------
+// 收藏、验证码、「粘贴为…」用到的额外条目
+
+/** 7 条带名称的收藏（超过 5 条：「全部」里只列前 5 条，末尾是「查看全部 7 个收藏」） */
+function favoriteSeeds(os: string, now: number): Seed[] {
+  const a = apps(os)
+  const fav = (name: string, preview: string, days: number, app = a.notes): Seed => ({
+    kind: 'text',
+    preview,
+    at: now - days * DAY,
+    pinned: true,
+    name,
+    app,
+  })
+  return [
+    fav('家里地址', '上海市徐汇区漕溪北路 88 号 12 层 1203 室', 1, a.wechat),
+    fav('发票抬头', '上海某某信息科技有限公司 · 税号 91310104MA1FR0XX0Q', 2),
+    fav('Wi-Fi', 'Wisp-Guest / 密码 correct-horse-battery', 3),
+    fav('会议链接', 'https://meet.example.com/wisp-weekly', 4, a.safari),
+    fav('签名', 'Best regards, Wisp Team', 5, a.mail),
+    fav('常用回复', '收到，我看一下，稍后回复你。', 6, a.slack),
+    fav('快递地址', '北京市海淀区中关村大街 1 号', 8, a.wechat),
+  ]
+}
+
+/**
+ * 最近的两条：一条短信验证码（10 分钟后删除，刚复制）与一条 JSON（「粘贴为…」可以格式化），排在其他样例前面；不带
+ * 收藏（光标打开时就在验证码上）
+ */
+function smartSeeds(os: string, now: number): Seed[] {
+  const a = apps(os)
+  return [
+    {
+      kind: 'text',
+      preview: '【Wisp】您的验证码 482913，10 分钟内有效。客服电话 138 0013 8000',
+      at: now - 40_000,
+      expiresIn: 10,
+      app: a.wechat,
+    },
+    {
+      kind: 'code',
+      preview: '{"name":"wisp","version":"0.2.0","features":["sync","chips"]}',
+      at: now - 90_000,
+      app: a.code,
+    },
+    ...seeds(os, now).filter((s) => !s.pinned),
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -614,6 +725,31 @@ function openClipboard(ctx: MockContext, setup: ClipSetup = {}): ClipDb {
   }
   return db
 }
+
+/**
+ * 悬浮剪贴板（clipfloat 入口）：同一份样例数据经 `clipboard_float_ready` 交给窗口，光标接着面板的第三条；`act` 在
+ * 视图挂载之后执行
+ */
+const float = (id: string, label: string, act?: (ctx: MockContext) => void): Scenario => ({
+  id: `clipboard.${id}`,
+  label,
+  view: 'clipboard',
+  entry: 'clipfloat',
+  setup(ctx) {
+    const db = new ClipDb(ctx)
+    for (const seed of seeds(ctx.fixtures.os, Date.now())) db.add(seed)
+    db.install()
+    const { kind: _kind, ...payload } = db.payload() as Extract<PanelPayload, { kind: 'clipboard' }>
+    ctx.handle('clipboard_float_ready', () => ({
+      query: '',
+      filter: 'all',
+      selected_id: db.items[2]?.id ?? null,
+      on_top: true,
+      payload,
+    }))
+    act?.(ctx)
+  },
+})
 
 const clip = (
   id: string,
@@ -797,7 +933,7 @@ const scroll10k: Scenario = {
     let details = 0
     // 预先排好序：分页直接切片（mock 的处理函数不把排序开销算进被测页面的主线程）
     ctx.handle('clipboard_recent', ({ offset, limit, filter }) => {
-      const all = filter === 'all' ? sorted : sorted.filter((it) => matches(it.kind, filter))
+      const all = filter === 'all' ? sorted : sorted.filter((it) => matchesFilter(it, filter))
       return {
         items: all.slice(offset, offset + limit).map((item) => ({ item, highlights: [] })),
         pinned_count: 3,
@@ -992,7 +1128,7 @@ const deleteKey = (): [string, string] =>
   mac() ? ['Backspace', 'Backspace'] : ['Delete', 'Delete']
 
 export const scenarios: readonly Scenario[] = [
-  clip('list', '剪贴板 · 混合类型（置顶 / 最近）'),
+  clip('list', '剪贴板 · 混合类型（收藏 / 最近）'),
   clip('search', '剪贴板 · 搜索高亮', { act: () => typeQuery('wisp') }),
   clip('search-snippet', '剪贴板 · 命中在预览之外（上下文片段）', {
     act: () => typeQuery('round 37'),
@@ -1009,9 +1145,11 @@ export const scenarios: readonly Scenario[] = [
   }),
   clip('no-result', '剪贴板 · 无结果', { act: () => typeQuery('不存在的内容 xyz') }),
   clip('no-result-filtered', '剪贴板 · 过滤后无结果', {
+    // 全部 → 收藏 → 文本 → 图片：在图片里搜文字
     act: (ctx) =>
       steps(ctx, [
         [0, () => press('Tab', 'Tab')],
+        [150, () => press('Tab', 'Tab')],
         [150, () => press('Tab', 'Tab')],
         [150, () => typeQuery('budget')],
       ]),
@@ -1026,8 +1164,80 @@ export const scenarios: readonly Scenario[] = [
       steps(ctx, [
         [0, () => press('Tab', 'Tab')],
         [120, () => press('Tab', 'Tab')],
+        [120, () => press('Tab', 'Tab')],
       ]),
   }),
+  clip('favorites-collapsed', '剪贴板 · 收藏分组折叠（标题后是条数）', {
+    seeds: (os, now) => [...favoriteSeeds(os, now), ...seeds(os, now)],
+    payload: { favorites_collapsed: true },
+  }),
+  clip('favorites-more', '剪贴板 · 收藏超过 5 条：只列前 5 条与「查看全部 7 个收藏」', {
+    seeds: (os, now) => [...favoriteSeeds(os, now), ...seeds(os, now)],
+  }),
+  clip('favorites-view', '剪贴板 · 收藏视图（点「查看全部」进入，名称加粗）', {
+    seeds: (os, now) => [...favoriteSeeds(os, now), ...seeds(os, now)],
+    act: () => $<HTMLButtonElement>('[data-testid="clip-show-favorites"]')?.click(),
+  }),
+  clip('chips-otp', '剪贴板 · 验证码条目的芯片条与「N 分钟后删除」（⌘E 进入芯片条）', {
+    seeds: smartSeeds,
+    // 光标打开时就在验证码上：停下来之后检视，芯片条出现；⌘E 把键盘焦点交给芯片条
+    act: (ctx) => steps(ctx, [[400, () => press('e', 'KeyE', { mod: true })]]),
+  }),
+  clip('multi-select', '剪贴板 · 多选（⌘ 点击按顺序编号，提示条换成合并粘贴）', {
+    act: (ctx) =>
+      steps(ctx, [
+        [0, () => clickRow(4, { mod: true })],
+        [80, () => clickRow(3, { mod: true })],
+        [80, () => clickRow(6, { mod: true })],
+      ]),
+  }),
+  clip('paste-as', '剪贴板 · 「粘贴为…」子页（⌥⇧↩）', {
+    seeds: smartSeeds,
+    act: (ctx) =>
+      steps(ctx, [
+        [0, () => press('ArrowDown', 'ArrowDown')],
+        [400, () => press('Enter', 'Enter', { alt: true, shift: true })],
+      ]),
+  }),
+  clip('rename', '剪贴板 · 收藏的命名条', {
+    seeds: (os, now) => [...favoriteSeeds(os, now).slice(0, 2), ...seeds(os, now)],
+    act: (ctx) =>
+      steps(ctx, [
+        [0, () => contextMenuOn(1)],
+        [250, () => $<HTMLElement>('[data-testid="clip-context-menu-item-rename"]')?.click()],
+      ]),
+  }),
+  float('float', '悬浮剪贴板（接着面板的光标，置顶；头部是置顶开关与关闭）'),
+  float('float-queue', '悬浮剪贴板 · 连续粘贴进行中（头部的「结束」与进度提示）', (ctx) =>
+    ctx.after(300, () => ctx.emit('clipboard:queue', { active: true, index: 2, total: 4 })),
+  ),
+  clip('queue-start', '剪贴板 · 选了三条，提示条里的 ⌘↩ 是连续粘贴', {
+    act: (ctx) =>
+      steps(ctx, [
+        [0, () => clickRow(3, { mod: true })],
+        [80, () => clickRow(4, { mod: true })],
+        [80, () => clickRow(6, { mod: true })],
+      ]),
+  }),
+  {
+    id: 'clipboard.queue-toast',
+    label: 'toast · 连续粘贴进度（2 / 5）',
+    view: 'toast',
+    manualSettle: true,
+    setup(ctx) {
+      const pasteKey = ctx.fixtures.os === 'macos' ? '⌘V' : 'Ctrl+V'
+      ctx.preparePanel(
+        {
+          kind: 'toast',
+          reason: 'copy_only',
+          paste_key: pasteKey,
+          queue: { active: true, index: 2, total: 5 },
+        },
+        { width: 300, placement: 'below', focused: false },
+      )
+      ctx.after(700, () => ctx.settled())
+    },
+  },
   clip('filter-menu', '剪贴板 · 类型过滤菜单（⌘F）', {
     act: () => press('f', 'KeyF', { mod: true }),
   }),

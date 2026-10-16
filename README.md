@@ -49,10 +49,14 @@ Wisp 把三件最常用的小事收进一个随叫随到的面板：选中文字
 按 <kbd>⌥ V</kbd>（Windows / Linux：<kbd>Ctrl + Alt + V</kbd>）唤出历史，直接打字搜索，回车粘贴回原来的应用。
 
 - 记录文本、富文本、图片和文件，自动认出链接、颜色与代码；中文一两个字也能搜到。
-- <kbd>⇧ ↩</kbd> 纯文本粘贴、<kbd>⌘ ↩</kbd> 只复制不粘贴、<kbd>⌘ 1–9</kbd> 快速粘贴、空格预览全文或大图、<kbd>⌘ P</kbd> 置顶。
-- 疑似密码、令牌和私钥的内容不记录；1Password、Bitwarden、KeePassXC 等密码管理器默认排除；遵守应用标记的「不要记录」。
+- <kbd>⇧ ↩</kbd> 纯文本粘贴、<kbd>⌘ ↩</kbd> 只复制不粘贴、<kbd>⌘ 1–9</kbd> 快速粘贴、空格预览全文或大图。
+- **收藏**：<kbd>⌘ D</kbd> 收藏常用的条目，还可以给它起个名字、按名字搜索；收藏排在列表顶部，不会被自动清理。
+- **智能识别**：条目里的电话、邮箱、链接、验证码、快递单号、金额等排成一行芯片，单击只粘贴这一段；验证码 10 分钟后自动删除。「粘贴为…」可以合并成一行、转换大小写与全半角、格式化 JSON、去掉链接里的跟踪参数。
+- **多选与连续粘贴**：<kbd>⌘</kbd> 单击选择多条，回车合并粘贴；按 <kbd>⌘ ↩</kbd> 连续粘贴——之后在任何应用里每按一次 <kbd>⌘ V</kbd> 就粘贴下一条。
+- **悬浮剪贴板**：<kbd>⌘ P</kbd> 把剪贴板变成一个可以一直开着的置顶小窗口，点一条就粘贴进正在用的应用，不抢焦点；文字和链接也可以直接拖进其他应用。
+- 图片可以直接「识别文字」；疑似密码、令牌和私钥的内容不记录；1Password、Bitwarden、KeePassXC 等密码管理器默认排除；遵守应用标记的「不要记录」。
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png"><img src="docs/images/clipboard-light.png" width="640" alt="剪贴板面板：置顶区与最近区，混合了文本、链接、代码、颜色、图片和文件"></picture></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png"><img src="docs/images/clipboard-light.png" width="640" alt="剪贴板面板：收藏区与最近区，混合了文本、链接、代码、颜色、图片和文件"></picture></p>
 
 ### 多设备同步
 
@@ -150,6 +154,7 @@ chmod +x Wisp_0.1.1_amd64.AppImage && ./Wisp_0.1.1_amd64.AppImage
 | 截图 OCR | ✓ | ✗ 显示「截图失败」，说明为「这一版在 Wayland 会话下无法截图。需要截图时，请切换到 X11 会话」（这一版还没有接入 Wayland 的截图门户） |
 | 剪贴板记录 | ✓ | ✗ 不记录新的复制 |
 | 粘贴回原应用 | ✓ | 只复制，提示你按 <kbd>Ctrl + V</kbd> |
+| 剪贴板的连续粘贴 | ✓ | ✗ |
 | 扩展触发 | ✓ | ✗ |
 | 面板透明与圆角 | ✓ | 不透明 |
 
@@ -220,7 +225,7 @@ Key 只写入系统凭据存储：macOS 钥匙串与 Linux Secret Service 里服
 | 截图直接翻译 | <kbd>⌃ ⌥ ⇧ S</kbd> | <kbd>Alt + Shift + T</kbd> | <kbd>Super + Alt + T</kbd> |
 | 剪贴板 | <kbd>⇧ ⌘ V</kbd> | <kbd>Alt + Shift + V</kbd> | <kbd>Super + Alt + V</kbd> |
 
-面板里的常用键：<kbd>Esc</kbd> 关闭，<kbd>⌘ C</kbd> 复制，<kbd>⌘ R</kbd> 重新生成，<kbd>⌘ P</kbd> 固定 / 置顶，<kbd>⌘ ,</kbd> 打开设置（Windows / Linux 把 <kbd>⌘</kbd> 换成 <kbd>Ctrl</kbd>）。完整键位见[使用说明](docs/user-guide.md#快捷键速查)。
+面板里的常用键：<kbd>Esc</kbd> 关闭，<kbd>⌘ C</kbd> 复制，<kbd>⌘ R</kbd> 重新生成，<kbd>⌘ P</kbd> 固定成独立窗口（剪贴板里是打开悬浮剪贴板），<kbd>⌘ D</kbd> 收藏剪贴板条目，<kbd>⌘ ,</kbd> 打开设置（Windows / Linux 把 <kbd>⌘</kbd> 换成 <kbd>Ctrl</kbd>）。完整键位见[使用说明](docs/user-guide.md#快捷键速查)。
 
 ## 隐私
 

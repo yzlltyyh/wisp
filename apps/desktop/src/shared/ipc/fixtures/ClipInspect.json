@@ -1,0 +1,16 @@
+{
+  "entities": [
+    {
+      "kind": "otp",
+      "value": "482915",
+      "start": 26,
+      "end": 32,
+      "sensitive": false
+    }
+  ],
+  "transforms": [
+    "join_lines",
+    "upper",
+    "lower"
+  ]
+}

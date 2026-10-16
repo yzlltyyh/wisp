@@ -25,53 +25,49 @@ import { formatBytes, formatChars, formatNumber } from '../../../shared/i18n/for
 import type { TFunction } from '../../../shared/i18n/useT'
 import { CopyButton, Icon } from '../../../shared/ui'
 import { formatHex, formatHsl, formatRgb, META_FILES, parseColor, type Rgba } from '../model'
-import type { ClipActions } from '../useClipboard'
+import type { ClipCommands } from '../useClipboard'
 
 /** 详情：undefined = 加载中，null = 取不到（已删除 / 出错） */
 export function useDetail(
-  actions: ClipActions,
+  cmd: ClipCommands,
   id: number,
   needed: boolean,
 ): ClipItemDetail | null | undefined {
   const [state, setState] = useState<{ id: number; detail: ClipItemDetail | null | undefined }>(
-    () => ({ id, detail: needed ? actions.cachedDetail(id) : undefined }),
+    () => ({ id, detail: needed ? cmd.cachedDetail(id) : undefined }),
   )
   // 换了条目：先用缓存（有的话），没有就回到加载中
-  if (state.id !== id) setState({ id, detail: needed ? actions.cachedDetail(id) : undefined })
+  if (state.id !== id) setState({ id, detail: needed ? cmd.cachedDetail(id) : undefined })
   useEffect(() => {
     if (!needed) return
     let live = true
-    void actions.detail(id).then((detail) => {
+    void cmd.detail(id).then((detail) => {
       if (live) setState((cur) => (cur.id === id ? { id, detail } : cur))
     })
     return () => {
       live = false
     }
-  }, [actions, id, needed])
+  }, [cmd, id, needed])
   return state.id === id ? state.detail : undefined
 }
 
 /** 悬停卡片用的正文开头：undefined = 加载中，null = 取不到 */
-export function useHead(
-  actions: ClipActions,
-  id: number,
-  needed: boolean,
-): string | null | undefined {
+export function useHead(cmd: ClipCommands, id: number, needed: boolean): string | null | undefined {
   const [state, setState] = useState<{ id: number; head: string | null | undefined }>(() => ({
     id,
-    head: needed ? actions.cachedHead(id) : undefined,
+    head: needed ? cmd.cachedHead(id) : undefined,
   }))
-  if (state.id !== id) setState({ id, head: needed ? actions.cachedHead(id) : undefined })
+  if (state.id !== id) setState({ id, head: needed ? cmd.cachedHead(id) : undefined })
   useEffect(() => {
     if (!needed) return
     let live = true
-    void actions.textHead(id).then((head) => {
+    void cmd.textHead(id).then((head) => {
       if (live) setState((cur) => (cur.id === id ? { id, head } : cur))
     })
     return () => {
       live = false
     }
-  }, [actions, id, needed])
+  }, [cmd, id, needed])
   return state.id === id ? state.head : undefined
 }
 
@@ -322,13 +318,11 @@ export function toRgba(value: string): Rgba | null {
 
 export function ColorInfo({
   value,
-  t,
-  copy = false,
+  copyLabel,
 }: {
   value: string
-  t: TFunction
-  /** 每一行带复制按钮（全文预览） */
-  copy?: boolean
+  /** 给出时每一行带复制按钮（全文预览）：注册表里「复制」片段操作的标签 */
+  copyLabel?: string
 }) {
   const [rgba] = useState(() => toRgba(value))
   const rows = rgba
@@ -346,10 +340,10 @@ export function ColorInfo({
           <div key={r.id} className="clip-color-row">
             <dt>{r.label}</dt>
             <dd>{r.value}</dd>
-            {copy ? (
+            {copyLabel ? (
               <CopyButton
                 text={r.value}
-                label={`${t('clipboard.action.copy_value')} ${r.label}`}
+                label={`${copyLabel} ${r.label}`}
                 data-testid={`clip-copy-${r.id}`}
               />
             ) : null}

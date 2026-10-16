@@ -24,7 +24,14 @@ const mock = () => {
 }
 
 const account = { server_url: 'https://dav.jianguoyun.com/dav/', username: 'me@example.com' }
-const content = { settings: true, api_keys: true, clipboard: true, images: true, ocr_history: true }
+const content = {
+  settings: true,
+  api_keys: true,
+  clipboard: true,
+  images: true,
+  ocr_history: true,
+  verification_codes: true,
+}
 
 describe('mock 同步', () => {
   it('每条同步命令都有默认处理函数', () => {

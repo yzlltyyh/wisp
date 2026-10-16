@@ -214,7 +214,7 @@ pub(crate) fn app_keys_for_window(
 }
 
 /// 规范组合键 → 虚拟键码组合
-fn to_key_combo(c: &Combo) -> Option<KeyCombo> {
+pub(crate) fn to_key_combo(c: &Combo) -> Option<KeyCombo> {
     Some(KeyCombo {
         ctrl: c.modifiers.control,
         alt: c.modifiers.alt,

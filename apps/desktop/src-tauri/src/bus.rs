@@ -21,6 +21,11 @@ pub enum Command {
         text: String,
         origin: TriggerOrigin,
     },
+    /// 识别一张现成图片里的文字（剪贴板图片条目「识别文字」）：与截图 OCR 共用同一段启动流程，没有截图与框选
+    OcrImage {
+        image: wisp_capture::RgbaImage,
+        origin: TriggerOrigin,
+    },
     OpenWindow(WindowTarget),
     ToggleClipboardPause,
     ClearClipboard {
@@ -30,7 +35,7 @@ pub enum Command {
     Quit,
 }
 
-// 手写 Debug：禁止把正文写进日志，TranslateText 只输出字符数
+// 手写 Debug：禁止把正文写进日志，TranslateText 只输出字符数，OcrImage 只输出尺寸
 impl fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -47,6 +52,12 @@ impl fmt::Debug for Command {
             Self::TranslateText { text, origin } => f
                 .debug_struct("TranslateText")
                 .field("chars", &text.chars().count())
+                .field("origin", origin)
+                .finish(),
+            Self::OcrImage { image, origin } => f
+                .debug_struct("OcrImage")
+                .field("width", &image.width())
+                .field("height", &image.height())
                 .field("origin", origin)
                 .finish(),
             Self::OpenWindow(t) => f.debug_tuple("OpenWindow").field(t).finish(),

@@ -261,6 +261,60 @@ async fn unpin_after_clear_keep_pinned_keeps_the_item() {
 }
 
 #[tokio::test]
+async fn favorite_names_travel_with_the_pin_register() {
+    let server = MemoryRemote::new();
+    let mut a = Device::new(&server, "a", 0xa);
+    let mut b = Device::new(&server, "b", 0xb);
+    let x = a.store.copy("named");
+    a.connect().await.unwrap();
+    b.connect().await.unwrap();
+    settle(&mut [&mut a, &mut b]).await;
+    // 命名即收藏：名称随 `p/` 的值到达另一台设备
+    tick();
+    a.store.name(&x, Some("Home"));
+    settle(&mut [&mut a, &mut b]).await;
+    let item = b.state().clip[&x].clone();
+    assert!(item.pinned);
+    assert_eq!(item.name.as_deref(), Some("Home"));
+    // 另一台设备改名：整值 LWW，后写的胜出
+    tick();
+    b.store.name(&x, Some("Office"));
+    settle(&mut [&mut a, &mut b]).await;
+    assert_eq!(a.state().clip[&x].name.as_deref(), Some("Office"));
+    // 清除名称：仍是收藏
+    tick();
+    a.store.name(&x, None);
+    settle(&mut [&mut a, &mut b]).await;
+    assert!(b.state().clip[&x].pinned && b.state().clip[&x].name.is_none());
+    // 取消收藏一并去掉名称
+    tick();
+    b.store.name(&x, Some("Again"));
+    settle(&mut [&mut a, &mut b]).await;
+    tick();
+    a.store.pin(&x, false);
+    settle(&mut [&mut a, &mut b]).await;
+    assert_converged(&[&a, &b]);
+    let item = b.state().clip[&x].clone();
+    assert!(!item.pinned && item.name.is_none());
+}
+
+#[tokio::test]
+async fn a_device_joining_later_receives_names_with_the_items() {
+    let server = MemoryRemote::new();
+    let mut a = Device::new(&server, "a", 0xa);
+    let x = a.store.copy("named before b joined");
+    a.store.name(&x, Some("Wi-Fi"));
+    a.connect().await.unwrap();
+    a.sync_fully().await.unwrap();
+    // b 之后才加入：条目与名称一起导入（ClipUpsert 带着收藏状态与名称）
+    let mut b = Device::new(&server, "b", 0xb);
+    b.connect().await.unwrap();
+    settle(&mut [&mut a, &mut b]).await;
+    assert_converged(&[&a, &b]);
+    assert_eq!(b.state().clip[&x].name.as_deref(), Some("Wi-Fi"));
+}
+
+#[tokio::test]
 async fn deletes_and_clears_propagate_and_purge_the_log() {
     let server = MemoryRemote::new();
     let mut a = Device::new(&server, "a", 0xa);
@@ -544,4 +598,71 @@ async fn switched_off_domains_keep_no_bodies_of_other_devices() {
     assert!(s.clip.get(&x).is_some_and(|i| i.text == "private text"));
     assert!(s.ocr.get(&o).is_some_and(|i| i.text == "private ocr"));
     assert_eq!(bodies(), 0);
+}
+
+#[tokio::test]
+async fn reenabling_clipboard_sync_keeps_favorites_made_while_off() {
+    let server = MemoryRemote::new();
+    let mut a = Device::new(&server, "a", 0xa);
+    let mut b = Device::new(&server, "b", 0xb);
+    let x = a.store.copy("favorite");
+    let y = a.store.copy("plain");
+    a.connect().await.unwrap();
+    b.connect().await.unwrap();
+    settle(&mut [&mut a, &mut b]).await;
+
+    // a 关掉剪贴板同步期间收藏了 x：与桌面端一样，关闭期间不记录剪贴板改动，副本里没有这次收藏，
+    // 重新加入时只能从本机枚举的 `p/`（`{"pin": true}` 对象）得知；b 随后清空（保留收藏）
+    a.options.content.clipboard = false;
+    a.sync().await.unwrap();
+    a.store.detach();
+    tick();
+    a.store.pin(&x, true);
+    a.store.attach(a.engine().journal().expect("日志"), a.engine().hlc());
+    tick();
+    b.store.clear(true);
+    b.sync_fully().await.unwrap();
+
+    // 重新打开：重新加入时 x 是本机的收藏，不被那次清空删掉，并发布到 b；未收藏的 y 照常被清掉
+    a.options.content.clipboard = true;
+    a.engine().reapply(&Domain::Clip).unwrap();
+    settle(&mut [&mut a, &mut b]).await;
+    let s = a.state();
+    assert!(s.clip.get(&x).is_some_and(|i| i.pinned), "{:?}", s.clip);
+    assert!(!s.clip.contains_key(&y), "{:?}", s.clip);
+    assert!(b.state().clip.get(&x).is_some_and(|i| i.pinned && i.text == "favorite"));
+    assert_converged(&[&a, &b]);
+}
+
+#[tokio::test]
+async fn local_clear_keeping_favorites_does_not_refetch_them() {
+    let server = MemoryRemote::new();
+    let mut a = Device::new(&server, "a", 0xa);
+    let mut b = Device::new(&server, "b", 0xb);
+    let img = a.store.copy_image(&[7u8; 40_000]);
+    let plain = a.store.copy("plain");
+    a.store.pin(&img, true);
+    a.connect().await.unwrap();
+    b.connect().await.unwrap();
+    settle(&mut [&mut a, &mut b]).await;
+    assert!(b.state().clip.get(&img).is_some_and(|i| i.pinned));
+
+    // b 本机清空（保留收藏）：收藏的图片本机还在，不应被当作已删除而重新下载
+    tick();
+    b.store.clear(true);
+    b.remote.clear_ops();
+    b.sync_fully().await.unwrap();
+    assert!(
+        !b.remote
+            .ops()
+            .iter()
+            .any(|(op, p)| *op == Op::Get && p.contains("/blobs/")),
+        "{:?}",
+        b.remote.ops()
+    );
+    settle(&mut [&mut a, &mut b]).await;
+    let s = b.state();
+    assert!(s.clip.get(&img).is_some_and(|i| i.pinned), "{:?}", s.clip);
+    assert!(!s.clip.contains_key(&plain));
+    assert_converged(&[&a, &b]);
 }

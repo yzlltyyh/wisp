@@ -114,17 +114,24 @@ pub enum RemoteChange {
     /// cfg / sty / glo / key：寄存器被删除（集合元素、术语或 Key 被删除）
     Delete { key: String },
     /// clip：条目出现，或内容记录有了更新的版本。`value` 是 `c/<hash>` 的值
-    /// （`{kind, created_at, last_used_at, text?, html?, rtf_b64?, image?, src?, truncated}`）；
+    /// （`{kind, created_at, last_used_at, text?, html?, rtf_b64?, image?, src?, truncated, exp?}`）；
     /// 本机已有该 hash 时内容不变，`created_at` 取较小、`last_used_at` 取较大。
-    /// `pinned` 为 `None` 时保持本机的置顶状态。图片条目的原图在 `blobs` 里（[`BlobRole::Image`]）
+    /// `pinned` 为 `None` 时保持本机的收藏状态与名称；为 `Some(true)` 时名称随之换成 `name`（None = 没有名称）。
+    /// 图片条目的原图在 `blobs` 里（[`BlobRole::Image`]）
     ClipUpsert {
         hash: [u8; 32],
         value: Value,
         pinned: Option<bool>,
+        name: Option<String>,
         blobs: Vec<SpooledBlob>,
     },
-    /// clip：只有置顶状态变化（本机没有该条目时忽略，报 `Applied`）
-    ClipPin { hash: [u8; 32], pinned: bool },
+    /// clip：只有收藏状态或名称变化（`p/<hash>` 的值，见 [`crate::model::PinValue`]）。收藏时名称换成 `name`，
+    /// 取消收藏时名称一并去掉；本机没有该条目时忽略，报 `Applied`
+    ClipPin {
+        hash: [u8; 32],
+        pinned: bool,
+        name: Option<String>,
+    },
     /// clip：删除这些条目（用户删除的墓碑，以及按清空判定式算出的、已不存活的条目）；本机没有的忽略
     ClipDelete { hashes: Vec<[u8; 32]> },
     /// clip：清空在本机生效到没有同步寄存器的条目（文件条目、超限图片等）：

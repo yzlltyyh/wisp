@@ -20,6 +20,8 @@
  *     要为压低热状态内存而放宽这条规则，前提是两件事一起到位：懒加载的实现与内存实测（能省多少），以及「懒加载视图的
  *     chunk 在首次唤出前已预取」的门禁（依赖图里核对预取清单，或冒烟每次启动后各唤出一次并按视图判 ≤ 100 ms）；
  *   - settings 入口静态可达的模块里没有 src/settings、src/onboarding（设置与引导互相 lazy()，各自只加载自己的代码）；
+ *   - pinned（翻译 / OCR 的固定窗口）入口里没有剪贴板视图本身（它只在悬浮剪贴板的入口里）；clipfloat（悬浮剪贴板）
+ *     入口静态导入剪贴板视图，不带翻译 / 输入视图与设置、引导、Overlay；
  *   - overlay 入口静态可达的模块里没有 React / Motion 运行时。
  * 另外打印 panel 入口首屏（静态可达）的 JS / CSS 体积与各视图的渲染后字节数（只报告，不设预算），供懒加载取舍参考。
  */
@@ -79,6 +81,29 @@ export const GRAPH_RULES = {
     ],
   },
   settings: { forbid: ['src/settings/', 'src/onboarding/'], require: [] },
+  pinned: {
+    forbid: [
+      'src/settings/',
+      'src/onboarding/',
+      'src/overlay/',
+      'src/views/clipboard/ClipboardView',
+      'src/views/clipboard/ClipList',
+      'src/floating/',
+    ],
+    require: [],
+  },
+  clipfloat: {
+    forbid: [
+      'src/settings/',
+      'src/onboarding/',
+      'src/overlay/',
+      'src/views/translate/',
+      'src/views/input/',
+      'src/pinned/',
+    ],
+    forbidLazy: ['src/settings/', 'src/onboarding/', 'src/overlay/'],
+    require: ['src/views/clipboard/', 'src/floating/'],
+  },
   overlay: {
     forbid: [
       'pkg:react',
@@ -373,6 +398,12 @@ function selfTest() {
   const base = () => [
     entry('settings', [`${root}src/window/settings.tsx`]),
     entry('overlay', [`${root}src/overlay/index.ts`]),
+    // 固定窗口可以用剪贴板目录里的小部件（OCR 的芯片条），但不带剪贴板视图本身
+    entry('pinned', [`${root}src/pinned/PinnedApp.tsx`, `${root}src/views/clipboard/entities.tsx`]),
+    entry('clipfloat', [
+      `${root}src/floating/FloatingApp.tsx`,
+      `${root}src/views/clipboard/ClipboardView.tsx`,
+    ]),
   ]
   // 五个视图都静态导入（toast 在共享 chunk 里）：符合规则
   const staticViews = [
@@ -430,6 +461,23 @@ function selfTest() {
     c.fileName === 'overlay.js' ? { ...c, imports: ['shared.js'] } : c,
   )
   assert.ok(checkGraph(reactOverlay).some((p) => p.startsWith('overlay') && p.includes('react')))
+  // 固定窗口静态带上了剪贴板视图（应只在悬浮剪贴板的入口里）
+  const heavyPinned = staticViews.map((c) =>
+    c.fileName === 'pinned.js'
+      ? { ...c, moduleIds: [...c.moduleIds, `${root}src/views/clipboard/ClipboardView.tsx`] }
+      : c,
+  )
+  assert.ok(
+    checkGraph(heavyPinned).some((p) => p.startsWith('pinned') && p.includes('ClipboardView')),
+  )
+  // 悬浮剪贴板把剪贴板视图 lazy() 出去：首帧交接前多一次请求
+  const lazyFloat = staticViews.map((c) =>
+    c.fileName === 'clipfloat.js'
+      ? { ...c, moduleIds: [`${root}src/floating/FloatingApp.tsx`], dynamicImports: ['cv.js'] }
+      : c,
+  )
+  lazyFloat.push(chunk('cv.js', [`${root}src/views/clipboard/ClipboardView.tsx`]))
+  assert.ok(checkGraph(lazyFloat).some((p) => p.startsWith('clipfloat') && p.includes('懒加载')))
   ok('check-size 自检通过（入口依赖图规则）')
 }
 

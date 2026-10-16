@@ -52,6 +52,28 @@ pub fn is_modifier(keysym: u32) -> bool {
     HELD_MODIFIERS.contains(&keysym)
 }
 
+/// 同一种修饰键的左右两侧（与 Alt 共用一个键的 Meta 也算 Alt）归到同一个代表
+fn modifier_family(keysym: u32) -> u32 {
+    match keysym {
+        XK_SHIFT_R => XK_SHIFT_L,
+        XK_CONTROL_R => XK_CONTROL_L,
+        XK_ALT_R | XK_META_L | XK_META_R => XK_ALT_L,
+        XK_SUPER_R => XK_SUPER_L,
+        XK_HYPER_R => XK_HYPER_L,
+        other => other,
+    }
+}
+
+/// 重放用户按下的组合时，要模拟按下（之后抬起）的修饰键：`wanted` 里同一种（左右任一侧）已经被按住的跳过。
+/// 用户按住 Ctrl 连按 V 时，合成的 Control_L 抬起会让服务器认为 Ctrl 已经松开，下一下 V 就成了普通的「v」
+pub fn modifiers_to_press(wanted: &[u32], held: &[u32]) -> Vec<u32> {
+    wanted
+        .iter()
+        .copied()
+        .filter(|w| !held.iter().any(|h| modifier_family(*h) == modifier_family(*w)))
+        .collect()
+}
+
 /// keysym 是否为锁定键
 #[cfg_attr(not(feature = "mouse-hook"), allow(dead_code))]
 pub fn is_lock(keysym: u32) -> bool {
@@ -163,6 +185,21 @@ impl KeyMap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_modifiers_are_not_pressed_again() {
+        let wanted = [XK_CONTROL_L, XK_SHIFT_L];
+        // 用户按住右 Ctrl：Ctrl 已经满足，只补 Shift
+        assert_eq!(modifiers_to_press(&wanted, &[XK_CONTROL_R]), vec![XK_SHIFT_L]);
+        assert_eq!(
+            modifiers_to_press(&wanted, &[XK_CONTROL_L, XK_SHIFT_R]),
+            Vec::<u32>::new()
+        );
+        // 按住的是组合不要的修饰键：不影响要按的
+        assert_eq!(modifiers_to_press(&[XK_CONTROL_L], &[XK_ALT_L]), vec![XK_CONTROL_L]);
+        assert_eq!(modifiers_to_press(&[XK_ALT_L], &[XK_META_L]), Vec::<u32>::new());
+        assert_eq!(modifiers_to_press(&wanted, &[]), wanted.to_vec());
+    }
 
     /// 按 keycode → 第 1 组前两列构造映射（其余列补 0）
     fn keymap(entries: &[(u8, u32, u32)]) -> KeyMap {

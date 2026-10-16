@@ -103,6 +103,11 @@ export interface VirtualListProps {
   overscan?: number
   /** 行与行之间、首尾的留白（px） */
   paddingY?: number
+  /**
+   * 末尾额外的留白（px）：列表底部有浮层盖住一截时（剪贴板的芯片条），最后一行能滚到浮层上方，按键移动时也不会停在
+   * 浮层下面
+   */
+  endInset?: number
   className?: string
   /** 滚动容器（listbox）的 id：组合框的 aria-controls 指向它 */
   id?: string
@@ -122,6 +127,7 @@ export function VirtualList({
   stagger = false,
   overscan = 6,
   paddingY = 4,
+  endInset = 0,
   className,
   id: listId,
   role = 'listbox',
@@ -162,7 +168,8 @@ export function VirtualList({
     getItemKey,
     overscan: fullOverscan ? overscan : 0,
     paddingStart: paddingY,
-    paddingEnd: paddingY,
+    paddingEnd: paddingY + endInset,
+    scrollPaddingEnd: endInset,
     measureElement: measureRow,
     initialRect: { width: 0, height },
     observeElementRect: observeViewport(height),

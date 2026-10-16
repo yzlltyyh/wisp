@@ -51,10 +51,14 @@ Press <kbd>⌥ S</kbd> (Windows / Linux: <kbd>Ctrl + Alt + S</kbd>). The screen 
 Press <kbd>⌥ V</kbd> (Windows / Linux: <kbd>Ctrl + Alt + V</kbd>) to open your history, start typing to search, and press Return to paste into the app you came from.
 
 - Records text, rich text, images, and files, and recognizes links, colors, and code. Search works even for one or two Chinese characters.
-- <kbd>⇧ ↩</kbd> pastes as plain text, <kbd>⌘ ↩</kbd> copies without pasting, <kbd>⌘ 1–9</kbd> pastes an item directly, Space previews the full text or a larger image, and <kbd>⌘ P</kbd> pins an item.
-- Anything that looks like a password, token, or private key is never recorded. Password managers such as 1Password, Bitwarden, and KeePassXC are excluded by default, and Wisp respects apps that mark content as "do not record".
+- <kbd>⇧ ↩</kbd> pastes as plain text, <kbd>⌘ ↩</kbd> copies without pasting, <kbd>⌘ 1–9</kbd> pastes an item directly, and Space previews the full text or a larger image.
+- **Favorites**: press <kbd>⌘ D</kbd> to keep an item you use often, and give it a name you can search for. Favorites stay at the top of the list and are never cleaned up automatically.
+- **Smart detection**: phone numbers, email addresses, links, verification codes, tracking numbers, amounts, and more show up as a row of chips; click one to paste just that part. Verification codes are deleted automatically after 10 minutes. **Paste as** joins lines, changes case or character width, formats JSON, and removes tracking parameters from links.
+- **Multi-select and paste in sequence**: <kbd>⌘</kbd>-click to select several items and press Return to paste them together, or press <kbd>⌘ ↩</kbd> to paste them in sequence — after that, each <kbd>⌘ V</kbd> in any app pastes the next one.
+- **Floating clipboard**: <kbd>⌘ P</kbd> turns the clipboard into a small window that stays on top and open; click an item to paste it into the app you're using without taking focus. You can also drag text and links straight into other apps.
+- Images can be run through **Recognize text**. Anything that looks like a password, token, or private key is never recorded. Password managers such as 1Password, Bitwarden, and KeePassXC are excluded by default, and Wisp respects apps that mark content as "do not record".
 
-<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png"><img src="docs/images/clipboard-light.png" width="640" alt="Clipboard panel: pinned and recent sections with text, links, code, colors, images, and files"></picture></p>
+<p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/clipboard-dark.png"><img src="docs/images/clipboard-light.png" width="640" alt="Clipboard panel: favorites and recent sections with text, links, code, colors, images, and files"></picture></p>
 
 ### Multi-device sync
 
@@ -152,6 +156,7 @@ chmod +x Wisp_0.1.1_amd64.AppImage && ./Wisp_0.1.1_amd64.AppImage
 | Screenshot OCR | ✓ | ✗ Shows "Screenshot failed" with the explanation "Screenshots aren't available in a Wayland session in this version. To take screenshots, switch to an X11 session" (the Wayland screenshot portal is not supported yet) |
 | Clipboard history | ✓ | ✗ New copies are not recorded |
 | Pasting back into the app | ✓ | Copies only and asks you to press <kbd>Ctrl + V</kbd> |
+| Pasting clipboard items in sequence | ✓ | ✗ |
 | Extra triggers | ✓ | ✗ |
 | Translucent, rounded panels | ✓ | Opaque |
 
@@ -222,7 +227,7 @@ If a preferred shortcut is already taken by the system or another app, Wisp swit
 | Screenshot translate | <kbd>⌃ ⌥ ⇧ S</kbd> | <kbd>Alt + Shift + T</kbd> | <kbd>Super + Alt + T</kbd> |
 | Clipboard | <kbd>⇧ ⌘ V</kbd> | <kbd>Alt + Shift + V</kbd> | <kbd>Super + Alt + V</kbd> |
 
-Common keys inside the panel: <kbd>Esc</kbd> closes it, <kbd>⌘ C</kbd> copies, <kbd>⌘ R</kbd> regenerates, <kbd>⌘ P</kbd> pins or keeps on top, and <kbd>⌘ ,</kbd> opens Settings (on Windows and Linux, use <kbd>Ctrl</kbd> instead of <kbd>⌘</kbd>). The full list is in the [user guide](docs/user-guide.md#快捷键速查) (Chinese).
+Common keys inside the panel: <kbd>Esc</kbd> closes it, <kbd>⌘ C</kbd> copies, <kbd>⌘ R</kbd> regenerates, <kbd>⌘ P</kbd> pins a result to its own window (in the clipboard, it opens the floating clipboard), <kbd>⌘ D</kbd> adds a clipboard item to favorites, and <kbd>⌘ ,</kbd> opens Settings (on Windows and Linux, use <kbd>Ctrl</kbd> instead of <kbd>⌘</kbd>). The full list is in the [user guide](docs/user-guide.md#快捷键速查) (Chinese).
 
 ## Privacy
 

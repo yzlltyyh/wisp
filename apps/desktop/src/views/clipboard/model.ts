@@ -1,8 +1,8 @@
 /**
- * 剪贴板视图的纯逻辑：行模型（「置顶 / 最近」两组，检索结果平铺）、排序与增删、分页合并、
- * 键盘移动、高度、颜色换算、文本工具。不依赖 React / IPC，单测（__tests__/model.test.ts）直接覆盖。
+ * 剪贴板视图的纯逻辑：行模型（「收藏 / 最近」两组，收藏分组可折叠、超过 5 条时只列前 5 条；检索结果与收藏视图平铺）、
+ * 排序与增删、分页合并、键盘移动、高度、颜色换算、文本工具。不依赖 React / IPC，单测（__tests__/model.test.ts）直接覆盖。
  */
-import type { ClipFilter, ClipHit, ClipItemMeta, ClipKind } from '../../shared/ipc/types'
+import type { ClipFilter, ClipHit, ClipItemMeta } from '../../shared/ipc/types'
 
 // ---------------------------------------------------------------------------
 // 尺寸（逻辑 px）。行高与令牌 --h-row / --h-row-image 一致；头部 / 提示条与 design.* 视觉稿一致
@@ -11,10 +11,22 @@ import type { ClipFilter, ClipHit, ClipItemMeta, ClipKind } from '../../shared/i
 export const ROW_HEIGHT = 44
 /** 图片行 */
 export const IMAGE_ROW_HEIGHT = 64
-/** 分组标题（「置顶 / 最近」，不可选中） */
+/** 分组标题（「收藏 / 最近」，不可选中；收藏的标题是折叠按钮） */
 export const GROUP_HEIGHT = 28
+/** 收藏分组末尾的「查看全部 N 个收藏」行（不可选中，与分组标题同高） */
+export const MORE_HEIGHT = 28
+/**
+ * 「全部」列表里收藏分组最多列出几条：更多时末尾追加「查看全部 N 个收藏」行（点它切到收藏视图）。Rust 的打开高度
+ * 估算（`placement::clipboard_estimated_height`）按同一规则镜像
+ */
+export const FAVORITES_PREVIEW = 5
 /** VirtualList 首尾的留白（它的 paddingY 默认值） */
 export const LIST_PADDING = 4
+/**
+ * 列表末尾为芯片条留出的滚动余量：芯片条（28 的芯片 + 上下各 4）浮在列表底部、离列表下沿 4，光标移到最后一行时
+ * 停在它上方。只是滚动区里的留白，不计入打开高度（Rust 的高度镜像不变）
+ */
+export const CHIP_STRIP_INSET = 40
 /** 头部：大号无边框搜索 + 过滤 + ⋯ */
 export const HEADER_HEIGHT = 48
 /** 底部快捷键提示条（可在设置里隐藏） */
@@ -33,10 +45,11 @@ export const EMPTY_HEIGHT = 176
 /** 剪贴板打开时取 clamp(内容, 240, min(560, 上限))，与 Rust 的 `placement::clipboard_open_height` 同一规则 */
 export const OPEN_MAX_HEIGHT = 560
 /**
- * 打开高度的下限。面板的通用下限是 240；这里再保证类型过滤菜单（7 项 × 28 + 内边距）在头部下方完整放得下：
- * 菜单在卡片内会「预留高度」让卡片长高，而剪贴板的卡片高度在会话内只增不减（Rust 锁定），长高之后视图就比卡片矮了
+ * 打开高度的下限。面板的通用下限是 240；这里再保证类型过滤菜单（8 项 × 28 + 内边距）在头部下方完整放得下：
+ * 菜单在卡片内会「预留高度」让卡片长高，而剪贴板的卡片高度在会话内只增不减（Rust 锁定），长高之后视图就比卡片矮了。
+ * 与 Rust 的 `placement` 下限同一算式（改过滤项数时两边一起改）
  */
-export const OPEN_MIN_HEIGHT = HEADER_HEIGHT + 4 + (7 * 28 + 8) + 8
+export const OPEN_MIN_HEIGHT = HEADER_HEIGHT + 4 + (8 * 28 + 8) + 8
 
 /** 菜单项 / 分隔线 / 菜单内边距的高度（components.css 的 .ui-menu，估算右键菜单是否放得下） */
 export const MENU_ITEM_HEIGHT = 28
@@ -53,6 +66,11 @@ export const SEARCH_LIMIT = 200
 export const SEARCH_LIMIT_MAX = 500
 /** 输入即搜索的去抖 */
 export const SEARCH_DEBOUNCE_MS = 60
+/**
+ * 光标换条目之后多久才检视它（芯片条的识别结果）：按住 ↑↓ 连续移动（约每 33 ms 一次）、指针扫过列表时不逐条请求，
+ * 停下来之后才发一次；检视过的条目有缓存，回到它时立即显示
+ */
+export const INSPECT_DEBOUNCE_MS = 90
 /**
  * 少于这么多个字的查询不走全文索引（trigram 至少要 3 个字），只在最近 SHORT_QUERY_SCOPE 条里做子串匹配：
  * 没搜到时提示「多输入几个字可以搜索全部历史」
@@ -90,6 +108,7 @@ export const META_FILES = 5
 
 export const FILTERS: readonly ClipFilter[] = [
   'all',
+  'favorite',
   'text',
   'image',
   'files',
@@ -98,11 +117,20 @@ export const FILTERS: readonly ClipFilter[] = [
   'color',
 ]
 
-/** 条目是否属于某个过滤（文本包含富文本，与 wisp-clipboard 的 `ClipFilter::Text` 一致） */
-export function matchesFilter(kind: ClipKind, filter: ClipFilter): boolean {
-  if (filter === 'all') return true
-  if (filter === 'text') return kind === 'text' || kind === 'rich_text'
-  return kind === filter
+/**
+ * 条目是否属于某个过滤（与 wisp-clipboard 的 `ClipFilter` 一致）：收藏按 `pinned`，文本包含富文本，其余按类型
+ */
+export function matchesFilter(item: ClipItemMeta, filter: ClipFilter): boolean {
+  switch (filter) {
+    case 'all':
+      return true
+    case 'favorite':
+      return item.pinned
+    case 'text':
+      return item.kind === 'text' || item.kind === 'rich_text'
+    default:
+      return item.kind === filter
+  }
 }
 
 /** Tab / ⇧Tab 循环切换过滤 */
@@ -113,7 +141,7 @@ export function cycleFilter(filter: ClipFilter, step: 1 | -1): ClipFilter {
 }
 
 // ---------------------------------------------------------------------------
-// 排序与增删（顺序与 Rust 一致：置顶在前，最近使用在前，同一毫秒 id 大的在前）
+// 排序与增删（顺序与 Rust 一致：收藏在前，最近使用在前，同一毫秒 id 大的在前）
 
 export function compareItems(a: ClipItemMeta, b: ClipItemMeta): number {
   return Number(b.pinned) - Number(a.pinned) || b.last_used_at - a.last_used_at || b.id - a.id
@@ -155,7 +183,7 @@ export function removeHit(hits: readonly ClipHit[], id: number): readonly ClipHi
 
 /**
  * 合并下一页：两边都已按 `compareItems` 排好序，按顺序归并（O(n)），同一 id 只留已加载的那份（它带着本地已应用的
- * 实时变化）。分页期间的实时插入会让下一页的开头与已有条目重复；取消置顶落到已加载范围之外的条目暂时排在末尾，
+ * 实时变化）。分页期间的实时插入会让下一页的开头与已有条目重复；取消收藏落到已加载范围之外的条目暂时排在末尾，
  * 下一页到达后归并回它真正的位置——不会出现重复，也不会乱序
  */
 export function appendPage(hits: readonly ClipHit[], page: readonly ClipHit[]): ClipHit[] {
@@ -187,10 +215,10 @@ export function findHit(hits: readonly ClipHit[], id: number | null): ClipHit | 
 }
 
 // ---------------------------------------------------------------------------
-// 时间（全文预览里的完整时间用；列表只分「置顶 / 最近」两组）
+// 时间（全文预览里的完整时间用；列表只分「收藏 / 最近」两组）
 
 export type TimeGroup = 'today' | 'yesterday' | 'week' | 'earlier'
-/** 列表分组：置顶 / 最近；检索结果平铺、没有分组标题 */
+/** 列表分组：收藏（线上字段仍叫 pinned）/ 最近；检索结果与收藏视图平铺、没有分组标题 */
 export type GroupId = 'pinned' | 'recent'
 
 /** 本地时区当天 0 点 */
@@ -235,46 +263,112 @@ export interface GroupRow {
   readonly type: 'group'
   readonly key: string
   readonly group: GroupId
+  /**
+   * 收藏分组的折叠信息（标题是按钮，`aria-expanded`）：组里的条数（含折叠或没列出的）与是否折叠；「最近」分组为 null
+   */
+  readonly fold: { readonly count: number; readonly collapsed: boolean } | null
 }
 export interface ItemRow {
   readonly type: 'item'
   readonly key: number
   readonly hit: ClipHit
-  /** 在当前可见顺序里的序号（从 1 开始，含置顶区，受过滤与搜索影响） */
+  /** 在当前可见顺序里的序号（从 1 开始，只数列出来的行：折叠或没列出的收藏不占序号；受过滤与搜索影响） */
   readonly ordinal: number
   readonly group: GroupId
 }
-export type Row = GroupRow | ItemRow
+/** 收藏分组末尾的「查看全部 N 个收藏」（不可选中；点它切到收藏视图） */
+export interface MoreRow {
+  readonly type: 'more'
+  readonly key: string
+  /** 收藏的总条数 */
+  readonly count: number
+}
+export type Row = GroupRow | ItemRow | MoreRow
+
+/** 行的排布方式 */
+export interface RowLayout {
+  /** 平铺、没有分组标题：检索结果（收藏在前，行尾带星标）与收藏视图 */
+  readonly flat: boolean
+  /** 收藏分组折叠：只留标题 */
+  readonly collapsed: boolean
+  /** 收藏分组最多列出几条（多出的由「查看全部」行代表）；null 表示全部列出 */
+  readonly cap: number | null
+}
+
+const GROUPED: RowLayout = { flat: false, collapsed: false, cap: null }
 
 /**
- * 条目 → 行：最近列表分「置顶 / 最近」两组（design.clipboard-list），分组标题不可选中；检索结果平铺
- * （`flat`：置顶命中排在前面，其余按时间，没有分组标题——置顶项在行尾带图钉标记）。
- * 输入应已按 `compareItems` 排好序（Rust 的列表 / 检索结果本来就是这个顺序）；万一某组被拆成两段，标题 key 加序号避免重复
+ * 条目 → 行：最近列表分「收藏 / 最近」两组（design.clipboard-list），分组标题不可选中；收藏分组可折叠，`cap` 给出时
+ * 只列前 `cap` 条、末尾追加「查看全部 N 个收藏」行。检索结果与收藏视图平铺（`flat`）。
+ *
+ * 输入应已按 `compareItems` 排好序（Rust 的列表 / 检索结果本来就是这个顺序，收藏在前）；万一某组被拆成两段，标题 key
+ * 加序号避免重复。序号只数列出来的条目（⌘1–9 按看得见的顺序）
  */
-export function buildRows(hits: readonly ClipHit[], flat = false): Row[] {
+export function buildRows(hits: readonly ClipHit[], layout: Partial<RowLayout> = {}): Row[] {
+  const { flat, collapsed, cap } = { ...GROUPED, ...layout }
   const rows: Row[] = []
+  if (flat) {
+    hits.forEach((hit, i) => {
+      rows.push({
+        type: 'item',
+        key: hit.item.id,
+        hit,
+        ordinal: i + 1,
+        group: hit.item.pinned ? 'pinned' : 'recent',
+      })
+    })
+    return rows
+  }
+  const favorites = countFavorites(hits)
   let current: GroupId | null = null
   let splits = 0
-  for (let i = 0; i < hits.length; i++) {
-    const hit = hits[i] as ClipHit
+  let ordinal = 0
+  let listed = 0
+  for (const hit of hits) {
     const group: GroupId = hit.item.pinned ? 'pinned' : 'recent'
-    if (!flat && group !== current) {
+    if (group !== current) {
+      // 「查看全部」行跟在收藏分组的末尾（离开收藏分组时追加）
+      if (current === 'pinned') pushMore(rows, favorites, listed, collapsed, cap)
       const seen = current !== null && rows.some((r) => r.type === 'group' && r.group === group)
       rows.push({
         type: 'group',
         key: seen ? `group:${group}:${++splits}` : `group:${group}`,
         group,
+        fold: group === 'pinned' ? { count: favorites, collapsed } : null,
       })
       current = group
     }
-    rows.push({ type: 'item', key: hit.item.id, hit, ordinal: i + 1, group })
+    if (group === 'pinned') {
+      if (collapsed || (cap !== null && listed >= cap)) continue
+      listed++
+    }
+    rows.push({ type: 'item', key: hit.item.id, hit, ordinal: ++ordinal, group })
   }
+  if (current === 'pinned') pushMore(rows, favorites, listed, collapsed, cap)
   return rows
+}
+
+function countFavorites(hits: readonly ClipHit[]): number {
+  let n = 0
+  for (const h of hits) if (h.item.pinned) n++
+  return n
+}
+
+function pushMore(
+  rows: Row[],
+  count: number,
+  listed: number,
+  collapsed: boolean,
+  cap: number | null,
+): void {
+  if (collapsed || cap === null || listed >= count) return
+  rows.push({ type: 'more', key: 'more:favorites', count })
 }
 
 export function rowHeight(row: Row | undefined): number {
   if (!row) return ROW_HEIGHT
   if (row.type === 'group') return GROUP_HEIGHT
+  if (row.type === 'more') return MORE_HEIGHT
   return row.hit.item.kind === 'image' ? IMAGE_ROW_HEIGHT : ROW_HEIGHT
 }
 

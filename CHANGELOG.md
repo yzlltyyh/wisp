@@ -12,9 +12,20 @@ Each version ends with an English summary.
 - 端到端加密：数据在本机用同步密码派生的密钥加密后才上传，服务器只看到密文；没有 Wisp 账号，也不经过中转服务器。同步密码可以一键生成；它不保存、也无法找回，忘记后只能清除服务器上的数据重新开始，各设备本机的数据不受影响。
 - 自动同步：改动后约 2 秒上传，打开面板、托盘菜单或设置窗口时取回其他设备的改动；不在后台定时轮询，暂时连不上时稍后自动重试。也可以关闭自动同步，只在点「立即同步」时同步。
 - 冲突自动合并，不弹对话框：同一项以最后的改动为准，不同项的改动都会保留。加入已有的同步数据时，服务器上已有的设置优先，本机独有的模型服务、术语与历史会保留，不会删除本机已有的数据；以前同步过的设备再连接回来时，会应用它离开期间其他设备上的删除与清空。
-- 剪贴板的复制、置顶、删除与清空会同步到其他设备，粘贴只影响本机；同步来的条目同样经过本机的排除名单、疑似密钥检测与保留设置。服务器上的历史受保留设置限制，不会无限增长。
+- 剪贴板的复制、收藏（包括收藏的名称）、删除与清空会同步到其他设备，粘贴只影响本机；同步来的条目同样经过本机的排除名单、疑似密钥检测与保留设置。服务器上的历史受保留设置限制，不会无限增长。
 - 全局快捷键、风格快捷键与面板材质只在同一系统的设备之间同步；开机启动、剪贴板记录开关、疑似密钥检测、识别历史开关与日志、性能选项只属于本机。
 - 同步页显示状态与进度、同步过的设备，提供「立即同步」「更新密码…」「断开同步」与「清除服务器上的数据」；同步需要处理时，托盘状态行会提示，成功时不打扰。
+- 剪贴板的「置顶」改为「收藏」，快捷键改为 ⌘D（Windows / Linux：Ctrl+D）。收藏排在列表顶部，分组可以折叠；「全部」里最多列出 5 条，更多时点「查看全部 N 个收藏」切到收藏视图，筛选里也新增了「收藏」。收藏可以命名（右键或 ⌘K 里的「命名…」），名称能被搜到。
+- ⌘P 在剪贴板里改为打开悬浮剪贴板（也可以点头部的「悬浮」按钮），与翻译、OCR 面板里「固定」的按键一致：剪贴板变成一个默认置顶、可以一直开着的小窗口，可拖动、调整大小并记住位置；点一条就粘贴进正在使用的应用，不抢焦点。
+- 智能识别：条目里的电话、邮箱、链接、IP 地址、验证码、快递单号、订单号、金额与日期时间排成一行芯片，单击只粘贴这一段，⌥ 单击只复制，⌘E 用键盘选择；悬停预览、全文预览与 OCR 结果里同样可用。识别只在本机进行，可以在「设置 → 剪贴板 → 智能识别」里按种类关闭；身份证号与银行卡号的识别默认关闭，打开后显示时遮住中间几位。
+- 验证码 10 分钟后自动从剪贴板历史中删除（收藏的除外，可以在设置里关闭）。开启同步时，各台设备按同一到期时间各自删除，到期前在任意一台设备上收藏的会在各台设备上保留；「同步内容」新增「验证码」开关，关闭后验证码只留在本机。
+- 「粘贴为…」（⌥⇧↩ 或右键菜单）：合并为一行、去掉首尾空白、大小写转换、转为半角或全角、格式化或压缩 JSON、去掉链接里的跟踪参数，只列出对当前条目适用的几项。结果直接粘贴，不另记一条历史。
+- 多选：⌘ 单击、⇧ 单击或 ⇧↑ / ⇧↓ 选择多条，按选择顺序编号；回车按顺序合并粘贴，也可以一起收藏、删除或拖出。
+- 连续粘贴：选好多条后按 ⌘↩，第一条立即粘贴，之后在任何应用里每按一次 ⌘V（Windows / Linux：Ctrl+V）就粘贴下一条。Wisp 只在连续粘贴进行期间临时接管粘贴键，粘贴完、按 Esc、锁屏或 10 分钟没有操作时立即恢复；Linux 的 Wayland 会话下不可用。
+- 剪贴板里的文字、链接与富文本可以直接拖进其他应用（多选时拖出合并后的文字）。
+- 剪贴板里的图片可以「识别文字」：在 OCR 面板里给出结果，与截图 OCR 一样可以编辑、翻译与固定。
+- 新的应用图标与托盘图标：衔着纸片的「拾字小妖精」，托盘与菜单栏使用专为小尺寸绘制的简化版，浅色、深色与 macOS 菜单栏各有一套；Windows 与 Linux 的浮标也换成了同一形象。
+- 模型服务改为显示各家真实的标志（OpenAI、Anthropic、Google Gemini、DeepSeek、通义千问、智谱、火山方舟、Kimi、硅基流动、MiniMax、OpenRouter、Groq、Ollama、LM Studio），深色模式下自动调整；自定义的服务仍显示首字母。
 
 ### 修复
 
@@ -27,8 +38,19 @@ Each version ends with an English summary.
 - End-to-end encryption: everything is encrypted on your device with a key derived from your sync password before it's uploaded, so the server only sees ciphertext. There is no Wisp account and no relay server. The sync password is never stored and can't be recovered; if you forget it, clear the data on the server and start over — the data on each device is kept.
 - Automatic sync uploads changes within about two seconds and picks up changes from your other devices when you open a panel, the tray menu, or Settings. Wisp never polls in the background and retries quietly when the server can't be reached; you can also turn automatic sync off and use Sync now.
 - Conflicts are merged automatically without dialogs. Joining existing sync data never deletes anything on your device: settings already on the server take priority, and model services, glossary terms, and history that only this device has are kept. A device that synced before and reconnects picks up anything deleted or cleared elsewhere while it was away.
-- Clipboard copies, pins, deletions, and clears sync across devices, while pasting stays local; synced items still pass this device's exclusions, secret detection, and retention limits, which also keep the history on the server bounded.
+- Clipboard copies, favorites (including their names), deletions, and clears sync across devices, while pasting stays local; synced items still pass this device's exclusions, secret detection, and retention limits, which also keep the history on the server bounded.
 - Shortcuts and panel material sync only between devices on the same operating system; launch at login, clipboard recording, secret detection, the recognition history switch, and logging and performance options stay on each device.
+- Pinned clipboard items are now favorites, toggled with ⌘D (Ctrl+D on Windows and Linux). Favorites sit in a collapsible section at the top of the list; All shows up to five of them, with "Show all N favorites" opening the new Favorites filter. You can name a favorite (Name… in the right-click or ⌘K menu) and search by that name.
+- In the clipboard, ⌘P now opens the floating clipboard (or click Float in the header), matching the Pin key in the translation and OCR panels: a small window that stays on top, can be moved, resized, and left open, and remembers where you put it. Click an item to paste it into the app you're using without taking focus.
+- Smart detection: phone numbers, email addresses, links, IP addresses, verification codes, tracking and order numbers, amounts, and dates show up as a row of chips. Click a chip to paste just that part, ⌥-click to copy it, or press ⌘E to pick one with the keyboard; chips also appear in previews and OCR results. Detection runs on your device and each kind can be turned off in Settings → Clipboard → Smart detection; ID and bank card numbers are off by default and shown with the middle digits hidden.
+- Verification codes are removed from clipboard history 10 minutes after you copy them (favorites excepted; you can turn this off). With sync on, every device removes it at the same expiry time, and a code favorited on any device before it expires is kept everywhere; a new Verification codes switch under What to sync keeps codes on this device only.
+- Paste as (⌥⇧↩ or the right-click menu) joins lines, trims whitespace, changes case, converts between half-width and full-width characters, formats or minifies JSON, and removes tracking parameters from links, listing only the options that apply. The result is pasted directly and isn't added to the history.
+- Multi-select: ⌘-click, ⇧-click, or ⇧↑ / ⇧↓ to select several items, numbered in the order you pick them. Press Return to paste them together in that order, or add them to favorites, delete, or drag them out at once.
+- Paste in sequence: select several items and press ⌘↩. The first one is pasted right away, and each ⌘V (Ctrl+V on Windows and Linux) in any app pastes the next. Wisp takes over the paste key only while a sequence is running and lets go as soon as it finishes, you press Esc, the screen locks, or 10 minutes pass; not available in Linux Wayland sessions.
+- Text, links, and rich text can be dragged from the clipboard straight into other apps (several selected items are dragged as one block of text).
+- Recognize text on clipboard images shows the result in the OCR panel, where you can edit, translate, and pin it just like a screenshot.
+- A new app and tray icon: a little sprite carrying a scrap of paper, with a simplified version drawn for the tray and menu bar in light, dark, and macOS menu bar variants; the floating trigger on Windows and Linux uses the same mark.
+- Model services now show their real logos (OpenAI, Anthropic, Google Gemini, DeepSeek, Qwen, Zhipu, Volcengine Ark, Kimi, SiliconFlow, MiniMax, OpenRouter, Groq, Ollama, LM Studio), adapted for dark mode; custom services still show their initial.
 - Fixes: configuration files saved with a UTF-8 BOM (for example by Windows Notepad) are no longer treated as corrupt and reset; providers and glossary entries in Settings are now saved one at a time, so changes made in the files or synced from another device aren't overwritten by stale values in an open Settings window.
 
 ## 0.1.1（2026-10-14）

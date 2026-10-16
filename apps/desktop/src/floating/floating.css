@@ -1,0 +1,73 @@
+/*
+ * 悬浮剪贴板：卡片视觉与固定窗口一致，背景纯色（不用材质）。
+ * - macOS / Windows（shadow_margin = 0）：窗口的圆角、边框与阴影由系统提供，卡片铺满窗口；
+ * - Linux（透明窗口，shadow_margin > 0）：卡片四周留阴影边距，自己画 --r-panel 圆角、内缘 hairline 与 --shadow-pinned。
+ * 剪贴板视图的根节点用负外边距抵消卡片的内边距（与面板一致），这里给出同样的内边距。
+ */
+.floating {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+.floating[data-margin] {
+  inset: var(--shadow-margin);
+}
+
+.floating-card {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 0;
+  background: var(--surface-solid);
+  box-shadow: var(--highlight-top);
+}
+.floating[data-margin] .floating-card {
+  border-radius: var(--r-panel);
+}
+/* 内缘 1 px 描边与阴影（与固定窗口相同的画法） */
+.floating[data-margin] .floating-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  pointer-events: none;
+}
+.floating[data-margin] .floating-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  box-shadow: var(--shadow-pinned);
+  pointer-events: none;
+}
+
+.floating-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--pad-panel-y) var(--pad-panel-x);
+}
+
+/* 初始状态取不到时的空卡片：一条可拖动、可关闭的标题栏 */
+.floating-fallback {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 calc(var(--pad-panel-x) - 6px) 0 var(--pad-panel-x);
+}
+.floating-fallback-title {
+  flex: 1;
+  align-self: center;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
+  color: var(--fg-2);
+  white-space: nowrap;
+}

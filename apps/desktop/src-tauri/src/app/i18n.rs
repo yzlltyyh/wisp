@@ -94,6 +94,7 @@ const KEYS: &[&str] = &[
     "tray.status.update",
     "tray.status.update_ready",
     "tray.status.sync_attention",
+    "tray.status.queue",
     "tray.translate_selection",
     "tray.translate_input",
     "tray.ocr",
@@ -172,6 +173,9 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (EnUs, "tray.status.update_ready") => "Wisp {version} is ready · Restart to apply",
         (ZhCn, "tray.status.sync_attention") => "同步需要处理 · 点击查看",
         (EnUs, "tray.status.sync_attention") => "Sync needs attention · Click to review",
+        // 连续粘贴进行中：已粘贴 / 总条数
+        (ZhCn, "tray.status.queue") => "连续粘贴 {index} / {total} · 点击结束",
+        (EnUs, "tray.status.queue") => "Pasting in sequence {index} / {total} · Click to stop",
         (ZhCn, "tray.translate_selection") => "划词翻译",
         (EnUs, "tray.translate_selection") => "Translate Selection",
         (ZhCn, "tray.translate_input") => "翻译输入…",
@@ -202,20 +206,20 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (ZhCn, "dialog.clear_clipboard.title") => "清空剪贴板历史？",
         (EnUs, "dialog.clear_clipboard.title") => "Clear clipboard history?",
         (ZhCn, "dialog.clear_clipboard.message") => {
-            "可以只删除未置顶的记录（置顶的条目保留），也可以全部删除。此操作无法撤销。"
+            "可以只删除未收藏的记录（收藏的条目保留），也可以全部删除。此操作无法撤销。"
         }
         (EnUs, "dialog.clear_clipboard.message") => {
-            "Delete only unpinned items and keep pinned ones, or delete everything. This can't be undone."
+            "Delete only items that aren't in favorites and keep your favorites, or delete everything. This can't be undone."
         }
         (ZhCn, "dialog.clear_clipboard.message_synced") => {
-            "可以只删除未置顶的记录（置顶的条目保留），也可以全部删除。其他设备上的记录也会一并清除。此操作无法撤销。"
+            "可以只删除未收藏的记录（收藏的条目保留），也可以全部删除。其他设备上的记录也会一并清除。此操作无法撤销。"
         }
         (EnUs, "dialog.clear_clipboard.message_synced") => {
-            "Delete only unpinned items and keep pinned ones, or delete everything. Items on your other devices will be \
-             cleared too. This can't be undone."
+            "Delete only items that aren't in favorites and keep your favorites, or delete everything. Items on your other \
+             devices will be cleared too. This can't be undone."
         }
-        (ZhCn, "dialog.clear_clipboard.ok") => "清空（保留置顶）",
-        (EnUs, "dialog.clear_clipboard.ok") => "Clear (Keep Pinned)",
+        (ZhCn, "dialog.clear_clipboard.ok") => "清空（保留收藏）",
+        (EnUs, "dialog.clear_clipboard.ok") => "Clear (Keep Favorites)",
         (ZhCn, "dialog.clear_clipboard.all") => "全部清空",
         (EnUs, "dialog.clear_clipboard.all") => "Clear All",
         (ZhCn, "dialog.cancel") => "取消",

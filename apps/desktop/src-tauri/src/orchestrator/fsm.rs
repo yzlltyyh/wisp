@@ -1,7 +1,7 @@
 //! 流程状态机：翻译、输入、OCR、直接翻译四条流程（外加剪贴板面板的打开，只用来收尾埋点）的
 //! 「状态 × 事件」转移表。
 //!
-//! 每次由 Rust 发起的流程（快捷键、托盘、浮标、`--trigger`、引导页「试一试」、剪贴板条目送翻译）对应一个 **run**：
+//! 每次由 Rust 发起的流程（快捷键、托盘、浮标、`--trigger`、引导页「试一试」、剪贴板条目送翻译 / 识别文字）对应一个 **run**：
 //! 从触发开始，到它的面板会话结束为止。编排器在每个关键步骤调用 [`step`]（经 `Core::advance`），由返回值决定下一步：
 //! - [`Transition::Next`]：合法转移，继续；
 //! - [`Transition::Ignore`]：run 已经结束（被新的触发取代、被取消、面板已关），迟到的结果直接丢弃——这就是
@@ -207,7 +207,8 @@ pub fn step(flow: Flow, stage: Stage, event: Event) -> Transition {
             (S::Triggered | S::Framing, E::NotReady) | (S::Capturing, E::CaptureFailed) => Next(S::NotReady),
             (S::Capturing, E::CaptureCancelled) => Next(S::Cancelled),
             (S::Capturing, E::Captured) => Next(S::Framing),
-            (S::Framing, E::Committed) => Next(S::Requesting),
+            // 现成的图片（剪贴板图片「识别文字」）没有截图与框选：图片一到就提交
+            (S::Framing | S::Triggered, E::Committed) => Next(S::Requesting),
             _ => requesting(stage, event),
         },
     }
@@ -372,6 +373,11 @@ mod tests {
             assert_eq!(walk(flow, &[E::Begin, E::CaptureCancelled]), Stage::Cancelled);
             assert_eq!(walk(flow, &[E::Begin, E::Captured, E::Cancel]), Stage::Cancelled);
             assert_eq!(walk(flow, &[E::NotReady, E::Closed]), Stage::Closed);
+            // 现成的图片（剪贴板图片「识别文字」）：没有截图与框选，直接提交
+            assert_eq!(
+                walk(flow, &[E::Committed, E::FirstDelta, E::Finished, E::Closed]),
+                Stage::Closed
+            );
         }
     }
 
@@ -441,9 +447,9 @@ mod tests {
                 }
             }
         }
-        // 每个流程共有 40 条（重入 13、取消 7、关闭 13、失败 7）× 5 + 各流程专有 40 条（翻译 14、输入 5、剪贴板 1、
-        // OCR 10、直接翻译 10）
-        assert_eq!(next, 243, "转移表的合法转移条数变了：确认是有意的修改后更新这里");
+        // 每个流程共有 40 条（重入 13、取消 7、关闭 13、失败 7）× 5 + 各流程专有 42 条（翻译 14、输入 5、剪贴板 1、
+        // OCR 11、直接翻译 11：现成图片直接提交各占一条）
+        assert_eq!(next, 245, "转移表的合法转移条数变了：确认是有意的修改后更新这里");
         // 非法：输入流程不取词、不截图；翻译流程不提交选区；请求结束后不会再有 FirstDelta；剪贴板面板不发请求
         assert_eq!(step(Flow::Input, Stage::Triggered, Event::Begin), Transition::Illegal);
         assert_eq!(

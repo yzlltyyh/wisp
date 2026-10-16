@@ -11,7 +11,7 @@ use crate::types::{
     ClickEvent, ClipSnapshot, HookHandle, LayoutInfo, ReadLimits, Selection, SelectionError, SuppressRange,
 };
 #[cfg(feature = "mouse-hook")]
-use crate::types::{HookError, HookSpec, InputSignal};
+use crate::types::{HookError, HookSpec, InputSignal, KeyChord};
 
 /// 读取当前选中文本
 pub trait SelectedText: Send + Sync {
@@ -219,6 +219,10 @@ pub enum KeyGrabError {
 pub trait InputHooks: Send + Sync {
     /// 按 spec 安装（或合并）钩子；返回的 Handle 被 drop 时注销钩子并结束线程
     fn install(&self, spec: HookSpec, sink: Box<dyn Fn(InputSignal) + Send + Sync>) -> Result<HookHandle, HookError>;
+    /// 重放一次被 `paste_keys` 拦下的粘贴键（上层已写好要粘贴的内容）：带 Wisp 标记注入，自己的钩子放行；X11 先撤销
+    /// 这一组的抓取、XTEST 发送、再抓回来。仍按着的修饰键保持不动（用户按住 ⌘ 连按 V 时，下一次按键照样带着 ⌘）。
+    /// **阻塞**（X11 与服务器同步往返），在工作线程上调用
+    fn replay_paste(&self, chord: KeyChord) -> Result<(), HookError>;
 }
 
 /// 浮标（原生小窗，无 WebView）

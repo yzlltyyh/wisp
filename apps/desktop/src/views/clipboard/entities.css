@@ -1,0 +1,55 @@
+/*
+ * 识别出的片段（芯片）：剪贴板的芯片条 / 预览与 OCR 视图共用（entities.tsx）。芯片是控件填充色的小按钮，值用等宽数字；
+ * 芯片条放不下时横向滚动（不显示滚动条）。各自的停靠位置在各视图的样式里
+ */
+.clip-chips {
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.clip-chips::-webkit-scrollbar {
+  display: none;
+}
+.clip-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  height: 24px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: var(--r-chip);
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--fg);
+  background: var(--fill-control);
+  cursor: default;
+  transition: background-color var(--dur-instant) var(--ease-standard);
+}
+.clip-chip:hover {
+  background: var(--fill-control-hover);
+}
+.clip-chip:active {
+  background: var(--fill-control-pressed);
+}
+/* 剪贴板 ⌘E 进入芯片条后的当前芯片（焦点仍在搜索框里，高亮代替焦点环） */
+.clip-chip[data-active] {
+  background: var(--fill-selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.clip-chip-icon {
+  flex: none;
+  color: var(--fg-2);
+}
+.clip-chip-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}

@@ -398,6 +398,8 @@ lenient_struct! {
         pub paste_on: PasteOn,
         /// true
         pub show_hint_bar: bool,
+        /// 智能识别（芯片条、验证码自动删除）
+        pub smart: SmartSettings,
     }
 }
 
@@ -419,6 +421,49 @@ impl Default for ClipboardSettings {
             panel_position: ClipPanelPosition::Center,
             paste_on: PasteOn::SingleClick,
             show_hint_bar: true,
+            smart: SmartSettings::default(),
+        }
+    }
+}
+
+lenient_struct! {
+    /// 剪贴板的智能识别：哪些种类的片段显示为芯片，以及验证码条目是否自动删除。随设置同步
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+    pub struct SmartSettings {
+        /// true：邮箱、电话、链接、IP
+        pub contacts: bool,
+        /// true：验证码
+        pub codes: bool,
+        /// true：快递单号、订单号、金额、日期时间
+        pub numbers: bool,
+        /// false：身份证号、银行卡号（敏感内容，默认不识别）
+        pub identity: bool,
+        /// true：验证码条目 10 分钟后在本机自动删除（收藏的除外）
+        pub otp_auto_delete: bool,
+    }
+}
+
+impl Default for SmartSettings {
+    fn default() -> Self {
+        Self {
+            contacts: true,
+            codes: true,
+            numbers: true,
+            identity: false,
+            otp_auto_delete: true,
+        }
+    }
+}
+
+impl SmartSettings {
+    /// 这一种片段是否要识别（按设置里的四个分组）
+    pub const fn allows(&self, kind: crate::clip::EntityKind) -> bool {
+        use crate::clip::EntityKind as K;
+        match kind {
+            K::Email | K::Phone | K::Url | K::Ip => self.contacts,
+            K::Otp => self.codes,
+            K::Tracking | K::Order | K::Amount | K::Datetime => self.numbers,
+            K::IdCard | K::BankCard => self.identity,
         }
     }
 }
@@ -594,6 +639,8 @@ lenient_struct! {
         pub images: bool,
         /// true：识别历史（只在本机开启了识别历史时生效）
         pub ocr_history: bool,
+        /// true：剪贴板里的验证码条目（`clipboard` 关闭时无效）。关闭后本机的验证码不上传，其他设备的也不接收
+        pub verification_codes: bool,
     }
 }
 
@@ -605,6 +652,7 @@ impl Default for SyncContent {
             clipboard: true,
             images: true,
             ocr_history: true,
+            verification_codes: true,
         }
     }
 }

@@ -46,7 +46,7 @@ export interface TextStreamOptions {
 }
 
 /** 场景可以直接打开的入口；默认由 `view` 推导 */
-export type MockEntry = 'panel' | 'settings' | 'pinned' | 'overlay'
+export type MockEntry = 'panel' | 'settings' | 'pinned' | 'clipfloat' | 'overlay'
 export type ScenarioView =
   PanelPayload['kind'] | 'pinned' | 'settings' | 'onboarding' | 'overlay' | 'page'
 

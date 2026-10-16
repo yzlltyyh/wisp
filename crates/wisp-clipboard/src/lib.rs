@@ -23,8 +23,15 @@
 //!   `make_thumb`（锁外，耗时几十毫秒）；拿到元数据后持锁 `RecentCache::update`（只合并内容字段，不移动条目，
 //!   不会把生成期间已删除的条目插回来），推送 `updated` 时用 `RecentCache::get` 取合并后的元数据（不在缓存里时用返回值）。
 //! - 粘贴：`get_payload` → 写剪贴板（抑制自身变更）→ 持锁 `touch` + `RecentCache::upsert`；
-//! - 置顶：持锁 `set_pinned` + `RecentCache::upsert`；删除：持锁 `delete` + `RecentCache::remove`；
-//!   清空：持锁 `clear` + `RecentCache::clear`；
+//! - 收藏（置顶）：持锁 `set_pinned` + `RecentCache::upsert`；命名：持锁 [`ClipStore::set_name`] + `RecentCache::upsert`
+//!   （命名即收藏，排序位置可能改变；名称先在 IPC 第一步用 [`clean_favorite_name`] 校验）。收藏会去掉验证码的过期时间，
+//!   取消收藏会去掉名称。删除：持锁 `delete` + `RecentCache::remove`；清空：持锁 `clear` + `RecentCache::clear`；
+//! - 验证码：记录时（≤ 1 KB 的文本）识别为验证码、且 [`IngestPolicy::otp_ttl_ms`] 开启时，条目带过期时间
+//!   （`ClipItemMeta.expires_at`）。打开数据库后、`Inserted` 的条目带过期时间时，用 [`ClipStore::next_expiry`] 排一次性
+//!   任务，到点持锁 [`ClipStore::expire_due`] + 逐条 `RecentCache::remove` 并推送 `removed`；系统睡眠会让定时器晚到，
+//!   列表与检索结果在返回前用 [`otp_expired`] 过滤掉已过期的；
+//! - 检视（芯片条、「粘贴为…」）：[`ClipStore::inspect`] 读正文后交给 [`smart::inspect`]；纯文本（识别结果等）直接用
+//!   [`smart::inspect`]。结果不落库，调用方可以按 id 缓存最近几条；
 //! - 空闲清理：`retain` → `sweep_orphan_blobs` → `vacuum_if_due` → `RecentCache::load`（`retain` 只返回计数）。
 //!   `clear` / `retain` 在一个事务里批量删除并抹掉索引条目，期间持有存储锁：默认上限 1000 条时清空约几十毫秒，
 //!   1 万条时约 0.5 s（见 `benches/search.rs`）；`vacuum_if_due` 的临时库在文件里，不随库的大小占内存；
@@ -40,13 +47,15 @@
 //! - 多设备同步（`sync.rs`）：导出用 [`ClipStore::sync_rows`] / [`ClipStore::sync_export`]（只读，不需要串行锁）；
 //!   应用远端条目先在串行锁之外 [`ClipStore::prepare_remote`]（本机隐私规则、类型开关、上限、图片解码与 hash 核对），
 //!   再持锁 [`ClipStore::apply_remote_many`]（一个事务，最多 [`MAX_REMOTE_BATCH`] 条）+ 更新缓存；
-//!   [`ClipStore::set_pinned_by_hash`]、[`ClipStore::delete_by_hashes`]、[`ClipStore::delete_unsynced_before`] 与本机的置顶 /
-//!   删除一样持锁调用。识别历史的同步身份是派生键 [`ocr_key`]；
+//!   [`ClipStore::set_favorite_by_hash`]（收藏与名称）、[`ClipStore::set_pinned_by_hash`]、[`ClipStore::delete_by_hashes`]、
+//!   [`ClipStore::delete_unsynced_before`] 与本机的收藏 / 删除一样持锁调用。导出的 [`SyncRow`] / [`SyncItem`] 带名称、
+//!   过期时间与验证码标记，远端条目的 [`RemoteItem`] 同样带回前两者。识别历史的同步身份是派生键 [`ocr_key`]；
 //! - `ClipStore` 的方法都是阻塞的，统一放在 `spawn_blocking` / 工作线程中调用。
 
 mod blobs;
 mod cache;
 mod error;
+mod favorite;
 mod html;
 mod imaging;
 mod infer;
@@ -58,18 +67,21 @@ mod retention;
 mod row;
 mod schema;
 mod search;
+pub mod smart;
 mod store;
 mod sync;
 
 pub use blobs::BlobKind;
 pub use cache::RecentCache;
 pub use error::StoreError;
+pub use favorite::{MAX_NAME_CHARS, NameError, clean_name as clean_favorite_name};
 pub use infer::infer_kind;
 pub use ingest::{IngestOutcome, IngestPolicy, SkipReason};
 pub use ocr_history::{OcrHistoryNew, ocr_thumbnail};
 pub use privacy::{PrivacyRules, looks_like_secret};
 pub use retention::{RetentionPolicy, RetentionReport};
 pub use row::refresh_file_exists;
+pub use smart::otp::{TTL_MS as OTP_TTL_MS, is_expired as otp_expired};
 pub use store::ClipStore;
 pub use sync::{
     MAX_REMOTE_BATCH, OcrApplied, OcrSyncItem, OcrSyncRow, PreparedOcr, PreparedRemote, RejectReason, Rejected,

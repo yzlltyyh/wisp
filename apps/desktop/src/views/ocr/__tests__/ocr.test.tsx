@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ViewProps } from '../../../panel/types'
 import { boot, setTransport, type Transport } from '../../../shared/ipc'
 import type {
+  ClipInspect,
   LlmError,
   ModelEntry,
   OcrPayload,
@@ -136,12 +137,23 @@ function snapshot(autoCopy = true): SettingsSnapshot {
   } as unknown as SettingsSnapshot
 }
 
+const NO_ENTITIES: ClipInspect = { entities: [], transforms: [] }
+/** text_inspect 的结果：undefined 模拟没实现这条命令的替身（未知命令一律返回 undefined），'fail' 模拟命令失败 */
+let inspectResult: ClipInspect | undefined | 'fail' = NO_ENTITIES
+
 function fakeTransport(): Transport {
   return {
     kind: 'mock',
     invoke: <T,>(cmd: string, args?: Record<string, unknown>) => {
       calls.push([cmd, args ?? {}])
       if (cmd === 'panel_pin') return Promise.resolve('p-1' as T)
+      // 识别完成后视图会检视文字（芯片）：默认没有片段，用例需要芯片时改 inspectResult
+      if (cmd === 'text_inspect') {
+        if (inspectResult === 'fail') {
+          return Promise.reject({ code: 'internal', message: 'inspect failed', llm: null })
+        }
+        return Promise.resolve(inspectResult as T)
+      }
       return Promise.resolve(undefined as T)
     },
     openStream: <T,>(cmd: string, args: Record<string, unknown>, onEvent: Listener) => {
@@ -286,6 +298,7 @@ beforeEach(() => {
   broken = new Set()
   rejectTranslate = false
   replays = new Map()
+  inspectResult = NO_ENTITIES
   setTransport(fakeTransport())
   resetSettingsSnapshot(snapshot())
   // 用例里的断言用中文文案
@@ -542,6 +555,89 @@ describe('自动复制', () => {
     expect((screen.getByTestId('ocr-text') as HTMLTextAreaElement).value).toBe('重新发起')
   })
 })
+
+describe('识别出的片段（芯片）', () => {
+  it('识别完成后检视文字：片段排成芯片，单击粘贴片段（不进历史）、⌥ 单击只复制并提示', async () => {
+    inspectResult = {
+      entities: [
+        { kind: 'phone', value: '13800138000', start: 4, end: 17, sensitive: false },
+        { kind: 'otp', value: '482913', start: 22, end: 28, sensitive: false },
+      ],
+      transforms: [],
+    }
+    view()
+    await recognize('r-ocr', '联系电话 138 0013 8000，验证码 482913')
+    await settle()
+    expect(callsOf('text_inspect')).toEqual([
+      ['text_inspect', { text: '联系电话 138 0013 8000，验证码 482913' }],
+    ])
+    const chips = await screen.findAllByTestId('clip-chip')
+    // 验证码排在最前（展示注册表的顺序）
+    expect(chips.map((c) => c.textContent)).toEqual(['482913', '13800138000'])
+    fireEvent.click(chips[0] as HTMLElement)
+    expect(callsOf('clipboard_paste_text')).toEqual([
+      ['clipboard_paste_text', { text: '482913', from: null, mode: 'normal' }],
+    ])
+    fireEvent.click(chips[1] as HTMLElement, { altKey: true })
+    await waitFor(() =>
+      expect(callsOf('clipboard_copy_text')).toEqual([
+        ['clipboard_copy_text', { text: '13800138000' }],
+      ]),
+    )
+    expect(callsOf('clipboard_paste_text')).toHaveLength(1)
+  })
+
+  it('没有片段时不显示；编辑之后旧的芯片立即收起，停下来再重新检视', async () => {
+    view()
+    await recognize()
+    await settle()
+    expect(screen.queryByTestId('ocr-chips')).toBeNull()
+    inspectResult = {
+      entities: [{ kind: 'email', value: 'a@b.co', start: 0, end: 6, sensitive: false }],
+      transforms: [],
+    }
+    fireEvent.change(screen.getByTestId('ocr-text'), { target: { value: 'a@b.co' } })
+    await waitFor(() => expect(screen.getByTestId('ocr-chips')).toHaveTextContent('a@b.co'))
+    expect(callsOf('text_inspect')).toHaveLength(2)
+  })
+
+  it('检视结果缺失（替身没实现 text_inspect）或检视失败：不显示芯片，也不留下未处理的 Promise 拒绝', async () => {
+    // 应用代码的类型里没有 Node；这里只借用进程的 unhandledRejection 事件确认拒绝都有人处理
+    const node = (globalThis as unknown as { process: NodeEvents }).process
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    node.on('unhandledRejection', onUnhandled)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      inspectResult = undefined
+      view()
+      await recognize()
+      await settle()
+      expect(callsOf('text_inspect')).toHaveLength(1)
+      expect(screen.queryByTestId('ocr-chips')).toBeNull()
+      // 结果缺失只是没有片段，不算失败
+      expect(warn).not.toHaveBeenCalled()
+
+      inspectResult = 'fail'
+      fireEvent.change(screen.getByTestId('ocr-text'), { target: { value: 'a@b.co' } })
+      await waitFor(() => expect(callsOf('text_inspect')).toHaveLength(2))
+      await settle()
+      expect(screen.queryByTestId('ocr-chips')).toBeNull()
+      // 失败只记错误码，不记文字
+      expect(warn).toHaveBeenCalledWith('[ocr] text_inspect failed: internal')
+      // Node 在微任务清空之后才报告未处理的拒绝：再等一轮宏任务
+      await settle()
+      expect(unhandled).toEqual([])
+    } finally {
+      node.off('unhandledRejection', onUnhandled)
+    }
+  })
+})
+
+interface NodeEvents {
+  on(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+  off(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+}
 
 describe('重新识别', () => {
   it('模式菜单：切到结构化 → 用同一张截图重新识别（不重新截图）', async () => {

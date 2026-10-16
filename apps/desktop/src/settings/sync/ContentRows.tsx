@@ -2,7 +2,7 @@
  * 「同步内容」的开关行：已连接页里每次切换直接写入设置，连接子视图里只改草稿（随「连接」一起提交）。
  *
  * - 「API Key」是「设置与模型服务」的子项（缩进的子行）：Key 按服务 id 存，脱离服务同步没有意义，所以父项关闭时它也
- *   禁用并显示为关；
+ *   禁用并显示为关；「验证码」同样是「剪贴板历史」的子项（验证码条目是剪贴板历史的一部分；关闭时只留在本机）；
  * - 剪贴板历史与识别历史关闭后，本机上传过的记录会在之后从服务器上移除（其他设备上已有的保留）：已连接时在行内说明；
  * - 识别历史只在本机开启了识别历史时同步，本机关着时就地提示。
  */
@@ -60,6 +60,21 @@ export function ContentRows({
         ariaLabel={t('settings.sync.content.clipboard')}
         data-testid="sync-content-clipboard"
       />
+      <div className="st-subrows">
+        <SwitchRow
+          label={t('settings.sync.content.verification_codes')}
+          description={
+            content.clipboard
+              ? t('settings.sync.content.verification_codes_desc')
+              : t('settings.sync.content.verification_codes_off')
+          }
+          checked={content.clipboard && content.verification_codes}
+          disabled={!content.clipboard}
+          onChange={(v) => onChange('verification_codes', v)}
+          ariaLabel={t('settings.sync.content.verification_codes')}
+          data-testid="sync-content-verification_codes"
+        />
+      </div>
       <SwitchRow
         label={t('settings.sync.content.images')}
         description={t('settings.sync.content.images_desc')}

@@ -2,7 +2,8 @@
 //!
 //! 菜单结构（快捷键只用于显示，取 `HotkeyStatus.effective`，切换语言后整份重建）：
 //! ```text
-//! ● 状态行（权限缺失 > 快捷键失败 > 记录已暂停 > 同步需要处理 > 有新版本 > 正常；点击后各自跳转）
+//! ● 状态行（连续粘贴进行中 > 权限缺失 > 快捷键失败 > 记录已暂停 > 同步需要处理 > 有新版本 > 正常；点击后各自跳转，
+//!   连续粘贴的点击即结束它）
 //! ─────
 //! 划词翻译 ⌥D / 翻译输入… ⌥⇧D / 截图 OCR ⌥S / 截图直接翻译 ⌥⇧S / 剪贴板 ⌥V
 //! 显示固定窗口（固定窗口数 > 0 时）
@@ -51,9 +52,14 @@ pub mod ids {
     pub const QUIT: &str = "quit";
 }
 
-/// 状态行（优先级：权限缺失 > 快捷键失败 > 记录已暂停 > 同步需要处理 > 有新版本 > 正常）
+/// 状态行（优先级：连续粘贴进行中 > 权限缺失 > 快捷键失败 > 记录已暂停 > 同步需要处理 > 有新版本 > 正常）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrayStatus {
+    /// 连续粘贴进行中（粘贴键正被拦下）：最先显示，点击即结束——用户随时看得到、也随时停得下来
+    Queue {
+        index: u32,
+        total: u32,
+    },
     /// 缺少权限；`after_update` = 更新后授权失效
     Permission {
         after_update: bool,
@@ -80,6 +86,7 @@ impl TrayStatus {
     pub const fn icon(&self) -> (Variant, Option<Dot>) {
         match self {
             Self::Permission { .. } | Self::HotkeyFailed { .. } => (Variant::Attention, None),
+            Self::Queue { .. } => (Variant::Normal, Some(Dot::Update)),
             Self::Paused => (Variant::Paused, None),
             Self::Update { .. } => (Variant::Normal, Some(Dot::Update)),
             Self::SyncAttention | Self::Ok => (Variant::Normal, None),
@@ -99,6 +106,11 @@ impl TrayStatus {
                 };
                 i18n::tr_args(lang, key, &[("count", &count.to_string())])
             }
+            Self::Queue { index, total } => i18n::tr_args(
+                lang,
+                "tray.status.queue",
+                &[("index", &index.to_string()), ("total", &total.to_string())],
+            ),
             Self::Paused => i18n::tr(lang, "tray.status.paused").to_owned(),
             Self::SyncAttention => i18n::tr(lang, "tray.status.sync_attention").to_owned(),
             Self::Update { version, ready: false } => {
@@ -122,7 +134,7 @@ impl TrayStatus {
             Self::Permission { .. } => [0xEF, 0x44, 0x44],
             Self::HotkeyFailed { .. } | Self::SyncAttention => [0xF5, 0x9E, 0x0B],
             Self::Paused => [0x9C, 0xA3, 0xAF],
-            Self::Update { .. } => [0x3B, 0x82, 0xF6],
+            Self::Update { .. } | Self::Queue { .. } => [0x3B, 0x82, 0xF6],
             Self::Ok => [0x22, 0xC5, 0x5E],
         }
     }
@@ -139,6 +151,8 @@ pub struct StatusInputs<'a> {
     /// 同步有需要用户处理的错误（`SyncService::needs_attention`）
     pub sync_attention: bool,
     pub update: &'a UpdateStatus,
+    /// 连续粘贴的进度 (已粘贴, 总条数)；没有进行中的队列时为 None
+    pub queue: Option<(u32, u32)>,
 }
 
 fn missing(state: PermissionState) -> bool {
@@ -147,6 +161,9 @@ fn missing(state: PermissionState) -> bool {
 
 /// 按优先级得出状态行（纯函数）
 pub fn status_of(i: &StatusInputs<'_>) -> TrayStatus {
+    if let Some((index, total)) = i.queue {
+        return TrayStatus::Queue { index, total };
+    }
     let p = &i.permissions;
     if p.lost_after_update {
         return TrayStatus::Permission { after_update: true };
@@ -202,7 +219,8 @@ pub fn status_command(status: &TrayStatus) -> Option<Command> {
             section: Some(sections::ABOUT.to_owned()),
             anchor: None,
         })),
-        TrayStatus::Ok => None,
+        // 连续粘贴的结束由菜单事件直接交给剪贴板服务（`on_event`），不经总线
+        TrayStatus::Queue { .. } | TrayStatus::Ok => None,
     }
 }
 
@@ -264,6 +282,7 @@ pub fn model(app: &tauri::AppHandle, paused_override: Option<bool>) -> MenuModel
         clipboard_paused: paused,
         sync_attention: state.sync.needs_attention(),
         update: &update,
+        queue: state.clipboard.queue_status().map(|q| (q.index, q.total)),
     });
     MenuModel {
         lang,
@@ -418,9 +437,17 @@ pub fn on_event(app: &tauri::AppHandle, ev: &MenuEvent) {
         origin: TriggerOrigin::Tray,
     };
     let cmd = match id {
-        ids::STATUS => match status_command(&super::current_status(app)) {
-            Some(cmd) => cmd,
-            None => return,
+        ids::STATUS => match super::current_status(app) {
+            TrayStatus::Queue { .. } => {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.clipboard.queue_cancel_later();
+                }
+                return;
+            }
+            status => match status_command(&status) {
+                Some(cmd) => cmd,
+                None => return,
+            },
         },
         ids::TRANSLATE_SELECTION => action(HotkeyAction::TranslateSelection),
         ids::TRANSLATE_INPUT => action(HotkeyAction::TranslateInput),
@@ -475,7 +502,7 @@ pub fn on_event(app: &tauri::AppHandle, ev: &MenuEvent) {
     }
 }
 
-/// 清空剪贴板历史前的原生确认框：[清空（保留置顶）]（默认）/ [全部清空] / [取消]。同步剪贴板历史时注明其他设备上的
+/// 清空剪贴板历史前的原生确认框：[清空（保留收藏）]（默认）/ [全部清空] / [取消]。同步剪贴板历史时注明其他设备上的
 /// 记录也会一并清除（清空会同步到其他设备）
 fn confirm_clear(app: &tauri::AppHandle) {
     let lang = current_lang(app);
@@ -546,7 +573,7 @@ mod tests {
 
     #[test]
     fn clear_dialog_offers_keep_pinned_clear_all_and_cancel() {
-        let (keep, all) = ("Clear (Keep Pinned)", "Clear All");
+        let (keep, all) = ("Clear (Keep Favorites)", "Clear All");
         let c = |r: MessageDialogResult| clear_choice(&r, keep, all);
         assert_eq!(c(MessageDialogResult::Custom(keep.to_owned())), Some(true));
         assert_eq!(c(MessageDialogResult::Custom(all.to_owned())), Some(false));
@@ -584,6 +611,7 @@ mod tests {
             clipboard_paused: false,
             sync_attention: false,
             update,
+            queue: None,
         }
     }
 
@@ -617,6 +645,14 @@ mod tests {
         let none = UpdateStatus::default();
         i.update = &none;
         assert_eq!(status_of(&i), TrayStatus::Ok);
+        // 连续粘贴进行中排在最前（粘贴键正被拦下，用户要随时看得到、停得下来）
+        i.permissions.accessibility = PermissionState::Denied;
+        i.queue = Some((2, 5));
+        let queue = status_of(&i);
+        assert_eq!(queue, TrayStatus::Queue { index: 2, total: 5 });
+        assert!(queue.actionable());
+        assert_eq!(status_command(&queue), None, "点击由菜单事件直接结束队列");
+        assert_eq!(queue.label(Lang::ZhCn), "连续粘贴 2 / 5 · 点击结束");
     }
 
     #[test]

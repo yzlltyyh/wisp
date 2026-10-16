@@ -68,6 +68,8 @@ pub struct PanelState {
 pub struct HiddenSet {
     pub panel: bool,
     pub pinned: Vec<String>,
+    /// 悬浮剪贴板被隐藏了
+    pub float: bool,
 }
 
 /// 一次截图会话
@@ -149,6 +151,8 @@ pub struct WindowManager {
     /// 面板显示管线（见 panel.rs）
     panel: Arc<PanelController>,
     pinned: PinnedRegistry,
+    /// 悬浮剪贴板（float.rs）
+    float: super::float::FloatWindow,
     overlays: OverlayRegistry,
     /// 最近一次取到的显示器（`self_hit` 在平台钩子线程上调用，不能现场查询）
     screens: RwLock<Vec<Screen>>,
@@ -177,8 +181,8 @@ fn shadow_margin(frame_mode: FrameMode) -> f64 {
 fn boot_shadow_margin(frame_mode: FrameMode, label: &str) -> f64 {
     match TemplateKind::of(label) {
         TemplateKind::Panel => shadow_margin(frame_mode),
-        TemplateKind::Pinned if native::pinned_css_shadow() => SHADOW_MARGIN,
-        TemplateKind::Pinned | TemplateKind::Regular | TemplateKind::Overlay => 0.0,
+        TemplateKind::Pinned | TemplateKind::Floating if native::pinned_css_shadow() => SHADOW_MARGIN,
+        TemplateKind::Pinned | TemplateKind::Floating | TemplateKind::Regular | TemplateKind::Overlay => 0.0,
     }
 }
 
@@ -386,6 +390,7 @@ impl WindowManager {
             host,
             panel,
             pinned: PinnedRegistry::new(),
+            float: super::float::FloatWindow::new(),
             overlays: OverlayRegistry::new(),
             screens: RwLock::new(Vec::new()),
             own_rects: Mutex::new(HashMap::new()),
@@ -420,7 +425,7 @@ impl WindowManager {
     }
 
     /// 记下其他窗口的一次短时活动，`lasts` 之后结束（与已记下的取结束得晚的那个）
-    fn note_activity(&self, what: impl Into<String>, lasts: Duration) {
+    pub(super) fn note_activity(&self, what: impl Into<String>, lasts: Duration) {
         let until = std::time::Instant::now() + lasts;
         let mut g = self.activity.lock();
         if g.as_ref().is_none_or(|(_, u)| *u < until) {
@@ -446,6 +451,23 @@ impl WindowManager {
     /// macOS = Native，其他平台 = Css
     pub fn frame_mode(&self) -> FrameMode {
         self.frame_mode
+    }
+
+    pub(super) fn app(&self) -> &tauri::AppHandle {
+        &self.app
+    }
+
+    pub(super) fn settings(&self) -> &Arc<SettingsService> {
+        &self.settings
+    }
+
+    pub(super) fn float(&self) -> &super::float::FloatWindow {
+        &self.float
+    }
+
+    /// 重新取一次显示器（悬浮窗恢复记住的位置用）
+    pub(super) fn screens_now(&self) -> Vec<Screen> {
+        self.refresh_screens()
     }
 
     /// 托盘就绪后异步预热隐藏的 Panel：按模板隐藏创建，macOS 转为非激活 NSPanel，Native 帧模式装上原生卡片表面
@@ -825,6 +847,7 @@ impl WindowManager {
         let mut set = HiddenSet {
             panel: self.panel.hide_for_capture(CAPTURE_HIDE_WAIT),
             pinned: Vec::new(),
+            float: false,
         };
         for id in self.pinned.shown_ids() {
             let Some(win) = pinned::window(&self.app, &id) else {
@@ -839,9 +862,10 @@ impl WindowManager {
                 Err(e) => log::warn!("hide pinned {id} for capture failed: {}", e.message),
             }
         }
+        set.float = self.float_hide_for_capture();
         // 浮标是临时窗口：直接隐藏（不播放动画），截图后不恢复，HiddenSet 不记它
         let bobber = self.hide_bobber_for_capture();
-        if set.panel || !set.pinned.is_empty() || bobber {
+        if set.panel || !set.pinned.is_empty() || set.float || bobber {
             native::flush_after_hide();
         }
         set
@@ -880,6 +904,9 @@ impl WindowManager {
     /// **会阻塞**（每个 pinned 一次主线程往返），在阻塞线程上调用
     pub fn restore_after_capture(&self, set: HiddenSet) {
         *self.capture_since.lock() = None;
+        if set.float {
+            self.float_restore_after_capture();
+        }
         for id in set.pinned {
             if let Some(win) = pinned::window(&self.app, &id)
                 && let Err(e) = native::pinned_show(&win, false)
@@ -1337,7 +1364,7 @@ pub fn boot_script(boot: &Boot) -> String {
         "{}".to_owned()
     });
     format!(
-        r#"(function(){{var b={json};Object.defineProperty(window,"__WISP_BOOT__",{{value:Object.freeze(b),enumerable:true}});function a(h){{var l=String(b.label||""),k=l==="settings"||l==="onboarding"||l==="panel"?l:l.indexOf("pinned-")===0?"pinned":l.indexOf("overlay-")===0?"overlay":"panel";h.dataset.os=b.os;h.dataset.theme=b.theme;h.dataset.reducedMotion=String(b.reduce_motion);h.dataset.material=b.material;h.dataset.frame=b.frame_mode;h.dataset.window=k;h.lang=b.ui_language;if(b.accent)h.style.setProperty("--accent",b.accent);h.style.setProperty("--shadow-margin",(+b.shadow_margin||0)+"px");}}var d=document,h=d.documentElement;if(h){{a(h);return;}}var m=new MutationObserver(function(){{var e=d.documentElement;if(e){{m.disconnect();a(e);}}}});m.observe(d,{{childList:true}});d.addEventListener("DOMContentLoaded",function(){{m.disconnect();var e=d.documentElement;if(e&&!e.dataset.window)a(e);}},{{once:true}});}})();"#
+        r#"(function(){{var b={json};Object.defineProperty(window,"__WISP_BOOT__",{{value:Object.freeze(b),enumerable:true}});function a(h){{var l=String(b.label||""),k=l==="settings"||l==="onboarding"||l==="panel"?l:l.indexOf("pinned-")===0||l==="clipfloat"?"pinned":l.indexOf("overlay-")===0?"overlay":"panel";h.dataset.os=b.os;h.dataset.theme=b.theme;h.dataset.reducedMotion=String(b.reduce_motion);h.dataset.material=b.material;h.dataset.frame=b.frame_mode;h.dataset.window=k;h.lang=b.ui_language;if(b.accent)h.style.setProperty("--accent",b.accent);h.style.setProperty("--shadow-margin",(+b.shadow_margin||0)+"px");}}var d=document,h=d.documentElement;if(h){{a(h);return;}}var m=new MutationObserver(function(){{var e=d.documentElement;if(e){{m.disconnect();a(e);}}}});m.observe(d,{{childList:true}});d.addEventListener("DOMContentLoaded",function(){{m.disconnect();var e=d.documentElement;if(e&&!e.dataset.window)a(e);}},{{once:true}});}})();"#
     )
 }
 
@@ -1511,6 +1538,8 @@ mod tests {
             paste_on_double_click: false,
             unavailable: None,
             recording: wisp_types::ClipboardRecording::Recording,
+            favorites_collapsed: false,
+            queue_unavailable: None,
         });
         assert_eq!(view_width(PanelView::Clipboard, &clip, &s), 420.0);
         // 设置被手改到范围外时夹回
@@ -1521,6 +1550,7 @@ mod tests {
         let toast = PanelPayload::Toast(ToastPayload {
             reason: CopiedReason::CopyOnly,
             paste_key: "⌘V".to_owned(),
+            queue: None,
         });
         let w = view_width(PanelView::Toast, &toast, &s);
         assert!((placement::TOAST_MIN_WIDTH..=placement::TOAST_MAX_WIDTH).contains(&w));

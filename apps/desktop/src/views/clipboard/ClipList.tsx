@@ -11,10 +11,10 @@
  *   · 按键重复（按住 ↑↓）、按页 / 到首尾、换了列表来源（过滤、检索结果、清空检索、分页）：直接到位；
  *   · 需要滚动才能露出选中项（键盘移动越过视口边缘）：直接到位——滚动本身就是运动，屏幕上的高亮停在边上，不会先朝
  *     按键的反方向跳一下；
- *   · 实时插入 / 置顶 / 删除：从选中行此刻画出来的位置出发，与行的位移同一条曲线、同一个起点，任何一帧都贴着选中行；
+ *   · 实时插入 / 收藏 / 删除：从选中行此刻画出来的位置出发，与行的位移同一条曲线、同一个起点，任何一帧都贴着选中行；
  * - 实时变化的位移（FLIP）：所有受影响的行（含分组标题）在同一次提交里从变化之前的**屏幕位置**平移到新位置；列表已经
  *   滚下去时先补偿滚动位置（视口顶部的内容不动），再对视口里位置变了的行做位移（例如视口中间删掉一条，下面的行合拢）。
- *   跨过其他行的那一行（置顶 / 取消置顶 / 重复复制移到顶部）抬起（不透明底、压在上面），文字不会互相叠印；新插入的行
+ *   跨过其他行的那一行（收藏 / 取消收藏 / 重复复制移到顶部）抬起（不透明底、压在上面），文字不会互相叠印；新插入的行
  *   等位移走过一半、让出空位之后再淡入（rowInsert）；
  * - 被删除 / 被清空的行不会在一帧内消失：变化之前把它们的 DOM 复制成「残影」留在原处，timing.menuOut 淡出后移除，
  *   下面的行同时合拢（减少动效时直接移除）；
@@ -23,8 +23,12 @@
  *   WAAPI 直接作用在行内容上，不重新挂载、不经 React），选中指示器不参与，键盘不被阻塞，减少动效时不播；
  * - 悬停 300 ms 在面板内部显示预览卡片，原图只在这时请求。卡片只在指针明显想进入它时保持（指针在卡片上
  *   慢下来）：正常速度往下扫时卡片收起、卡片下面的那一行照常被选中，不会挡住指针的去路；点卡片等于点它对应的行；
- *   卡片的出现 / 消失都按 presets.popover；单击粘贴（可改为双击），右键菜单 / ⌘K 操作菜单含全部操作；
- * - 防误点：行的屏幕位置因为数据变化（其他设备同步来的条目插在上面、置顶、删除、重新检索）刚改变过——不到一个
+ *   卡片的出现 / 消失都按 presets.popover；单击粘贴（可改为双击），右键菜单 / ⌘K 操作菜单含全部操作（菜单项、单击 /
+ *   双击的粘贴都经操作注册表，见 actions/）；菜单是分页的（「粘贴为…」「提取」在同一个浮层里换页）；
+ * - 多选：⌘ / Ctrl 点击切换一条、⇧ 点击从起点选到这一条；已有选择时单击也是切换（不会误粘贴一条、丢掉整个选择）。
+ *   标记的序号画在行首（只是行的一个属性，不进行模型的缓存输入）；
+ * - 收藏分组的标题是折叠按钮，「查看全部 N 个收藏」行切到收藏视图（都经注册表的操作）；
+ * - 防误点：行的屏幕位置因为数据变化（其他设备同步来的条目插在上面、收藏、删除、重新检索）刚改变过——不到一个
  *   `--dur-base`，或在按下指针之后才变——的那一行，单击只选中、不粘贴：用户瞄准的是变化之前在那里的条目；
  * - 滚动条是覆盖式的（三端一致）：不占内容宽度，行与高亮离卡片两边恒为 6 px；滚动时 / 指针靠近右边缘时出现，可拖动；
  * - 行内确认进行中时，悬停不移动选中项（再按一次 ⌫ 只作用于发起确认的那一条）；
@@ -39,6 +43,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -46,16 +51,25 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from 'zustand'
-import type { OsKind } from '../../shared/ipc/types'
+import type { ClipItemMeta, OsKind } from '../../shared/ipc/types'
 import { useViewActive } from '../../shared/hooks/useViewActive'
 import { useT } from '../../shared/i18n/useT'
 import { adaptPreset, presets, reducedPolicy } from '../../shared/motion/presets'
 import { cssEase, duration, ease, ms, timing } from '../../shared/motion/tokens'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
-import { Menu, VirtualList, type MenuEntry, type VirtualListHandle } from '../../shared/ui'
-import { ClipRow } from './ClipRow'
-import { actionMenuItems, contextMenuItems } from './menus'
+import { ChevronDown } from 'lucide-react'
 import {
+  Icon,
+  PagedMenu,
+  VirtualList,
+  type MenuEntry,
+  type MenuPage,
+  type VirtualListHandle,
+} from '../../shared/ui'
+import type { ClipActionId, ClipRunner, MenuSurface } from './actions'
+import { ClipRow } from './ClipRow'
+import {
+  CHIP_STRIP_INSET,
   firstItemIndex,
   HEADER_HEIGHT,
   indexOfId,
@@ -68,18 +82,21 @@ import {
   type Row,
 } from './model'
 import { preloadPreview, usePreviewModule } from './previewModule'
-import { isSearching, rowsOf, type ClipStore } from './store'
-import type { ClipActions } from './useClipboard'
+import { isSearching, rowsOf, visibleHits, type ClipStore } from './store'
+import type { ClipCommands } from './useClipboard'
 
 export interface ClipListProps {
   store: ClipStore
-  actions: ClipActions
+  /** 数据命令：选中、分页、详情 */
+  cmd: ClipCommands
+  /** 操作注册表：菜单项与单击 / 双击的粘贴 */
+  runner: ClipRunner
   rows: readonly Row[]
   offsets: readonly number[]
   height: number
   os: OsKind
   pasteOnDoubleClick: boolean
-  /** 检索结果平铺（没有分组标题，置顶项带图钉） */
+  /** 检索结果平铺（没有分组标题，收藏带星标） */
   flat: boolean
   /** 全文预览打开时列表淡出（保留滚动位置） */
   covered: boolean
@@ -91,12 +108,22 @@ export interface ClipListProps {
   listboxId: string
   /** 本次显示的标识（会话号）：视图显示中（进入 / 已显示）时给出，其余为 null——变成新值时重放打开的 stagger */
   showKey: number | null
+  /**
+   * 按下可以拖出的行之后把焦点还给搜索框（它的 mousedown 没被拦下，焦点会离开搜索框）。悬浮窗不还：搜索框拿到焦点
+   * 会让它临时可聚焦、抢走目标应用的键盘
+   */
+  refocusSearch: boolean
 }
 
 interface Hover {
   id: number
   top: number
   bottom: number
+}
+
+/** 指针打开的是右键菜单；键盘（⌘K / ⇧F10 / ContextMenu）打开的操作菜单另含视图级操作 */
+function surfaceOf(via: 'pointer' | 'keyboard'): MenuSurface {
+  return via === 'keyboard' ? 'command' : 'context'
 }
 
 /** 一帧（秒） */
@@ -136,6 +163,11 @@ const MOVE = { duration: duration.base, ease: ease.standard } as const
  * 用户瞄准的那一条）
  */
 const SHIFT_GUARD_MS = ms(duration.base)
+/**
+ * 拖出的数据要提前取：拖拽开始的回调里只能同步写。正文超过这么多字的条目（以及富文本：HTML 往往比正文大得多）
+ * 等按下之后指针真的开始移动才取——普通单击粘贴不该为一次可能的拖拽经 IPC 取几 MB 的载荷；短条目取得快，按下时就取好
+ */
+const DRAG_EAGER_CHARS = 4096
 /** 残影（被删除 / 清空的行）淡出 */
 const GHOST_OUT = { duration: timing.menuOut, ease: ease.standard } as const
 
@@ -164,7 +196,8 @@ interface Ghost {
 
 export function ClipList({
   store,
-  actions,
+  cmd,
+  runner,
   rows,
   offsets,
   height,
@@ -176,6 +209,7 @@ export function ClipList({
   ensureHeight,
   listboxId,
   showKey,
+  refocusSearch,
 }: ClipListProps) {
   const t = useT()
   const reduced = useReducedMotionPref()
@@ -188,6 +222,12 @@ export function ClipList({
   const confirm = useStore(store, (s) => s.confirm)
   const paused = useStore(store, (s) => s.paused)
   const actionMenu = useStore(store, (s) => s.actionMenu)
+  const marks = useStore(store, (s) => s.marks)
+  const inspect = useStore(store, (s) => s.inspect)
+  // 检索时行里的收藏名称按查询词高亮（预览的高亮来自 Rust）
+  const nameQuery = useStore(store, (s) => (isSearching(s) ? s.query.trim() : ''))
+  /** 条目 → 选择序号（从 1 开始）：每行 O(1) 取用 */
+  const markOf = useMemo(() => new Map(marks.map((it, i) => [it.id, i + 1])), [marks])
   const listRef = useRef<VirtualListHandle>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const selectedIndex = indexOfId(rows, selectedId)
@@ -221,15 +261,15 @@ export function ClipList({
    */
   const markShifted = (before: Snapshot, delta: number) => {
     const at = performance.now()
-    const marks = shiftedAt.current
-    for (const [key, when] of marks) if (at - when >= SHIFT_GUARD_MS) marks.delete(key)
+    const shifted = shiftedAt.current
+    for (const [key, when] of shifted) if (at - when >= SHIFT_GUARD_MS) shifted.delete(key)
     const old = new Map<string | number, number>()
     before.rows.forEach((r, i) => old.set(r.key, before.offsets[i] ?? 0))
     rows.forEach((r, i) => {
       if (r.type !== 'item') return
       const from = old.get(r.key)
       if (from === undefined || Math.abs(from + delta - (offsets[i] ?? 0)) >= 0.5)
-        marks.set(r.key, at)
+        shifted.set(r.key, at)
     })
   }
 
@@ -363,7 +403,7 @@ export function ClipList({
         running.delete(content)
         continue
       }
-      // 跨过其他行的那一行抬起来：不透明底、压在上面（置顶 / 取消置顶 / 重复复制移到顶部）
+      // 跨过其他行的那一行抬起来：不透明底、压在上面（收藏 / 取消收藏 / 重复复制移到顶部）
       const lift = Math.abs(offset) > rowHeight(row)
       if (lift) node.dataset.lift = ''
       const flip: Flip = { offset, stop: () => {} }
@@ -415,7 +455,7 @@ export function ClipList({
     // 实时变化：先位移与残影，再让指示器从选中行此刻画出来的位置出发、与它同一条曲线
     if (moved) {
       const el = listRef.current?.element()
-      // 列表已滚下去、这次还要把选中项滚进视口（置顶 / 取消置顶后跟随条目）：随后的滚动会让位移的起点失效，
+      // 列表已滚下去、这次还要把选中项滚进视口（收藏 / 取消收藏后跟随条目）：随后的滚动会让位移的起点失效，
       // 只做锚定，不播放位移与残影
       const scrolledReveal = before.reveal !== reveal && !!el && el.scrollTop > 1
       const { started, delta } = playMoves(before, !scrolledReveal)
@@ -453,7 +493,7 @@ export function ClipList({
     const h = rowHeight(rows[selectedIndex])
     if (y === indicatorY.get() && h === indicatorH.get() && indicatorAnim.current.length === 0)
       return
-    // 只换了数组（服务端确认置顶、缩略图 / 文件存在性的 updated、分页追加），选中项与它的位置都没变：
+    // 只换了数组（服务端确认收藏、缩略图 / 文件存在性的 updated、分页追加），选中项与它的位置都没变：
     // 进行中的位移 / 追随照常走完
     if (rowsChanged && before.key === selectedId && before.y === y) {
       if (indicatorAnim.current.length > 0) return
@@ -506,7 +546,7 @@ export function ClipList({
     [],
   )
 
-  // ----- 选中项滚进视口（键盘移动、置顶后跟随）。向上移到某组第一条时连同组标题一起露出。
+  // ----- 选中项滚进视口（键盘移动、收藏后跟随）。向上移到某组第一条时连同组标题一起露出。
   // 需要滚动时指示器直接到位（滚动本身就是运动；否则内容瞬间滚动一行、指示器还在内容坐标里从上一行追过来，屏幕上的
   // 高亮会先朝按键的反方向跳一下）；这次提交还有实时变化的位移时一并收尾（位移的起点按滚动之前算，已经失效）。
   // 只响应挂载之后的变化：挂载（尤其是在视图切换的暂存层里）时不读布局，否则 scrollTop 会逼出整个视图的同步排版
@@ -584,7 +624,7 @@ export function ClipList({
 
   // ----- 覆盖式滚动条：不占内容宽度（行与高亮离卡片两边恒为 6 px，三端一致）。滚动时、指针靠近右边缘时、拖动时
   // 出现，停下一会儿后淡出；几何只在显示时计算（不在挂载 / 每次渲染时读布局）
-  const total = listContentHeight(rows)
+  const total = listContentHeight(rows) + CHIP_STRIP_INSET
   const barRef = useRef<HTMLDivElement>(null)
   const thumbRef = useRef<HTMLDivElement>(null)
   const barTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -685,9 +725,9 @@ export function ClipList({
   // ----- 分页：距离末尾不到两屏
   const maybeLoadMore = useCallback(
     (el: HTMLElement) => {
-      if (el.scrollTop + height >= total - PREFETCH_SCREENS * height) actions.loadMore()
+      if (el.scrollTop + height >= total - PREFETCH_SCREENS * height) cmd.loadMore()
     },
-    [actions, height, total],
+    [cmd, height, total],
   )
   useEffect(() => {
     const el = listRef.current?.element()
@@ -703,8 +743,8 @@ export function ClipList({
   // 选中项（键盘）走到接近末尾时也加载
   useEffect(() => {
     if (selectedIndex >= 0 && selectedIndex >= rows.length - screenRows(height) * PREFETCH_SCREENS)
-      actions.loadMore()
-  }, [selectedIndex, rows.length, height, actions])
+      cmd.loadMore()
+  }, [selectedIndex, rows.length, height, cmd])
 
   const rowAt = (target: EventTarget | null): HTMLElement | null =>
     target instanceof Element ? target.closest<HTMLElement>('[data-clip-id]') : null
@@ -736,6 +776,12 @@ export function ClipList({
   }
 
   const onPointerMove = (e: ReactPointerEvent) => {
+    // 按着大条目开始移动：可能要拖出，现在取拖拽数据（见 DRAG_EAGER_CHARS）
+    const lazy = lazyDrag.current
+    if (lazy !== null && (e.buttons & 1) === 1) {
+      lazyDrag.current = null
+      cmd.prepareDrag(lazy)
+    }
     if (e.pointerType === 'touch') return
     const p = pointer.current
     // 第一次只记基线（见 pointer 的说明）：面板出现时的合成事件不选中指针下的行
@@ -786,7 +832,7 @@ export function ClipList({
       if (p.id !== -1) hideHover()
       return
     }
-    if (store.getState().selectedId !== id) actions.select(id)
+    if (store.getState().selectedId !== id) cmd.select(id)
     if (p.id === id) return
     p.id = id
     clearHoverTimer()
@@ -805,12 +851,67 @@ export function ClipList({
 
   // ----- 防误点（见文件头）：按下指针时记下按在哪一条上、什么时候
   const pressed = useRef<{ id: number | null; at: number } | null>(null)
+  /** 按下了大条目、还没开始移动：移动时再取拖拽数据 */
+  const lazyDrag = useRef<number[] | null>(null)
   const onPointerDown = (e: ReactPointerEvent) => {
     if (e.button !== 0) return
+    const row = rowAt(e.target)
     pressed.current = {
-      id: inCard(e.target) ? (hover?.id ?? null) : idOf(rowAt(e.target)),
+      id: inCard(e.target) ? (hover?.id ?? null) : idOf(row),
       at: performance.now(),
     }
+    // 拖出：拖拽开始的回调里只能同步写数据，按下时先取好（多选时拖的是整个选择）；大条目等开始移动再取
+    lazyDrag.current = null
+    const id = idOf(row)
+    if (id === null || !row?.draggable) return
+    const ids = dragIds(id)
+    if (heavyDrag(ids)) lazyDrag.current = ids
+    else cmd.prepareDrag(ids)
+  }
+  const onPointerUp = () => {
+    lazyDrag.current = null
+    restoreFocus()
+  }
+
+  // ----- 拖出（HTML5）：文本 / 链接 / 富文本带到别的应用；按在已选中的行上时拖出整个选择（按选择顺序合并）
+  const dragIds = (id: number): number[] => {
+    const marked = store.getState().marks
+    return marked.some((it) => it.id === id) ? marked.map((it) => it.id) : [id]
+  }
+  /** 拖出的数据可能很大（见 DRAG_EAGER_CHARS） */
+  const heavyDrag = (ids: readonly number[]): boolean => {
+    const s = store.getState()
+    const items = new Map<number, ClipItemMeta>()
+    for (const h of visibleHits(s)) items.set(h.item.id, h.item)
+    for (const it of s.marks) items.set(it.id, it)
+    return ids.some((id) => {
+      const it = items.get(id)
+      return (
+        it !== undefined && (it.kind === 'rich_text' || (it.char_count ?? 0) > DRAG_EAGER_CHARS)
+      )
+    })
+  }
+  const onDragStart = (e: ReactDragEvent) => {
+    const id = idOf(rowAt(e.target))
+    const data = id === null ? null : cmd.dragData(dragIds(id))
+    // 数据还没取到（按下后立刻拖、条目已不在）：这次不拖，松开后再试一次即可
+    if (!data) {
+      e.preventDefault()
+      return
+    }
+    hideHover()
+    pressed.current = null
+    const dt = e.dataTransfer
+    dt.effectAllowed = 'copy'
+    dt.setData('text/plain', data.text)
+    if (data.uri) dt.setData('text/uri-list', data.uri)
+    if (data.html) dt.setData('text/html', data.html)
+  }
+  /** 松开 / 拖拽结束：可以拖出的行没拦下 mousedown，焦点可能已经离开搜索框（面板里还回去） */
+  const restoreFocus = () => {
+    if (!refocusSearch) return
+    const search = searchRef.current
+    if (search && document.activeElement !== search) search.focus({ preventScroll: true })
   }
   /** 这次单击落在的条目刚换过位置（或按下之后才换到指针下面）：只选中、不粘贴 */
   const shiftedUnder = (id: number): boolean => {
@@ -823,30 +924,62 @@ export function ClipList({
   }
 
   // 点卡片等于点它对应的行（单击粘贴；改为双击时双击粘贴）
+  const paste = (id: number) => runner.run('paste', runner.ctx('pointer', id))
+  /**
+   * 带修饰键的单击是多选：⌘ / Ctrl 切换一条、⇧ 从起点选到这一条；已有选择时单击也是切换（选择状态下误点不会粘贴
+   * 一条、丢掉整个选择）。返回是否按多选处理了
+   */
+  const markClick = (e: ReactMouseEvent, id: number): boolean => {
+    const toggle = os === 'macos' ? e.metaKey : e.ctrlKey
+    if (e.shiftKey) {
+      runner.run('mark_range', runner.ctx('pointer', id), id)
+      return true
+    }
+    if (toggle || store.getState().marks.length > 0) {
+      runner.run('mark_toggle', runner.ctx('pointer', id), id)
+      return true
+    }
+    return false
+  }
   const onClick = (e: ReactMouseEvent) => {
     if (e.button !== 0) return
+    const el = e.target instanceof Element ? e.target : null
+    // 收藏分组的标题（折叠 / 展开）与「查看全部 N 个收藏」
+    if (el?.closest('[data-group-toggle]')) {
+      hideHover()
+      runner.run('favorites_toggle', runner.ctx('pointer', null))
+      return
+    }
+    if (el?.closest('[data-show-favorites]')) {
+      hideHover()
+      runner.run('show_favorites', runner.ctx('pointer', null))
+      return
+    }
     if (inCard(e.target)) {
       if (hover && !pasteOnDoubleClick) {
         const id = hover.id
         hideHover()
-        if (shiftedUnder(id)) actions.select(id)
-        else actions.paste('normal', id)
+        if (markClick(e, id)) return
+        if (shiftedUnder(id)) cmd.select(id)
+        else paste(id)
       }
       return
     }
     const id = idOf(rowAt(e.target))
     if (id === null) return
     hideHover()
-    if (pasteOnDoubleClick) actions.select(id)
-    else if (shiftedUnder(id)) actions.select(id)
-    else actions.paste('normal', id)
+    if (markClick(e, id)) return
+    if (pasteOnDoubleClick) cmd.select(id)
+    else if (shiftedUnder(id)) cmd.select(id)
+    else paste(id)
   }
   const onDoubleClick = (e: ReactMouseEvent) => {
-    if (!pasteOnDoubleClick) return
+    if (!pasteOnDoubleClick || e.shiftKey || (os === 'macos' ? e.metaKey : e.ctrlKey)) return
+    if (store.getState().marks.length > 0) return
     const id = inCard(e.target) ? (hover?.id ?? null) : idOf(rowAt(e.target))
     if (id === null) return
     hideHover()
-    actions.paste('normal', id)
+    paste(id)
   }
 
   // ----- 右键菜单 / ⌘K 操作菜单
@@ -856,31 +989,79 @@ export function ClipList({
     side: 'top' | 'bottom'
     align: 'start' | 'end'
     via: 'pointer' | 'keyboard'
+    /** 当前显示的子页（「粘贴为…」「提取」）；null 是操作菜单本身 */
+    page: ClipActionId | null
+    /** 换页的方向（进入子页 1，返回 -1） */
+    direction: 1 | -1
   } | null>(null)
   // 第一次打开时才挂载菜单（之后保留，退出动画照常播放）；焦点由组件库的 Menu 在定位完成后移进菜单、关闭后还给搜索框
   const [menuUsed, setMenuUsed] = useState(false)
   if (menu !== null && !menuUsed) setMenuUsed(true)
   const itemsFor = useCallback(
     (id: number, via: 'pointer' | 'keyboard'): MenuEntry[] => {
-      const hit = rows.find((r) => r.type === 'item' && r.key === id)
-      if (!hit || hit.type !== 'item') return []
-      return via === 'keyboard'
-        ? actionMenuItems(hit.hit.item, os, paused, t, actions)
-        : contextMenuItems(hit.hit.item, os, t, actions)
+      const surface = surfaceOf(via)
+      const c = runner.ctx(surface, id)
+      // 条目已不在列表里（刚被删除 / 同步移走）：没有可做的操作
+      return c.target ? runner.menu(surface, c, t) : []
     },
-    [rows, os, paused, t, actions],
+    // rows / paused / marks / inspect：菜单项随列表、暂停状态、多选与检视结果更新（上下文在调用时从 store 读）
+    // oxlint-disable-next-line react/exhaustive-deps
+    [rows, paused, marks, inspect, t, runner],
   )
-  const menuItems = useMemo<MenuEntry[]>(
-    () => (menu ? itemsFor(menu.id, menu.via) : []),
-    [menu, itemsFor],
-  )
-  const openMenu = (id: number, x: number, y: number, via: 'pointer' | 'keyboard') => {
+  const menuPage = useMemo<MenuPage>(() => {
+    const root: MenuPage = {
+      key: 'root',
+      label: t('clipboard.a11y.actions'),
+      items: menu ? itemsFor(menu.id, menu.via) : [],
+      'data-testid': 'clip-context-menu',
+    }
+    if (!menu?.page) return root
+    const surface = surfaceOf(menu.via)
+    const back = () => setMenu((cur) => (cur ? { ...cur, page: null, direction: -1 } : cur))
+    const sub = runner.page(menu.page, runner.ctx(surface, menu.id), t, back)
+    // 子页没有项（例如这一条没有可用的变换）：留在操作菜单本身
+    return sub && sub.items.length > 0 ? { ...sub, 'data-testid': `clip-menu-${menu.page}` } : root
+    // inspect / marks：子页的项来自检视结果与多选
+    // oxlint-disable-next-line react/exhaustive-deps
+  }, [menu, itemsFor, inspect, marks, runner, t])
+  /** 最近一次打开菜单的请求（检视结果到达之前又打开了别的，旧的作废） */
+  const menuSeq = useRef(0)
+  const openMenu = (
+    id: number,
+    x: number,
+    y: number,
+    via: 'pointer' | 'keyboard',
+    page: ClipActionId | null = null,
+  ) => {
     hideHover()
-    actions.select(id)
-    // ⌘K 操作菜单的最后一项是「清空历史…」：先读清空会不会同步到其他设备
-    if (via === 'keyboard') actions.prepareClear()
+    cmd.select(id)
+    // 「粘贴为」「提取」取决于检视结果：没检视过的文本条目先检视（有缓存时不等），菜单项一次到位、打开后不再增减
+    const seq = ++menuSeq.current
+    const wait = cmd.inspectNow()
+    if (!wait) placeMenu(id, x, y, via, page)
+    else
+      void wait.then(() => {
+        if (seq === menuSeq.current && store.getState().selectedId === id)
+          placeMenu(id, x, y, via, page)
+      })
+  }
+  const placeMenu = (
+    id: number,
+    x: number,
+    y: number,
+    via: 'pointer' | 'keyboard',
+    page: ClipActionId | null,
+  ) => {
+    // 菜单里的操作先做准备（⌘K 操作菜单的最后一项是「清空历史…」：先读清空会不会同步到其他设备）
+    const surface = surfaceOf(via)
+    runner.prepare(surface, runner.ctx(surface, id))
     const card = wrapRef.current?.closest('.clip')?.getBoundingClientRect()
-    const need = menuHeight(itemsFor(id, via)) + 8
+    // 直接打开到子页（⌥⇧↩）时按子页估算：返回行 + 分隔线 + 子页的项
+    const sub = page ? runner.page(page, runner.ctx(surface, id), t, () => {}) : null
+    const need =
+      menuHeight(
+        sub && sub.items.length > 0 ? [{}, { type: 'separator' }, ...sub.items] : itemsFor(id, via),
+      ) + 8
     let side: 'top' | 'bottom' = 'bottom'
     let align: 'start' | 'end' = 'start'
     let left = x
@@ -906,7 +1087,15 @@ export function ClipList({
         } else ensureHeight(y - card.top + need)
       }
     }
-    setMenu({ id, anchor: { left, top, width: 0, height: 0 }, side, align, via })
+    setMenu({
+      id,
+      anchor: { left, top, width: 0, height: 0 },
+      side,
+      align,
+      via,
+      page,
+      direction: 1,
+    })
   }
   const onContextMenu = (e: ReactMouseEvent) => {
     e.preventDefault()
@@ -914,18 +1103,24 @@ export function ClipList({
     if (id === null) return
     openMenu(id, e.clientX, e.clientY, 'pointer')
   }
-  // ⌘K / ⇧F10 / ContextMenu（视图的键位表递增 actionMenu）：锚在选中行的标题起点下方，与指针右键菜单同一套
-  // 上下翻转规则；选中行不在渲染范围里时（滚出去了）锚在列表区顶部
+  // ⌘K / ⇧F10 / ContextMenu / ⌥⇧↩（视图的键位表递增 actionMenu，可带上要直接打开的子页）：锚在选中行的标题起点
+  // 下方，与指针右键菜单同一套上下翻转规则；选中行不在渲染范围里时（滚出去了）锚在列表区顶部。菜单已经打开时
+  // （菜单里选了「粘贴为…」）只换页
   const actionSeen = useRef(actionMenu)
   useEffect(() => {
     if (actionSeen.current === actionMenu) return
     actionSeen.current = actionMenu
+    const page = store.getState().actionPage
+    if (menu && page) {
+      setMenu({ ...menu, page, direction: 1 })
+      return
+    }
     const id = store.getState().selectedId
     const wrap = wrapRef.current
     if (id === null || !wrap) return
     const row = wrap.querySelector<HTMLElement>(`[data-clip-id="${id}"]`)
     const r = (row ?? wrap).getBoundingClientRect()
-    openMenu(id, r.left + 36, row ? r.bottom - 6 : r.top + 8, 'keyboard')
+    openMenu(id, r.left + 36, row ? r.bottom - 6 : r.top + 8, 'keyboard', page)
     // 只响应 actionMenu 的变化
     // oxlint-disable-next-line react/exhaustive-deps
   }, [actionMenu])
@@ -937,8 +1132,30 @@ export function ClipList({
       if (r.type === 'group') {
         return (
           <RowShell appear={moving && !reduced ? 'insert' : null}>
-            <div className="clip-group" data-group={r.group} role="presentation">
-              {t(`clipboard.group.${r.group}`)}
+            {r.fold ? (
+              <FavoritesHeader count={r.fold.count} collapsed={r.fold.collapsed} />
+            ) : (
+              <div className="clip-group" data-group={r.group} role="presentation">
+                {t(`clipboard.group.${r.group}`)}
+              </div>
+            )}
+          </RowShell>
+        )
+      }
+      if (r.type === 'more') {
+        return (
+          <RowShell appear={moving && !reduced ? 'insert' : null}>
+            <div className="clip-more" role="presentation">
+              {/* 点击由列表的事件委托处理（data-show-favorites）；键盘经 Tab 切到「收藏」过滤 */}
+              <button
+                type="button"
+                className="clip-more-button"
+                tabIndex={-1}
+                data-show-favorites=""
+                data-testid="clip-show-favorites"
+              >
+                {t('clipboard.group.more', { n: r.count })}
+              </button>
             </div>
           </RowShell>
         )
@@ -951,15 +1168,31 @@ export function ClipList({
             ordinal={r.ordinal}
             badge={badges && r.ordinal <= 9 ? r.ordinal : null}
             selected={r.key === selectedId}
+            mark={markOf.get(r.key) ?? null}
             now={now}
             confirming={r.key === confirmingId}
             flat={flat}
+            query={r.hit.item.name ? nameQuery : ''}
             os={os}
           />
         </RowShell>
       )
     },
-    [rows, selectedId, now, fresh, confirmingId, badges, t, flat, os, moving, reduced],
+    [
+      rows,
+      selectedId,
+      markOf,
+      now,
+      fresh,
+      confirmingId,
+      badges,
+      t,
+      flat,
+      nameQuery,
+      os,
+      moving,
+      reduced,
+    ],
   )
   const estimateSize = useCallback((i: number) => rowHeight(rows[i]), [rows])
   const getItemKey = useCallback((i: number) => rows[i]?.key ?? i, [rows])
@@ -969,7 +1202,7 @@ export function ClipList({
   const HoverCard = preview?.HoverCard
 
   return (
-    // 列表的键盘操作由统一的键盘路由提供（↑↓ / ↩ / ⌘P / ⌫ / Space…，见 keys.ts），这里只处理指针：
+    // 列表的键盘操作由操作注册表派生的键位层提供（↑↓ / ↩ / ⌘P / ⌫ / Space…，见 actions/registry.ts），这里只处理指针：
     // 悬停选中、单击 / 双击粘贴、右键菜单（事件委托，行组件保持纯展示、可 memo）。按下时焦点不离开搜索框由视图的
     // 根节点统一处理（focus.ts 的 keepSearchFocus）
     // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
@@ -987,6 +1220,9 @@ export function ClipList({
         if (inCard(e.target)) hideHover()
       }}
       onPointerDown={onPointerDown}
+      onPointerUp={onPointerUp}
+      onDragStart={onDragStart}
+      onDragEnd={restoreFocus}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
@@ -1000,6 +1236,7 @@ export function ClipList({
         getItemKey={getItemKey}
         renderItem={renderItem}
         height={height}
+        endInset={CHIP_STRIP_INSET}
         selectedIndex={-1}
         overscan={screenRows(height)}
         aria-label={t('clipboard.a11y.list')}
@@ -1041,25 +1278,55 @@ export function ClipList({
             anchorBottom={hover.bottom}
             areaHeight={height}
             now={now}
-            actions={actions}
+            cmd={cmd}
+            runner={runner}
+            store={store}
           />
         ) : null}
       </AnimatePresence>
       {menuUsed ? (
-        <Menu
+        <PagedMenu
           open={menu !== null}
-          anchor={menu?.anchor ?? { left: 0, top: 0, width: 0, height: 0 }}
+          anchor={menu?.anchor ?? NO_ANCHOR}
           side={menu?.side ?? 'bottom'}
           align={menu?.align ?? 'start'}
           flip={false}
-          items={menuItems}
-          initialActive={menu?.via === 'keyboard' ? 'first' : 'none'}
-          label={t('clipboard.a11y.actions')}
+          page={menuPage}
+          direction={menu?.direction ?? 1}
+          initialActive={menu?.via === 'keyboard' || menu?.page ? 'first' : 'none'}
           returnFocus={searchRef}
-          data-testid="clip-context-menu"
           onClose={() => setMenu(null)}
         />
       ) : null}
+    </div>
+  )
+}
+
+const NO_ANCHOR = { left: 0, top: 0, width: 0, height: 0 } as const
+
+/**
+ * 「收藏」分组的标题：折叠按钮（`aria-expanded`），折叠时在标题后面给出条数。点击由列表的事件委托处理
+ * （data-group-toggle，执行注册表的 favorites_toggle）；键盘从 ⌘K / ⋯ 菜单里的「折叠收藏」到达，按钮本身不进 Tab 顺序
+ * （焦点一直在搜索框里）
+ */
+function FavoritesHeader({ count, collapsed }: { count: number; collapsed: boolean }) {
+  const t = useT()
+  return (
+    <div className="clip-group" data-group="pinned" role="presentation">
+      <button
+        type="button"
+        className="clip-group-toggle"
+        tabIndex={-1}
+        aria-expanded={!collapsed}
+        aria-label={t('clipboard.a11y.favorites', { count, n: count })}
+        data-group-toggle=""
+        data-collapsed={collapsed || undefined}
+        data-testid="clip-favorites-toggle"
+      >
+        {t('clipboard.group.pinned')}
+        {collapsed ? <span className="clip-group-count">{count}</span> : null}
+        <Icon icon={ChevronDown} size={12} className="clip-group-chevron" />
+      </button>
     </div>
   )
 }

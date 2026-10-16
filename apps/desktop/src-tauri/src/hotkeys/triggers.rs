@@ -119,6 +119,8 @@ impl Desired {
             bobber: self.bobber,
             double_tap: self.double_tap,
             mouse: self.mouse,
+            // 连续粘贴的粘贴键由剪贴板队列自己另装一份（只在队列进行中存在），不并进扩展触发
+            ..HookSpec::default()
         }
     }
 
@@ -557,6 +559,8 @@ pub(crate) fn route(gate: &BobberGate, sig: &InputSignal) -> Route {
         }
         InputSignal::DoubleTap => Route::Fire(HotkeyAction::TranslateSelection, TriggerOrigin::DoubleTap),
         InputSignal::MouseAction { action, .. } => Route::Fire(*action, TriggerOrigin::MouseButton),
+        // 只发给连续粘贴自己的订阅，扩展触发收不到
+        InputSignal::PasteKey { .. } | InputSignal::SessionLocked => Route::Nothing,
     }
 }
 

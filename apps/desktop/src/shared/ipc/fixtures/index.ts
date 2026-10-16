@@ -592,6 +592,79 @@ export const ClipItemMeta = {
   "color": "#3478F6"
 } satisfies T.ClipItemMeta
 
+export const ClipItemMeta__favorite = {
+  "id": 130,
+  "kind": "text",
+  "created_at": 1760000000000,
+  "last_used_at": 1760000360000,
+  "use_count": 3,
+  "pinned": true,
+  "source": {
+    "id": "com.apple.Safari",
+    "name": "Safari",
+    "icon_url": "http://wisp.localhost/icon%2Fa1b2c3.png"
+  },
+  "preview": "ssh deploy@203.0.113.7 -p 2222",
+  "char_count": 30,
+  "line_count": 1,
+  "truncated": false,
+  "image": null,
+  "files": null,
+  "link": null,
+  "color": null,
+  "name": "Staging server"
+} satisfies T.ClipItemMeta
+
+export const ClipItemMeta__otp = {
+  "id": 131,
+  "kind": "text",
+  "created_at": 1760000000000,
+  "last_used_at": 1760000360000,
+  "use_count": 3,
+  "pinned": false,
+  "source": null,
+  "preview": "Your verification code is 482915. It expires in 10 minutes.",
+  "char_count": 59,
+  "line_count": 1,
+  "truncated": false,
+  "image": null,
+  "files": null,
+  "link": null,
+  "color": null,
+  "expires_at": 1760000960000
+} satisfies T.ClipItemMeta
+
+export const Entity = {
+  "kind": "bank_card",
+  "value": "6222020200112233446",
+  "start": 5,
+  "end": 28,
+  "sensitive": true
+} satisfies T.Entity
+
+export const ClipInspect = {
+  "entities": [
+    {
+      "kind": "otp",
+      "value": "482915",
+      "start": 26,
+      "end": 32,
+      "sensitive": false
+    }
+  ],
+  "transforms": [
+    "join_lines",
+    "upper",
+    "lower"
+  ]
+} satisfies T.ClipInspect
+
+export const QueueStatus = {
+  "active": true,
+  "index": 2,
+  "total": 5
+} satisfies T.QueueStatus
+
 export const HighlightRange = {
   "start": 4,
   "end": 9
@@ -1102,9 +1175,25 @@ export const PanelPayload__toast = {
   "paste_key": "⌘V"
 } satisfies T.PanelPayload
 
+export const ClipDragData = {
+  "text": "Hello, Wisp",
+  "html": "<p>Hello, <b>Wisp</b></p>",
+  "uri": null
+} satisfies T.ClipDragData
+
 export const ToastPayload = {
   "reason": "focus_timeout",
   "paste_key": "⌘V"
+} satisfies T.ToastPayload
+
+export const ToastPayload__queue = {
+  "reason": "copy_only",
+  "paste_key": "⌘V",
+  "queue": {
+    "active": true,
+    "index": 2,
+    "total": 5
+  }
 } satisfies T.ToastPayload
 
 export const TranslatePayload = {
@@ -1260,6 +1349,89 @@ export const ClipboardPayload = {
   "hint_bar": true,
   "paste_on_double_click": false
 } satisfies T.ClipboardPayload
+
+export const ClipFloatInit = {
+  "query": "deploy",
+  "filter": "favorite",
+  "selected_id": 130,
+  "on_top": true,
+  "payload": {
+    "page": {
+      "items": [
+        {
+          "item": {
+            "id": 128,
+            "kind": "text",
+            "created_at": 1760000000000,
+            "last_used_at": 1760000360000,
+            "use_count": 3,
+            "pinned": false,
+            "source": {
+              "id": "com.apple.Safari",
+              "name": "Safari",
+              "icon_url": "http://wisp.localhost/icon%2Fa1b2c3.png"
+            },
+            "preview": "The quick brown fox jumps over the lazy dog",
+            "char_count": 43,
+            "line_count": 1,
+            "truncated": false,
+            "image": null,
+            "files": null,
+            "link": null,
+            "color": null
+          },
+          "highlights": [
+            {
+              "start": 4,
+              "end": 9
+            }
+          ]
+        },
+        {
+          "item": {
+            "id": 129,
+            "kind": "image",
+            "created_at": 1760000100000,
+            "last_used_at": 1760000100000,
+            "use_count": 1,
+            "pinned": true,
+            "source": null,
+            "preview": "",
+            "char_count": null,
+            "line_count": null,
+            "truncated": false,
+            "image": {
+              "width": 1280,
+              "height": 720,
+              "bytes": 245760,
+              "thumb_url": "http://wisp.localhost/thumb%2Fd4e5f6.jpg"
+            },
+            "files": [
+              {
+                "path": "/Users/me/Desktop/report.pdf",
+                "name": "report.pdf",
+                "exists": true,
+                "size": 182044
+              }
+            ],
+            "link": "https://example.com/",
+            "color": "#3478F6"
+          },
+          "highlights": []
+        }
+      ],
+      "pinned_count": 1,
+      "next_offset": 50,
+      "query": "quick",
+      "filter": "all"
+    },
+    "paused": false,
+    "hint_bar": true,
+    "paste_on_double_click": false,
+    "favorites_collapsed": true,
+    "queue_unavailable": "errors.platform.wayland_input_hooks"
+  }
+} satisfies T.ClipFloatInit
 
 export const InputPayload = {
   "initial_text": "",
@@ -1649,7 +1821,14 @@ export const SettingsSnapshot = {
       "secret_tray_flash": true,
       "panel_position": "center",
       "paste_on": "single_click",
-      "show_hint_bar": true
+      "show_hint_bar": true,
+      "smart": {
+        "contacts": true,
+        "codes": true,
+        "numbers": true,
+        "identity": false,
+        "otp_auto_delete": true
+      }
     },
     "appearance": {
       "theme": "system",
@@ -1677,7 +1856,8 @@ export const SettingsSnapshot = {
         "api_keys": true,
         "clipboard": true,
         "images": true,
-        "ocr_history": true
+        "ocr_history": true,
+        "verification_codes": true
       }
     }
   },
@@ -2331,7 +2511,14 @@ export const Settings = {
     "secret_tray_flash": true,
     "panel_position": "center",
     "paste_on": "single_click",
-    "show_hint_bar": true
+    "show_hint_bar": true,
+    "smart": {
+      "contacts": true,
+      "codes": true,
+      "numbers": true,
+      "identity": false,
+      "otp_auto_delete": true
+    }
   },
   "appearance": {
     "theme": "system",
@@ -2359,7 +2546,8 @@ export const Settings = {
       "api_keys": true,
       "clipboard": true,
       "images": true,
-      "ocr_history": true
+      "ocr_history": true,
+      "verification_codes": true
     }
   }
 } satisfies T.Settings
@@ -2498,8 +2686,23 @@ export const ClipboardSettings = {
   "secret_tray_flash": true,
   "panel_position": "remember",
   "paste_on": "double_click",
-  "show_hint_bar": true
+  "show_hint_bar": true,
+  "smart": {
+    "contacts": true,
+    "codes": true,
+    "numbers": true,
+    "identity": true,
+    "otp_auto_delete": false
+  }
 } satisfies T.Settings['clipboard']
+
+export const SmartSettings = {
+  "contacts": true,
+  "codes": false,
+  "numbers": true,
+  "identity": false,
+  "otp_auto_delete": true
+} satisfies T.Settings['clipboard']['smart']
 
 export const ExcludedApp = {
   "os": "macos",
@@ -2535,7 +2738,8 @@ export const SyncSettings = {
     "api_keys": false,
     "clipboard": true,
     "images": false,
-    "ocr_history": true
+    "ocr_history": true,
+    "verification_codes": true
   }
 } satisfies T.Settings['sync']
 
@@ -2544,5 +2748,6 @@ export const SyncContent = {
   "api_keys": false,
   "clipboard": true,
   "images": true,
-  "ocr_history": false
+  "ocr_history": false,
+  "verification_codes": false
 } satisfies T.Settings['sync']['content']

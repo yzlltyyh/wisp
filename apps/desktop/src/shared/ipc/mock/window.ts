@@ -330,7 +330,8 @@ export function frameStaticWindow(boot: Boot, desktop: MockDesktop | null): void
       top: '0',
       zIndex: '1',
       width: '440px',
-      height: '320px',
+      // 悬浮剪贴板要放得下一屏条目
+      height: boot.label === 'clipfloat' ? '460px' : '320px',
       transform: `translate(${Math.round(work.x + work.width * 0.52)}px, ${Math.round(work.y + work.height * 0.18)}px)`,
       overflow: 'hidden',
       contain: 'layout',

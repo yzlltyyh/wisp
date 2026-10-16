@@ -16,6 +16,9 @@
 //!
 //! 前端按 id 幂等处理每种事件（`inserted` 遇到已有的 id 视为更新）：排队补发的事件可能与首页内容重叠。
 //!
+//! **悬浮剪贴板**：页面先订阅、再调用 `clipboard_float_ready`，之后每条事件同样直接推给它（不排队：它就绪之前没有
+//! 视图要更新，就绪时拉取的首页已经是新的）；它就绪期间投递一律视为「已显示」——远端改动逐条推送，悬浮窗照常更新。
+//!
 //! **已知缺口**：「ready 之后才推送」假定视图在调用 `panel_ready` 之前已经订阅完成；集成态
 //! 的剪贴板视图在挂载的 effect 里异步 `listen`，没有等它完成就 ready，ready 之后紧接着补发的事件仍可能丢失。
 
@@ -74,6 +77,9 @@ impl Engine {
     /// 此刻推送的事件会怎样到达（与 [`Engine::emit`] 同样持投递锁读面板状态）。不阻塞
     pub(crate) fn delivery(&self) -> Delivery {
         let ob = self.outbox.inner.lock();
+        if self.host.float_ready() {
+            return Delivery::Shown;
+        }
         match self.host.clipboard_view() {
             ClipView::Shown(_) => Delivery::Shown,
             ClipView::Preparing(_) => Delivery::Soon,
@@ -85,6 +91,10 @@ impl Engine {
     /// 推送 `clipboard:changed`（规则见模块文档）。不阻塞
     pub(crate) fn emit(&self, change: ClipboardChanged) {
         let mut ob = self.outbox.inner.lock();
+        // 悬浮剪贴板：持锁推送，顺序与调用顺序一致
+        if self.host.float_ready() {
+            self.host.emit_float(&change);
+        }
         // 持锁读面板状态：与其他线程的投递线性排列（锁外读到的状态可能已经过时）
         let view = self.host.clipboard_view();
         let now = Instant::now();

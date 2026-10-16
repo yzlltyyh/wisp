@@ -322,6 +322,14 @@
     margin-left: auto;
   }
 
+  /* ---- 识别出的片段（芯片）：正文下方、底栏上方一行，放不下时横向滚动（芯片本身的样式在剪贴板的 entities.css） ---- */
+  .ocr-chips {
+    margin-top: 10px;
+  }
+  .ocr-chips + .ocr-footer {
+    margin-top: 8px;
+  }
+
   /* ---- 底栏：状态行 · 复制 · [翻译 | ▾] · [重新识别 | ▾] · 固定（控件组之间留 6 px，读得出是几组） ---- */
   .ocr-footer {
     display: flex;

@@ -79,6 +79,7 @@ pub fn policy() -> IngestPolicy {
             excluded_apps: default_excluded_apps(),
             secret_detection: true,
         },
+        otp_ttl_ms: Some(wisp_clipboard::OTP_TTL_MS),
     }
 }
 

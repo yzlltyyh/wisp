@@ -19,5 +19,12 @@
   "secret_tray_flash": true,
   "panel_position": "remember",
   "paste_on": "double_click",
-  "show_hint_bar": true
+  "show_hint_bar": true,
+  "smart": {
+    "contacts": true,
+    "codes": true,
+    "numbers": true,
+    "identity": true,
+    "otp_auto_delete": false
+  }
 }

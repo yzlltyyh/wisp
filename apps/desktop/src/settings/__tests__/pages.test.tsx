@@ -210,11 +210,17 @@ describe('子页导航', () => {
 })
 
 describe('服务列表', () => {
-  it('从没测试过不显示「未测试」；头像是两字母且读屏不念；新建的同名服务自动加编号', async () => {
+  it('从没测试过不显示「未测试」；头像是服务商标志（没有模板时是两字母）且读屏不念；新建的同名服务自动加编号', async () => {
     const h = installHarness(
       snapshot(
-        { providers: [provider('deepseek', { name: 'DeepSeek' })] },
-        { has_key: { deepseek: true } },
+        {
+          providers: [
+            provider('deepseek', { name: 'DeepSeek' }),
+            provider('gateway', { name: 'My Gateway', template_id: null }),
+            provider('relay', { name: '中转站' }),
+          ],
+        },
+        { has_key: { deepseek: true, gateway: true, relay: true } },
       ),
     )
     h.handle('provider_templates', () => TEMPLATES)
@@ -223,8 +229,20 @@ describe('服务列表', () => {
     const row = await screen.findByTestId('provider-row-deepseek')
     expect(row).not.toHaveTextContent('未测试')
     const logo = row.querySelector('.st-logo')
-    expect(logo).toHaveTextContent('DS')
+    expect(logo).toHaveAttribute('data-brand', 'deepseek')
     expect(logo).toHaveAttribute('aria-hidden', 'true')
+    expect(logo?.querySelector('svg')).not.toBeNull()
+    expect(logo?.textContent).toBe('')
+    // 手动添加（没有模板）的服务：两字母头像
+    const custom = screen.getByTestId('provider-row-gateway').querySelector('.st-logo')
+    expect(custom).not.toHaveAttribute('data-brand')
+    expect(custom).toHaveTextContent('MG')
+    expect(custom).toHaveAttribute('aria-hidden', 'true')
+    // 中转站不是品牌：中性图标，不是标志也不是字母
+    const relay = screen.getByTestId('provider-row-relay').querySelector('.st-logo')
+    expect(relay).not.toHaveAttribute('data-brand')
+    expect(relay?.querySelector('svg')).not.toBeNull()
+    expect(relay?.textContent).toBe('')
     await userEvent.click(screen.getByTestId('provider-add-open'))
     await userEvent.click(await screen.findByTestId('template-deepseek'))
     expect(await screen.findByTestId('provider-name')).toHaveValue('DeepSeek 2')

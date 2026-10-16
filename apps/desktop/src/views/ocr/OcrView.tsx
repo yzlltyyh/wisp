@@ -68,6 +68,7 @@ import { useT, useTKey } from '../../shared/i18n/useT'
 import {
   api,
   WispIpcError,
+  type Entity,
   type Lang,
   type ModelRef,
   type NotReady,
@@ -128,8 +129,10 @@ import {
   thumbMaxWidth,
   visionModels,
 } from './model'
+import type { ChipMode } from '../clipboard/entities'
 import { LongTextPrompt } from '../translate/LongTextPrompt'
 import { registerOcrMessages } from './i18n'
+import { OcrChips } from './OcrChips'
 import {
   FlipBox,
   Footer,
@@ -209,7 +212,7 @@ export function OcrView(props: OcrViewProps) {
   const t = useT()
   const tKey = useTKey()
   const snap = useSettingsSnapshot()
-  const { fontSize } = useAppearance()
+  const { fontSize, os } = useAppearance()
   const footerIn = usePreset('footerIn')
   const reducedMotion = useReducedMotionPref()
   const active = useViewActive()
@@ -624,6 +627,24 @@ export function OcrView(props: OcrViewProps) {
   }
 
   // ---- 复制 / 固定 / 设置 ----
+
+  /**
+   * 芯片：单击把片段粘贴到原来的应用（与剪贴板的芯片同一条粘贴管线，片段不进历史）；⌥ 单击只复制、在底栏提示。
+   * 粘贴不成时（例如没有可以粘贴的目标）退回复制
+   */
+  function pasteFragment(entity: Entity, how: ChipMode): void {
+    const copy = () =>
+      void copyText(entity.value).then((ok) =>
+        showToast(t(ok ? 'common.state.copied' : 'common.state.copy_failed')),
+      )
+    if (how === 'copy_only') {
+      copy()
+      return
+    }
+    api.clipboardPasteText(entity.value, null, 'normal').catch((error: unknown) => {
+      if (WispIpcError.from('clipboard_paste_text', error).code !== 'conflict') copy()
+    })
+  }
 
   function copyByKey(): boolean {
     const translation = direct ? main.text() : trOpen && tr.state.hasText ? tr.text() : null
@@ -1329,6 +1350,9 @@ export function OcrView(props: OcrViewProps) {
           onCancel={() => setConfirm(null)}
           data-testid="ocr-confirm"
         />
+        {footerOn && settledStatus && hasText && !direct ? (
+          <OcrChips text={ocrText} os={os} onPick={pasteFragment} />
+        ) : null}
         {footerOn ? (
           <Footer data-testid="ocr-footer">
             <StatusLine

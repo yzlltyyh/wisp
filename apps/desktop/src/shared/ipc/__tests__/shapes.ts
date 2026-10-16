@@ -183,12 +183,38 @@ const ClipKind = enumOf<T.ClipKind>()('ClipKind', {
 })
 const ClipFilter = enumOf<T.ClipFilter>()('ClipFilter', {
   all: 1,
+  favorite: 1,
   text: 1,
   image: 1,
   files: 1,
   link: 1,
   code: 1,
   color: 1,
+})
+const EntityKind = enumOf<T.EntityKind>()('EntityKind', {
+  email: 1,
+  phone: 1,
+  url: 1,
+  ip: 1,
+  otp: 1,
+  tracking: 1,
+  order: 1,
+  amount: 1,
+  datetime: 1,
+  id_card: 1,
+  bank_card: 1,
+})
+const TransformId = enumOf<T.TransformId>()('TransformId', {
+  join_lines: 1,
+  trim: 1,
+  upper: 1,
+  lower: 1,
+  title: 1,
+  half_width: 1,
+  full_width: 1,
+  json_pretty: 1,
+  json_minify: 1,
+  strip_tracking: 1,
 })
 const PasteMode = enumOf<T.PasteMode>()('PasteMode', { normal: 1, plain: 1, copy_only: 1 })
 const CopiedReason = enumOf<T.CopiedReason>()('CopiedReason', {
@@ -433,13 +459,19 @@ const ClipboardPayloadFields: Fields<T.ClipboardPayload> = {
       unavailable: { reason_key: str },
     }),
   ),
+  favorites_collapsed: opt(bool),
+  queue_unavailable: opt(nul(str)),
 }
 const InputPayloadFields: Fields<T.InputPayload> = {
   initial_text: str,
   target_lang: nul(Lang),
   hint: nul(ref('NotReady')),
 }
-const ToastPayloadFields: Fields<T.ToastPayload> = { reason: CopiedReason, paste_key: str }
+const ToastPayloadFields: Fields<T.ToastPayload> = {
+  reason: CopiedReason,
+  paste_key: str,
+  queue: opt(nul(ref('QueueStatus'))),
+}
 const capability = ref('Capability')
 const modelRef = ref('ModelRef')
 
@@ -688,7 +720,24 @@ export const registry = {
     files: nul(arr(ref('FileRef'))),
     link: nul(str),
     color: nul(str),
+    name: opt(nul(str)),
+    expires_at: opt(nul(num)),
   }),
+  EntityKind,
+  Entity: obj<T.Entity>()('Entity', {
+    kind: EntityKind,
+    value: str,
+    start: num,
+    end: num,
+    sensitive: bool,
+  }),
+  TransformId,
+  ClipInspect: obj<T.ClipInspect>()('ClipInspect', {
+    entities: arr(ref('Entity')),
+    transforms: arr(TransformId),
+  }),
+  QueueStatus: obj<T.QueueStatus>()('QueueStatus', { active: bool, index: num, total: num }),
+  ClipDragData: obj<T.ClipDragData>()('ClipDragData', { text: str, html: nul(str), uri: nul(str) }),
   HighlightRange: obj<T.HighlightRange>()('HighlightRange', { start: num, end: num }),
   ClipHit: obj<T.ClipHit>()('ClipHit', {
     item: ref('ClipItemMeta'),
@@ -841,6 +890,13 @@ export const registry = {
   TranslatePayload: obj<T.TranslatePayload>()('TranslatePayload', TranslatePayloadFields),
   OcrPayload: obj<T.OcrPayload>()('OcrPayload', OcrPayloadFields),
   ClipboardPayload: obj<T.ClipboardPayload>()('ClipboardPayload', ClipboardPayloadFields),
+  ClipFloatInit: obj<T.ClipFloatInit>()('ClipFloatInit', {
+    query: str,
+    filter: ClipFilter,
+    selected_id: nul(num),
+    on_top: bool,
+    payload: ref('ClipboardPayload'),
+  }),
   InputPayload: obj<T.InputPayload>()('InputPayload', InputPayloadFields),
   ToastPayload: obj<T.ToastPayload>()('ToastPayload', ToastPayloadFields),
   PanelPayload: union<T.PanelPayload, 'kind'>()('PanelPayload', 'kind', {
@@ -1145,6 +1201,14 @@ export const registry = {
     panel_position: ClipPanelPosition,
     paste_on: PasteOn,
     show_hint_bar: bool,
+    smart: ref('SmartSettings'),
+  }),
+  SmartSettings: obj<T.SmartSettings>()('SmartSettings', {
+    contacts: bool,
+    codes: bool,
+    numbers: bool,
+    identity: bool,
+    otp_auto_delete: bool,
   }),
   ThemePref,
   MaterialPref,
@@ -1185,6 +1249,7 @@ export const registry = {
     clipboard: bool,
     images: bool,
     ocr_history: bool,
+    verification_codes: bool,
   }),
   SyncSettings: obj<T.SyncSettings>()('SyncSettings', {
     enabled: bool,

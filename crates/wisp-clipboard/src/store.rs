@@ -17,8 +17,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use wisp_types::{
-    AppRef, ClipFilter, ClipHit, ClipItemDetail, ClipItemMeta, ClipKind, ClipPage, ClipPayload, OcrHistoryItem,
-    RawClipboard,
+    AppRef, ClipFilter, ClipHit, ClipInspect, ClipItemDetail, ClipItemMeta, ClipKind, ClipPage, ClipPayload,
+    OcrHistoryItem, RawClipboard,
 };
 
 use crate::blobs::{self, BlobKind, TMP_PREFIX, asset_path, hash_stem, is_fresh_tmp, stage};
@@ -28,10 +28,12 @@ use crate::ingest::{FilesRecord, IngestOutcome, IngestPolicy, Prepared, SkipReas
 use crate::ocr_history::{OcrHistoryNew, mode_from_str, mode_to_str};
 use crate::retention::{RetentionPolicy, RetentionReport, age_cutoff, vacuum_due};
 use crate::row::{
-    META_COLS, ORDER_RECENT, StoredFile, files_columns, filter_sql, kind_to_str, meta_from_row, parse_files,
+    META_COL_COUNT, META_COLS, META_EXP, META_NAME, META_OTP, ORDER_RECENT, StoredFile, files_columns, filter_sql,
+    kind_from_str, kind_to_str, meta_from_row, parse_files,
 };
 use crate::schema;
 use crate::search::{LIKE_SCAN_ROWS, Query, SEARCH_PREFIX_CHARS};
+use crate::smart::{self, RecognizeOpts};
 
 /// 数据库文件名
 const DB_FILE: &str = "clipboard.db";
@@ -54,6 +56,16 @@ const DETAIL_EXISTS_CHECKS: usize = 200;
 const PURGE_BYTES_CAP: i64 = SEARCH_PREFIX_CHARS as i64 * 3;
 /// 估算逐行清理时每行计入的字节上限：长文本里重复的 trigram 多，要改写的段页数在十几 KB 之后基本不再增长
 const PURGE_ROW_BYTES_CAP: i64 = 16 * 1024;
+/// 到期的验证码条目（`?1` = 现在）。收藏时过期时间已被去掉；这里再限定 `pinned = 0`，即使哪条写入路径漏掉了，
+/// 也不会删掉用户收藏的条目
+const EXPIRED_COND: &str = "pinned = 0 AND json_extract(meta_json, '$.exp') <= ?1";
+/// 收藏 / 取消收藏（`?1` = 是否收藏，`?2` = id）：收藏时去掉过期时间（用户明确要保留），取消收藏时去掉名称
+/// （名称只属于收藏）。置顶的各处写入（本机、同步）都用它，保证这两条规则一致
+pub(crate) const SET_PINNED_SQL: &str = "UPDATE items SET pinned = ?1, meta_json = CASE
+    WHEN meta_json IS NULL THEN NULL
+    WHEN ?1 THEN json_remove(meta_json, '$.exp')
+    ELSE json_remove(meta_json, '$.name') END
+    WHERE id = ?2";
 /// 保留策略要删除的条目：非置顶，且超期（按 last_used_at）或排在条数上限之外
 const RETAIN_COND: &str = "pinned = 0 AND (last_used_at < ?1 OR id IN (
     SELECT id FROM items WHERE pinned = 0 ORDER BY last_used_at DESC, id DESC LIMIT -1 OFFSET ?2))";
@@ -136,7 +148,10 @@ impl ClipStore {
         };
         let source = raw.source.as_ref().filter(|a| !a.id.trim().is_empty());
         match prepared {
-            Prepared::Text(t) => self.upsert(&t.hash, NewRow::Text(&t), source, now_ms),
+            Prepared::Text(mut t) => {
+                t.expires_at = policy.otp_expiry(t.otp, now_ms);
+                self.upsert(&t.hash, NewRow::Text(&t), source, now_ms)
+            }
             Prepared::Files(f) => {
                 let stored: Vec<StoredFile> = f.paths.iter().map(|p| StoredFile::capture(p)).collect();
                 let (json, head) = files_columns(&stored).map_err(|e| StoreError::InvalidInput(e.to_string()))?;
@@ -332,10 +347,12 @@ impl ClipStore {
                 .prepare_cached(&sql)?
                 .query_row([id], |r| {
                     let meta = meta_from_row(r)?;
-                    let text: Option<String> = r.get(19)?;
-                    let image_blob: Option<String> = r.get(22)?;
+                    // 详情列接在元数据列之后
+                    let col = |i: usize| META_COL_COUNT + i;
+                    let text: Option<String> = r.get(col(0))?;
+                    let image_blob: Option<String> = r.get(col(3))?;
                     let files = (meta.kind == ClipKind::Files).then(|| {
-                        parse_files(r.get::<_, Option<String>>(23).ok().flatten().as_deref())
+                        parse_files(r.get::<_, Option<String>>(col(4)).ok().flatten().as_deref())
                             .iter()
                             .map(StoredFile::to_ref)
                             .collect::<Vec<_>>()
@@ -346,8 +363,8 @@ impl ClipStore {
                         } else {
                             text
                         },
-                        has_html: r.get(20)?,
-                        has_rtf: r.get(21)?,
+                        has_html: r.get(col(1))?,
+                        has_rtf: r.get(col(2))?,
                         image_url: image_blob.map(|k| asset_path(BlobKind::Img, &k)),
                         files,
                         meta,
@@ -459,7 +476,7 @@ impl ClipStore {
         read_meta(&inner.conn, id)
     }
 
-    /// 置顶 / 取消置顶
+    /// 收藏（置顶）/ 取消收藏。收藏时去掉验证码的过期时间，取消收藏时去掉名称（见 [`SET_PINNED_SQL`]）
     pub fn set_pinned(&self, id: i64, pinned: bool) -> Result<ClipItemMeta, StoreError> {
         self.guard(|| self.set_pinned_impl(id, pinned))
     }
@@ -468,12 +485,105 @@ impl ClipStore {
         let inner = self.inner.lock();
         let n = inner
             .conn
-            .prepare_cached("UPDATE items SET pinned = ?1 WHERE id = ?2")?
+            .prepare_cached(SET_PINNED_SQL)?
             .execute(params![pinned, id])?;
         if n == 0 {
             return Err(StoreError::NotFound(id));
         }
         read_meta(&inner.conn, id)
+    }
+
+    /// 给条目命名（`name` 先经 [`crate::clean_favorite_name`] 清理；空白等同于清除）。命名即收藏：条目随之收藏并
+    /// 去掉过期时间，排序位置可能改变，调用方与 `set_pinned` 一样持锁 `RecentCache::upsert`。清除名称不改变收藏状态
+    pub fn set_name(&self, id: i64, name: Option<&str>) -> Result<ClipItemMeta, StoreError> {
+        let name = match name.map(crate::favorite::clean_name).transpose() {
+            Ok(n) => n.flatten(),
+            Err(e) => return Err(StoreError::InvalidInput(e.to_string())),
+        };
+        self.guard(|| {
+            let inner = self.inner.lock();
+            let n = match &name {
+                Some(name) => inner
+                    .conn
+                    .prepare_cached(&format!(
+                        "UPDATE items SET pinned = 1, meta_json = json_set(json_remove(coalesce(meta_json, '{{}}'), \
+                         '{META_EXP}'), '{META_NAME}', ?1) WHERE id = ?2"
+                    ))?
+                    .execute(params![name, id])?,
+                None => inner
+                    .conn
+                    .prepare_cached(&format!(
+                        "UPDATE items SET meta_json = json_remove(meta_json, '{META_NAME}') WHERE id = ?1"
+                    ))?
+                    .execute(params![id])?,
+            };
+            if n == 0 {
+                return Err(StoreError::NotFound(id));
+            }
+            read_meta(&inner.conn, id)
+        })
+    }
+
+    /// 删除到期的验证码条目（与 `delete` 一样不留明文），返回（本地 id，同步用的 hash）。调用方持串行锁，
+    /// 对每个 id `RecentCache::remove` 并推送 `removed`；hash 交给同步层删除服务器上的副本
+    pub fn expire_due(&self, now_ms: i64) -> Result<Vec<(i64, [u8; 32])>, StoreError> {
+        self.guard(|| {
+            let mut inner = self.inner.lock();
+            let mut due = Vec::new();
+            {
+                let mut stmt = inner
+                    .conn
+                    .prepare_cached(&format!("SELECT id, hash FROM items WHERE {EXPIRED_COND}"))?;
+                let mut rows = stmt.query([now_ms])?;
+                while let Some(r) = rows.next()? {
+                    let hash: Vec<u8> = r.get(1)?;
+                    if let Ok(hash) = <[u8; 32]>::try_from(hash.as_slice()) {
+                        due.push((r.get::<_, i64>(0)?, hash));
+                    }
+                }
+            }
+            let ids: Vec<i64> = due.iter().map(|(id, _)| *id).collect();
+            self.delete_ids_locked(&mut inner, &ids)?;
+            Ok(due)
+        })
+    }
+
+    /// 最早的过期时间（没有带过期时间的条目时为 None）：打开数据库与记录了验证码之后，调用方据此排一次性的清理任务
+    pub fn next_expiry(&self) -> Result<Option<i64>, StoreError> {
+        self.guard(|| {
+            let inner = self.inner.lock();
+            let next: Option<i64> = inner
+                .conn
+                .prepare_cached(&format!(
+                    "SELECT min(json_extract(meta_json, '{META_EXP}')) FROM items WHERE pinned = 0"
+                ))?
+                .query_row([], |r| r.get(0))?;
+            Ok(next)
+        })
+    }
+
+    /// 条目的检视（芯片条、「粘贴为…」）：识别只看正文前 16 KB，变换按全文判断（JSON 要整体合法）。
+    /// 条目不存在时为 None；图片与文件没有正文，结果为空
+    pub fn inspect(&self, id: i64, opts: &RecognizeOpts) -> Result<Option<ClipInspect>, StoreError> {
+        Ok(self
+            .text_of(id)?
+            .map(|(kind, text)| smart::inspect(kind, text.as_deref().unwrap_or_default(), opts)))
+    }
+
+    /// 条目的类型与完整正文（图片、文件没有正文，为 None）；不存在时为 None。「粘贴为…」据此执行变换
+    /// （`smart::apply(id, kind, text)`），结果不经过 WebView
+    pub fn text_of(&self, id: i64) -> Result<Option<(ClipKind, Option<String>)>, StoreError> {
+        let row: Option<(String, Option<String>)> = self.guard(|| {
+            let inner = self.inner.lock();
+            Ok(inner
+                .conn
+                .prepare_cached(
+                    "SELECT kind, CASE WHEN kind IN ('image', 'files') THEN NULL ELSE text END FROM items WHERE id = ?1",
+                )?
+                .query_row([id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional()?)
+        })?;
+        Ok(row.map(|(kind, text)| (kind_from_str(&kind), text)))
     }
 
     /// 删除一条（同时删除 blob）；不存在时返回 false。被删内容在库文件与 WAL 中都不留明文（见模块文档）
@@ -1215,7 +1325,7 @@ pub(crate) fn insert_row(
     } = times;
     match row {
         NewRow::Text(t) => {
-            let meta = format!("{{\"char_count\":{},\"line_count\":{}}}", t.char_count, t.line_count);
+            let meta = text_meta_json(t, pinned);
             stmt.execute(params![
                 kind_to_str(t.kind),
                 created_at,
@@ -1319,22 +1429,31 @@ fn pinned_count(conn: &Connection, filter: ClipFilter) -> Result<u32, StoreError
 /// 检索出元数据行（高亮在调用方计算）
 fn search_rows(conn: &Connection, q: &Query, filter: ClipFilter, limit: u32) -> Result<Vec<ClipItemMeta>, StoreError> {
     let f = filter_sql(filter);
+    // 收藏的名称也参与检索（两条路径都是 LIKE：收藏只有几十到几百条，不需要索引）。写成 `id IN (… UNION …)`，
+    // 让正文命中仍按 rowid 查找，不因为 OR 退化成全表扫描
     let rows = if q.uses_fts() {
         let sql = format!(
             "SELECT {META_COLS} FROM items
-             WHERE id IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?1) AND {f}
-             {ORDER_RECENT} LIMIT ?2"
+             WHERE id IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?1 UNION {}) AND {f}
+             {ORDER_RECENT} LIMIT ?2",
+            name_match("?3")
         );
         conn.prepare_cached(&sql)?
-            .query_map(params![q.fts_phrase(), i64::from(limit)], meta_from_row)?
+            .query_map(
+                params![q.fts_phrase(), i64::from(limit), q.like_pattern()],
+                meta_from_row,
+            )?
             .collect::<Result<Vec<_>, _>>()?
     } else {
         // like() 由 schema::register_functions 覆盖为 Unicode 大小写折叠；只看正文前缀，长文本不会拖慢短查询
         let sql = format!(
             "SELECT {META_COLS} FROM items
-             WHERE id IN (SELECT id FROM items {ORDER_RECENT} LIMIT ?3)
-               AND substr(text, 1, ?4) LIKE ?1 ESCAPE '\\' AND {f}
-             {ORDER_RECENT} LIMIT ?2"
+             WHERE id IN (
+                 SELECT id FROM items WHERE id IN (SELECT id FROM items {ORDER_RECENT} LIMIT ?3)
+                   AND substr(text, 1, ?4) LIKE ?1 ESCAPE '\\'
+                 UNION {}) AND {f}
+             {ORDER_RECENT} LIMIT ?2",
+            name_match("?1")
         );
         conn.prepare_cached(&sql)?
             .query_map(
@@ -1344,6 +1463,30 @@ fn search_rows(conn: &Connection, q: &Query, filter: ClipFilter, limit: u32) -> 
             .collect::<Result<Vec<_>, _>>()?
     };
     Ok(rows)
+}
+
+/// 名称命中的收藏（`param` 是 LIKE 模式的参数位置）
+fn name_match(param: &str) -> String {
+    format!("SELECT id FROM items WHERE pinned = 1 AND json_extract(meta_json, '{META_NAME}') LIKE {param} ESCAPE '\\'")
+}
+
+/// 文本行的 `meta_json`：字数、行数，以及验证码标记与过期时间（收藏的条目不过期）
+fn text_meta_json(t: &TextRecord, pinned: bool) -> String {
+    let mut m = serde_json::Map::new();
+    m.insert("char_count".into(), t.char_count.into());
+    m.insert("line_count".into(), t.line_count.into());
+    if t.otp {
+        m.insert(json_key(META_OTP).into(), 1.into());
+    }
+    if let Some(exp) = t.expires_at.filter(|_| !pinned) {
+        m.insert(json_key(META_EXP).into(), exp.into());
+    }
+    serde_json::Value::Object(m).to_string()
+}
+
+/// `$.key` → `key`
+fn json_key(path: &str) -> &str {
+    path.trim_start_matches("$.")
 }
 
 /// 收集将被删除的行引用的原图与缩略图
@@ -1577,6 +1720,7 @@ mod tests {
             max_text_bytes: 1 << 20,
             max_image_bytes: 20 << 20,
             privacy: PrivacyRules::default(),
+            otp_ttl_ms: Some(crate::smart::otp::TTL_MS),
         }
     }
 
@@ -1762,6 +1906,14 @@ mod tests {
         assert_eq!(FtsPurge::choose(&vol(990, 1_386_000), &k1), FtsPurge::Rebuild);
         assert_eq!(FtsPurge::choose(&vol(500, 700_000), &k1), FtsPurge::Rebuild);
         assert_eq!(FtsPurge::choose(&k10, &k10), FtsPurge::Rebuild);
+    }
+
+    #[test]
+    fn literal_sql_uses_the_meta_json_keys() {
+        // 这些 SQL 是常量字面量，不能用 format! 引用键名常量：改键名时靠这里提醒
+        assert!(EXPIRED_COND.contains(META_EXP));
+        assert!(SET_PINNED_SQL.contains(META_EXP) && SET_PINNED_SQL.contains(META_NAME));
+        assert!(crate::row::META_COLS.contains(META_EXP) && crate::row::META_COLS.contains(META_NAME));
     }
 
     #[test]

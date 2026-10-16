@@ -860,6 +860,7 @@ mod measure {
                 back: Some(HotkeyAction::TranslateSelection),
                 forward: Some(HotkeyAction::Ocr),
             }),
+            ..HookSpec::default()
         };
         let _hook = p
             .hooks

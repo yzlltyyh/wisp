@@ -525,15 +525,90 @@ impl InputHooks for Imp {
             .0
             .x11_for(Feature::InputHooks)
             .map_err(|r| HookError::Unsupported(r.to_owned()))?;
-        let id = x11::input::install(&x, spec, Arc::from(sink))?;
+        let sink: Arc<dyn Fn(InputSignal) + Send + Sync> = Arc::from(sink);
+        // 粘贴键走根窗口上的被动抓取（与快捷键同一张抓取表），其余走 XInput2 原始事件
+        let paste = if spec.paste_keys.is_empty() {
+            None
+        } else {
+            Some(install_paste_keys(&self.0.x11, &x, spec.paste_keys, Arc::clone(&sink))?)
+        };
+        let rest = HookSpec {
+            paste_keys: crate::types::PasteKeys::default(),
+            ..spec
+        };
+        let id = if rest.is_empty() {
+            None
+        } else {
+            match x11::input::install(&x, rest, sink) {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    drop(paste);
+                    return Err(e);
+                }
+            }
+        };
         let lazy = Arc::clone(&self.0.x11);
         Ok(HookHandle::new(move || {
-            lazy.registry().hooks.lock().retain(|h| h.id != id);
-            if let Some(x) = lazy.peek() {
-                x11::input::sync(&x);
+            drop(paste);
+            if let Some(id) = id {
+                lazy.registry().hooks.lock().retain(|h| h.id != id);
+                if let Some(x) = lazy.peek() {
+                    x11::input::sync(&x);
+                }
             }
         }))
     }
+
+    fn replay_paste(&self, chord: crate::types::KeyChord) -> Result<(), HookError> {
+        let x = self
+            .0
+            .x11_for(Feature::InputHooks)
+            .map_err(|r| HookError::Unsupported(r.to_owned()))?;
+        if !x.ext.xtest {
+            return Err(HookError::Unsupported(reason::X11_MISSING_XTEST.to_owned()));
+        }
+        // xterm / urxvt 的 Shift+Insert 粘贴的是 PRIMARY：与面板的粘贴一样先把刚写入的剪贴板同时作为 PRIMARY 提供
+        if selection::reads_primary(&chord.to_combo())
+            && let Err(e) = x11::clipboard::mirror_to_primary(&x)
+        {
+            log::info!("sequential paste: PRIMARY not mirrored ({e}); the terminal may paste an older selection");
+        }
+        x11::hotkeys::replay_paste(&x, chord).map_err(HookError::Other)
+    }
+}
+
+/// 连续粘贴：抓取粘贴键并登记路由，返回撤销它们的句柄。一组都抓不到（全被别的程序占用）时返回错误；部分抓不到的
+/// 只记日志（那几组键照常交给应用，队列不前进）
+#[cfg(feature = "mouse-hook")]
+fn install_paste_keys(
+    lazy: &Arc<LazyX11>,
+    x: &Arc<X11>,
+    keys: crate::types::PasteKeys,
+    sink: Arc<dyn Fn(InputSignal) + Send + Sync>,
+) -> Result<HookHandle, HookError> {
+    let mut combos = Vec::new();
+    for chord in keys.iter() {
+        let canon = chord.to_combo().to_canonical();
+        match x11::hotkeys::register(x, &canon) {
+            Ok(()) => combos.push((canon, chord)),
+            Err(e) => log::info!("paste key {canon} not grabbed: {e}"),
+        }
+    }
+    if combos.is_empty() {
+        return Err(HookError::Unsupported(
+            "none of the paste keys could be grabbed".to_owned(),
+        ));
+    }
+    let grabbed: Vec<String> = combos.iter().map(|(c, _)| c.clone()).collect();
+    lazy.registry().hotkeys.set_paste(Some(x11::hotkeys::PasteRoute {
+        combos,
+        sink: Arc::new(move |chord| sink(InputSignal::PasteKey { chord })),
+    }));
+    let lazy = Arc::clone(lazy);
+    Ok(HookHandle::new(move || {
+        let x = lazy.peek();
+        x11::hotkeys::end_paste(&lazy.registry().hotkeys, x.as_deref(), &grabbed);
+    }))
 }
 
 #[cfg(feature = "mouse-hook")]

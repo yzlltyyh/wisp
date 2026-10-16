@@ -141,7 +141,14 @@
     "secret_tray_flash": true,
     "panel_position": "center",
     "paste_on": "single_click",
-    "show_hint_bar": true
+    "show_hint_bar": true,
+    "smart": {
+      "contacts": true,
+      "codes": true,
+      "numbers": true,
+      "identity": false,
+      "otp_auto_delete": true
+    }
   },
   "appearance": {
     "theme": "system",
@@ -169,7 +176,8 @@
       "api_keys": true,
       "clipboard": true,
       "images": true,
-      "ocr_history": true
+      "ocr_history": true,
+      "verification_codes": true
     }
   }
 }

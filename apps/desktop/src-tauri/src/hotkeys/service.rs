@@ -29,7 +29,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcut, GlobalShortcutExt, Shortcut, 
 use wisp_platform::{KeyGrab, KeyGrabError};
 use wisp_types::{
     Binding, ConflictLevel, ConflictReport, ExtTriggerStatus, HideReason, HotkeyAction, HotkeySettings, HotkeyStatus,
-    HotkeyTarget, HotkeyTestReceived, KeyboardAdvice, NeighborHit, OsKind, Style, event,
+    HotkeyTarget, HotkeyTestReceived, KeyboardAdvice, NeighborHit, OsKind, PanelView, Style, event,
 };
 
 use super::conflicts::{self, CheckEnv, Taken};
@@ -159,6 +159,12 @@ fn native_grab(platform: &wisp_platform::Platform) -> Option<&dyn KeyGrab> {
         return None;
     }
     platform.hotkey_env.key_grab()
+}
+
+/// 全局 Esc（截图之外）先关用户打开的面板；没有时结束连续粘贴（之后进度 toast 一并收起）。连续粘贴的进度 toast
+/// 也是面板会话，但不是用户打开的面板（文案写着「Esc 结束」）：只关 toast 会让队列继续拦截粘贴键
+fn escape_closes_panel_first(view: Option<PanelView>) -> bool {
+    view.is_some_and(|v| v != PanelView::Toast)
 }
 
 /// 快捷键 id（插件按 id 分发）
@@ -735,12 +741,18 @@ impl HotkeyService {
             KeyStep::Fire(target) => self.send(&target, TriggerOrigin::Hotkey),
             KeyStep::Echo(target) => self.emit_test_received(target),
             KeyStep::Esc => {
-                // 不在按键回调里同步处理（隐藏面板最终会注销 Esc，不能重入插件 / 平台后端）。有截图会话时先取消它
+                // 不在按键回调里同步处理（隐藏面板、结束连续粘贴最终会注销 Esc，不能重入插件 / 平台后端）。先取消截图
+                // 会话，再关可见的面板，都没有时结束连续粘贴（卸载钩子会阻塞：放进阻塞线程池）
                 let app = self.app.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Some(state) = app.try_state::<AppState>()
-                        && !state.orchestrator.escape_overlay()
-                    {
+                tauri::async_runtime::spawn_blocking(move || {
+                    let Some(state) = app.try_state::<AppState>() else {
+                        return;
+                    };
+                    if state.orchestrator.escape_overlay() {
+                        return;
+                    }
+                    let view = state.windows.panel_state().map(|p| p.view);
+                    if escape_closes_panel_first(view) || !state.clipboard.queue_escape() || view.is_some() {
                         state.windows.panel_request_hide(HideReason::Escape);
                     }
                 });
@@ -797,6 +809,12 @@ impl HotkeyService {
     /// 结束时调用，**阻塞**（插件与主线程往返）
     pub fn overlay_esc_guard(&self, active: bool) {
         self.esc.lock().overlay = active;
+        self.sync_esc();
+    }
+
+    /// 连续粘贴进行中注册全局 Esc（按下即结束队列）。剪贴板服务在队列开始 / 结束时调用，**阻塞**（插件与主线程往返）
+    pub fn queue_esc_guard(&self, active: bool) {
+        self.esc.lock().queue = active;
         self.sync_esc();
     }
 
@@ -1091,5 +1109,14 @@ mod tests {
         let b = Shortcut::from_str("shift+control+alt+KeyS").expect("可解析").id();
         assert_eq!(a, b);
         assert!(shortcut_id(ESCAPE).is_some());
+    }
+
+    #[test]
+    fn escape_ends_the_queue_while_only_its_toast_shows() {
+        assert!(escape_closes_panel_first(Some(PanelView::Clipboard)));
+        assert!(escape_closes_panel_first(Some(PanelView::Translate)));
+        // 进度 toast 不算用户打开的面板：先结束连续粘贴
+        assert!(!escape_closes_panel_first(Some(PanelView::Toast)));
+        assert!(!escape_closes_panel_first(None));
     }
 }

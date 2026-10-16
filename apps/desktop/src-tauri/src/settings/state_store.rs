@@ -34,6 +34,24 @@ pub struct WindowGeometry {
     pub height: f64,
 }
 
+/// 悬浮剪贴板记住的位置、大小（显示器 id + 本屏逻辑坐标的卡片矩形）与置顶。只属于本机，不同步
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClipFloatState {
+    pub geometry: Option<WindowGeometry>,
+    /// 默认置顶
+    pub on_top: bool,
+}
+
+impl Default for ClipFloatState {
+    fn default() -> Self {
+        Self {
+            geometry: None,
+            on_top: true,
+        }
+    }
+}
+
 /// 记住的位置
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -67,6 +85,8 @@ pub struct StateFile {
     pub onboarding_done: bool,
     pub onboarding_version: u32,
     pub clipboard_paused: bool,
+    /// 剪贴板列表顶部的「收藏」分组已折叠（只属于本机，不同步）
+    pub clipboard_favorites_collapsed: bool,
     pub settings_window: Option<WindowGeometry>,
     /// 按显示器记住的剪贴板面板位置
     pub clipboard_positions: BTreeMap<String, Position>,
@@ -76,6 +96,8 @@ pub struct StateFile {
     /// 上一次看到授权为 granted 时的应用版本（版本变了且授权从有到无，才判定为「更新后授权失效」）
     pub permissions_seen_version: String,
     pub pinned_on_top_default: bool,
+    /// 悬浮剪贴板的位置、大小与置顶
+    pub clip_float: ClipFloatState,
     /// `<yyyy-mm-dd>`（UTC）→ `<provider_id>/<model_id>` → 计数
     pub usage: BTreeMap<String, BTreeMap<String, UsageCounter>>,
     /// 已在系统钥匙串里保存了 Key 的 provider_id（只记 id；`has_key` 据此回答，不必读钥匙串，见 `keychain.rs`）
@@ -97,6 +119,7 @@ impl Default for StateFile {
             onboarding_done: false,
             onboarding_version: 1,
             clipboard_paused: false,
+            clipboard_favorites_collapsed: false,
             settings_window: None,
             clipboard_positions: BTreeMap::new(),
             last_update_check_ms: 0,
@@ -104,6 +127,7 @@ impl Default for StateFile {
             permissions_seen_granted: PermissionsSeen::default(),
             permissions_seen_version: String::new(),
             pinned_on_top_default: true,
+            clip_float: ClipFloatState::default(),
             usage: BTreeMap::new(),
             stored_keys: BTreeSet::new(),
             orphan_keys: BTreeSet::new(),

@@ -32,9 +32,11 @@ mod backend_x11;
 mod backend_xcap;
 
 pub use crop::{crop, fit_long_edge, to_physical};
-pub use encode::{EncodedImage, encode_for_llm, encode_png, fits_protocol, reencode_for_llm};
+pub use encode::{EncodedImage, decode_image, encode_for_llm, encode_png, fits_protocol, reencode_for_llm};
 pub use error::CaptureError;
 pub use frame::{CaptureSet, Frame, WindowRect};
+/// 裁剪与解码得到的像素（调用方不必为了写出类型名而直接依赖 image）
+pub use image::RgbaImage;
 
 use wisp_types::{MonitorInfo, PermissionState};
 

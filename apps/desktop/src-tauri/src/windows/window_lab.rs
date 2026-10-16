@@ -628,6 +628,8 @@ fn clipboard_payload() -> PanelPayload {
         paste_on_double_click: false,
         unavailable: None,
         recording: wisp_types::ClipboardRecording::Recording,
+        favorites_collapsed: false,
+        queue_unavailable: None,
     })
 }
 
@@ -919,6 +921,7 @@ async fn memory_step(app: &tauri::AppHandle, wm: &Arc<WindowManager>, step_name:
             wm.panel_show_toast(ToastPayload {
                 reason: CopiedReason::CopyOnly,
                 paste_key: "⌘V".to_owned(),
+                queue: None,
             });
             tokio::time::sleep(Duration::from_millis(1600)).await;
             if let Some(s) = wm.panel_state().filter(|s| s.view == PanelView::Toast) {
@@ -2659,6 +2662,7 @@ pub fn spawn(app: tauri::AppHandle) {
         wm.panel_show_toast(ToastPayload {
             reason: CopiedReason::CopyOnly,
             paste_key: "⌘V".to_owned(),
+            queue: None,
         });
         tokio::time::sleep(Duration::from_millis(600)).await;
         let toast = wm.panel_state();
@@ -3013,6 +3017,8 @@ pub fn spawn(app: tauri::AppHandle) {
                     paste_on_double_click: false,
                     unavailable: None,
                     recording: wisp_types::ClipboardRecording::Recording,
+                    favorites_collapsed: false,
+                    queue_unavailable: None,
                 }),
             ),
         ] {

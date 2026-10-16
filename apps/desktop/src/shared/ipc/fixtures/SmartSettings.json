@@ -1,0 +1,7 @@
+{
+  "contacts": true,
+  "codes": false,
+  "numbers": true,
+  "identity": false,
+  "otp_auto_delete": true
+}

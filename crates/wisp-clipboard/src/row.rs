@@ -8,10 +8,21 @@ use wisp_types::{ClipFilter, ClipHit, ClipItemMeta, ClipKind, FileRef, ImageMeta
 use crate::blobs::{BlobKind, asset_path};
 
 /// 列表 / 元数据查询的列（顺序与 [`meta_from_row`] 一致）。列表不读正文与完整文件列表：这些列都排在表的前部
-/// （见 `schema.rs`「列的顺序」），读一行只用到该行在 b-tree 页内的部分。Link / Color 的正文就是一个短值，例外
+/// （见 `schema.rs`「列的顺序」），读一行只用到该行在 b-tree 页内的部分。Link / Color 的正文就是一个短值，例外。
+/// 新列只能追加在末尾，并同步 [`META_COL_COUNT`]：`get_detail` 等在它后面接着取列时按这个数计算位置
 pub(crate) const META_COLS: &str = "id, kind, created_at, last_used_at, use_count, pinned, source_app_id, source_app_name, \
      icon_key, text_preview, json_extract(meta_json, '$.char_count'), json_extract(meta_json, '$.line_count'), truncated, \
-     image_w, image_h, image_bytes, thumb_blob, files_head_json, CASE WHEN kind IN ('link', 'color') THEN text END";
+     image_w, image_h, image_bytes, thumb_blob, files_head_json, CASE WHEN kind IN ('link', 'color') THEN text END, \
+     json_extract(meta_json, '$.name'), json_extract(meta_json, '$.exp')";
+
+/// [`META_COLS`] 的列数：在它之后追加的列从这个序号开始
+pub(crate) const META_COL_COUNT: usize = 21;
+
+/// `meta_json` 里的键：收藏的名称、验证码条目的过期时间（Unix 毫秒）、记录时识别为验证码的标记。
+/// 都放在 `meta_json` 里而不是新列：加列需要数据库迁移，降级的用户会因为库版本更新而整个历史被停用
+pub(crate) const META_NAME: &str = "$.name";
+pub(crate) const META_EXP: &str = "$.exp";
+pub(crate) const META_OTP: &str = "$.otp";
 
 /// 列表排序（置顶在前，其余按最近使用；同一毫秒按 id 新的在前）
 pub(crate) const ORDER_RECENT: &str = "ORDER BY pinned DESC, last_used_at DESC, id DESC";
@@ -45,10 +56,12 @@ pub(crate) fn kind_from_str(s: &str) -> ClipKind {
     }
 }
 
-/// 过滤条件的 SQL 片段（常量，便于 prepare_cached 按过滤器缓存语句）。「文本」包含纯文本与富文本
+/// 过滤条件的 SQL 片段（常量，便于 prepare_cached 按过滤器缓存语句）。「文本」包含纯文本与富文本；
+/// 「收藏」按置顶状态而不是类型
 pub(crate) fn filter_sql(f: ClipFilter) -> &'static str {
     match f {
         ClipFilter::All => "1",
+        ClipFilter::Favorite => "pinned = 1",
         ClipFilter::Text => "kind IN ('text', 'rich_text')",
         ClipFilter::Image => "kind = 'image'",
         ClipFilter::Files => "kind = 'files'",
@@ -58,10 +71,12 @@ pub(crate) fn filter_sql(f: ClipFilter) -> &'static str {
     }
 }
 
-/// 内存中判断条目是否满足过滤器（与 [`filter_sql`] 一致）
-pub(crate) fn filter_matches(f: ClipFilter, k: ClipKind) -> bool {
+/// 内存中判断条目是否满足过滤器（与 [`filter_sql`] 一致）。收藏要看条目状态，所以收整条元数据而不是只收类型
+pub(crate) fn filter_matches(f: ClipFilter, m: &ClipItemMeta) -> bool {
+    let k = m.kind;
     match f {
         ClipFilter::All => true,
+        ClipFilter::Favorite => m.pinned,
         ClipFilter::Text => matches!(k, ClipKind::Text | ClipKind::RichText),
         ClipFilter::Image => k == ClipKind::Image,
         ClipFilter::Files => k == ClipKind::Files,
@@ -168,6 +183,8 @@ pub(crate) fn meta_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ClipItemM
         files,
         link,
         color,
+        name: r.get::<_, Option<String>>(19)?,
+        expires_at: r.get::<_, Option<i64>>(20)?,
     })
 }
 
@@ -218,5 +235,49 @@ mod tests {
             assert_eq!(serde_json::to_value(k).expect("序列化"), kind_to_str(k));
         }
         assert_eq!(kind_from_str("future_kind"), ClipKind::Text);
+    }
+
+    #[test]
+    fn meta_col_count_matches_the_column_list() {
+        // 按顶层逗号数列（CASE / json_extract 里的逗号在括号内）
+        let mut depth = 0i32;
+        let mut cols = 1;
+        for c in META_COLS.chars() {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ',' if depth == 0 => cols += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(cols, META_COL_COUNT);
+    }
+
+    #[test]
+    fn favorite_filter_matches_pinned_items_of_any_kind() {
+        assert_eq!(filter_sql(ClipFilter::Favorite), "pinned = 1");
+        let mut m = ClipItemMeta {
+            id: 1,
+            kind: ClipKind::Image,
+            created_at: 0,
+            last_used_at: 0,
+            use_count: 1,
+            pinned: false,
+            source: None,
+            preview: String::new(),
+            char_count: None,
+            line_count: None,
+            truncated: false,
+            image: None,
+            files: None,
+            link: None,
+            color: None,
+            name: None,
+            expires_at: None,
+        };
+        assert!(!filter_matches(ClipFilter::Favorite, &m));
+        m.pinned = true;
+        assert!(filter_matches(ClipFilter::Favorite, &m));
+        assert!(filter_matches(ClipFilter::Image, &m) && !filter_matches(ClipFilter::Text, &m));
     }
 }

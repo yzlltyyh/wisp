@@ -581,7 +581,8 @@ fn remote_config_is_applied_unless_changed_locally_during_the_cycle() {
             Domain::Clip,
             vec![RemoteChange::ClipPin {
                 hash: [1; 32],
-                pinned: true
+                pinned: true,
+                name: None,
             }]
         ),
         Err(wisp_sync::LocalError::Unavailable)

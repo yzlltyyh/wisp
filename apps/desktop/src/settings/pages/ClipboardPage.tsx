@@ -1,7 +1,7 @@
 /**
- * 设置 → 剪贴板：监听开关与暂停、记录类型、保留（条数不含置顶 / 天数 / 单条上限）、隐私（疑似密钥跳过、托盘提示）、
- * 排除应用（从最近复制过的应用里选，或手动填应用标识）、面板（位置、单击 / 双击粘贴、提示条）、应用内粘贴键映射
- * （终端等）、清空历史（保留置顶，二次确认）。
+ * 设置 → 剪贴板：监听开关与暂停、记录类型、保留（条数不含收藏 / 天数 / 单条上限）、隐私（疑似密钥跳过、托盘提示）、
+ * 排除应用（从最近复制过的应用里选，或手动填应用标识）、智能识别（哪些片段显示为芯片、验证码到时自动删除）、面板（位置、
+ * 单击 / 双击粘贴、提示条）、应用内粘贴键映射（终端等）、清空历史（保留收藏，二次确认）。
  */
 import { AppWindow, Plus, Trash2, X } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
@@ -15,6 +15,7 @@ import type {
   ExcludedApp,
   OsKind,
   PasteOn,
+  SmartSettings,
   SourceApp,
 } from '../../shared/ipc/types'
 import { presets, usePreset } from '../../shared/motion/presets'
@@ -216,6 +217,8 @@ export default function ClipboardPage() {
         <ExcludedApps apps={c.excluded_apps} />
       </Section>
 
+      <SmartSection smart={c.smart} />
+
       <Section title={t('settings.clipboard.panel')}>
         <SegmentRow<ClipPanelPosition>
           label={t('settings.clipboard.position')}
@@ -267,6 +270,36 @@ export default function ClipboardPage() {
         />
       </Section>
     </Page>
+  )
+}
+
+/**
+ * 智能识别：四类片段各一个开关（证件与银行卡号是敏感信息，默认关闭，说明里写明），以及验证码到时自动删除。识别本身
+ * 在 Rust 里按需进行，这里只改设置（随设置同步）
+ */
+function SmartSection({ smart }: { smart: SmartSettings }) {
+  const t = useT()
+  const rows = [
+    ['contacts', 'smart_contacts'],
+    ['codes', 'smart_codes'],
+    ['numbers', 'smart_numbers'],
+    ['identity', 'smart_identity'],
+    ['otp_auto_delete', 'otp_auto_delete'],
+  ] as const
+  return (
+    <Section title={t('settings.clipboard.smart')} description={t('settings.clipboard.smart_desc')}>
+      {rows.map(([key, label]) => (
+        <SwitchRow
+          key={key}
+          label={t(`settings.clipboard.${label}`)}
+          description={t(`settings.clipboard.${label}_desc`)}
+          checked={smart[key]}
+          onChange={(v) => void patchSettings(at(`clipboard.smart.${key}`, v))}
+          ariaLabel={t(`settings.clipboard.${label}`)}
+          data-testid={`clip-smart-${key}`}
+        />
+      ))}
+    </Section>
   )
 }
 

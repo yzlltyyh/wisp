@@ -228,6 +228,43 @@ pub struct ClearValue {
     pub wall_ms: i64,
 }
 
+/// `p/<hash>`（剪贴板收藏）寄存器的值：`{"pin": bool, "name"?: string}`。
+///
+/// 读取时同时接受裸的 `bool`（只有收藏状态、没有名称）：值对象化之前写下的记录、以及测试与模拟器里的手写记录都按
+/// 同一口径解释。名称属于收藏：取消收藏时不写名称，读取时也忽略未收藏条目的名称。名称的长度与字符规则由本机在写入数据库
+/// 前清理（不合规的按没有名称处理），这里只搬运
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PinValue {
+    pub pin: bool,
+    pub name: Option<String>,
+}
+
+impl PinValue {
+    /// 从记录的值解析；既不是 bool 也不是带 `pin` 的对象时为 None（更新的版本写下的未知形态，按「没有寄存器」处理）
+    pub fn parse(v: &Value) -> Option<PinValue> {
+        if let Some(pin) = v.as_bool() {
+            return Some(PinValue { pin, name: None });
+        }
+        let pin = v.get("pin")?.as_bool()?;
+        let name = v
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|n| pin && !n.is_empty())
+            .map(str::to_owned);
+        Some(PinValue { pin, name })
+    }
+
+    /// 写进记录的值（总是对象形态；没有名称时省略 `name`）
+    pub fn to_value(&self) -> Value {
+        let mut obj = serde_json::Map::new();
+        obj.insert("pin".into(), Value::Bool(self.pin));
+        if let Some(name) = self.name.as_deref().filter(|_| self.pin) {
+            obj.insert("name".into(), Value::String(name.to_owned()));
+        }
+        Value::Object(obj)
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // key 的拼写
 // ---------------------------------------------------------------------------------------------
@@ -248,7 +285,7 @@ pub mod keys {
         format!("c/{}", hex(hash))
     }
 
-    /// `p/<hash hex>`：置顶状态
+    /// `p/<hash hex>`：收藏状态与名称（[`super::PinValue`]）
     pub fn clip_pin(hash: &[u8; 32]) -> String {
         format!("p/{}", hex(hash))
     }
@@ -632,6 +669,36 @@ mod tests {
         assert_eq!(serde_json::from_value::<Record>(tomb_json).unwrap(), tomb);
         assert_eq!(serde_json::from_value::<Record>(null_json).unwrap(), null);
         assert!(tomb.is_tombstone() && !null.is_tombstone());
+    }
+
+    #[test]
+    fn pin_values_accept_bools_and_objects() {
+        let named = PinValue {
+            pin: true,
+            name: Some("Home".into()),
+        };
+        assert_eq!(named.to_value(), json!({"pin": true, "name": "Home"}));
+        assert_eq!(PinValue::parse(&named.to_value()), Some(named));
+        // 裸 bool：只有收藏状态
+        assert_eq!(PinValue::parse(&json!(true)), Some(PinValue { pin: true, name: None }));
+        assert_eq!(PinValue::parse(&json!(false)), Some(PinValue::default()));
+        // 未收藏的名称不算数，写出时也不带
+        assert_eq!(
+            PinValue::parse(&json!({"pin": false, "name": "x"})),
+            Some(PinValue::default())
+        );
+        let unpinned = PinValue {
+            pin: false,
+            name: Some("x".into()),
+        };
+        assert_eq!(unpinned.to_value(), json!({"pin": false}));
+        // 空名称按没有名称处理；看不懂的形态为 None
+        assert_eq!(
+            PinValue::parse(&json!({"pin": true, "name": ""})),
+            Some(PinValue { pin: true, name: None })
+        );
+        assert_eq!(PinValue::parse(&json!({"name": "x"})), None);
+        assert_eq!(PinValue::parse(&json!("true")), None);
     }
 
     #[test]

@@ -25,8 +25,10 @@ use wisp_types::{
 
 use crate::assets::AssetRegistry;
 use crate::error::{IpcError, IpcErrorCode};
+use crate::windows::panel::PANEL_LABEL;
 
 use super::engine::Engine;
+use super::paste::{PasteHost, PasteRequest, PasteSource};
 use super::port::{ClipView, Exec, Host, OffscreenWait, Port, TargetCheck};
 use super::retention::{CleanupReport, Plan, QUIET, plan};
 use super::watch::{Capture, process_with};
@@ -51,6 +53,14 @@ pub(super) enum Call {
     PasteInto {
         plain: bool,
     },
+    /// 悬浮剪贴板交还键盘焦点（值是目标应用 id）
+    FloatYield(String),
+    /// 连续粘贴：装上 / 卸下拦下粘贴键的钩子、重放一次粘贴键（值是主键名）
+    HookInstall,
+    HookRemove,
+    Replay(&'static str),
+    /// 连续粘贴期间的全局 Esc
+    EscGuard(bool),
     Toast(CopiedReason),
     Perf(String),
 }
@@ -146,11 +156,13 @@ impl Paste for MockPaste {
 pub(super) struct MockFocus {
     log: Log,
     pub(super) activate_result: Mutex<Result<(), PlatformError>>,
+    /// 当前的前台应用（悬浮窗与队列的粘贴目标）
+    pub(super) frontmost: Mutex<Option<AppRef>>,
 }
 
 impl FocusTracker for MockFocus {
     fn frontmost(&self) -> Option<AppRef> {
-        None
+        self.frontmost.lock().clone()
     }
 
     fn activate(&self, app: &AppRef) -> Result<(), PlatformError> {
@@ -189,11 +201,80 @@ impl AppInfo for MockApps {
     }
 }
 
+/// 钩子装上之后平台层的信号出口
+type SignalSink = Arc<dyn Fn(wisp_platform::InputSignal) + Send + Sync>;
+
+/// 连续粘贴的钩子：记下装卸与重放；`sink` 是装上之后平台层的信号出口（测试经 [`MockHooks::press`] 模拟按键）
+pub(super) struct MockHooks {
+    log: Log,
+    pub(super) sink: Arc<Mutex<Option<SignalSink>>>,
+    pub(super) keys: Mutex<Option<wisp_platform::PasteKeys>>,
+    pub(super) install_error: Mutex<Option<wisp_platform::HookError>>,
+    pub(super) replay_error: Mutex<Option<wisp_platform::HookError>>,
+    pub(super) unavailable: Mutex<Option<String>>,
+}
+
+impl MockHooks {
+    /// 模拟平台层拦下一次粘贴键（钩子没装时什么都不发生：按键照常交给应用）
+    pub(super) fn press(&self, chord: wisp_platform::KeyChord) -> bool {
+        let sink = self.sink.lock().clone();
+        match sink {
+            Some(sink) => {
+                sink(wisp_platform::InputSignal::PasteKey { chord });
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub(super) fn signal(&self, sig: wisp_platform::InputSignal) {
+        let sink = self.sink.lock().clone();
+        if let Some(sink) = sink {
+            sink(sig);
+        }
+    }
+
+    pub(super) fn installed(&self) -> bool {
+        self.sink.lock().is_some()
+    }
+}
+
+impl super::port::PasteKeyHooks for MockHooks {
+    fn install(
+        &self,
+        keys: wisp_platform::PasteKeys,
+        sink: Box<dyn Fn(wisp_platform::InputSignal) + Send + Sync>,
+    ) -> Result<HookHandle, wisp_platform::HookError> {
+        if let Some(e) = self.install_error.lock().clone() {
+            return Err(e);
+        }
+        self.log.lock().push(Call::HookInstall);
+        *self.keys.lock() = Some(keys);
+        *self.sink.lock() = Some(Arc::from(sink));
+        let log = Arc::clone(&self.log);
+        let slot = Arc::clone(&self.sink);
+        Ok(HookHandle::new(move || {
+            slot.lock().take();
+            log.lock().push(Call::HookRemove);
+        }))
+    }
+
+    fn replay(&self, chord: wisp_platform::KeyChord) -> Result<(), wisp_platform::HookError> {
+        self.log.lock().push(Call::Replay(chord.code));
+        self.replay_error.lock().clone().map_or(Ok(()), Err)
+    }
+
+    fn unavailable(&self) -> Option<String> {
+        self.unavailable.lock().clone()
+    }
+}
+
 pub(super) struct MockPort {
     pub(super) clipboard: MockClipboard,
     pub(super) paste: MockPaste,
     pub(super) focus: MockFocus,
     pub(super) apps: MockApps,
+    pub(super) hooks: MockHooks,
     /// Windows 预激活前的检查结果
     pub(super) target_check: Mutex<TargetCheck>,
     /// 平台报告的「模拟粘贴键」能力（默认可用）
@@ -223,6 +304,10 @@ impl Port for MockPort {
 
     fn paste_inject(&self) -> Capability {
         self.paste_inject.lock().clone()
+    }
+
+    fn paste_hooks(&self) -> &dyn super::port::PasteKeyHooks {
+        &self.hooks
     }
 }
 
@@ -286,6 +371,16 @@ pub(super) struct MockHost {
     pub(super) on_emit: Hook,
     /// 最近分配的面板会话 id
     sessions: AtomicU64,
+    /// 面板会话触发时的前台应用（面板宿主的粘贴目标）
+    pub(super) prev_app: Mutex<Option<AppRef>>,
+    /// 悬浮窗能否交还键盘焦点
+    pub(super) float_yields: AtomicBool,
+    /// 悬浮窗已就绪（事件同时推给它）
+    pub(super) float_ready: AtomicBool,
+    /// 推给悬浮窗的 `clipboard:changed`
+    pub(super) float_events: Mutex<Vec<ClipboardChanged>>,
+    /// 连续粘贴的进度推送（状态, 是否带 toast）
+    pub(super) queue_events: Mutex<Vec<(wisp_types::QueueStatus, bool)>>,
 }
 
 impl MockHost {
@@ -314,6 +409,38 @@ impl Host for MockHost {
 
     fn session_live(&self, session: u64) -> bool {
         self.view().session() == Some(session)
+    }
+
+    fn panel_prev_app(&self, session: u64) -> Option<AppRef> {
+        // 只有当前会话有记录（与窗口层一致：会话结束后取不到）
+        self.view()
+            .session()
+            .filter(|s| *s == session)
+            .and_then(|_| self.prev_app.lock().clone())
+    }
+
+    fn float_yield(&self, target: &AppRef) -> bool {
+        self.log.lock().push(Call::FloatYield(target.id.clone()));
+        self.float_yields.load(Ordering::SeqCst)
+    }
+
+    fn float_ready(&self) -> bool {
+        self.float_ready.load(Ordering::SeqCst)
+    }
+
+    fn emit_float(&self, change: &ClipboardChanged) {
+        self.float_events.lock().push(change.clone());
+    }
+
+    fn queue_changed(&self, status: &wisp_types::QueueStatus, toast: Option<ToastPayload>) {
+        if let Some(t) = &toast {
+            assert_eq!(t.queue, Some(*status), "进度 toast 带的就是这次的进度");
+        }
+        self.queue_events.lock().push((*status, toast.is_some()));
+    }
+
+    fn queue_escape_guard(&self, active: bool) {
+        self.log.lock().push(Call::EscGuard(active));
     }
 
     fn panel_hidden(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
@@ -483,11 +610,20 @@ pub(super) fn mock_port(log: &Log) -> Arc<MockPort> {
         focus: MockFocus {
             log: Arc::clone(log),
             activate_result: Mutex::new(Ok(())),
+            frontmost: Mutex::default(),
         },
         apps: MockApps {
             icon: AtomicBool::new(true),
             calls: AtomicUsize::new(0),
             running: Mutex::default(),
+        },
+        hooks: MockHooks {
+            log: Arc::clone(log),
+            sink: Arc::default(),
+            keys: Mutex::default(),
+            install_error: Mutex::default(),
+            replay_error: Mutex::default(),
+            unavailable: Mutex::default(),
         },
         target_check: Mutex::new(Ok(())),
         paste_inject: Mutex::new(Capability::yes()),
@@ -515,6 +651,11 @@ pub(super) fn mock_host(log: &Log) -> Arc<MockHost> {
         on_toast: Mutex::default(),
         on_emit: Mutex::default(),
         sessions: AtomicU64::new(1),
+        prev_app: Mutex::default(),
+        float_yields: AtomicBool::new(true),
+        float_ready: AtomicBool::new(false),
+        float_events: Mutex::default(),
+        queue_events: Mutex::default(),
     })
 }
 
@@ -556,6 +697,16 @@ pub(super) fn app(id: &str) -> AppRef {
     }
 }
 
+/// 面板会话 `session` 里粘贴条目 `id` 的请求（在 mock 的钩子里直接调用 `Engine::paste` 时用）
+pub(super) fn panel_item(session: u64, id: i64) -> PasteRequest {
+    PasteRequest {
+        source: PasteSource::Item { id, transform: None },
+        mode: PasteMode::Normal,
+        host: PasteHost::Panel { session },
+        selected_at: Instant::now(),
+    }
+}
+
 /// 一条文本条目的元数据（纯函数的单测用）
 pub(super) fn text_meta() -> ClipItemMeta {
     ClipItemMeta {
@@ -574,6 +725,8 @@ pub(super) fn text_meta() -> ClipItemMeta {
         files: None,
         link: None,
         color: None,
+        name: None,
+        expires_at: None,
     }
 }
 
@@ -625,8 +778,31 @@ impl Rig {
         *self.host.settings.write() = Arc::new(s);
     }
 
+    /// 在面板里粘贴一个条目：目标应用记为当前面板会话的 `prev_app`，宿主按面板窗口推出（与命令层相同）
     pub(super) fn paste(&self, id: i64, mode: PasteMode, target: Option<AppRef>) -> Result<PasteOutcome, IpcError> {
-        self.engine.paste(id, mode, target, Instant::now())
+        self.paste_from(PANEL_LABEL, PasteSource::Item { id, transform: None }, mode, target)
+    }
+
+    /// 从某个窗口发起一次粘贴（宿主按 label 推出）。面板的目标应用是会话的 `prev_app`，悬浮窗是当前的前台应用
+    pub(super) fn paste_from(
+        &self,
+        label: &str,
+        source: PasteSource,
+        mode: PasteMode,
+        target: Option<AppRef>,
+    ) -> Result<PasteOutcome, IpcError> {
+        let host = PasteHost::of_window(label, self.host.view().session())?;
+        if label == PANEL_LABEL {
+            *self.host.prev_app.lock() = target;
+        } else {
+            *self.port.focus.frontmost.lock() = target;
+        }
+        self.engine.paste(PasteRequest {
+            source,
+            mode,
+            host,
+            selected_at: Instant::now(),
+        })
     }
 
     /// 重新打开剪贴板面板（新的会话，已显示）

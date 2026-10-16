@@ -533,6 +533,27 @@ describe('已连接', () => {
     expect(useSettingsStore.getState().notice).toBeNull()
   })
 
+  it('验证码是「剪贴板历史」的子开关：单独关闭只写 verification_codes；剪贴板历史关闭时禁用并显示为关', async () => {
+    const h = installHarness(connectedSnapshot())
+    renderSync(h)
+    await screen.findByTestId('sync-connected')
+    const codes = () => screen.getByTestId('sync-content-verification_codes-switch')
+    expect(codes()).toBeEnabled()
+    expect(codes()).toBeChecked()
+    await userEvent.click(codes())
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
+    expect(h.callsOf('settings_patch')[0]?.patch).toEqual({
+      sync: { content: { verification_codes: false } },
+    })
+    await userEvent.click(screen.getByTestId('sync-content-clipboard-switch'))
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(2))
+    expect(codes()).toBeDisabled()
+    expect(codes()).not.toBeChecked()
+    expect(screen.getByTestId('sync-content-verification_codes')).toHaveTextContent(
+      '需要先同步剪贴板历史',
+    )
+  })
+
   it('设备：本机在前并标「本机」，其余显示系统与最近同步时间', async () => {
     const h = installHarness(connectedSnapshot())
     h.handle('sync_devices', () => devices)

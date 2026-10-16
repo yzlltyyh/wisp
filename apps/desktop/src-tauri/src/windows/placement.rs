@@ -271,19 +271,28 @@ pub fn height_cap(screen: &Screen, max_height_ratio: f64) -> f64 {
     (screen.work.height * ratio).floor().max(MIN_CARD_HEIGHT)
 }
 
-/// 剪贴板视图的尺寸（逻辑 px），与前端 `views/clipboard/model.ts` 同名常量一致（Rust 据此预估打开高度）
+/// 剪贴板视图的尺寸（逻辑 px），与前端 `views/clipboard/model.ts` 同名常量一致（Rust 据此预估打开高度；
+/// 测试 `clipboard_rows_match_frontend` 直接读 model.ts 核对，前端改了数值这里会失败）
 pub mod clipboard_rows {
     pub const ROW: f64 = 44.0;
     pub const IMAGE_ROW: f64 = 64.0;
+    /// 分组标题（「收藏 / 最近」）
     pub const GROUP: f64 = 28.0;
+    /// 收藏分组末尾的「查看全部 N 个收藏」行（前端 `MORE_HEIGHT`）
+    pub const MORE: f64 = 28.0;
+    /// 「全部」列表里收藏分组最多列出几条，多出的由「查看全部」行代表（前端 `FAVORITES_PREVIEW`）
+    pub const FAVORITES_PREVIEW: usize = 5;
     pub const LIST_PADDING: f64 = 4.0;
     pub const HEADER: f64 = 48.0;
     pub const HINT: f64 = 36.0;
     /// 「已暂停」横幅的条带（上 8 + 横幅 40 + 下 4）
     pub const BANNER: f64 = 52.0;
     pub const EMPTY: f64 = 176.0;
-    /// 打开高度的下限（头部 + 类型过滤菜单放得下，前端 `OPEN_MIN_HEIGHT`）
-    pub const OPEN_MIN: f64 = HEADER + 4.0 + (7.0 * 28.0 + 8.0) + 8.0;
+    /// 类型过滤菜单的项数（全部、收藏、文本、图片、文件、链接、代码、颜色；前端 `FILTERS`）
+    pub const FILTER_ITEMS: f64 = 8.0;
+    /// 打开高度的下限：头部下方放得下整个类型过滤菜单（每项 28 + 菜单内边距 8），前端 `OPEN_MIN_HEIGHT`。
+    /// 剪贴板卡片在会话内只增不减，菜单若放不下会把卡片撑高、之后视图就比卡片矮了，所以下限按菜单算
+    pub const OPEN_MIN: f64 = HEADER + 4.0 + (FILTER_ITEMS * 28.0 + 8.0) + 8.0;
 }
 
 /// 剪贴板视图顶部是否有记录状态横幅，与前端 `ClipboardView` 的 `banner` 同一规则：
@@ -297,37 +306,68 @@ pub fn clipboard_has_banner(payload: &wisp_types::ClipboardPayload) -> bool {
 
 /// 剪贴板面板打开时卡片的预估高度：居中放置按「卡片中心在工作区高度 1/3 处」算位置，原先一律按初始
 /// 高度 240 算，卡片随后向下长到 560，有历史时（常见情况）整张卡片偏下（中心约在 52% 处）。按首屏载荷估算前端的
-/// `clamp(内容, 下限, min(560, 上限))`：头部 + 横幅（[`clipboard_has_banner`]）+ 提示条 + 列表（分组标题与行），
-/// 没有条目时是空状态
+/// `clamp(内容, 下限, min(560, 上限))`：头部 + 横幅（[`clipboard_has_banner`]）+ 提示条 + 列表
+/// （[`clipboard_list_height`]），没有条目时是空状态
 pub fn clipboard_estimated_height(payload: &wisp_types::ClipboardPayload, cap: f64) -> f64 {
     use clipboard_rows as r;
-    let page = &payload.page;
     let banner = clipboard_has_banner(payload);
     let chrome = r::HEADER + if banner { r::BANNER } else { 0.0 } + if payload.hint_bar { r::HINT } else { 0.0 };
-    let list = if page.items.is_empty() {
+    let list = if payload.page.items.is_empty() {
         r::EMPTY
     } else {
-        let mut h = 2.0 * r::LIST_PADDING;
-        let mut group: Option<bool> = None;
-        for hit in &page.items {
-            let pinned = hit.item.pinned;
-            if group != Some(pinned) {
-                h += r::GROUP;
-                group = Some(pinned);
-            }
-            h += if hit.item.kind == wisp_types::ClipKind::Image {
-                r::IMAGE_ROW
-            } else {
-                r::ROW
-            };
-            if h + chrome >= CLIPBOARD_MAX_HEIGHT {
-                break;
-            }
-        }
-        h
+        // 超过最大高度之后的行不影响结果（总会被封顶），不必再数
+        clipboard_list_height(
+            &payload.page,
+            payload.favorites_collapsed,
+            CLIPBOARD_MAX_HEIGHT - chrome,
+        )
     };
     let hi = CLIPBOARD_MAX_HEIGHT.min(cap).max(MIN_CARD_HEIGHT);
     (chrome + list).clamp(r::OPEN_MIN.min(hi), hi)
+}
+
+/// 打开时（「全部」、没有检索）列表内容的高度，逐行镜像前端 `buildRows(hits, { collapsed, cap: FAVORITES_PREVIEW })`
+/// 与 `listContentHeight`：首尾留白各 4；每进入一组加一个分组标题；收藏分组折叠时只留标题，展开时只列前 5 条，
+/// 收藏多于 5 条时在分组末尾加一行「查看全部」。收藏条数按这一页里的条目数（与前端一致，不用 `pinned_count`）。
+/// 内容达到 `stop_at` 就停下（调用方只关心封顶之前的部分）
+fn clipboard_list_height(page: &wisp_types::ClipPage, collapsed: bool, stop_at: f64) -> f64 {
+    use clipboard_rows as r;
+    let favorites = page.items.iter().filter(|h| h.item.pinned).count();
+    // 离开收藏分组时，没列全的收藏由「查看全部」行代表（折叠时连它也不显示）
+    let more = |listed: usize| {
+        if !collapsed && listed < favorites { r::MORE } else { 0.0 }
+    };
+    let mut h = 2.0 * r::LIST_PADDING;
+    let mut group: Option<bool> = None;
+    let mut listed = 0usize;
+    for hit in &page.items {
+        let pinned = hit.item.pinned;
+        if group != Some(pinned) {
+            if group == Some(true) {
+                h += more(listed);
+            }
+            h += r::GROUP;
+            group = Some(pinned);
+        }
+        if pinned {
+            if collapsed || listed >= r::FAVORITES_PREVIEW {
+                continue;
+            }
+            listed += 1;
+        }
+        h += if hit.item.kind == wisp_types::ClipKind::Image {
+            r::IMAGE_ROW
+        } else {
+            r::ROW
+        };
+        if h >= stop_at {
+            return h;
+        }
+    }
+    if group == Some(true) {
+        h += more(listed);
+    }
+    h
 }
 
 /// 剪贴板面板打开时的锁定高度：`clamp(内容, 240, min(560, 上限))`
@@ -1054,6 +1094,8 @@ mod tests {
             } else {
                 wisp_types::ClipboardRecording::Recording
             },
+            favorites_collapsed: false,
+            queue_unavailable: None,
         }
     }
 
@@ -1067,7 +1109,7 @@ mod tests {
         // 3 条：头部 48 + 分组 28 + 3 × 44 + 首尾留白 8 + 提示条 36 = 252，低于菜单下限时取下限
         let few = clipboard_estimated_height(&clip_payload(3, 0, false, true), cap);
         assert_eq!(few, clipboard_rows::OPEN_MIN.max(252.0));
-        // 置顶 + 最近两组、暂停横幅
+        // 收藏 + 最近两组、暂停横幅
         let two_groups = clipboard_estimated_height(&clip_payload(4, 1, true, false), cap);
         assert_eq!(
             two_groups,
@@ -1083,6 +1125,95 @@ mod tests {
         assert!(
             (center - third).abs() <= 1.0 || card.y <= s.work.y + EDGE_INSET + 1.0,
             "{center} vs {third}"
+        );
+    }
+
+    /// 尺寸常量直接对照前端 model.ts（唯一来源）：前端改了行高、收藏上限或过滤项数而这里没跟上时失败
+    #[test]
+    fn clipboard_rows_match_frontend() {
+        use clipboard_rows as r;
+        let model = include_str!("../../../src/views/clipboard/model.ts");
+        let compact: String = model.chars().filter(|c| !c.is_whitespace()).collect();
+        for decl in [
+            format!("exportconstROW_HEIGHT={}", r::ROW),
+            format!("exportconstIMAGE_ROW_HEIGHT={}", r::IMAGE_ROW),
+            format!("exportconstGROUP_HEIGHT={}", r::GROUP),
+            format!("exportconstMORE_HEIGHT={}", r::MORE),
+            format!("exportconstFAVORITES_PREVIEW={}", r::FAVORITES_PREVIEW),
+            format!("exportconstLIST_PADDING={}", r::LIST_PADDING),
+            format!("exportconstHEADER_HEIGHT={}", r::HEADER),
+            format!("exportconstHINT_HEIGHT={}", r::HINT),
+            format!("exportconstEMPTY_HEIGHT={}", r::EMPTY),
+            format!("exportconstOPEN_MAX_HEIGHT={CLIPBOARD_MAX_HEIGHT}"),
+            format!(
+                "exportconstOPEN_MIN_HEIGHT=HEADER_HEIGHT+4+({}*28+8)+8",
+                r::FILTER_ITEMS
+            ),
+        ] {
+            assert!(compact.contains(&decl), "model.ts 里找不到 `{decl}`");
+        }
+        // 横幅条带 = 上留白 + 横幅 + 下留白
+        let banner = ["BANNER_TOP", "BANNER_BOX", "BANNER_BOTTOM"]
+            .iter()
+            .map(|name| {
+                let key = format!("exportconst{name}=");
+                let at = compact
+                    .find(&key)
+                    .unwrap_or_else(|| panic!("model.ts 里找不到 `{key}`"))
+                    + key.len();
+                let digits: String = compact[at..].chars().take_while(char::is_ascii_digit).collect();
+                digits.parse::<f64>().expect("数值")
+            })
+            .sum::<f64>();
+        assert_eq!(banner, r::BANNER);
+        // 过滤菜单的项数
+        let key = "exportconstFILTERS:readonlyClipFilter[]=[";
+        let at = compact.find(key).expect("model.ts 里找不到 FILTERS") + key.len();
+        let list = &compact[at..at + compact[at..].find(']').expect("FILTERS 的结尾")];
+        let items = list.split(',').filter(|s| !s.is_empty()).count();
+        assert_eq!(items as f64, r::FILTER_ITEMS, "FILTERS = [{list}]");
+        assert_eq!(r::OPEN_MIN, 292.0);
+    }
+
+    /// 「全部」列表的收藏分组：与前端 model.test.ts 的「Rust 高度镜像」用例是同一组样例与数值（两边各自断言，
+    /// 任何一边的算式变了都会失败）
+    #[test]
+    fn clipboard_list_mirrors_favorites_layout() {
+        let list = |favorites: usize, recent: usize, collapsed: bool| {
+            clipboard_list_height(&clip_page(favorites + recent, favorites), collapsed, f64::INFINITY)
+        };
+        // 没有收藏：「最近」标题 + 行
+        assert_eq!(list(0, 3, false), 8.0 + 28.0 + 3.0 * 44.0);
+        assert_eq!(list(0, 3, false), 168.0);
+        // 只有收藏：展开列出全部（不超过 5 条）；折叠只留标题
+        assert_eq!(list(3, 0, false), 168.0);
+        assert_eq!(list(3, 0, true), 36.0);
+        // 刚好 5 条：不加「查看全部」
+        assert_eq!(list(5, 2, false), 8.0 + 28.0 + 5.0 * 44.0 + 28.0 + 2.0 * 44.0);
+        assert_eq!(list(5, 2, false), 372.0);
+        // 7 条：只列前 5 条 +「查看全部」行，然后是「最近」
+        assert_eq!(list(7, 2, false), 8.0 + 28.0 + 5.0 * 44.0 + 28.0 + 28.0 + 2.0 * 44.0);
+        assert_eq!(list(7, 2, false), 400.0);
+        // 只有收藏且多于 5 条：「查看全部」在最后
+        assert_eq!(list(7, 0, false), 284.0);
+        // 折叠：收藏标题 +「最近」标题 + 行；没有最近时只剩收藏标题
+        assert_eq!(list(7, 2, true), 8.0 + 28.0 + 28.0 + 2.0 * 44.0);
+        assert_eq!(list(7, 2, true), 152.0);
+        assert_eq!(list(7, 0, true), 36.0);
+        assert_eq!(list(50, 2, false), 400.0);
+
+        // 打开高度按载荷里的折叠状态算：头部 48 + 提示条 36 + 列表（上限取最大高度，不让屏幕高度先封顶）
+        let cap = CLIPBOARD_MAX_HEIGHT;
+        let mut p = clip_payload(9, 7, false, true);
+        assert_eq!(clipboard_estimated_height(&p, cap), 84.0 + 400.0);
+        p.favorites_collapsed = true;
+        // 84 + 152 = 236，低于过滤菜单的下限
+        assert_eq!(clipboard_estimated_height(&p, cap), clipboard_rows::OPEN_MIN);
+        // 大量收藏：展开时只列前 5 条，不会因为收藏多就顶到最大高度
+        let many = clip_payload(52, 50, false, true);
+        assert_eq!(
+            clipboard_estimated_height(&many, cap),
+            84.0 + 8.0 + 28.0 + 5.0 * 44.0 + 28.0 + 28.0 + 2.0 * 44.0
         );
     }
 

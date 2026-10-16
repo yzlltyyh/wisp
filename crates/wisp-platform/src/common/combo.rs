@@ -177,6 +177,33 @@ impl Combo {
     }
 }
 
+/// 可按值复制的组合键：主键是键码表里的静态名。钩子规格按值传递、钩子回调里逐键比较，不能带堆上的字符串，
+/// 所以用它而不是 [`Combo`]；两者可以互相转换
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyChord {
+    pub modifiers: Modifiers,
+    /// W3C `KeyboardEvent.code` 风格的主键名（键码表里的静态串）
+    pub code: &'static str,
+}
+
+impl KeyChord {
+    /// 由 [`Combo`] 得出；主键不在键码表里时为 None
+    pub fn of(combo: &Combo) -> Option<Self> {
+        normalize_code(&combo.code).map(|code| Self {
+            modifiers: combo.modifiers,
+            code,
+        })
+    }
+
+    /// 转回 [`Combo`]（发键、格式化用）
+    pub fn to_combo(self) -> Combo {
+        Combo {
+            modifiers: self.modifiers,
+            code: self.code.to_owned(),
+        }
+    }
+}
+
 /// 把任意 global-hotkey 风格的字符串规范化为规范串（修饰键顺序 Control+Alt+Shift+Super，主键为 W3C code）；
 /// 无法解析时返回 None。所有组合键比较都以它的输出为准
 pub fn canonical(s: &str) -> Option<String> {

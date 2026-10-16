@@ -440,6 +440,7 @@ impl Env for FakeEnv {
         HiddenSet {
             panel: live.is_some(),
             pinned: vec!["p-hidden".to_owned()],
+            ..HiddenSet::default()
         }
     }
     fn restore_after_capture(&self, set: HiddenSet) {
@@ -523,6 +524,8 @@ impl Env for FakeEnv {
             paste_on_double_click: false,
             unavailable: None,
             recording: wisp_types::ClipboardRecording::Recording,
+            favorites_collapsed: false,
+            queue_unavailable: None,
         }
     }
     fn clipboard_has_current(&self) -> bool {
@@ -1352,6 +1355,56 @@ async fn capture_permission_and_failures_show_cards() {
     assert_eq!(ocr_payload(&req).not_ready, Some(NotReady::NoVisionModel));
     assert_eq!(ocr_payload(&req).mode, OcrMode::Translate);
     assert!(!env.called("capture_all"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn clipboard_images_are_recognised_like_a_capture() {
+    let (env, core) = setup(configured());
+    // 剪贴板图片「识别文字」：没有截图与框选，同一段启动流程，面板交叉淡入
+    core.dispatch(Command::OcrImage {
+        image: gray_image(120, 30),
+        origin: TriggerOrigin::Clipboard,
+    });
+    until("panel", WAIT, || env.prepare_count() == 1).await;
+    let (req, _) = env.last_prepare().expect("prepare");
+    assert_eq!(req.view, PanelView::Ocr);
+    assert_eq!(req.transition, PanelTransition::Crossfade);
+    let payload = ocr_payload(&req);
+    assert_eq!(payload.not_ready, None);
+    assert_eq!(payload.mode, OcrMode::Lines);
+    assert_eq!(payload.image_size, PhysSize { width: 120, height: 30 });
+    assert!(!env.called("capture_all"), "现成的图片不截图");
+    // 请求与截图 OCR 相同：可以接上流、结果自动复制，缩略图可取
+    let id = payload.request_id.clone().expect("request");
+    let sink = Collector::new();
+    core.stream_attach(&RequestCaller::Panel, &id, sink.clone())
+        .expect("attach");
+    until("ocr done", WAIT, || sink.terminal().is_some()).await;
+    assert!(matches!(
+        sink.terminal(),
+        Some(StreamEvent::Done { no_text: false, .. })
+    ));
+    let thumb = format!("{}.png", payload.capture_id);
+    assert!(CropSource(Arc::clone(&core.captures)).fetch(&thumb).is_some());
+
+    // 没有视觉模型：显示未就绪卡片（同样交叉淡入），不发请求
+    let mut s = configured();
+    s.defaults.ocr = None;
+    let (env, core) = setup(s);
+    core.dispatch(Command::OcrImage {
+        image: gray_image(8, 8),
+        origin: TriggerOrigin::Clipboard,
+    });
+    until("card", WAIT, || env.prepare_count() == 1).await;
+    let (req, _) = env.last_prepare().expect("prepare");
+    assert_eq!(req.transition, PanelTransition::Crossfade);
+    assert_eq!(ocr_payload(&req).not_ready, Some(NotReady::NoVisionModel));
+    assert_eq!(env.llm_count(), 0);
+}
+
+fn gray_image(width: u32, height: u32) -> wisp_capture::RgbaImage {
+    let len = usize::try_from(width * height * 4).expect("size");
+    wisp_capture::RgbaImage::from_raw(width, height, vec![250; len]).expect("pixels")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

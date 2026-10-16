@@ -8,6 +8,7 @@ use image::{ExtendedColorType, ImageEncoder, RgbaImage};
 use wisp_types::Protocol;
 
 use crate::crop::{fit_dims, resize_rgba};
+use crate::error::CaptureError;
 use crate::pixel;
 
 /// 编码结果
@@ -178,6 +179,14 @@ pub fn reencode_for_llm(bytes: &[u8], protocol: Protocol) -> Option<EncodedImage
     Some(encode_for_llm(&img, protocol))
 }
 
+/// 把已有的图片文件内容（PNG / JPEG）解码成 RGBA，供「识别图片里的文字」走与截图相同的缩放与编码（剪贴板里的图片）。
+/// 解码失败时的错误信息只有格式层面的原因，不含像素内容
+pub fn decode_image(bytes: &[u8]) -> Result<RgbaImage, CaptureError> {
+    image::load_from_memory(bytes)
+        .map(image::DynamicImage::into_rgba8)
+        .map_err(|e| CaptureError::Backend(format!("image decode failed: {e}")))
+}
+
 /// [`encode_for_llm`] 的本体：按给定上限编码（单测可以用小上限确定性地走完每一级回退）
 pub(crate) fn encode_with_limits(img: &RgbaImage, limits: ImageLimits) -> EncodedImage {
     if img.width() == 0 || img.height() == 0 {
@@ -252,6 +261,14 @@ mod tests {
             Protocol::AnthropicMessages
         ));
         assert!(reencode_for_llm(b"not an image", Protocol::Gemini).is_none());
+    }
+
+    #[test]
+    fn decoding_round_trips_png_and_rejects_garbage() {
+        let img = RgbaImage::from_pixel(3, 2, image::Rgba([1, 2, 3, 128]));
+        let png = encode_png(&img);
+        assert_eq!(decode_image(&png.bytes).expect("decode"), img);
+        assert!(matches!(decode_image(b"not an image"), Err(CaptureError::Backend(_))));
     }
 
     #[test]

@@ -10,7 +10,12 @@
 //! 分两步，耗时的工作都不占存储锁：[`ClipStore::prepare_remote`] 在锁外做本机策略检查（隐私规则、类型开关、大小上限、
 //! 按天数的保留预检）、图片解码与像素 hash、把原图复制成待就位的临时文件；[`ClipStore::apply_remote_many`] 在一个事务里
 //! 落库（最多 [`MAX_REMOTE_BATCH`] 条）。内容不可变：已有条目只合并时间（`created_at` 取较早、`last_used_at` 取较晚）与
-//! 置顶（远端给出时采用远端的，否则保留本机的）。FTS 索引由已有的触发器维护。
+//! 收藏（远端给出时采用远端的置顶与名称，否则保留本机的）。FTS 索引由已有的触发器维护。
+//!
+//! # 收藏与验证码
+//! - 收藏的名称只属于收藏：远端给出「收藏」时名称随之写入（缺省即清除），取消收藏时名称一并去掉（与本机的规则相同）；
+//! - 验证码条目的过期时间是绝对时间，所有设备一致：远端给出时沿用；没给、但本机开启了自动删除且识别为验证码时，
+//!   按 `created_at + 保留时长` 计算（各设备结果相同）。已经过期的不接收（[`RejectReason::Retention`]）。
 //!
 //! 被本机策略拒绝的条目返回原因（[`RejectReason`]，不含内容），调用方据此记为「本机不接收」，同一版本的记录不再重试；
 //! 读写文件之类的暂时性失败返回 [`Rejected::Failed`]，稍后重试。
@@ -33,10 +38,10 @@ use crate::imaging::{self, ImageError, PngInfo};
 use crate::ingest::{IngestPolicy, Prepared, SkipReason, TextRecord, prepare};
 use crate::ocr_history::{mode_from_str, mode_to_str};
 use crate::retention::{RetentionPolicy, age_cutoff};
-use crate::row::kind_from_str;
+use crate::row::{META_OTP, kind_from_str};
 use crate::store::{
-    ClipStore, Inner, NewRow, RowTimes, blob_intact, checkpoint_truncate, delete_items, icon_key_for, ocr_history_row,
-    read_meta,
+    ClipStore, Inner, NewRow, RowTimes, SET_PINNED_SQL, blob_intact, checkpoint_truncate, delete_items, icon_key_for,
+    ocr_history_row, read_meta,
 };
 
 /// 一次 [`ClipStore::apply_remote_many`] / [`ClipStore::ocr_apply_remote`] 最多写入的条数：一个事务持有存储锁的时间
@@ -74,13 +79,19 @@ pub fn parse_hash_hex(s: &str) -> Option<[u8; 32]> {
 // ---------- 剪贴板：类型 ----------
 
 /// 本机一条剪贴板条目的同步元数据（不含正文），启动核对与加入时枚举用
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SyncRow {
     pub hash: [u8; 32],
     pub kind: ClipKind,
     pub created_at: i64,
     pub last_used_at: i64,
     pub pinned: bool,
+    /// 收藏的名称（只有收藏的条目才有）
+    pub name: Option<String>,
+    /// 验证码条目的过期时间（Unix 毫秒）
+    pub expires_at: Option<i64>,
+    /// 记录时识别为验证码（与是否开启自动删除无关；「同步验证码」关闭时据此不发布）
+    pub otp: bool,
 }
 
 impl fmt::Debug for SyncRow {
@@ -90,6 +101,9 @@ impl fmt::Debug for SyncRow {
             .field("created_at", &self.created_at)
             .field("last_used_at", &self.last_used_at)
             .field("pinned", &self.pinned)
+            .field("named", &self.name.is_some())
+            .field("expires_at", &self.expires_at)
+            .field("otp", &self.otp)
             .finish_non_exhaustive()
     }
 }
@@ -142,6 +156,12 @@ pub struct SyncItem {
     pub image: Option<SyncImage>,
     pub source: Option<SyncSource>,
     pub truncated: bool,
+    /// 收藏的名称（只有收藏的条目才有）
+    pub name: Option<String>,
+    /// 验证码条目的过期时间（Unix 毫秒）
+    pub expires_at: Option<i64>,
+    /// 记录时识别为验证码
+    pub otp: bool,
 }
 
 impl fmt::Debug for SyncItem {
@@ -156,6 +176,9 @@ impl fmt::Debug for SyncItem {
             .field("rtf", &self.rtf.is_some())
             .field("image", &self.image)
             .field("truncated", &self.truncated)
+            .field("named", &self.name.is_some())
+            .field("expires_at", &self.expires_at)
+            .field("otp", &self.otp)
             .finish_non_exhaustive()
     }
 }
@@ -178,6 +201,10 @@ pub struct RemoteItem {
     pub image_path: Option<PathBuf>,
     pub source: Option<SyncSource>,
     pub truncated: bool,
+    /// 收藏的名称：只在 `pinned == Some(true)` 时有意义（None = 没有名称）。不合规的名称按没有名称处理
+    pub name: Option<String>,
+    /// 验证码条目的过期时间（Unix 毫秒，记录里的绝对时间）
+    pub expires_at: Option<i64>,
 }
 
 impl fmt::Debug for RemoteItem {
@@ -190,6 +217,8 @@ impl fmt::Debug for RemoteItem {
             .field("text_len", &self.text.as_ref().map(String::len))
             .field("image", &self.image_path.is_some())
             .field("truncated", &self.truncated)
+            .field("named", &self.name.is_some())
+            .field("expires_at", &self.expires_at)
             .finish_non_exhaustive()
     }
 }
@@ -205,7 +234,7 @@ pub enum RejectReason {
     Mismatch,
     /// 内容缺失或无法解析（图片解码失败、没有原图文件、正文为空）
     Invalid,
-    /// 按本机的保留策略会立即被清理：未置顶且早于天数上限，或排在条数上限之外
+    /// 按本机的保留策略会立即被清理：未置顶且早于天数上限，或排在条数上限之外；或者是已经过期的验证码
     Retention,
 }
 
@@ -232,6 +261,8 @@ pub struct PreparedRemote {
     created_at: i64,
     last_used_at: i64,
     pinned: Option<bool>,
+    /// 收藏的名称（已清理；只在 `pinned == Some(true)` 时使用）
+    name: Option<String>,
     source: Option<AppRef>,
     /// 本机条数上限（不含置顶）：落库时在事务里判断新条目会不会排在上限之外
     max_items: u32,
@@ -432,6 +463,22 @@ impl ClipStore {
         Ok(self.ident_of(id)?.map(|(hash, _)| hash))
     }
 
+    /// 条目是否在记录时被识别为验证码（`meta_json.$.otp`，与是否收藏、是否开启自动删除无关）；不存在时为 false。
+    /// 「同步验证码」关闭时验证码条目的内容不发布，收藏之后据此补发
+    pub fn is_otp(&self, id: i64) -> Result<bool, StoreError> {
+        self.guard(|| {
+            let inner = self.inner.lock();
+            let otp: Option<i64> = inner
+                .conn
+                .prepare_cached(&format!(
+                    "SELECT coalesce(json_extract(meta_json, '{META_OTP}'), 0) FROM items WHERE id = ?1"
+                ))?
+                .query_row([id], |r| r.get(0))
+                .optional()?;
+            Ok(otp.is_some_and(|v| v != 0))
+        })
+    }
+
     /// 条目的 hash 与类型（文件条目不同步，调用方据此跳过）；不存在时为 None
     pub fn ident_of(&self, id: i64) -> Result<Option<([u8; 32], ClipKind)>, StoreError> {
         self.guard(|| {
@@ -449,9 +496,10 @@ impl ClipStore {
     pub fn sync_rows(&self) -> Result<Vec<SyncRow>, StoreError> {
         self.guard(|| {
             let inner = self.inner.lock();
-            let mut stmt = inner.conn.prepare_cached(
-                "SELECT hash, kind, created_at, last_used_at, pinned FROM items ORDER BY last_used_at DESC, id DESC",
-            )?;
+            let mut stmt = inner.conn.prepare_cached(&format!(
+                "SELECT hash, kind, created_at, last_used_at, pinned, {SYNC_META_COLS}
+                 FROM items ORDER BY last_used_at DESC, id DESC"
+            ))?;
             let rows = stmt
                 .query_map([], |r| {
                     Ok((
@@ -460,18 +508,22 @@ impl ClipStore {
                         r.get::<_, i64>(2)?,
                         r.get::<_, i64>(3)?,
                         r.get::<_, i64>(4)? != 0,
+                        sync_meta(r, 5)?,
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(rows
                 .into_iter()
-                .filter_map(|(h, kind, created_at, last_used_at, pinned)| {
+                .filter_map(|(h, kind, created_at, last_used_at, pinned, (name, expires_at, otp))| {
                     Some(SyncRow {
                         hash: to_hash(&h)?,
                         kind: kind_from_str(&kind),
                         created_at,
                         last_used_at,
                         pinned,
+                        name,
+                        expires_at,
+                        otp,
                     })
                 })
                 .collect())
@@ -497,16 +549,17 @@ impl ClipStore {
             (Option<i64>, Option<i64>, Option<i64>),
             (Option<String>, Option<String>),
             bool,
+            SyncMeta,
         );
         let row: Option<ExportRow> = {
             let inner = self.inner.lock();
             inner
                 .conn
-                .prepare_cached(
+                .prepare_cached(&format!(
                     "SELECT kind, created_at, last_used_at, pinned, text, html, rtf, image_blob, image_w, image_h,
-                            image_bytes, source_app_id, source_app_name, truncated
-                     FROM items WHERE hash = ?1",
-                )?
+                            image_bytes, source_app_id, source_app_name, truncated, {SYNC_META_COLS}
+                     FROM items WHERE hash = ?1"
+                ))?
                 .query_row([&hash[..]], |r| {
                     Ok((
                         r.get(0)?,
@@ -520,11 +573,13 @@ impl ClipStore {
                         (r.get(8)?, r.get(9)?, r.get(10)?),
                         (r.get(11)?, r.get(12)?),
                         r.get::<_, i64>(13)? != 0,
+                        sync_meta(r, 14)?,
                     ))
                 })
                 .optional()?
         };
-        let Some((kind, created_at, last_used_at, pinned, text, html, rtf, image_blob, dims, src, truncated)) = row
+        let Some((kind, created_at, last_used_at, pinned, text, html, rtf, image_blob, dims, src, truncated, meta)) =
+            row
         else {
             return Ok(None);
         };
@@ -574,6 +629,9 @@ impl ClipStore {
             image,
             source,
             truncated,
+            name: meta.0,
+            expires_at: meta.1,
+            otp: meta.2,
         }))
     }
 
@@ -634,7 +692,18 @@ impl ClipStore {
                     ..RawClipboard::default()
                 };
                 match prepare(&raw, policy) {
-                    Ok(Prepared::Text(t)) if t.hash == item.hash => PreparedBody::Text(t),
+                    Ok(Prepared::Text(mut t)) if t.hash == item.hash => {
+                        // 收藏的不过期；本机关闭了自动删除时不写过期时间
+                        let favorite = item.pinned == Some(true);
+                        t.expires_at = policy
+                            .otp_ttl_ms
+                            .and(item.expires_at.or_else(|| policy.otp_expiry(t.otp, item.created_at)))
+                            .filter(|_| !favorite);
+                        if t.expires_at.is_some_and(|exp| exp <= now_ms) {
+                            return reject(R::Retention);
+                        }
+                        PreparedBody::Text(t)
+                    }
                     Ok(Prepared::Text(_)) => return reject(R::Mismatch),
                     Ok(Prepared::Image(_) | Prepared::Files(_)) | Err(SkipReason::Empty) => return reject(R::Invalid),
                     Err(reason) => return reject(R::Skipped(reason)),
@@ -646,6 +715,10 @@ impl ClipStore {
             created_at: item.created_at,
             last_used_at: item.last_used_at,
             pinned: item.pinned,
+            name: item
+                .name
+                .as_deref()
+                .and_then(|n| crate::favorite::clean_name(n).ok().flatten()),
             source,
             max_items: retention.max_items,
             body,
@@ -728,7 +801,7 @@ impl ClipStore {
         result
     }
 
-    /// 按 hash 置顶 / 取消置顶；条目不存在时为 None
+    /// 按 hash 置顶 / 取消置顶（名称不变；取消置顶时名称随之去掉）；条目不存在时为 None
     pub fn set_pinned_by_hash(&self, hash: &[u8; 32], pinned: bool) -> Result<Option<ClipItemMeta>, StoreError> {
         self.guard(|| {
             let inner = self.inner.lock();
@@ -737,8 +810,27 @@ impl ClipStore {
             };
             inner
                 .conn
-                .prepare_cached("UPDATE items SET pinned = ?1 WHERE id = ?2")?
+                .prepare_cached(SET_PINNED_SQL)?
                 .execute(params![pinned, id])?;
+            read_meta(&inner.conn, id).map(Some)
+        })
+    }
+
+    /// 按 hash 应用远端的收藏状态（`p/<hash>` 的值）：收藏时名称换成 `name`（None 或不合规时清除），取消收藏时名称
+    /// 一并去掉；条目不存在时为 None
+    pub fn set_favorite_by_hash(
+        &self,
+        hash: &[u8; 32],
+        pinned: bool,
+        name: Option<&str>,
+    ) -> Result<Option<ClipItemMeta>, StoreError> {
+        let name = name.and_then(|n| crate::favorite::clean_name(n).ok().flatten());
+        self.guard(|| {
+            let inner = self.inner.lock();
+            let Some(id) = id_of_hash(&inner.conn, hash)? else {
+                return Ok(None);
+            };
+            write_favorite(&inner.conn, id, pinned, name.as_deref())?;
             read_meta(&inner.conn, id).map(Some)
         })
     }
@@ -795,7 +887,7 @@ impl ClipStore {
     }
 
     /// 在一个事务里删除这些 id（调用方持锁），连同它们的 blob；之后截断 WAL
-    fn delete_ids_locked(&self, inner: &mut Inner, ids: &[i64]) -> Result<(), StoreError> {
+    pub(crate) fn delete_ids_locked(&self, inner: &mut Inner, ids: &[i64]) -> Result<(), StoreError> {
         if ids.is_empty() {
             return Ok(());
         }
@@ -823,10 +915,11 @@ fn apply_rows(
 ) -> Result<Vec<RemoteApplied>, StoreError> {
     let mut out = Vec::with_capacity(items.len());
     for item in items.iter_mut() {
-        type Existing = (i64, i64, i64, bool, Option<String>, Option<i64>);
+        type Existing = (i64, i64, i64, bool, Option<String>, Option<i64>, Option<String>);
         let existing: Option<Existing> = tx
             .prepare_cached(
-                "SELECT id, created_at, last_used_at, pinned, image_blob, image_bytes FROM items WHERE hash = ?1",
+                "SELECT id, created_at, last_used_at, pinned, image_blob, image_bytes, json_extract(meta_json, '$.name')
+                 FROM items WHERE hash = ?1",
             )?
             .query_row([&item.hash[..]], |r| {
                 Ok((
@@ -836,10 +929,11 @@ fn apply_rows(
                     r.get::<_, i64>(3)? != 0,
                     r.get(4)?,
                     r.get(5)?,
+                    r.get(6)?,
                 ))
             })
             .optional()?;
-        if let Some((id, created_at, last_used_at, pinned, image_blob, image_bytes)) = existing {
+        if let Some((id, created_at, last_used_at, pinned, image_blob, image_bytes, name)) = existing {
             if let PreparedBody::Image {
                 key,
                 bytes,
@@ -860,12 +954,21 @@ fn apply_rows(
                 last_used_at.max(item.last_used_at),
                 item.pinned.unwrap_or(pinned),
             );
-            if merged == (created_at, last_used_at, pinned) {
+            // 远端给出收藏状态时名称随之而来；没给时保留本机的
+            let merged_name = match item.pinned {
+                Some(true) => item.name.clone(),
+                Some(false) => None,
+                None => name.clone(),
+            };
+            if merged == (created_at, last_used_at, pinned) && merged_name == name {
                 out.push(RemoteApplied::Unchanged(id));
                 continue;
             }
-            tx.prepare_cached("UPDATE items SET created_at = ?1, last_used_at = ?2, pinned = ?3 WHERE id = ?4")?
-                .execute(params![merged.0, merged.1, merged.2, id])?;
+            tx.prepare_cached("UPDATE items SET created_at = ?1, last_used_at = ?2 WHERE id = ?3")?
+                .execute(params![merged.0, merged.1, id])?;
+            if item.pinned.is_some() {
+                write_favorite(tx, id, merged.2, merged_name.as_deref())?;
+            }
             out.push(RemoteApplied::Merged {
                 meta: read_meta(tx, id)?,
                 moved: merged.1 != last_used_at || merged.2 != pinned,
@@ -921,6 +1024,9 @@ fn apply_rows(
                 pinned,
             },
         )?;
+        if pinned && item.name.is_some() {
+            write_favorite(tx, id, true, item.name.as_deref())?;
+        }
         out.push(RemoteApplied::Inserted(read_meta(tx, id)?));
     }
     Ok(out)
@@ -934,6 +1040,32 @@ fn place_image(dir: &Path, key: &str, src: &Path, staged: &mut Option<StagedBlob
         None => stage_file(dir, key, src)?.commit()?,
     }
     Ok(())
+}
+
+/// 写入收藏状态（调用方持锁 / 在事务里）：置顶规则见 [`SET_PINNED_SQL`]；收藏时名称换成 `name`（None 时清除）
+fn write_favorite(conn: &rusqlite::Connection, id: i64, pinned: bool, name: Option<&str>) -> Result<(), StoreError> {
+    conn.prepare_cached(SET_PINNED_SQL)?.execute(params![pinned, id])?;
+    if pinned {
+        conn.prepare_cached(
+            "UPDATE items SET meta_json = CASE
+                WHEN ?1 IS NULL THEN json_remove(meta_json, '$.name')
+                ELSE json_set(coalesce(meta_json, '{}'), '$.name', ?1) END
+             WHERE id = ?2",
+        )?
+        .execute(params![name, id])?;
+    }
+    Ok(())
+}
+
+/// 同步关心的 `meta_json` 字段：名称、过期时间、验证码标记（[`sync_meta`] 按这个顺序读取）
+const SYNC_META_COLS: &str = "json_extract(meta_json, '$.name'), json_extract(meta_json, '$.exp'), coalesce(json_extract(meta_json, '$.otp'), 0)";
+
+/// （名称，过期时间，是否验证码）
+type SyncMeta = (Option<String>, Option<i64>, bool);
+
+/// 从第 `at` 列开始读 [`SYNC_META_COLS`]
+fn sync_meta(r: &rusqlite::Row<'_>, at: usize) -> rusqlite::Result<SyncMeta> {
+    Ok((r.get(at)?, r.get(at + 1)?, r.get::<_, i64>(at + 2)? != 0))
 }
 
 fn id_of_hash(conn: &rusqlite::Connection, hash: &[u8; 32]) -> Result<Option<i64>, StoreError> {
@@ -1274,6 +1406,14 @@ mod tests {
     }
 
     #[test]
+    fn sync_meta_columns_use_the_meta_json_keys() {
+        use crate::row::{META_EXP, META_NAME, META_OTP};
+        for key in [META_NAME, META_EXP, META_OTP] {
+            assert!(SYNC_META_COLS.contains(key), "{key}");
+        }
+    }
+
+    #[test]
     fn debug_output_never_contains_content() {
         let item = RemoteItem {
             hash: [7; 32],
@@ -1290,6 +1430,8 @@ mod tests {
                 app_name: "Secret App".into(),
             }),
             truncated: false,
+            name: Some("Secret favorite".into()),
+            expires_at: Some(3),
         };
         let s = format!("{item:?}");
         for needle in ["secret", "spool", "Secret", "0707"] {

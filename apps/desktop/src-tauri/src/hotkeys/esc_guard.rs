@@ -7,6 +7,9 @@
 //! **截图会话（Overlay 显示中、还没 commit）期间同样注册**——Overlay 的退出不依赖页面：页面还没
 //! 加载完、WebContent 卡住或崩溃、按键焦点留在另一块屏的 Overlay 上时，Esc 照样取消截图。按下时先交给编排器
 //! （有截图会话就取消它），没有才按面板处理。
+//!
+//! **连续粘贴进行中同样注册**：用户在别的应用里按 Esc 即结束队列（拦下粘贴键的钩子随之卸载）。按下时截图会话与可见
+//! 的面板优先，都没有才结束队列。
 
 /// 全局 Esc 的规范串
 pub const ESCAPE: &str = "Escape";
@@ -18,6 +21,8 @@ pub struct EscGuard {
     pub wanted: bool,
     /// 截图会话（未 commit 的 Overlay）希望有全局 Esc
     pub overlay: bool,
+    /// 连续粘贴进行中，希望有全局 Esc
+    pub queue: bool,
     /// 当前已注册
     pub registered: bool,
 }
@@ -33,7 +38,7 @@ pub enum EscAction {
 impl EscGuard {
     /// 根据期望、录制状态与快捷键是否可用，决定注册还是注销
     pub fn next(&self, suspended: bool, available: bool) -> EscAction {
-        let want = (self.wanted || self.overlay) && !suspended && available;
+        let want = (self.wanted || self.overlay || self.queue) && !suspended && available;
         match (want, self.registered) {
             (true, false) => EscAction::Register,
             (false, true) => EscAction::Unregister,
@@ -63,6 +68,18 @@ mod tests {
         assert_eq!(g.next(true, true), EscAction::Unregister, "开始录制时注销");
         g.wanted = false;
         assert_eq!(g.next(false, true), EscAction::Unregister);
+    }
+
+    #[test]
+    fn sequential_paste_also_wants_escape() {
+        let mut g = EscGuard {
+            queue: true,
+            ..EscGuard::default()
+        };
+        assert_eq!(g.next(false, true), EscAction::Register);
+        g.registered = true;
+        g.queue = false;
+        assert_eq!(g.next(false, true), EscAction::Unregister, "队列结束即注销");
     }
 
     #[test]

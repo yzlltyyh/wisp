@@ -13,6 +13,8 @@ import {
   compareItems,
   cycleFilter,
   displayUnits,
+  FAVORITES_PREVIEW,
+  FILTERS,
   findMatches,
   firstItemIndex,
   firstLines,
@@ -20,6 +22,7 @@ import {
   formatHsl,
   formatRgb,
   GROUP_HEIGHT,
+  HEADER_HEIGHT,
   hostOf,
   IMAGE_ROW_HEIGHT,
   lastItemIndex,
@@ -27,6 +30,7 @@ import {
   listContentHeight,
   matchesFilter,
   menuHeight,
+  MORE_HEIGHT,
   nthItem,
   OPEN_MAX_HEIGHT,
   OPEN_MIN_HEIGHT,
@@ -35,6 +39,7 @@ import {
   removeHit,
   replaceItem,
   ROW_HEIGHT,
+  rowHeight,
   rowOffsets,
   screenRows,
   stepItem,
@@ -61,7 +66,7 @@ describe('时间与分组', () => {
     expect(timeGroup(TODAY - 1, b)).toBe('yesterday')
   })
 
-  it('最近列表分「置顶 / 最近」两组；分组标题不可选中，序号跳过标题', () => {
+  it('最近列表分「收藏 / 最近」两组；分组标题不可选中，序号跳过标题', () => {
     const hits = [
       hit(meta(1, { pinned: true, last_used_at: TODAY - 30 * 24 * HOUR })),
       hit(meta(2, { last_used_at: NOW - 60_000 })),
@@ -80,14 +85,70 @@ describe('时间与分组', () => {
     expect(rows.flatMap((r) => (r.type === 'item' ? [r.ordinal] : []))).toEqual([1, 2, 3, 4])
     // 标题 key 稳定（实时插入时标题平移而不是重新挂载）
     expect(rows[2]?.key).toBe('group:recent')
-    // 没有置顶项时只有「最近」
+    // 没有收藏时只有「最近」
     expect(buildRows(hits.slice(1)).filter((r) => r.type === 'group')).toHaveLength(1)
   })
 
-  it('检索结果平铺：没有分组标题，置顶命中仍在前面，序号照常', () => {
-    const rows = buildRows([hit(meta(1, { pinned: true })), hit(meta(2)), hit(meta(3))], true)
+  it('检索结果平铺：没有分组标题，收藏命中仍在前面，序号照常', () => {
+    const rows = buildRows([hit(meta(1, { pinned: true })), hit(meta(2)), hit(meta(3))], {
+      flat: true,
+    })
     expect(rows.every((r) => r.type === 'item')).toBe(true)
     expect(rows.map((r) => (r.type === 'item' ? r.ordinal : 0))).toEqual([1, 2, 3])
+  })
+
+  it('收藏分组的标题带折叠信息（条数、是否折叠）；「最近」的标题没有', () => {
+    const rows = buildRows([
+      hit(meta(1, { pinned: true })),
+      hit(meta(2, { pinned: true })),
+      hit(meta(3)),
+    ])
+    const groups = rows.filter((r) => r.type === 'group')
+    expect(groups.map((g) => (g.type === 'group' ? g.fold : undefined))).toEqual([
+      { count: 2, collapsed: false },
+      null,
+    ])
+  })
+
+  it('收藏折叠：只留标题，收藏不占 ⌘n 的序号', () => {
+    const rows = buildRows(
+      [hit(meta(1, { pinned: true })), hit(meta(2, { pinned: true })), hit(meta(3)), hit(meta(4))],
+      { collapsed: true },
+    )
+    expect(rows.map((r) => r.key)).toEqual(['group:pinned', 'group:recent', 3, 4])
+    expect(rows.flatMap((r) => (r.type === 'item' ? [r.ordinal] : []))).toEqual([1, 2])
+    const head = rows[0]
+    expect(head?.type === 'group' && head.fold).toEqual({ count: 2, collapsed: true })
+  })
+
+  it('收藏超过上限：只列前几条，末尾追加「查看全部 N 个收藏」行（与 Rust 的高度估算同一规则）', () => {
+    const favorites = Array.from({ length: 7 }, (_, i) => hit(meta(i + 1, { pinned: true })))
+    const rows = buildRows([...favorites, hit(meta(20))], { cap: FAVORITES_PREVIEW })
+    expect(rows.map((r) => r.key)).toEqual([
+      'group:pinned',
+      1,
+      2,
+      3,
+      4,
+      5,
+      'more:favorites',
+      'group:recent',
+      20,
+    ])
+    const more = rows[6]
+    expect(more?.type === 'more' && more.count).toBe(7)
+    expect(rowHeight(more)).toBe(MORE_HEIGHT)
+    // 刚好等于上限：不追加；只有收藏、没有最近时「查看全部」在最后
+    expect(
+      buildRows(favorites.slice(0, FAVORITES_PREVIEW), { cap: FAVORITES_PREVIEW }).some(
+        (r) => r.type === 'more',
+      ),
+    ).toBe(false)
+    expect(buildRows(favorites, { cap: FAVORITES_PREVIEW }).at(-1)?.type).toBe('more')
+    // 折叠时连「查看全部」也不显示
+    expect(
+      buildRows(favorites, { cap: FAVORITES_PREVIEW, collapsed: true }).map((r) => r.key),
+    ).toEqual(['group:pinned'])
   })
 
   it('某组被拆成两段（顺序不单调）时，标题 key 不重复', () => {
@@ -179,13 +240,46 @@ describe('选中项移动', () => {
 })
 
 describe('过滤与排序', () => {
-  it('文本过滤包含富文本；Tab / ⇧Tab 循环', () => {
-    expect(matchesFilter('rich_text', 'text')).toBe(true)
-    expect(matchesFilter('code', 'text')).toBe(false)
-    expect(matchesFilter('image', 'all')).toBe(true)
-    expect(cycleFilter('all', 1)).toBe('text')
+  it('文本过滤包含富文本；收藏按 pinned、不按类型；Tab / ⇧Tab 循环（全部 → 收藏 → 文本 …）', () => {
+    expect(matchesFilter(meta(1, { kind: 'rich_text' }), 'text')).toBe(true)
+    expect(matchesFilter(meta(1, { kind: 'code' }), 'text')).toBe(false)
+    expect(matchesFilter(meta(1, { kind: 'image' }), 'all')).toBe(true)
+    expect(matchesFilter(meta(1, { kind: 'image', pinned: true }), 'favorite')).toBe(true)
+    expect(matchesFilter(meta(1, { kind: 'text' }), 'favorite')).toBe(false)
+    expect(cycleFilter('all', 1)).toBe('favorite')
+    expect(cycleFilter('favorite', 1)).toBe('text')
     expect(cycleFilter('all', -1)).toBe('color')
     expect(cycleFilter('color', 1)).toBe('all')
+  })
+
+  it('打开高度的下限放得下 8 项的过滤菜单', () => {
+    expect(OPEN_MIN_HEIGHT).toBe(HEADER_HEIGHT + 4 + (FILTERS.length * 28 + 8) + 8)
+    expect(FILTERS).toHaveLength(8)
+    // Rust 的 placement::clipboard_rows::OPEN_MIN 断言同一个数
+    expect(OPEN_MIN_HEIGHT).toBe(292)
+  })
+
+  it('Rust 高度镜像（placement::clipboard_list_height）的样例：打开时的「全部」列表，两边断言同一组数值', () => {
+    // 打开时就是这种排布（store 的 initialState）：「全部」、收藏最多列 5 条、折叠状态来自载荷
+    const list = (favorites: number, recent: number, collapsed: boolean) =>
+      listContentHeight(
+        buildRows(
+          [
+            ...Array.from({ length: favorites }, (_, i) => hit(meta(i + 1, { pinned: true }))),
+            ...Array.from({ length: recent }, (_, i) => hit(meta(100 + i))),
+          ],
+          { collapsed, cap: FAVORITES_PREVIEW },
+        ),
+      )
+    expect(list(0, 3, false)).toBe(168)
+    expect(list(3, 0, false)).toBe(168)
+    expect(list(3, 0, true)).toBe(36)
+    expect(list(5, 2, false)).toBe(372)
+    expect(list(7, 2, false)).toBe(400)
+    expect(list(7, 0, false)).toBe(284)
+    expect(list(7, 2, true)).toBe(152)
+    expect(list(7, 0, true)).toBe(36)
+    expect(list(50, 2, false)).toBe(400)
   })
 
   it('顺序与 Rust 一致：置顶在前、最近使用在前、同一毫秒 id 大的在前', () => {

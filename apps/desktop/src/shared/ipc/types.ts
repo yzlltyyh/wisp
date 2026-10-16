@@ -345,7 +345,8 @@ export interface PromptPreview {
 
 // ===== 剪贴板 =====
 export type ClipKind = 'text' | 'rich_text' | 'image' | 'files' | 'link' | 'color' | 'code'
-export type ClipFilter = 'all' | 'text' | 'image' | 'files' | 'link' | 'code' | 'color'
+/** `favorite`：收藏（按 `pinned` 而不是类型过滤） */
+export type ClipFilter = 'all' | 'favorite' | 'text' | 'image' | 'files' | 'link' | 'code' | 'color'
 export interface SourceApp {
   id: string
   name: string
@@ -381,6 +382,10 @@ export interface ClipItemMeta {
   files: FileRef[] | null
   link: string | null
   color: string | null
+  /** 收藏的名称（只有收藏的条目才有）；没有时省略 */
+  name?: string | null
+  /** 验证码条目在本机自动删除的时间（Unix 毫秒）；收藏后去掉，没有时省略 */
+  expires_at?: number | null
 }
 /** preview 中的 UTF-16 偏移 */
 export interface HighlightRange {
@@ -406,6 +411,15 @@ export interface ClipItemDetail {
   image_url: string | null
   files: FileRef[] | null
 }
+/**
+ * 拖出条目时放进拖拽数据的内容（按下时先取好，dragstart 里同步写入）：一条时是纯文本、富文本的 HTML（text/html）、
+ * 链接的地址（text/uri-list）；多条时按选择顺序以换行合并的纯文本
+ */
+export interface ClipDragData {
+  text: string
+  html: string | null
+  uri: string | null
+}
 export type PasteMode = 'normal' | 'plain' | 'copy_only'
 /** `manual`：已复制、请手动按粘贴键，不写原因 */
 export type CopiedReason =
@@ -428,6 +442,57 @@ export type ClipboardChanged =
   | { change: 'secret_skipped' }
   /** 一批改动（例如同步带来的大量新增、删除）不适合逐条推送：重新拉取列表首页 */
   | { change: 'reloaded' }
+/** 智能识别出的片段种类（识别在 Rust；前端按种类决定图标与文案） */
+export type EntityKind =
+  | 'email'
+  | 'phone'
+  | 'url'
+  | 'ip'
+  | 'otp'
+  | 'tracking'
+  | 'order'
+  | 'amount'
+  | 'datetime'
+  | 'id_card'
+  | 'bank_card'
+/** 识别出的一个片段 */
+export interface Entity {
+  kind: EntityKind
+  /** 粘贴用的值（已规范化：电话、卡号去掉空格与连字符，金额去掉货币符号与千位分隔符） */
+  value: string
+  /** 原文中的 UTF-16 偏移 */
+  start: number
+  end: number
+  /** 证件号、银行卡号：显示时遮罩中间部分 */
+  sensitive: boolean
+}
+/** 「粘贴为…」的文本变换（实现在 Rust） */
+export type TransformId =
+  | 'join_lines'
+  | 'trim'
+  | 'upper'
+  | 'lower'
+  | 'title'
+  | 'half_width'
+  | 'full_width'
+  | 'json_pretty'
+  | 'json_minify'
+  | 'strip_tracking'
+/** 一条内容的检视结果（clipboard_inspect / text_inspect） */
+export interface ClipInspect {
+  /** 按位置排序，互不重叠 */
+  entities: Entity[]
+  /** 适用的变换（菜单顺序） */
+  transforms: TransformId[]
+}
+/** 连续粘贴的进度（clipboard_queue_start 的返回值与 clipboard:queue 事件） */
+export interface QueueStatus {
+  /** 为 false 时已结束 */
+  active: boolean
+  /** 已经粘贴的条数（0..=total） */
+  index: number
+  total: number
+}
 /** 平台读到的原始剪贴板内容（platform → clipboard，不跨 IPC；`Vec<u8>` 序列化为数字数组） */
 export interface RawClipboard {
   change_id: number
@@ -608,6 +673,18 @@ export interface ClipboardPayload {
   unavailable?: string | null
   /** 监听状态；正在记录时省略（= `{ state: 'recording' }`），`paused` 与它同步 */
   recording?: ClipboardRecording
+  /** 列表顶部的「收藏」分组已折叠（本机状态）；展开时省略 */
+  favorites_collapsed?: boolean
+  /** 连续粘贴不可用的原因（i18n key：errors.platform.*）；可用时省略 */
+  queue_unavailable?: string | null
+}
+/** 悬浮剪贴板的初始状态：从面板交接时继承查询、筛选与光标 */
+export interface ClipFloatInit {
+  query: string
+  filter: ClipFilter
+  selected_id: number | null
+  on_top: boolean
+  payload: ClipboardPayload
 }
 /**
  * 剪贴板监听状态（ClipboardPayload.recording）：paused = 托盘「暂停剪贴板监听」；disabled = 设置里关闭了监听；
@@ -623,10 +700,14 @@ export interface InputPayload {
   target_lang: Lang | null
   hint: NotReady | null
 }
-/** paste_key：当前平台 / 目标应用实际的粘贴键显示串，如 "⌘V"、"Ctrl+Shift+V" */
+/**
+ * paste_key：当前平台 / 目标应用实际的粘贴键显示串，如 "⌘V"、"Ctrl+Shift+V"；queue：连续粘贴的进度（给出时显示
+ * 「连续粘贴 · 2 / 5」，reason 不再显示），普通的粘贴结果省略
+ */
 export interface ToastPayload {
   reason: CopiedReason
   paste_key: string
+  queue?: QueueStatus | null
 }
 export type PanelPayload =
   | ({ kind: 'translate' } & TranslatePayload)
@@ -1053,6 +1134,21 @@ export interface ClipboardSettings {
   panel_position: ClipPanelPosition
   paste_on: PasteOn
   show_hint_bar: boolean
+  /** 智能识别 */
+  smart: SmartSettings
+}
+/** 剪贴板的智能识别：哪些种类显示为芯片，验证码是否自动删除（随设置同步） */
+export interface SmartSettings {
+  /** 默认 true：邮箱、电话、链接、IP */
+  contacts: boolean
+  /** 默认 true：验证码 */
+  codes: boolean
+  /** 默认 true：快递单号、订单号、金额、日期时间 */
+  numbers: boolean
+  /** 默认 false：身份证号、银行卡号（敏感） */
+  identity: boolean
+  /** 默认 true：验证码条目 10 分钟后在本机自动删除（收藏的除外） */
+  otp_auto_delete: boolean
 }
 export type ThemePref = 'system' | 'light' | 'dark'
 export type MaterialPref = 'system' | 'solid'
@@ -1093,6 +1189,8 @@ export interface SyncContent {
   images: boolean
   /** 识别历史（只在本机开启了识别历史时生效） */
   ocr_history: boolean
+  /** 剪贴板里的验证码条目（`clipboard` 关闭时无效） */
+  verification_codes: boolean
 }
 /**
  * 多设备同步（整组只属于本机）。`enabled` / `server_url` / `username` 只由 `sync_connect` / `sync_disconnect` /
@@ -1277,5 +1375,7 @@ export interface EventMap {
   'sync:status': SyncStatus
   /** 术语表在设置窗口之外被改动（同步、手改文件）→ settings：没有未保存的编辑时重新读取 */
   'glossary:changed': null
+  /** 连续粘贴的进度与结束 → panel、悬浮剪贴板 */
+  'clipboard:queue': QueueStatus
 }
 export type EventName = keyof EventMap

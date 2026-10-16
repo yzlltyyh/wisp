@@ -52,16 +52,19 @@ impl RecentCache {
 
     /// 按 id 原地更新一条的元数据（后台缩略图生成完成后调用）：不改变顺序；不在缓存里时忽略（例如生成期间已被删除）。
     ///
-    /// 只取内容字段（缩略图、来源与图标、预览等）；排序相关的 `pinned` / `last_used_at` / `use_count` 保留缓存里的值：
-    /// 后台任务拿到的元数据可能已经过时（生成缩略图期间用户又粘贴或置顶了这一条），不能让旧值把条目挪回原位或回退次数。
-    /// 推送 `updated` 时用 [`Self::get`] 取合并后的元数据
+    /// 只取内容字段（缩略图、来源与图标、预览等）；排序相关的 `pinned` / `last_used_at` / `use_count` 与随收藏变化的
+    /// `name` / `expires_at` 保留缓存里的值：后台任务拿到的元数据可能已经过时（生成缩略图期间用户又粘贴、收藏或命名了
+    /// 这一条），不能让旧值把条目挪回原位、回退次数或抹掉名称。推送 `updated` 时用 [`Self::get`] 取合并后的元数据
     pub fn update(&mut self, meta: &ClipItemMeta) {
         if let Some(slot) = self.items.iter_mut().find(|m| m.id == meta.id) {
             let (pinned, last_used_at, use_count) = (slot.pinned, slot.last_used_at, slot.use_count);
+            let (name, expires_at) = (slot.name.take(), slot.expires_at);
             slot.clone_from(meta);
             slot.pinned = pinned;
             slot.last_used_at = last_used_at;
             slot.use_count = use_count;
+            slot.name = name;
+            slot.expires_at = expires_at;
         }
     }
 
@@ -96,7 +99,7 @@ impl RecentCache {
         let mut matching = 0usize;
         let mut pinned = 0u32;
         let mut items = Vec::with_capacity(limit.min(CACHE_CAP));
-        for m in self.items.iter().filter(|m| filter_matches(filter, m.kind)) {
+        for m in self.items.iter().filter(|m| filter_matches(filter, m)) {
             matching += 1;
             if m.pinned {
                 pinned += 1;
@@ -175,6 +178,8 @@ mod tests {
             files: None,
             link: None,
             color: None,
+            name: None,
+            expires_at: None,
         }
     }
 
@@ -289,6 +294,12 @@ mod tests {
             (merged.last_used_at, merged.use_count, merged.preview.as_str()),
             (30, 2, "with thumb")
         );
+        // 生成期间被命名（命名即收藏，走 upsert）：过时的元数据不会抹掉名称
+        let mut named = meta(2, 20, true, ClipKind::Text);
+        named.name = Some("named".into());
+        c.upsert(&named);
+        c.update(&meta(2, 20, false, ClipKind::Text));
+        assert_eq!(c.get(2).and_then(|m| m.name.as_deref()), Some("named"));
         // 生成期间被删除：update 不会把它插回来
         c.remove(2);
         c.update(&meta(2, 20, false, ClipKind::Text));

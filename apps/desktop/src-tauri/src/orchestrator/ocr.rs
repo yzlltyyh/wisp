@@ -36,7 +36,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use wisp_capture::{CaptureError, Frame, WindowRect};
+use wisp_capture::{CaptureError, Frame, RgbaImage, WindowRect};
 use wisp_llm::{CancellationToken, Purpose, Secret, UserContent};
 use wisp_prompts::PostKind;
 use wisp_types::{
@@ -163,6 +163,23 @@ pub(super) struct OcrJob {
     pub(super) key: KeySource,
 }
 
+/// 识别一张图片的启动参数（截图 commit 与剪贴板图片共用 [`Core::launch_ocr`]）
+pub(super) struct OcrLaunch {
+    pub(super) run: u64,
+    pub(super) trace: u64,
+    /// 触发时刻（「已发出」日志与埋点的起点）
+    pub(super) started: Instant,
+    /// 要识别的像素（截图的裁剪结果，或解码后的剪贴板原图）
+    pub(super) img: RgbaImage,
+    /// 截图直接翻译（剪贴板图片总是 false）
+    pub(super) direct: bool,
+    pub(super) resolved: Resolved,
+    pub(super) anchor: AnchorSource,
+    pub(super) prev: Option<AppRef>,
+    pub(super) transition: PanelTransition,
+    pub(super) key: KeySource,
+}
+
 /// 拆 Overlay 的窗口操作（阻塞线程上执行）。commit 之后的登记（`hold`）随之移进来，窗口操作做完才撤销。
 /// 第一件事是 `overlay:end`：页面据此立即收尾、释放冻结帧，必须赶在隐藏 / 销毁、解除窗口与会话的
 /// 绑定之前（此时窗口层的登记还在，`AppEnv` 才找得到这个会话的 Overlay）
@@ -260,8 +277,16 @@ impl Core {
                 });
                 self.screen.settled().await;
                 let prev = self.prev_app_for(TriggerOrigin::Hotkey).await;
-                self.show_ocr_not_ready(run, trace, nr, direct, prev, AnchorSource::Cursor)
-                    .await;
+                self.show_ocr_not_ready(
+                    run,
+                    trace,
+                    nr,
+                    direct,
+                    prev,
+                    AnchorSource::Cursor,
+                    PanelTransition::Enter,
+                )
+                .await;
             }
             return;
         }
@@ -272,8 +297,16 @@ impl Core {
                 if self.advance(run, Event::NotReady).is_some() {
                     self.screen.settled().await;
                     let prev = self.prev_app_for(TriggerOrigin::Hotkey).await;
-                    self.show_ocr_not_ready(run, trace, nr, direct, prev, AnchorSource::Cursor)
-                        .await;
+                    self.show_ocr_not_ready(
+                        run,
+                        trace,
+                        nr,
+                        direct,
+                        prev,
+                        AnchorSource::Cursor,
+                        PanelTransition::Enter,
+                    )
+                    .await;
                 }
                 return;
             }
@@ -291,8 +324,16 @@ impl Core {
                 let nr = NotReady::PermissionMissing {
                     permission: PermissionKind::ScreenRecording,
                 };
-                self.show_ocr_not_ready(run, trace, nr, direct, prev, AnchorSource::Cursor)
-                    .await;
+                self.show_ocr_not_ready(
+                    run,
+                    trace,
+                    nr,
+                    direct,
+                    prev,
+                    AnchorSource::Cursor,
+                    PanelTransition::Enter,
+                )
+                .await;
             }
             return;
         }
@@ -339,8 +380,16 @@ impl Core {
                     }
                     Some(nr) => {
                         if self.advance(run, Event::CaptureFailed).is_some() {
-                            self.show_ocr_not_ready(run, trace, nr, direct, prev, AnchorSource::Cursor)
-                                .await;
+                            self.show_ocr_not_ready(
+                                run,
+                                trace,
+                                nr,
+                                direct,
+                                prev,
+                                AnchorSource::Cursor,
+                                PanelTransition::Enter,
+                            )
+                            .await;
                         }
                     }
                 }
@@ -442,8 +491,16 @@ impl Core {
                     let nr = NotReady::CaptureFailed {
                         message: not_ready::capture_reason::BACKEND.to_owned(),
                     };
-                    self.show_ocr_not_ready(run, trace, nr, direct, prev, AnchorSource::Cursor)
-                        .await;
+                    self.show_ocr_not_ready(
+                        run,
+                        trace,
+                        nr,
+                        direct,
+                        prev,
+                        AnchorSource::Cursor,
+                        PanelTransition::Enter,
+                    )
+                    .await;
                 }
             }
             return;
@@ -592,11 +649,20 @@ impl Core {
             let nr = NotReady::CaptureFailed {
                 message: not_ready::capture_reason::BACKEND.to_owned(),
             };
-            self.show_ocr_not_ready(run, trace, nr, direct, prev, AnchorSource::Cursor)
-                .await;
+            self.show_ocr_not_ready(
+                run,
+                trace,
+                nr,
+                direct,
+                prev,
+                AnchorSource::Cursor,
+                PanelTransition::Enter,
+            )
+            .await;
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // 与 show_ocr_not_ready_session 同一组参数，拆成结构体只为凑数没有意义
     pub(super) async fn show_ocr_not_ready(
         self: &Arc<Self>,
         run: u64,
@@ -605,6 +671,7 @@ impl Core {
         direct: bool,
         prev: Option<AppRef>,
         anchor: AnchorSource,
+        transition: PanelTransition,
     ) {
         let settings = self.env.settings();
         let payload = OcrPayload {
@@ -626,7 +693,7 @@ impl Core {
             anchor,
             take_focus: false,
             prev_app: prev,
-            transition: PanelTransition::Enter,
+            transition,
         };
         self.show(run, trace, req, None, None).await;
     }
@@ -813,6 +880,55 @@ impl Core {
                 return Ok(OverlayCommitAck { fly_to });
             }
         };
+        log::info!(
+            "overlay session {}: committed {:?} {}x{} px",
+            c.session_id,
+            c.kind,
+            img.width(),
+            img.height()
+        );
+        // Key：触发时预读的；没有预读（读取可能弹框）时现在就与编码并行地读——commit 之后 Overlay 只剩飞入与淡出
+        // （约 360 ms），即使弹出授权框也只被盖住这一小会儿，换来请求先于面板可见（等 Overlay 拆完再读的话，
+        // 每次启动后的第一次 OCR 首 token 晚约 400 ms）
+        let key = key.map_or(KeySource::Read, KeySource::Prefetched);
+        let session = self
+            .launch_ocr(OcrLaunch {
+                run,
+                trace,
+                started,
+                img,
+                direct,
+                resolved,
+                anchor,
+                prev,
+                transition: PanelTransition::Enter,
+                key,
+            })
+            .await;
+        // 飞入目标：panel_prepare 返回之后立即读 panel_state（窗口重建中没有会话几何时为 null）
+        let fly_to = self.fly_target(session, &c.monitor_id);
+        self.set_overlay_panel(c.session_id, session);
+        self.spawn_overlay_done_watchdog(c.session_id);
+        Ok(OverlayCommitAck { fly_to })
+    }
+
+    /// 识别一张图片：登记裁剪与请求 → 推进到请求阶段 → 后台缩放、编码并发出请求 → 在面板里显示 OCR 视图。截图的 commit
+    /// 与剪贴板图片（[`Core::start_image_ocr`]）共用这一段，之后的重新识别、识别历史、缩略图都与截图相同。
+    /// 返回显示出来的面板会话；run 已被取代（或面板没能显示）时为 None，登记的请求与裁剪随之释放
+    pub(super) async fn launch_ocr(self: &Arc<Self>, l: OcrLaunch) -> Option<u64> {
+        let OcrLaunch {
+            run,
+            trace,
+            started,
+            img,
+            direct,
+            resolved,
+            anchor,
+            prev,
+            transition,
+            key,
+        } = l;
+        let settings = self.env.settings();
         let crop = self.captures.new_crop(
             Owner::Unbound,
             PhysSize {
@@ -851,23 +967,16 @@ impl Core {
         if self.advance(run, Event::Committed).is_none() {
             self.registry.remove(&id);
             self.captures.remove(&crop.id);
-            self.spawn_overlay_done_watchdog(c.session_id);
-            return Ok(OverlayCommitAck { fly_to: None });
+            return None;
         }
         log::info!(
-            "overlay session {}: committed {:?} {}x{} px → request {id} model={}/{}",
-            c.session_id,
-            c.kind,
+            "run {run}: recognising {}x{} px → request {id} model={}/{}",
             crop.size.width,
             crop.size.height,
             resolved.provider.id,
             resolved.model.id
         );
-        // Key：触发时预读的；没有预读（读取可能弹框）时现在就与编码并行地读——commit 之后 Overlay 只剩飞入与淡出
-        // （约 360 ms），即使弹出授权框也只被盖住这一小会儿，换来请求先于面板可见（等 Overlay 拆完再读的话，
-        // 每次启动后的第一次 OCR 首 token 晚约 400 ms）
-        let key = key.map_or(KeySource::Read, KeySource::Prefetched);
-        // 编码与请求在后台，与面板的 prepare 并行，不阻塞 commit 的返回（计时口径见模块注释）
+        // 编码与请求在后台，与面板的 prepare 并行，不阻塞调用方（截图 commit 不等编码就返回飞入目标）
         {
             let core = Arc::clone(self);
             let job = OcrJob {
@@ -933,14 +1042,60 @@ impl Core {
             anchor,
             take_focus: false,
             prev_app: prev,
-            transition: PanelTransition::Enter,
+            transition,
         };
-        let session = self.show(run, trace, req, Some(id), Some(crop)).await;
-        // 飞入目标：panel_prepare 返回之后立即读 panel_state（窗口重建中没有会话几何时为 null）
-        let fly_to = self.fly_target(session, &c.monitor_id);
-        self.set_overlay_panel(c.session_id, session);
-        self.spawn_overlay_done_watchdog(c.session_id);
-        Ok(OverlayCommitAck { fly_to })
+        self.show(run, trace, req, Some(id), Some(crop)).await
+    }
+
+    /// 识别一张现成的图片（剪贴板图片条目的「识别文字」）：没有截图与框选，图片一到就提交，之后与截图 OCR 相同
+    /// （[`Core::launch_ocr`]）。从剪贴板发起时交叉淡入，目标应用沿用剪贴板会话记下的那个
+    pub(super) fn start_image_ocr(self: &Arc<Self>, t: Trigger, img: RgbaImage) {
+        let run = self.start_run(Flow::Ocr, t.trace);
+        let core = Arc::clone(self);
+        tauri::async_runtime::spawn(async move { core.image_ocr_flow(run, t, img).await });
+    }
+
+    async fn image_ocr_flow(self: Arc<Self>, run: u64, t: Trigger, img: RgbaImage) {
+        let settings = self.env.settings();
+        let readiness = not_ready::check_ocr(&settings, None, &self.keys());
+        let transition = if t.origin == TriggerOrigin::Clipboard {
+            PanelTransition::Crossfade
+        } else {
+            PanelTransition::Enter
+        };
+        // 读 Key 不会弹框时与编码并行地预读（与截图触发时的预读同理）
+        let key = match &readiness {
+            Ok(r) => self.prefetch_key_if_quiet(&r.provider),
+            Err(_) => None,
+        };
+        // 被取代的 Overlay 拆完、进行中的截图段做完，再读前台应用、显示面板
+        self.screen.settled().await;
+        let prev = self.prev_app_for(t.origin).await;
+        let anchor = AnchorSource::Cursor;
+        match readiness {
+            Err(nr) => {
+                if self.advance(run, Event::NotReady).is_some() {
+                    self.show_ocr_not_ready(run, t.trace, nr, false, prev, anchor, transition)
+                        .await;
+                }
+            }
+            Ok(resolved) => {
+                let key = key.map_or(KeySource::Read, KeySource::Prefetched);
+                self.launch_ocr(OcrLaunch {
+                    run,
+                    trace: t.trace,
+                    started: t.started,
+                    img,
+                    direct: false,
+                    resolved,
+                    anchor,
+                    prev,
+                    transition,
+                    key,
+                })
+                .await;
+            }
+        }
     }
 
     pub(super) async fn show_ocr_not_ready_session(
@@ -952,7 +1107,8 @@ impl Core {
         prev: Option<AppRef>,
         anchor: AnchorSource,
     ) -> Option<u64> {
-        self.show_ocr_not_ready(run, trace, nr, direct, prev, anchor).await;
+        self.show_ocr_not_ready(run, trace, nr, direct, prev, anchor, PanelTransition::Enter)
+            .await;
         self.runs.lock().map.get(&run).and_then(|r| r.session)
     }
 

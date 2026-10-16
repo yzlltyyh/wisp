@@ -39,10 +39,18 @@ fn random_local_op(rng: &mut Rng, d: &Device, trace: &mut Vec<String>) {
         42..=59 => {
             store.copy(rng.pick(&TEXTS));
         }
-        60..=69 => {
+        60..=66 => {
             let items: Vec<String> = store.state.lock().clip.keys().cloned().collect();
             if !items.is_empty() {
                 store.pin(rng.pick(&items), rng.chance(60));
+            }
+        }
+        67..=69 => {
+            // 收藏命名（命名即收藏；偶尔清除名称）
+            let items: Vec<String> = store.state.lock().clip.keys().cloned().collect();
+            if !items.is_empty() {
+                let name = format!("n{}", rng.below(3));
+                store.name(rng.pick(&items), (!rng.chance(25)).then_some(name.as_str()));
             }
         }
         70..=77 => {
@@ -68,7 +76,10 @@ fn random_local_op(rng: &mut Rng, d: &Device, trace: &mut Vec<String>) {
     let pins = |s: &sim::State| {
         s.clip
             .iter()
-            .map(|(h, i)| format!("{}{}", &h[..4], if i.pinned { "*" } else { "" }))
+            .map(|(h, i)| {
+                let name = i.name.as_deref().map(|n| format!("={n}")).unwrap_or_default();
+                format!("{}{}{name}", &h[..4], if i.pinned { "*" } else { "" })
+            })
             .collect::<Vec<_>>()
             .join(",")
     };

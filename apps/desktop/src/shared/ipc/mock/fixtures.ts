@@ -194,6 +194,13 @@ export function createFixtures(boot: Boot) {
         panel_position: 'center',
         paste_on: 'single_click',
         show_hint_bar: true,
+        smart: {
+          contacts: true,
+          codes: true,
+          numbers: true,
+          identity: false,
+          otp_auto_delete: true,
+        },
       },
       appearance: {
         theme: 'system',
@@ -222,6 +229,7 @@ export function createFixtures(boot: Boot) {
           clipboard: true,
           images: true,
           ocr_history: true,
+          verification_codes: true,
         },
       },
     }
@@ -620,6 +628,7 @@ export function createFixtures(boot: Boot) {
   ): ClipPage {
     const matchesFilter = (it: ClipItemMeta) =>
       filter === 'all' ||
+      (filter === 'favorite' && it.pinned) ||
       it.kind === filter ||
       (filter === 'text' && (it.kind === 'rich_text' || it.kind === 'text'))
     const q = query?.trim().toLowerCase() ?? ''
@@ -633,6 +642,9 @@ export function createFixtures(boot: Boot) {
       const hay = it.preview.toLowerCase()
       const at = hay.indexOf(q)
       if (at >= 0) hits.push({ item: it, highlights: [{ start: at, end: at + q.length }] })
+      // 收藏的名称也能搜到（高亮由前端按查询串计算）
+      else if (it.pinned && it.name?.toLowerCase().includes(q))
+        hits.push({ item: it, highlights: [] })
     }
     // 置顶在前，其余按最近使用
     hits.sort(

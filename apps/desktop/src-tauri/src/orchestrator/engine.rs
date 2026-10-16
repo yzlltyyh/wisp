@@ -389,6 +389,12 @@ impl Core {
                     self.start_translate(t, Source::Text(text), None);
                 }
             }
+            Command::OcrImage { image, origin } => {
+                let t = self.arrive(origin);
+                if self.claim(t.seq) {
+                    self.start_image_ocr(t, image);
+                }
+            }
             Command::OpenWindow(target) => self.env.open_window(target),
             Command::ToggleClipboardPause => self.env.toggle_clipboard_pause(),
             Command::ClearClipboard { keep_pinned } => self.env.clear_clipboard(keep_pinned),

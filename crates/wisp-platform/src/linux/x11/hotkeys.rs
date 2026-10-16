@@ -14,6 +14,11 @@
 //! - 没有启用 XKB 的可检测自动重复（启用后服务器不再给本连接发核心 `MappingNotify`，会破坏键盘映射缓存的失效），
 //!   按住时的 Release + Press 对由事件线程按「同一 keycode、同一时间戳」识别并丢弃（`hotkey_logic::is_autorepeat`）；
 //!   抓取换了 keycode（或连接换了）时正按着的组合补发一次抬起（旧 keycode 的抬起不会再送到 Wisp）。
+//! - 连续粘贴的粘贴键（`HookSpec::paste_keys`）与快捷键共用这张抓取表：队列开始时抓取、结束时撤销，按键路由给
+//!   [`PasteRoute`] 而不是快捷键回调。被动抓取在按下之后独占键盘直到抬起，所以在**抬起**时才通知上层；重放
+//!   （[`replay_paste`]）与 Wisp 自己发的粘贴键（[`send_outside_paste_grab`]）先撤销这一组的抓取、XTEST 发送、
+//!   再抓回来——XTEST 的按键同样会触发被动抓取。整个过程与队列结束（[`end_paste`]）持同一把注册锁，路由清除之后
+//!   不会再抓回来。
 
 use std::sync::Arc;
 
@@ -30,6 +35,13 @@ use crate::traits::KeyGrabError;
 /// 按键回调：(规范串, 是否按下)
 pub(crate) type Handler = Arc<dyn Fn(&str, bool) + Send + Sync>;
 
+/// 连续粘贴期间抓取的粘贴键：规范串与对应的组合，以及抬起时的回调
+#[derive(Clone)]
+pub(crate) struct PasteRoute {
+    pub combos: Vec<(String, crate::types::KeyChord)>,
+    pub sink: Arc<dyn Fn(crate::types::KeyChord) + Send + Sync>,
+}
+
 /// 跨连接保存的快捷键注册
 #[derive(Default)]
 pub(crate) struct Registered {
@@ -38,11 +50,19 @@ pub(crate) struct Registered {
     ops: Mutex<()>,
     table: Mutex<GrabTable>,
     handler: Mutex<Option<Handler>>,
+    /// 连续粘贴的粘贴键（队列进行中才有）
+    paste: Mutex<Option<PasteRoute>>,
 }
 
 impl Registered {
     pub(crate) fn set_handler(&self, h: Handler) {
         *self.handler.lock() = Some(h);
+    }
+
+    /// 设置连续粘贴的路由（抓取本身由调用方注册；清除见 [`end_paste`]）
+    #[cfg(feature = "mouse-hook")]
+    pub(crate) fn set_paste(&self, route: Option<PasteRoute>) {
+        *self.paste.lock() = route;
     }
 
     /// 没有连接时的注销：只从注册表里去掉（重连后不会再抓取）
@@ -111,8 +131,13 @@ fn keycode_for(x: &X11, spec: Spec) -> Option<u8> {
 pub(crate) fn register(x: &X11, combo: &str) -> Result<(), KeyGrabError> {
     let (canon, spec) =
         hotkey_logic::spec(combo).ok_or_else(|| KeyGrabError::Rejected(format!("cannot parse hotkey {combo}")))?;
+    let _ops = x.reg.hotkeys.ops.lock();
+    register_locked(x, canon, spec)
+}
+
+/// 注册（调用方持注册锁）
+fn register_locked(x: &X11, canon: String, spec: Spec) -> Result<(), KeyGrabError> {
     let reg = &x.reg.hotkeys;
-    let _ops = reg.ops.lock();
     if reg.table.lock().contains(&canon) {
         return Ok(());
     }
@@ -134,11 +159,35 @@ pub(crate) fn unregister(x: &X11, combo: &str) {
     let Some((canon, spec)) = hotkey_logic::spec(combo) else {
         return;
     };
-    let reg = &x.reg.hotkeys;
-    let _ops = reg.ops.lock();
-    let removed = reg.table.lock().remove(&canon);
+    let _ops = x.reg.hotkeys.ops.lock();
+    unregister_locked(x, &canon, spec);
+}
+
+/// 注销（调用方持注册锁）
+fn unregister_locked(x: &X11, canon: &str, spec: Spec) {
+    let removed = x.reg.hotkeys.table.lock().remove(canon);
     if let Some(keycode) = removed.and_then(|e| e.keycode) {
         ungrab(x, keycode, spec.mods);
+    }
+}
+
+/// 结束连续粘贴：在注册锁内清除路由并撤销这些组合的抓取（`x` 为 None = 没有连接，只从注册表里去掉）。
+/// 与 [`send_outside_paste_grab`] 串行——发送期间临时撤销的抓取不会在路由清除之后被抓回来；否则这组键留在抓取表里
+/// 却没有路由，交给快捷键回调后被丢弃，粘贴键在整个桌面失效
+#[cfg(feature = "mouse-hook")]
+pub(crate) fn end_paste(reg: &Registered, x: Option<&X11>, combos: &[String]) {
+    let _ops = reg.ops.lock();
+    *reg.paste.lock() = None;
+    for combo in combos {
+        let Some((canon, spec)) = hotkey_logic::spec(combo) else {
+            continue;
+        };
+        match x {
+            Some(x) => unregister_locked(x, &canon, spec),
+            None => {
+                reg.table.lock().remove(&canon);
+            }
+        }
     }
 }
 
@@ -233,8 +282,59 @@ pub(crate) fn on_release(x: &X11, keycode: u8) {
 }
 
 fn post(x: &X11, combo: String, pressed: bool) {
+    // 连续粘贴的粘贴键：按下与抬起都已被抓取吞掉，抬起时（键盘不再被独占）才通知上层
+    let paste = x.reg.hotkeys.paste.lock().as_ref().and_then(|route| {
+        route
+            .combos
+            .iter()
+            .find(|(c, _)| *c == combo)
+            .map(|(_, chord)| (*chord, Arc::clone(&route.sink)))
+    });
+    if let Some((chord, sink)) = paste {
+        if !pressed {
+            x.reg.post("paste key", move || sink(chord));
+        }
+        return;
+    }
     let Some(handler) = x.reg.hotkeys.handler.lock().clone() else {
         return;
     };
     x.reg.post("hotkey", move || handler(&combo, pressed));
+}
+
+/// 在连续粘贴的抓取之外发送一组按键（**阻塞**：与 X 服务器同步往返）。`combo` 正被连续粘贴抓取时：撤销这一组的
+/// 抓取 → `send` → 抓回来——XTEST 的按键同样会触发被动抓取，否则重放会被再次拦下，Wisp 自己（面板、悬浮窗）发的
+/// 粘贴键也会被当成用户按的、变成一次队列前进。全程持注册锁，与 [`end_paste`] 串行：只在路由仍在时抓回来。
+/// 抓回失败时只记日志：之后这组键不再被拦下，队列由上层的超时结束
+pub(crate) fn send_outside_paste_grab<T>(x: &X11, combo: &crate::common::combo::Combo, send: impl FnOnce() -> T) -> T {
+    let reg = &x.reg.hotkeys;
+    let _ops = reg.ops.lock();
+    // 两把小锁分开拿（不嵌套）：事件线程只碰 table，post 只碰 paste
+    let routed = |canon: &str| {
+        reg.paste
+            .lock()
+            .as_ref()
+            .is_some_and(|route| route.combos.iter().any(|(c, _)| c == canon))
+    };
+    let grabbed = hotkey_logic::spec(&combo.to_canonical())
+        .filter(|(canon, _)| routed(canon))
+        .filter(|(canon, _)| reg.table.lock().contains(canon));
+    if let Some((canon, spec)) = &grabbed {
+        unregister_locked(x, canon, *spec);
+    }
+    let out = send();
+    if let Some((canon, spec)) = grabbed
+        && let Err(e) = register_locked(x, canon.clone(), spec)
+    {
+        log::warn!("paste key {canon} could not be grabbed again: {e}");
+    }
+    out
+}
+
+/// 重放一次被连续粘贴拦下的粘贴键（**阻塞**）。用户仍按着的修饰键不模拟（见 `keyboard::replay_combo`）；队列已经
+/// 结束（路由已清除）时直接发送、不再抓取
+#[cfg(feature = "mouse-hook")]
+pub(crate) fn replay_paste(x: &Arc<X11>, chord: crate::types::KeyChord) -> Result<(), String> {
+    let combo = chord.to_combo();
+    send_outside_paste_grab(x, &combo, || keyboard::replay_combo(x, &combo))
 }

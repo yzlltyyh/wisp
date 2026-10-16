@@ -287,6 +287,45 @@ fn clip_meta() -> ClipItemMeta {
         files: None,
         link: None,
         color: None,
+        name: None,
+        expires_at: None,
+    }
+}
+
+/// 收藏并命名的条目（`name` 写出）
+fn clip_meta_favorite() -> ClipItemMeta {
+    ClipItemMeta {
+        id: 130,
+        pinned: true,
+        preview: s("ssh deploy@203.0.113.7 -p 2222"),
+        char_count: Some(30),
+        name: Some(s("Staging server")),
+        ..clip_meta()
+    }
+}
+
+/// 验证码条目（`expires_at` 写出）
+fn clip_meta_otp() -> ClipItemMeta {
+    ClipItemMeta {
+        id: 131,
+        source: None,
+        preview: s("Your verification code is 482915. It expires in 10 minutes."),
+        char_count: Some(59),
+        expires_at: Some(1_760_000_960_000),
+        ..clip_meta()
+    }
+}
+
+fn clip_inspect() -> ClipInspect {
+    ClipInspect {
+        entities: vec![Entity {
+            kind: EntityKind::Otp,
+            value: s("482915"),
+            start: 26,
+            end: 32,
+            sensitive: false,
+        }],
+        transforms: vec![TransformId::JoinLines, TransformId::Upper, TransformId::Lower],
     }
 }
 
@@ -312,6 +351,8 @@ fn clip_meta_image() -> ClipItemMeta {
         files: Some(vec![file_ref()]),
         link: Some(s("https://example.com/")),
         color: Some(s("#3478F6")),
+        name: None,
+        expires_at: None,
     }
 }
 
@@ -490,6 +531,8 @@ fn clipboard_payload() -> ClipboardPayload {
         paste_on_double_click: false,
         unavailable: None,
         recording: ClipboardRecording::Recording,
+        favorites_collapsed: false,
+        queue_unavailable: None,
     }
 }
 
@@ -505,6 +548,7 @@ fn toast_payload() -> ToastPayload {
     ToastPayload {
         reason: CopiedReason::FocusTimeout,
         paste_key: s("⌘V"),
+        queue: None,
     }
 }
 
@@ -825,6 +869,27 @@ fn all_samples() -> Samples {
     );
     x.add("FileRef", file_ref());
     x.add("ClipItemMeta", clip_meta_image());
+    x.add("ClipItemMeta.favorite", clip_meta_favorite());
+    x.add("ClipItemMeta.otp", clip_meta_otp());
+    x.add(
+        "Entity",
+        Entity {
+            kind: EntityKind::BankCard,
+            value: s("6222020200112233446"),
+            start: 5,
+            end: 28,
+            sensitive: true,
+        },
+    );
+    x.add("ClipInspect", clip_inspect());
+    x.add(
+        "QueueStatus",
+        QueueStatus {
+            active: true,
+            index: 2,
+            total: 5,
+        },
+    );
     x.add("HighlightRange", HighlightRange { start: 4, end: 9 });
     x.add(
         "ClipHit",
@@ -962,7 +1027,27 @@ fn all_samples() -> Samples {
     x.add("PanelPayload.clipboard", PanelPayload::Clipboard(clipboard_payload()));
     x.add("PanelPayload.input", PanelPayload::Input(input_payload()));
     x.add("PanelPayload.toast", PanelPayload::Toast(toast_payload()));
+    x.add(
+        "ClipDragData",
+        ClipDragData {
+            text: s("Hello, Wisp"),
+            html: Some(s("<p>Hello, <b>Wisp</b></p>")),
+            uri: None,
+        },
+    );
     x.add("ToastPayload", toast_payload());
+    x.add(
+        "ToastPayload.queue",
+        ToastPayload {
+            reason: CopiedReason::CopyOnly,
+            paste_key: s("⌘V"),
+            queue: Some(QueueStatus {
+                active: true,
+                index: 2,
+                total: 5,
+            }),
+        },
+    );
     x.add(
         "TranslatePayload",
         TranslatePayload {
@@ -1005,6 +1090,20 @@ fn all_samples() -> Samples {
     );
     x.add("OcrPayload", ocr_payload());
     x.add("ClipboardPayload", clipboard_payload());
+    x.add(
+        "ClipFloatInit",
+        ClipFloatInit {
+            query: s("deploy"),
+            filter: ClipFilter::Favorite,
+            selected_id: Some(130),
+            on_top: true,
+            payload: ClipboardPayload {
+                favorites_collapsed: true,
+                queue_unavailable: Some(s("errors.platform.wayland_input_hooks")),
+                ..clipboard_payload()
+            },
+        },
+    );
     x.add("InputPayload", input_payload());
     x.add(
         "PanelShown",
@@ -1465,7 +1564,23 @@ fn all_samples() -> Samples {
             excluded_apps: vec![excluded_app()],
             panel_position: ClipPanelPosition::Remember,
             paste_on: PasteOn::DoubleClick,
+            smart: SmartSettings {
+                identity: true,
+                otp_auto_delete: false,
+                ..SmartSettings::default()
+            },
             ..ClipboardSettings::default()
+        },
+    );
+    x.add_as(
+        "SmartSettings",
+        "T.Settings['clipboard']['smart']",
+        SmartSettings {
+            contacts: true,
+            codes: false,
+            numbers: true,
+            identity: false,
+            otp_auto_delete: true,
         },
     );
     x.add_as(
@@ -1518,6 +1633,7 @@ fn all_samples() -> Samples {
             clipboard: true,
             images: true,
             ocr_history: false,
+            verification_codes: false,
         },
     );
 
@@ -1713,11 +1829,12 @@ fn settings_default_matches_contract_example() {
       "providers": [], "defaults": { "translate": null, "ocr": null },
       "translate": { "primary_lang": "zh-CN", "secondary_lang": "en", "default_style": "natural", "long_text_threshold": 3000, "close_on_click_outside": true, "close_on_mouse_leave": false, "mouse_leave_px": 160, "anchor": "selection", "input_anchor": "cursor", "cache_enabled": true, "show_source_by_default": false },
       "ocr": { "default_mode": "lines", "max_edge_px": 2048, "auto_copy": true, "history": false, "history_limit": 50, "window_detect": true, "fly_animation": true, "direct_translate_transcribe": false, "image_detail": "high" },
-      "clipboard": { "enabled": true, "record_text": true, "record_rich_text": true, "record_images": true, "record_files": true, "max_items": 1000, "max_age_days": null, "max_text_bytes": 1048576, "max_image_bytes": 20971520, "excluded_apps": [], "secret_detection": true, "secret_tray_flash": true, "panel_position": "center", "paste_on": "single_click", "show_hint_bar": true },
+      "clipboard": { "enabled": true, "record_text": true, "record_rich_text": true, "record_images": true, "record_files": true, "max_items": 1000, "max_age_days": null, "max_text_bytes": 1048576, "max_image_bytes": 20971520, "excluded_apps": [], "secret_detection": true, "secret_tray_flash": true, "panel_position": "center", "paste_on": "single_click", "show_hint_bar": true,
+        "smart": { "contacts": true, "codes": true, "numbers": true, "identity": false, "otp_auto_delete": true } },
       "appearance": { "theme": "system", "accent": "system", "font_size": 14, "translate_min_width": 360, "translate_max_width": 520, "clipboard_width": 420, "max_height_ratio": 0.6, "material": "system", "reduce_motion": "system" },
       "advanced": { "log_level": "info", "webview_low_memory_when_hidden": true, "unload_panel_after_idle_min": null },
       "sync": { "enabled": false, "server_url": "", "username": "", "auto": true,
-        "content": { "settings": true, "api_keys": true, "clipboard": true, "images": true, "ocr_history": true } } });
+        "content": { "settings": true, "api_keys": true, "clipboard": true, "images": true, "ocr_history": true, "verification_codes": true } } });
     example["clipboard"]["excluded_apps"] =
         serde_json::to_value(wisp_types::defaults::default_excluded_apps()).expect("序列化失败");
     // 注意：f32 经 `serde_json::to_value` 会被拓宽成 0.6000000238418579；落盘与 IPC 都走 `to_string`（输出 0.6），
@@ -1875,6 +1992,41 @@ fn optional_fields_are_omitted_by_default() {
         serde_json::to_value(ActionOrigin::OcrHistory).expect("json"),
         "ocr_history"
     );
+
+    // ClipItemMeta：名称与过期时间缺省时不写出，旧载荷照常解析
+    let plain = serde_json::to_value(clip_meta()).expect("json");
+    assert!(plain.get("name").is_none() && plain.get("expires_at").is_none());
+    let back: ClipItemMeta = serde_json::from_value(plain).expect("old meta");
+    assert_eq!(back, clip_meta());
+    assert_eq!(
+        serde_json::to_value(clip_meta_favorite()).expect("json")["name"],
+        "Staging server"
+    );
+    // ClipboardPayload：收藏分组展开（默认）、连续粘贴可用时不写出
+    let plain = serde_json::to_value(clipboard_payload()).expect("json");
+    assert!(plain.get("favorites_collapsed").is_none());
+    assert!(plain.get("queue_unavailable").is_none());
+    // ToastPayload：普通的粘贴结果没有队列进度，旧载荷照常解析
+    let plain = serde_json::to_value(toast_payload()).expect("json");
+    assert!(plain.get("queue").is_none());
+    assert_eq!(roundtrip_value(&toast_payload()), toast_payload());
+    let collapsed = ClipboardPayload {
+        favorites_collapsed: true,
+        ..clipboard_payload()
+    };
+    assert_eq!(
+        serde_json::to_value(&collapsed).expect("json")["favorites_collapsed"],
+        true
+    );
+    assert_eq!(roundtrip_value(&collapsed), collapsed);
+    // 收藏筛选的线上取值
+    assert_eq!(serde_json::to_value(ClipFilter::Favorite).expect("json"), "favorite");
+    // 旧的 settings（没有 smart / verification_codes）取默认值
+    let old: ClipboardSettings = serde_json::from_value(serde_json::json!({ "enabled": false })).expect("old");
+    assert_eq!(old.smart, SmartSettings::default());
+    assert!(!old.smart.identity && old.smart.otp_auto_delete);
+    let old: SyncContent = serde_json::from_value(serde_json::json!({ "images": false })).expect("old");
+    assert!(old.verification_codes);
 
     // OverlayEndReason 的全部取值
     for (r, name) in [

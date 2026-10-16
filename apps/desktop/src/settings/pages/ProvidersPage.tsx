@@ -31,11 +31,11 @@ import { useSubviewNav } from '../lib/subview'
 import { currentSettings, notify, patchSettings, useRuntime, useSettings } from '../store'
 import { DefaultModelFields } from '../providers/DefaultModels'
 import { lastTestRun, probedModel, useTestRunsVersion } from '../providers/hooks'
+import { ProviderLogo } from '../providers/logos'
 import {
   fillDefaults,
   hostOf,
   localizedDraft,
-  monogram,
   providerName,
   providerNeedsKey,
   uniqueName,
@@ -325,10 +325,8 @@ function ProviderList({
                 data-nav-id={`provider:${p.id}`}
                 data-testid={`provider-row-${p.id}`}
               >
-                {/* 头像只是标识（两字母、统一颜色），状态由右侧的徽标表达；读屏不念头像字母 */}
-                <span className="st-logo" data-tone="accent" aria-hidden="true">
-                  {monogram(providerName(p))}
-                </span>
+                {/* 头像只是标识（服务商标志，没有时是两字母），状态由右侧的徽标表达；读屏不念头像 */}
+                <ProviderLogo templateId={p.template_id} name={providerName(p)} />
                 <span className="st-provider-text">
                   <b>{providerName(p)}</b>
                   {/* host 单独截断，「· N 个模型」始终可见 */}

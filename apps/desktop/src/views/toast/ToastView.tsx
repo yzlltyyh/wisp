@@ -17,37 +17,25 @@
  * - 读屏：live region 先挂载、文案在下一帧写入，确保会被播报（aria-label 会盖掉内容，不用）。
  */
 import './toast.css'
-import { ArrowUpRight, CircleCheck, ClipboardCheck } from 'lucide-react'
+import { ArrowUpRight, CircleCheck, ClipboardCheck, ListOrdered } from 'lucide-react'
 import { m } from 'motion/react'
 import { useEffect, useState } from 'react'
 import type { ViewProps } from '../../panel/types'
 import { api } from '../../shared/ipc'
-import type { CopiedReason, OsKind } from '../../shared/ipc/types'
 import { usePlatform } from '../../shared/hooks/usePlatform'
 import { keepQuoted } from '../../shared/i18n/keepQuoted'
 import { Trans } from '../../shared/i18n/Trans'
-import { useT, type TFunction } from '../../shared/i18n/useT'
+import { useT } from '../../shared/i18n/useT'
 import { usePreset } from '../../shared/motion/presets'
 import { ms, timing } from '../../shared/motion/tokens'
 import { Icon } from '../../shared/ui'
+import { copiedReasonText, queueNotice } from '../clipboard/copied'
 import { loadClipboardMessages } from '../clipboard/i18n'
 
 loadClipboardMessages()
 
-/** 原因说明（仅复制、`manual`——只提示按键、不写原因——没有说明） */
-export function toastReason(reason: CopiedReason, os: OsKind, t: TFunction): string | null {
-  switch (reason) {
-    case 'copy_only':
-    case 'manual':
-      return null
-    case 'no_permission':
-      return os === 'macos'
-        ? t('clipboard.toast.reason.no_permission_macos')
-        : t('clipboard.toast.reason.no_permission')
-    default:
-      return t(`clipboard.toast.reason.${reason}`)
-  }
-}
+/** 原因说明（与悬浮剪贴板的轻提示同一套文案） */
+export const toastReason = copiedReasonText
 
 /**
  * 停留时长（毫秒）：只有一行时是基准（约 1.6 s）；有说明或行动入口时按字数加长，夹在约 4–5 s；`inPlace`（面板持有
@@ -69,18 +57,28 @@ export function ToastView(props: ViewProps<'toast'>) {
   const enter = usePreset('toast')
   const [hovered, setHovered] = useState(false)
   const visible = phase === 'entering' || phase === 'shown'
-  const copyOnly = payload.reason === 'copy_only'
+  // 连续粘贴的进度：主文案是进度，说明是下一次要按的键（不写只复制的原因）
+  const queue = payload.queue ?? null
+  const copyOnly = payload.reason === 'copy_only' || queue !== null
   // 面板持有焦点：剪贴板视图在原位切过来的前端退路（正常情况下 Rust 不激活地显示 toast，focused 为 false）
   const inPlace = focused
-  const detail = toastReason(payload.reason, os, t)
-  const openSettings = payload.reason === 'no_permission' && os === 'macos'
+  const detail = queue
+    ? queue.active
+      ? t('clipboard.queue.next', { key: payload.paste_key })
+      : null
+    : toastReason(payload.reason, os, t)
+  const openSettings = !queue && payload.reason === 'no_permission' && os === 'macos'
   const action = openSettings ? t('clipboard.toast.action.allow_accessibility') : null
   const titleKey = copyOnly
     ? null
     : inPlace
       ? 'clipboard.toast.press_after_close'
       : 'clipboard.toast.press_to_paste'
-  const title = titleKey ? t(titleKey, { key: payload.paste_key }) : t('clipboard.toast.copied')
+  const title = queue
+    ? queueNotice(queue, t)
+    : titleKey
+      ? t(titleKey, { key: payload.paste_key })
+      : t('clipboard.toast.copied')
   const spokenText = [title, detail, action].filter(Boolean).join('. ')
   const hold = toastHoldMs(spokenText, detail !== null, inPlace)
 
@@ -117,11 +115,11 @@ export function ToastView(props: ViewProps<'toast'>) {
       data-testid="view-toast"
       data-view="toast"
       data-session={sessionId}
-      data-reason={payload.reason}
+      data-reason={queue ? 'queue' : payload.reason}
       data-actionable={openSettings || undefined}
     >
       <m.span className="toast-icon" data-tone={copyOnly ? 'success' : 'info'} {...pulse}>
-        <Icon icon={copyOnly ? CircleCheck : ClipboardCheck} size={18} />
+        <Icon icon={queue ? ListOrdered : copyOnly ? CircleCheck : ClipboardCheck} size={18} />
       </m.span>
       <m.span className="toast-text" {...enter}>
         <span className="toast-title" data-testid="toast-title">

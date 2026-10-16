@@ -8,6 +8,7 @@
     "api_keys": false,
     "clipboard": true,
     "images": false,
-    "ocr_history": true
+    "ocr_history": true,
+    "verification_codes": true
   }
 }

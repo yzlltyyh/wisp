@@ -199,3 +199,40 @@ describe('读屏', () => {
     await waitFor(() => expect(live.textContent).toContain(t('clipboard.toast.reason.elevated')))
   })
 })
+
+describe('连续粘贴的进度', () => {
+  it('显示「连续粘贴 · 2 / 5」与下一次要按的键，不写只复制的原因；粘贴完最后一条时说完成', () => {
+    const props = viewProps<'toast'>(
+      {
+        kind: 'toast',
+        reason: 'copy_only',
+        paste_key: '⌘V',
+        queue: { active: true, index: 2, total: 5 },
+      },
+      { focused: false },
+    )
+    renderIn(<ToastView {...props} />)
+    expect(screen.getByTestId('toast-title').textContent).toBe(
+      t('clipboard.queue.progress', { index: 2, total: 5 }),
+    )
+    expect(screen.getByTestId('toast-detail').textContent).toBe(
+      t('clipboard.queue.next', { key: '⌘V' }),
+    )
+    expect(screen.getByTestId('view-toast').getAttribute('data-reason')).toBe('queue')
+  })
+
+  it('结束时只有一行：完成 / 已结束', () => {
+    const props = viewProps<'toast'>(
+      {
+        kind: 'toast',
+        reason: 'copy_only',
+        paste_key: '⌘V',
+        queue: { active: false, index: 5, total: 5 },
+      },
+      { focused: false },
+    )
+    renderIn(<ToastView {...props} />)
+    expect(screen.getByTestId('toast-title').textContent).toBe(t('clipboard.queue.done'))
+    expect(screen.queryByTestId('toast-detail')).toBeNull()
+  })
+})

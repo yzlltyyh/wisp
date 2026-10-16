@@ -362,6 +362,7 @@ fn input_hooks_and_bobber() {
             back: None,
             forward: None,
         }),
+        ..HookSpec::default()
     };
     // 运行期间请不要动鼠标、键盘：这里要断言浮标的消失信号
     let signals = Arc::new(Mutex::new(Vec::<InputSignal>::new()));

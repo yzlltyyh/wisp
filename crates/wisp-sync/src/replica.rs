@@ -27,7 +27,7 @@ use serde_json::Value;
 
 use crate::error::SyncError;
 use crate::hlc::Hlc;
-use crate::model::{BlobRef, DeviceInfo, Domain, Record, SegmentEntry, keys, outranks};
+use crate::model::{BlobRef, DeviceInfo, Domain, PinValue, Record, SegmentEntry, keys, outranks};
 use crate::projection::ConfigDoc;
 
 // ---------------------------------------------------------------------------------------------
@@ -124,6 +124,17 @@ pub(crate) const META_OCR_EVAL: &str = "eval/ocr";
 /// 上次检查保留策略（是否该为它压缩）时的策略签名；剪贴板 / 识别记录有任何变化时删除，
 /// 签名相同说明结论不变，空闲的一轮不必再读取整个域
 pub(crate) const META_RETENTION_EVAL: &str = "eval/retention";
+
+/// 本版本认识的剪贴板 / 识别历史 key 的 SQL 条件（与 [`keys::parse_clip`] / [`keys::parse_ocr`] 认的形态一致）
+static CONTENT_KEY_COND: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "((d = 'clip' AND (substr(k, 1, 2) IN ('c/', 'p/') OR k IN ('{}', '{}')))
+          OR (d = 'ocr' AND (substr(k, 1, 2) = 'o/' OR k = '{}')))",
+        keys::CLIP_CLEAR_ALL,
+        keys::CLIP_CLEAR_UNPINNED,
+        keys::OCR_CLEAR
+    )
+});
 
 /// 某个域的加入状态（「pending」= 尚未把本机记录并入副本）
 pub(crate) fn meta_join_key(d: &Domain) -> String {
@@ -441,14 +452,17 @@ fn note_local_clear(tx: &Transaction<'_>, own: &str, entry: &JournalEntry) -> Re
             )?;
         }
         (Domain::Clip, keys::CLIP_CLEAR_UNPINNED) => {
-            // 本机当时是否置顶只能从「已应用的置顶寄存器」得知；寄存器还没应用的按「未置顶、已被删」处理（保守）
+            // 本机当时是否置顶只能从「已应用的置顶寄存器」得知；寄存器还没应用的按「未置顶、已被删」处理（保守）。
+            // 寄存器的值与 `PinValue::parse` 同一口径：裸 `true` 或 `{"pin": true, …}` 对象
             tx.execute(
                 "UPDATE records SET gone = 1
                  WHERE d = 'clip' AND substr(k, 1, 2) = 'c/' AND tomb = 0 AND (t < ?1 OR (t = ?1 AND dev < ?2))
                    AND NOT EXISTS (
                        SELECT 1 FROM records AS p
                        WHERE p.d = 'clip' AND p.k = 'p/' || substr(records.k, 3)
-                         AND p.tomb = 0 AND p.v = 'true' AND p.applied_t IS p.t)",
+                         AND p.tomb = 0 AND p.applied_t IS p.t
+                         AND (p.v = 'true'
+                              OR CASE WHEN json_valid(p.v) THEN json_type(p.v, '$.pin') END = 'true'))",
                 params![t, own],
             )?;
         }
@@ -600,9 +614,12 @@ fn record_own(tx: &Transaction<'_>, own: &str, entry: &JournalEntry) -> Result<b
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
-        if let Some((0, Some(v))) = pin
-            && v == "true"
-        {
+        let pinned = pin
+            .and_then(|(tomb, v)| if tomb == 0 { v } else { None })
+            .and_then(|v| serde_json::from_str::<Value>(&v).ok())
+            .and_then(|v| PinValue::parse(&v))
+            .is_some_and(|p| p.pin);
+        if pinned {
             record_own(
                 tx,
                 own,
@@ -610,7 +627,7 @@ fn record_own(tx: &Transaction<'_>, own: &str, entry: &JournalEntry) -> Result<b
                     d: Domain::Clip,
                     k: pin_key,
                     t: entry.t,
-                    value: JournalValue::Set(Value::Bool(false)),
+                    value: JournalValue::Set(PinValue::default().to_value()),
                 },
             )?;
         }
@@ -1528,11 +1545,17 @@ impl Replica {
         Ok(rows)
     }
 
-    /// 某个域里是否有需要应用的行（与 [`Self::dirty_rows`] 同一条件，只看有没有）
+    /// 剪贴板 / 识别历史域里是否有需要应用的行（与 [`Self::dirty_rows`] 同一条件，只看有没有）。
+    ///
+    /// 只统计本版本认识的 key（[`CONTENT_KEY_COND`]）：应用时 [`Self::content_view`] 忽略不认识的 key，它们永远不会被
+    /// 标为已应用。若也算进来，更新的版本一旦写下新形态的 key，本机每一轮都会判定「有改动」而把整个域重新评估一遍
     pub(crate) fn has_dirty(&self, d: &Domain) -> Result<bool, SyncError> {
         let found: i64 = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM records WHERE d = ?1 AND applied_t IS NOT t
-                 AND evicted_t IS NOT t AND missing_t IS NOT t)",
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM records WHERE d = ?1 AND applied_t IS NOT t
+                     AND evicted_t IS NOT t AND missing_t IS NOT t AND {})",
+                *CONTENT_KEY_COND
+            ),
             [d.as_str()],
             |r| r.get(0),
         )?;
@@ -2068,6 +2091,24 @@ mod tests {
             .collect();
         r.mark_applied(&marks, true, false).unwrap();
         assert!(!r.has_dirty(&Domain::Clip).unwrap());
+        // 更新的版本写下的、本版本不认识的 key：应用时被忽略、永远不会标为已应用，也就不能算作「有改动」，
+        // 否则每一轮都要把整个域重新评估一遍
+        r.merge_device(
+            OWN,
+            PEER,
+            &[(
+                2,
+                vec![
+                    rec(Domain::Clip, "n/x", 7, Some(json!("name"))),
+                    rec(Domain::Ocr, "c/x", 8, Some(json!({}))),
+                ],
+            )],
+            None,
+            &no_seal,
+        )
+        .unwrap();
+        assert!(!r.has_dirty(&Domain::Clip).unwrap());
+        assert!(!r.has_dirty(&Domain::Ocr).unwrap());
     }
 
     #[test]

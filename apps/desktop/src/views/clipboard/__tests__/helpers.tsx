@@ -18,7 +18,10 @@ import type {
 } from '../../../shared/ipc/types'
 import { getAppearance, setAppearance } from '../../../shared/hooks/useAppearance'
 import { MotionRoot } from '../../../shared/motion/MotionRoot'
+import { createClipRunner, type ActionEnv, type ClipRunner } from '../actions'
+import type { ClipHost } from '../host'
 import { startOfDay } from '../model'
+import { createClipStore, type ClipState } from '../store'
 
 export const NOW = new Date(2026, 9, 11, 15, 30).getTime()
 export const TODAY = startOfDay(NOW)
@@ -70,6 +73,36 @@ export function payload(
   }
 }
 
+/**
+ * 不挂视图的操作 runner（注册表的派生与执行）：命令层与界面能力由调用方按需给出，没给的方法被调用时抛错，
+ * 用例不会悄悄走到没有准备的分支
+ */
+export function testRunner(
+  items: readonly ClipItemMeta[],
+  os: OsKind,
+  opts: { env?: Partial<ActionEnv>; state?: Partial<ClipState> } = {},
+): ClipRunner {
+  const store = createClipStore(payload(items), NOW)
+  if (opts.state) store.setState(opts.state)
+  const missing = (what: string) =>
+    new Proxy(
+      {},
+      {
+        get: (_t, name) => () => {
+          throw new Error(`${what}.${String(name)} not provided`)
+        },
+      },
+    )
+  const host = { kind: 'panel', escapeFallback: () => false } as unknown as ClipHost
+  const env: ActionEnv = {
+    cmd: missing('cmd') as ActionEnv['cmd'],
+    ui: missing('ui') as ActionEnv['ui'],
+    host,
+    ...opts.env,
+  }
+  return createClipRunner({ store, os, env })
+}
+
 /** 两条置顶 + 今天 4 条（第 3 条是图片，64 行高）+ 昨天 2 条 */
 export function sample(): ClipItemMeta[] {
   return [
@@ -111,7 +144,8 @@ export interface FakeIpc {
 export function fakeIpc(): FakeIpc {
   const ipc: FakeIpc = {
     calls: [],
-    results: {},
+    // 光标停下来之后视图会检视条目（芯片条）：默认没有识别结果，用例需要芯片时覆写
+    results: { clipboard_inspect: { entities: [], transforms: [] } },
     listeners: new Map(),
     emit(event, data) {
       for (const cb of ipc.listeners.get(event) ?? []) cb(data)

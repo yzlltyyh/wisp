@@ -468,25 +468,18 @@ impl Env for TauriEnv {
 
     fn clipboard_payload(&self) -> ClipboardPayload {
         let settings = self.settings.get();
-        let (page, paused, (unavailable, recording)) = match self.state() {
-            // 先取首页（可能顺带打开数据库），再读历史状态：打开失败 / 库来自更新版本时横幅随这一次载荷就出现
-            Some(s) => {
-                let page = s.clipboard.first_page();
-                (page, s.clipboard.paused(), s.clipboard.history_state())
-            }
-            None => (
-                wisp_types::ClipPage::empty(wisp_types::ClipFilter::All),
-                false,
-                (None, wisp_types::ClipboardRecording::Recording),
-            ),
-        };
-        ClipboardPayload {
-            page,
-            paused,
-            hint_bar: settings.clipboard.show_hint_bar,
-            paste_on_double_click: settings.clipboard.paste_on == PasteOn::DoubleClick,
-            unavailable: unavailable.map(str::to_owned),
-            recording,
+        match self.state() {
+            Some(s) => s.clipboard.payload(&settings),
+            None => ClipboardPayload {
+                page: wisp_types::ClipPage::empty(wisp_types::ClipFilter::All),
+                paused: false,
+                hint_bar: settings.clipboard.show_hint_bar,
+                paste_on_double_click: settings.clipboard.paste_on == PasteOn::DoubleClick,
+                unavailable: None,
+                recording: wisp_types::ClipboardRecording::Recording,
+                favorites_collapsed: false,
+                queue_unavailable: None,
+            },
         }
     }
 

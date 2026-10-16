@@ -20,8 +20,6 @@ import { relativeTime } from '../../../shared/i18n/relativeTime'
 import { MotionRoot } from '../../../shared/motion/MotionRoot'
 import { ClipboardView, prewarmClipboardRender } from '../ClipboardView'
 import { rowLabel } from '../ClipRow'
-import { contextMenuItems } from '../menus'
-import type { ClipActions } from '../useClipboard'
 import { preloadPreview } from '../previewModule'
 import { resetWebviewClipboardForTest, statusHoldMs } from '../useClipboard'
 import { GROUP_HEIGHT, IMAGE_ROW_HEIGHT, LIST_PADDING, OPEN_MIN_HEIGHT, ROW_HEIGHT } from '../model'
@@ -38,6 +36,7 @@ import {
   restorePlatform,
   sample,
   setPlatform,
+  testRunner,
   viewProps,
   type FakeIpc,
 } from './helpers'
@@ -143,7 +142,13 @@ describe('打开', () => {
     mount(sample(), { paused: true })
     const prevented = (el: Element) => !fireEvent.mouseDown(el, { button: 0 })
     expect(prevented(document.querySelector('.clip-listwrap') as Element)).toBe(true)
-    expect(prevented(document.getElementById('clip-row-3') as Element)).toBe(true)
+    // 可以拖出的行：mousedown 照常（否则拖不出去），松开时焦点回到搜索框
+    const row = document.getElementById('clip-row-3') as Element
+    expect(row.getAttribute('draggable')).toBe('true')
+    expect(prevented(row)).toBe(false)
+    act(() => search().blur())
+    fireEvent.pointerUp(row)
+    expect(document.activeElement).toBe(search())
     expect(prevented(within(screen.getByTestId('clip-paused')).getByRole('button'))).toBe(true)
     expect(prevented(search())).toBe(false)
     key('Space')
@@ -183,7 +188,7 @@ describe('打开', () => {
       )
       fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowDown' })
       expect(
-        screen.getByTestId('clip-filter-menu-item-filter-text').hasAttribute('data-active'),
+        screen.getByTestId('clip-filter-menu-item-filter-favorite').hasAttribute('data-active'),
       ).toBe(true)
       key('Escape')
       await waitFor(() => expect(document.activeElement).toBe(search()))
@@ -326,7 +331,7 @@ describe('实时插入与去重', () => {
     mount()
     for (let i = 0; i < 5; i++) key('ArrowDown')
     expect(selected()).toBe('clip-row-6')
-    key('KeyP', { meta: true })
+    key('KeyD', { meta: true })
     expect(rowIds().slice(0, 3)).toEqual([6, 1, 2])
     const row6 = document.getElementById('clip-row-6')?.closest<HTMLElement>('.ui-vlist-row')
     expect(row6?.hasAttribute('data-lift')).toBe(true)
@@ -521,7 +526,7 @@ describe('鼠标', () => {
       .map((el) => el.textContent ?? '')
     expect(labels.some((l) => l.includes(t('clipboard.action.paste_plain')))).toBe(true)
     expect(labels.some((l) => l.includes(t('clipboard.action.copy_only')))).toBe(true)
-    expect(labels.some((l) => l.includes(t('clipboard.action.pin')))).toBe(true)
+    expect(labels.some((l) => l.includes(t('clipboard.action.favorite')))).toBe(true)
     expect(labels.some((l) => l.includes(t('clipboard.action.translate')))).toBe(true)
     fireEvent.click(
       within(menu)
@@ -630,9 +635,10 @@ describe('鼠标', () => {
 
 describe('菜单与悬停卡片', () => {
   it('菜单里的「删除」：普通条目标 ⌫ / Delete；置顶项（菜单里直接删、不弹确认）标 ⌘⌫ / Ctrl+Delete', () => {
-    const a = {} as ClipActions
-    const shortcut = (pinned: boolean, os: 'macos' | 'windows') =>
-      contextMenuItems(meta(1, { pinned }), os, t, a).find((e) => e.id === 'delete')
+    const shortcut = (pinned: boolean, os: 'macos' | 'windows') => {
+      const runner = testRunner([meta(1, { pinned })], os)
+      return runner.menu('context', runner.ctx('context', 1), t).find((e) => e.id === 'delete')
+    }
     expect(shortcut(false, 'macos')).toMatchObject({ shortcut: 'Backspace' })
     expect(shortcut(true, 'macos')).toMatchObject({ shortcut: 'Mod+Backspace' })
     expect(shortcut(false, 'windows')).toMatchObject({ shortcut: 'Delete' })
@@ -725,7 +731,7 @@ describe('错误', () => {
     }
     mount()
     key('ArrowDown', { meta: true })
-    key('KeyP', { meta: true })
+    key('KeyD', { meta: true })
     expect(await screen.findByTestId('clip-status')).toHaveTextContent(t('clipboard.status.gone'))
     expect(rowIds()).not.toContain(8)
   })
@@ -737,9 +743,9 @@ describe('错误', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     mount()
     key('ArrowDown', { meta: true })
-    key('KeyP', { meta: true })
+    key('KeyD', { meta: true })
     expect(await screen.findByTestId('clip-status')).toHaveTextContent(
-      t('clipboard.status.failed.pin'),
+      t('clipboard.status.failed.favorite'),
     )
     await waitFor(() => expect(rowIds()).toEqual([1, 2, 3, 4, 5, 6, 7, 8]))
   })
@@ -753,7 +759,7 @@ describe('错误', () => {
     try {
       mount()
       key('ArrowDown', { meta: true })
-      key('KeyP', { meta: true })
+      key('KeyD', { meta: true })
       const pill = await screen.findByTestId('clip-status')
       expect(screen.getByTestId('view-clipboard')).toHaveAttribute('data-status-bar')
       // 「已保存」只停 1.5 s；错误 2.5 s 后仍在
@@ -860,13 +866,13 @@ describe('行（分组与无障碍）', () => {
     expect(label).not.toContain(relativeTime(item.last_used_at, NOW, 'short'))
   })
 
-  it('选项的可访问名称：类型 · 内容 · 来源 · 时间（· 已置顶）；⌘n 在 aria-keyshortcuts，角标不进名称', () => {
+  it('选项的可访问名称：类型 · 内容 · 来源 · 时间（· 已收藏）；⌘n 在 aria-keyshortcuts，角标不进名称', () => {
     mount()
     const row1 = document.getElementById('clip-row-1') as HTMLElement
     const name = row1.getAttribute('aria-label') ?? ''
     expect(name).toContain(t('clipboard.kind.text'))
     expect(name).toContain('收货地址')
-    expect(name).toContain(t('clipboard.a11y.pinned'))
+    expect(name).toContain(t('clipboard.a11y.favorite'))
     expect(row1.getAttribute('aria-keyshortcuts')).toBe('Meta+1 Alt+Meta+1')
     // 图片：尺寸与大小之间有分隔
     const img = document.getElementById('clip-row-5')?.getAttribute('aria-label') ?? ''
@@ -892,21 +898,21 @@ describe('行（分组与无障碍）', () => {
     )
   })
 
-  it('提示条：五项「粘贴 · 纯文本 · 仅复制 · 置顶 · 删除」在前，之后是 Space 预览、⌘K 操作、⌘F 筛选与 Esc 关闭', () => {
+  it('提示条：五项「粘贴 · 纯文本 · 仅复制 · 收藏 · 删除」在前，之后是 Space 预览、⌘K 操作、⌘F 筛选与 Esc 关闭', () => {
     mount()
     const ids = [...screen.getByTestId('clip-hints').children].map((c) =>
       c.getAttribute('data-hint'),
     )
     expect(ids).toEqual([
       'paste',
-      'plain',
-      'copy',
-      'pin',
+      'paste_plain',
+      'copy_only',
+      'favorite',
       'delete',
       'preview',
-      'actions',
-      'filter',
-      'close',
+      'open_actions',
+      'open_filter_menu',
+      'escape',
     ])
   })
 })
@@ -928,7 +934,7 @@ describe('预览', () => {
     const items = [meta(1, { kind: 'code', preview: 'const a = 1' }), meta(2, { preview: 'plain' })]
     mount(items)
     key('Space')
-    const mono = () => screen.getByTestId('clip-preview-mono').getAttribute('aria-pressed')
+    const mono = () => screen.getByTestId('clip-preview-monospace').getAttribute('aria-pressed')
     expect(mono()).toBe('true')
     key('ArrowDown')
     expect(mono()).toBe('false')

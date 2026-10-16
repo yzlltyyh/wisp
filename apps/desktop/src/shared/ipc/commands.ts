@@ -63,8 +63,33 @@ export interface CommandMap extends OverlayCommandMap {
     ret: T.ClipPage
   }
   clipboard_get: { args: { id: number }; ret: T.ClipItemDetail | null }
-  clipboard_paste: { args: { id: number; mode: T.PasteMode }; ret: T.PasteOutcome }
+  clipboard_paste: {
+    args: { id: number; mode: T.PasteMode; transform?: T.TransformId | null }
+    ret: T.PasteOutcome
+  }
+  clipboard_paste_text: {
+    args: { text: string; from: number | null; mode: T.PasteMode }
+    ret: T.PasteOutcome
+  }
+  clipboard_paste_many: { args: { ids: number[]; mode: T.PasteMode }; ret: T.PasteOutcome }
+  clipboard_inspect: { args: { id: number }; ret: T.ClipInspect }
+  text_inspect: { args: { text: string }; ret: T.ClipInspect }
   clipboard_pin: { args: { id: number; pinned: boolean }; ret: T.ClipItemMeta }
+  clipboard_set_name: { args: { id: number; name: string | null }; ret: T.ClipItemMeta }
+  clipboard_set_favorites_collapsed: { args: { collapsed: boolean }; ret: void }
+  clipboard_drag_data: { args: { ids: number[] }; ret: T.ClipDragData }
+  clipboard_queue_start: { args: { ids: number[] }; ret: T.QueueStatus }
+  clipboard_queue_cancel: { args: NoArgs; ret: void }
+  clipboard_float_open: {
+    args: { query: string; filter: T.ClipFilter; selected_id: number | null }
+    ret: void
+  }
+  clipboard_float_close: { args: NoArgs; ret: void }
+  clipboard_float_ready: { args: NoArgs; ret: T.ClipFloatInit }
+  clipboard_float_reveal: { args: NoArgs; ret: void }
+  clipboard_float_set_on_top: { args: { on_top: boolean }; ret: void }
+  clipboard_float_focus: { args: { focused: boolean }; ret: void }
+  clipboard_float_hover: { args: NoArgs; ret: void }
   clipboard_delete: { args: { id: number; force: boolean }; ret: void }
   clipboard_clear: { args: { keep_pinned: boolean }; ret: number }
   clipboard_set_paused: { args: { paused: boolean }; ret: void }
@@ -201,7 +226,23 @@ export const COMMAND_NAMES = [
   'clipboard_search',
   'clipboard_get',
   'clipboard_paste',
+  'clipboard_paste_text',
+  'clipboard_paste_many',
+  'clipboard_inspect',
+  'text_inspect',
   'clipboard_pin',
+  'clipboard_set_name',
+  'clipboard_set_favorites_collapsed',
+  'clipboard_drag_data',
+  'clipboard_queue_start',
+  'clipboard_queue_cancel',
+  'clipboard_float_open',
+  'clipboard_float_close',
+  'clipboard_float_ready',
+  'clipboard_float_reveal',
+  'clipboard_float_set_on_top',
+  'clipboard_float_focus',
+  'clipboard_float_hover',
   'clipboard_delete',
   'clipboard_clear',
   'clipboard_set_paused',
@@ -404,12 +445,85 @@ export function clipboardSearch(query: string, filter: T.ClipFilter, limit: numb
 export function clipboardGet(id: number) {
   return call('clipboard_get', { id })
 }
-/** Rust 负责立即隐藏面板并还原焦点；只复制时由 Rust 触发 toast 视图 */
-export function clipboardPaste(id: number, mode: T.PasteMode) {
-  return call('clipboard_paste', { id, mode })
+/**
+ * Rust 负责立即隐藏面板并还原焦点；只复制时由 Rust 触发 toast 视图。`transform`（「粘贴为…」）由 Rust 取全文变换后
+ * 写入，结果不进历史；粘贴来自哪个窗口（面板 / 悬浮窗）由 Rust 按调用窗口判断
+ */
+export function clipboardPaste(
+  id: number,
+  mode: T.PasteMode,
+  transform: T.TransformId | null = null,
+) {
+  // 整条原样粘贴（绝大多数）不带 transform 键：Rust 的 Option 参数缺省即 None
+  return call('clipboard_paste', transform ? { id, mode, transform } : { id, mode })
+}
+/** 粘贴一段文字（芯片的片段）：不进历史，`from` 是片段所属的条目（Rust 只更新它的最近使用时间） */
+export function clipboardPasteText(text: string, from: number | null, mode: T.PasteMode) {
+  return call('clipboard_paste_text', { text, from, mode })
+}
+/** 多选的条目按给出的顺序以换行连接后粘贴（合并结果不进历史） */
+export function clipboardPasteMany(ids: readonly number[], mode: T.PasteMode) {
+  return call('clipboard_paste_many', { ids: [...ids], mode })
+}
+/** 一条条目的识别结果与可用的「粘贴为…」变换（芯片条、「粘贴为…」子页共用） */
+export function clipboardInspect(id: number) {
+  return call('clipboard_inspect', { id })
+}
+/** 纯文本（OCR 结果）的识别结果 */
+export function textInspect(text: string) {
+  return call('text_inspect', { text })
 }
 export function clipboardPin(id: number, pinned: boolean) {
   return call('clipboard_pin', { id, pinned })
+}
+/** 收藏的名称；null 清除。命名即收藏（Rust 同时把条目设为收藏并去掉验证码的到期时间） */
+export function clipboardSetName(id: number, name: string | null) {
+  return call('clipboard_set_name', { id, name })
+}
+/** 列表顶部「收藏」分组的折叠状态（本机保存，经 ClipboardPayload 下发） */
+export function clipboardSetFavoritesCollapsed(collapsed: boolean) {
+  return call('clipboard_set_favorites_collapsed', { collapsed })
+}
+/** 拖出条目时的拖拽数据（按下时先取好：dragstart 里必须同步写入）；多条按选择顺序以换行合并 */
+export function clipboardDragData(ids: readonly number[]) {
+  return call('clipboard_drag_data', { ids: [...ids] })
+}
+/** 连续粘贴：立即粘贴第一条，之后在任何应用里每按一次粘贴键粘贴下一条（进度经 `clipboard:queue` 推送） */
+export function clipboardQueueStart(ids: readonly number[]) {
+  return call('clipboard_queue_start', { ids: [...ids] })
+}
+export function clipboardQueueCancel() {
+  return call('clipboard_queue_cancel', none)
+}
+/** 从面板交接到悬浮剪贴板（继承查询、筛选与光标） */
+export function clipboardFloatOpen(
+  query: string,
+  filter: T.ClipFilter,
+  selected_id: number | null,
+) {
+  return call('clipboard_float_open', { query, filter, selected_id })
+}
+export function clipboardFloatClose() {
+  return call('clipboard_float_close', none)
+}
+/** 悬浮窗先订阅事件再调用：返回初始状态，之后的 `clipboard:changed` 也发给它 */
+export function clipboardFloatReady() {
+  return call('clipboard_float_ready', none)
+}
+/** 悬浮窗的首帧已同步渲染：Rust 在同一帧显示它、隐藏发起的面板 */
+export function clipboardFloatReveal() {
+  return call('clipboard_float_reveal', none)
+}
+export function clipboardFloatSetOnTop(on_top: boolean) {
+  return call('clipboard_float_set_on_top', { on_top })
+}
+/** 悬浮窗的搜索框获得 / 失去焦点：平时它不抢焦点，打字期间临时可聚焦 */
+export function clipboardFloatFocus(focused: boolean) {
+  return call('clipboard_float_focus', { focused })
+}
+/** 指针移入悬浮窗：取回其他设备的改动（Rust 节流） */
+export function clipboardFloatHover() {
+  return call('clipboard_float_hover', none)
 }
 /** 置顶项要求 force（前端负责二次确认） */
 export function clipboardDelete(id: number, force: boolean) {

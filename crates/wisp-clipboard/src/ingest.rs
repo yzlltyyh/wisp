@@ -10,6 +10,8 @@
 //! 5. 规范化：文本只去掉末尾空白、超过上限截断并标 truncated；HTML 剥离后 > 256 KB 丢弃；RTF > 256 KB 丢弃；
 //!    图片超过上限 → [`SkipReason::TooLarge`]
 //! 6. hash：文本取规范化后的 UTF-8；文件取排序后的路径列表；图片取解码后的 RGBA（含宽高，见 `imaging.rs`）
+//! 7. 验证码：不超过 1 KB 的文本识别是否为验证码消息（`smart::otp`），命中时记下标记；开启了自动删除时，
+//!    落库时据此写入过期时间（[`IngestPolicy::otp_expiry`]）
 
 use wisp_types::{ClipItemMeta, ClipKind, ClipboardSettings, RawClipboard};
 
@@ -33,6 +35,17 @@ pub struct IngestPolicy {
     pub max_text_bytes: usize,
     pub max_image_bytes: usize,
     pub privacy: PrivacyRules,
+    /// 验证码条目的保留时长；None = 不自动删除（设置里关闭了「验证码 10 分钟后自动删除」）
+    pub otp_ttl_ms: Option<i64>,
+}
+
+impl IngestPolicy {
+    /// 一条新记录的过期时间：是验证码、开启了自动删除时为 `created_at + 保留时长`
+    pub fn otp_expiry(&self, otp: bool, created_at: i64) -> Option<i64> {
+        self.otp_ttl_ms
+            .filter(|_| otp)
+            .map(|ttl| created_at.saturating_add(ttl))
+    }
 }
 
 impl From<&ClipboardSettings> for IngestPolicy {
@@ -48,6 +61,7 @@ impl From<&ClipboardSettings> for IngestPolicy {
                 excluded_apps: s.excluded_apps.clone(),
                 secret_detection: s.secret_detection,
             },
+            otp_ttl_ms: s.smart.otp_auto_delete.then_some(crate::smart::otp::TTL_MS),
         }
     }
 }
@@ -93,6 +107,10 @@ pub(crate) struct TextRecord {
     pub char_count: u32,
     pub line_count: u32,
     pub hash: [u8; 32],
+    /// 记录时识别为验证码消息（`meta_json.$.otp`）
+    pub otp: bool,
+    /// 过期时间（`meta_json.$.exp`）：由落库方按 [`IngestPolicy::otp_expiry`] 填写，`prepare` 不知道当前时间
+    pub expires_at: Option<i64>,
 }
 
 /// 文件条目
@@ -211,6 +229,8 @@ fn text_record(
         char_count: char_count(text),
         line_count: line_count(text),
         hash: text_hash(text),
+        otp: crate::smart::otp::detect(text),
+        expires_at: None,
         text: text.to_owned(),
         html,
         rtf,
@@ -273,6 +293,7 @@ mod tests {
                 }],
                 secret_detection: true,
             },
+            otp_ttl_ms: Some(crate::smart::otp::TTL_MS),
         }
     }
 
@@ -549,5 +570,31 @@ mod tests {
         assert_eq!(f.paths, ["/Users/me/b.pdf", "/Users/me/a.txt"]);
         assert_eq!(f.preview, "b.pdf, a.txt");
         assert_eq!(f.text, "/Users/me/b.pdf\n/Users/me/a.txt");
+    }
+
+    #[test]
+    fn short_otp_messages_are_flagged() {
+        let p = policy();
+        let Ok(Prepared::Text(t)) = prepare(&raw_text("【银行】验证码 482915，5 分钟内有效"), &p) else {
+            panic!()
+        };
+        assert!(t.otp && t.expires_at.is_none(), "过期时间由落库方按当前时间计算");
+        assert_eq!(p.otp_expiry(t.otp, 1_000), Some(1_000 + crate::smart::otp::TTL_MS));
+        let Ok(Prepared::Text(t)) = prepare(&raw_text("plain note 482915"), &p) else {
+            panic!()
+        };
+        assert!(!t.otp);
+        assert_eq!(p.otp_expiry(t.otp, 1_000), None);
+        // 关闭自动删除：仍然标记，但不过期
+        let off = IngestPolicy {
+            otp_ttl_ms: None,
+            ..policy()
+        };
+        assert_eq!(off.otp_expiry(true, 1_000), None);
+        // 设置 → 策略
+        let mut s = ClipboardSettings::default();
+        assert_eq!(IngestPolicy::from(&s).otp_ttl_ms, Some(crate::smart::otp::TTL_MS));
+        s.smart.otp_auto_delete = false;
+        assert_eq!(IngestPolicy::from(&s).otp_ttl_ms, None);
     }
 }

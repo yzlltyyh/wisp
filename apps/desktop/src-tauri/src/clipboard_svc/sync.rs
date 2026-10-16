@@ -5,13 +5,15 @@
 //! 用户的操作在**串行区内、存储调用成功之后**调用 sink（识别历史在它自己的串行锁内），sink 只做 O(1) 的工作（分配时间戳、
 //! 把一条小记录推进队列），不阻塞记录与粘贴：
 //! - 记录（首次复制 inserted、再次复制 touched）→ [`ClipSyncSink::content`]；
-//! - 置顶 / 取消置顶 → [`ClipSyncSink::pin`]；删除 → [`ClipSyncSink::delete`]（hash 在删除之前取）；
+//! - 收藏 / 取消收藏 / 命名 → [`ClipSyncSink::favorite`]（收藏的是验证码时另补一次 [`ClipSyncSink::content`]：
+//!   「同步验证码」关闭时它的内容没有发布过）；删除 → [`ClipSyncSink::delete`]（hash 在删除之前取）；
 //!   清空 → [`ClipSyncSink::clear`]；
 //! - 识别历史：新增 → [`ClipSyncSink::ocr_add`]；删除、以及被重新识别取代（`replaces`）→ [`ClipSyncSink::ocr_delete`]
 //!   （键与删除在同一个存储事务里读取）；清空 → [`ClipSyncSink::ocr_clear`]。
 //!
 //! 粘贴时的 touch、保留策略与识别历史的条数裁剪都**不**通知：它们只属于本机（一台把上限设为 10 的设备不能清掉所有设备
-//! 的历史）。文件条目不同步，也不通知。
+//! 的历史）。验证码条目的到期删除同样不通知：过期时间随条目同步，每台设备按同一时刻各自删除；发布删除记录反而会压过
+//! 另一台设备在到期前的收藏（见 `smart.rs`）。文件条目不同步，也不通知。
 //!
 //! # 远端改动 → 本机
 //! 应用路径直接调用存储层的同步接口，从不经过上面那些入口，因此不会调用 sink——「远端写入被当作本机改动再发回去」由
@@ -45,8 +47,8 @@ use super::outbox::Delivery;
 pub trait ClipSyncSink: Send + Sync {
     /// 条目被记录（首次复制或再次复制）：之后按 hash 从库里导出内容
     fn content(&self, hash: [u8; 32]);
-    /// 置顶 / 取消置顶
-    fn pin(&self, hash: [u8; 32], pinned: bool);
+    /// 收藏状态或名称变了（收藏 / 取消收藏 / 命名）。`name` 只在收藏时有意义
+    fn favorite(&self, hash: [u8; 32], pinned: bool, name: Option<&str>);
     /// 用户删除了一条
     fn delete(&self, hash: [u8; 32]);
     /// 用户清空了历史（`keep_pinned`：置顶的保留）
@@ -64,8 +66,13 @@ pub trait ClipSyncSink: Send + Sync {
 pub enum ClipRemoteChange {
     /// 条目存在：没有就插入，有就合并时间与置顶（`RemoteItem::pinned` 为 None 时保留本机的置顶状态）
     Upsert(RemoteItem),
-    /// 只改置顶。本机没有这一条时：置顶报告 [`RemoteOutcome::Evicted`]（同步层据此重新取回这一条），取消置顶什么都不做
-    Pin { hash: [u8; 32], pinned: bool },
+    /// 只改收藏状态与名称（收藏时名称换成 `name`，取消收藏时去掉）。本机没有这一条时：收藏报告
+    /// [`RemoteOutcome::Evicted`]（同步层据此重新取回这一条），取消收藏什么都不做
+    Pin {
+        hash: [u8; 32],
+        pinned: bool,
+        name: Option<String>,
+    },
     /// 条目不再存在（被删除，或被清空隐藏）
     Delete { hash: [u8; 32] },
 }
@@ -139,7 +146,7 @@ pub type OcrSuperseded = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 /// 远端条目在锁外准备之后的形态
 enum Op {
     Upsert(PreparedRemote),
-    Pin([u8; 32], bool),
+    Pin([u8; 32], bool, Option<String>),
     Delete([u8; 32]),
 }
 
@@ -147,7 +154,7 @@ impl Op {
     fn hash(&self) -> &[u8; 32] {
         match self {
             Self::Upsert(p) => p.hash(),
-            Self::Pin(h, _) | Self::Delete(h) => h,
+            Self::Pin(h, ..) | Self::Delete(h) => h,
         }
     }
 }
@@ -159,6 +166,8 @@ struct Totals {
     thumbs: Vec<i64>,
     inserted: bool,
     removed: bool,
+    /// 新插入的验证码条目里最早的过期时间（随后排一次到期删除）
+    expiry: Option<i64>,
 }
 
 impl Engine {
@@ -207,6 +216,8 @@ impl Engine {
         };
         let settings = self.host.settings();
         let accept = settings.clipboard.enabled;
+        // 「同步验证码」关闭（只属于本机）：其他设备的验证码条目不导入
+        let accept_codes = settings.sync.content.verification_codes;
         let policy = IngestPolicy::from(&settings.clipboard);
         let retention = RetentionPolicy::from(&settings.clipboard);
         let now = self.host.now_ms();
@@ -216,6 +227,9 @@ impl Engine {
         for (i, change) in changes.into_iter().enumerate() {
             match change {
                 ClipRemoteChange::Upsert(_) if !accept => outcomes[i] = RemoteOutcome::Evicted,
+                ClipRemoteChange::Upsert(item) if !accept_codes && is_code_item(&item) => {
+                    outcomes[i] = RemoteOutcome::Evicted;
+                }
                 ClipRemoteChange::Upsert(item) => match store.prepare_remote(item, &policy, &retention, now) {
                     Ok(p) => ops.push((i, Op::Upsert(p))),
                     Err(Rejected::Policy(reason)) => {
@@ -224,7 +238,7 @@ impl Engine {
                     }
                     Err(Rejected::Failed(e)) => log::warn!("clipboard remote item deferred: {e}"),
                 },
-                ClipRemoteChange::Pin { hash, pinned } => ops.push((i, Op::Pin(hash, pinned))),
+                ClipRemoteChange::Pin { hash, pinned, name } => ops.push((i, Op::Pin(hash, pinned, name))),
                 ClipRemoteChange::Delete { hash } => ops.push((i, Op::Delete(hash))),
             }
         }
@@ -265,7 +279,7 @@ impl Engine {
                     upsert_at.push(i);
                     upserts.push(p);
                 }
-                Op::Pin(hash, pinned) => pins.push((i, hash, pinned)),
+                Op::Pin(hash, pinned, name) => pins.push((i, hash, pinned, name)),
                 Op::Delete(hash) => {
                     delete_at.push(i);
                     deletes.push(hash);
@@ -284,11 +298,14 @@ impl Engine {
                 Err(e) => log::warn!("clipboard remote items deferred: {e}"),
             }
         }
-        for (i, hash, pinned) in pins {
-            outcomes[i] = match store.set_pinned_by_hash(&hash, pinned) {
+        for (i, hash, pinned, name) in pins {
+            outcomes[i] = match store.set_favorite_by_hash(&hash, pinned, name.as_deref()) {
                 Ok(Some(meta)) => {
-                    let was = serial.cache_read().get(meta.id).map(|m| m.pinned);
-                    if was != Some(meta.pinned) {
+                    let was = serial
+                        .cache_read()
+                        .get(meta.id)
+                        .map(|m| (m.pinned, m.name.clone(), m.expires_at));
+                    if was != Some((meta.pinned, meta.name.clone(), meta.expires_at)) {
                         reposition(&serial, &meta, &mut events);
                     }
                     RemoteOutcome::Applied
@@ -335,6 +352,9 @@ impl Engine {
         match r {
             RemoteApplied::Inserted(meta) => {
                 totals.inserted = true;
+                if let Some(at) = meta.expires_at {
+                    totals.expiry = Some(totals.expiry.map_or(at, |t| t.min(at)));
+                }
                 if meta.image.as_ref().is_some_and(|i| i.thumb_url.is_none()) {
                     totals.thumbs.push(meta.id);
                 }
@@ -396,6 +416,9 @@ impl Engine {
         }
         if totals.inserted {
             self.idle.mark();
+        }
+        if let Some(at) = totals.expiry {
+            self.schedule_expiry(at);
         }
     }
 
@@ -552,6 +575,13 @@ fn reload_cache(serial: &Serial<'_>, store: &ClipStore) {
             *serial.cache() = wisp_clipboard::RecentCache::default();
         }
     }
+}
+
+/// 远端条目是不是会到期的验证码：带着过期时间，或正文按本机的检测器是验证码消息。收藏的不算（用户明确要保留，
+/// 它已经没有过期时间，按普通收藏同步）
+fn is_code_item(item: &RemoteItem) -> bool {
+    item.pinned != Some(true)
+        && (item.expires_at.is_some() || item.text.as_deref().is_some_and(wisp_clipboard::smart::otp::detect))
 }
 
 /// 条目的 hash 与类型（删除之前取，供同步通知）；查询失败只记日志

@@ -30,7 +30,8 @@ export type WindowKind = 'panel' | 'settings' | 'onboarding' | 'pinned' | 'overl
 
 export function windowKindOf(label: string): WindowKind {
   if (label === 'settings' || label === 'onboarding' || label === 'panel') return label
-  if (label.startsWith('pinned-')) return 'pinned'
+  // 悬浮剪贴板与固定窗口同属独立的卡片窗口（透明 / 系统圆角、不可选中文字），样式一致
+  if (label.startsWith('pinned-') || label === 'clipfloat') return 'pinned'
   if (label.startsWith('overlay-')) return 'overlay'
   return 'panel'
 }

@@ -41,7 +41,8 @@
 //!    它把 `(d, k, t, 值)` 经 [`Journal::record`] 写进 sync.db（同时更新配置影子）。
 //! 2. 记录本机改动的约定：
 //!    - 配置：投影 key → `Set(值)` / `Delete`；API Key：`Deferred`（明文不进 sync.db，推送时经 `export` 读取）；
-//!    - 剪贴板：新复制与再次复制 → `c/<hash>` `Deferred`；置顶与取消置顶 → `p/<hash>` `Set(bool)`；
+//!    - 剪贴板：新复制与再次复制 → `c/<hash>` `Deferred`；收藏、取消收藏与命名 →
+//!      `p/<hash>` `Set({"pin": bool, "name"?: string})`（[`model::PinValue`]）；
 //!      用户删除 → `c/<hash>` `Delete`；清空 → `@clear/all` 或 `@clear/unpinned` `Set({"wall_ms": 当前毫秒})`；
 //!    - 识别历史：新增 → `o/<id>` `Deferred`；删除与被替换 → `o/<id>` `Delete`；清空 → `@clear` `Set({"wall_ms"})`；
 //!    - 粘贴、保留策略的删除都不记录。

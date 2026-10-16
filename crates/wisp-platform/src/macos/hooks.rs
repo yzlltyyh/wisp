@@ -20,6 +20,11 @@
 //!   两次按下之间是否有鼠标按下用 `CGEventSourceSecondsSinceLastEventType` 判断，不必订阅鼠标事件；
 //! - 鼠标额外按键：otherMouseDown / Up（2 中键、3 Back、4 Forward）；拦截时按下与抬起都吞掉；长按模式先吞掉，
 //!   400 ms 内抬起就重新注入原始的按下与抬起（带 Wisp 标记）。
+//! - 连续粘贴的粘贴键（`paste_keys`）：第四个 tap（Default，keyDown / keyUp），只在队列进行中存在。粘贴键在安装时按当前
+//!   布局换成键码，回调里只比较键码与修饰位：匹配的按下吞掉并发出 `PasteKey`，同一个键的自动重复与抬起一并吞掉；上层
+//!   写好下一条后经 `replay_paste` 带 Wisp 标记重放（回调第一行就放行它）。有它时 keyDown 只由这个 tap 送达（浮标 /
+//!   双击的按键判定照常在没有吞掉时进行），同一个事件不会处理两次。屏幕锁定（`com.apple.screenIsLocked`）时发出
+//!   `SessionLocked`。
 
 use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
@@ -45,6 +50,8 @@ use super::ax;
 use super::bobber;
 use super::displays;
 use super::focus::frontmost_pid;
+use super::keyboard;
+use super::notify::DistributedObserver;
 use super::permissions::input_monitoring;
 use super::runloop::LoopThread;
 use super::util::{guarded, pool};
@@ -56,7 +63,7 @@ use crate::common::gesture::{
     MouseUpFacts,
 };
 use crate::traits::InputHooks;
-use crate::types::{DismissReason, HookError, HookHandle, HookSpec, InputSignal};
+use crate::types::{DismissReason, HookError, HookHandle, HookSpec, InputSignal, KeyChord, PasteKeys};
 
 /// 等待 tap 线程建好 tap 的上限
 const READY_WAIT: Duration = Duration::from_secs(2);
@@ -73,7 +80,60 @@ fn mask_of(t: CGEventType) -> CGEventMask {
 const SLOT_ACTIVE: usize = 0;
 const SLOT_LISTEN: usize = 1;
 const SLOT_KEYS: usize = 2;
-const SLOTS: usize = 3;
+const SLOT_PASTE: usize = 3;
+const SLOTS: usize = 4;
+
+/// CGEventFlags 里四个修饰键的设备无关位（Shift / Control / Option / Command）；粘贴键只按这四位比较
+const FLAG_SHIFT_BIT: u64 = 0x0002_0000;
+const FLAG_CONTROL_BIT: u64 = 0x0004_0000;
+const FLAG_ALTERNATE_BIT: u64 = 0x0008_0000;
+const FLAG_COMMAND_BIT: u64 = 0x0010_0000;
+
+/// 屏幕锁定的分布式通知
+const SCREEN_LOCKED: &str = "com.apple.screenIsLocked";
+
+/// 安装时解析好的一组粘贴键：当前布局下的键码 + 修饰位（只含上面四位）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PasteKeyCode {
+    keycode: u16,
+    flags: u64,
+    chord: KeyChord,
+}
+
+/// 组合键的修饰键 → 四个设备无关位
+fn modifier_bits(m: &crate::common::combo::Modifiers) -> u64 {
+    let mut bits = 0;
+    if m.shift {
+        bits |= FLAG_SHIFT_BIT;
+    }
+    if m.control {
+        bits |= FLAG_CONTROL_BIT;
+    }
+    if m.alt {
+        bits |= FLAG_ALTERNATE_BIT;
+    }
+    if m.super_key {
+        bits |= FLAG_COMMAND_BIT;
+    }
+    bits
+}
+
+/// 按当前键盘布局解析粘贴键（安装时在调用方线程上做：字母键码可能要等主线程预建布局表，不能放进 tap 回调）
+fn resolve_paste_keys(ctx: &Ctx, keys: &PasteKeys) -> Vec<PasteKeyCode> {
+    keys.iter()
+        .filter_map(|chord| match keyboard::keycode_for(ctx, &chord.to_combo()) {
+            Ok(keycode) => Some(PasteKeyCode {
+                keycode,
+                flags: modifier_bits(&chord.modifiers),
+                chord,
+            }),
+            Err(e) => {
+                log::info!("paste key {} not resolvable in the current layout: {e}", chord.code);
+                None
+            }
+        })
+        .collect()
+}
 
 /// 浮标按键 tap 的跨线程句柄：浮标显示 / 消失时由任意线程启用 / 停用（`CGEventTapEnable` 线程安全）
 pub(crate) struct KeyTap(CFRetained<CFMachPort>);
@@ -136,6 +196,10 @@ struct TapState {
     double: RefCell<Option<(DoubleTapMachine, ModifierKey)>>,
     buttons: RefCell<[ButtonState; 3]>,
     disabled_count: Cell<u32>,
+    /// 连续粘贴的粘贴键（安装时解析好的键码）
+    paste: Vec<PasteKeyCode>,
+    /// 拦下的那一次按下的键码：它的自动重复与抬起一并吞掉
+    paste_held: Cell<Option<u16>>,
 }
 
 /// 回调的处理结论
@@ -237,18 +301,55 @@ impl TapState {
                 Verdict::Pass
             }
             CGEventType::KeyDown => {
+                if self.paste_key(ev, true) {
+                    return Verdict::Swallow;
+                }
                 if self.spec.bobber && self.ctx.bobber.is_visible() {
                     bobber::dismiss(&self.ctx, DismissReason::KeyPress);
                 }
                 self.feed_double(TapInput::OtherKey);
                 Verdict::Pass
             }
+            CGEventType::KeyUp if self.paste_key(ev, false) => Verdict::Swallow,
             CGEventType::FlagsChanged => {
                 self.flags_changed(ev);
                 Verdict::Pass
             }
             _ => Verdict::Pass,
         }
+    }
+
+    /// 连续粘贴：这个按键是不是要拦下的粘贴键（按下时比较键码与修饰位；拦下的那个键的自动重复与抬起同样拦下）。
+    /// 只有第一次按下发出 `PasteKey`
+    fn paste_key(&self, ev: &CGEvent, down: bool) -> bool {
+        if self.paste.is_empty() {
+            return false;
+        }
+        let keycode = u16::try_from(CGEvent::integer_value_field(
+            Some(ev),
+            CGEventField::KeyboardEventKeycode,
+        ))
+        .unwrap_or(u16::MAX);
+        if self.paste_held.get() == Some(keycode) {
+            if !down {
+                self.paste_held.set(None);
+            }
+            return true;
+        }
+        if !down {
+            return false;
+        }
+        let bits =
+            CGEvent::flags(Some(ev)).0 & (FLAG_SHIFT_BIT | FLAG_CONTROL_BIT | FLAG_ALTERNATE_BIT | FLAG_COMMAND_BIT);
+        let Some(hit) = self.paste.iter().find(|k| k.keycode == keycode && k.flags == bits) else {
+            return false;
+        };
+        self.paste_held.set(Some(keycode));
+        // 按住不放时系统的自动重复：拦下但不再发信号（上面的 paste_held 已经接住它们，这里只是第一次按下）
+        if CGEvent::integer_value_field(Some(ev), CGEventField::KeyboardEventAutorepeat) == 0 {
+            self.emit(InputSignal::PasteKey { chord: hit.chord });
+        }
+        true
     }
 
     /// 浮标判定的同步部分：位移、连击、⌘ / Ctrl、是否落在 Wisp 窗口内
@@ -535,6 +636,8 @@ struct TapPlan {
     listen: CGEventMask,
     /// ListenOnly，平时停用：浮标可见期间的「任意按键消失」
     keys: CGEventMask,
+    /// Default（主动过滤）：连续粘贴期间的 keyDown / keyUp（拦下粘贴键）
+    paste: CGEventMask,
 }
 
 impl TapPlan {
@@ -544,11 +647,12 @@ impl TapPlan {
         out[SLOT_ACTIVE] = (CGEventTapOptions::Default, self.active);
         out[SLOT_LISTEN] = (CGEventTapOptions::ListenOnly, self.listen);
         out[SLOT_KEYS] = (CGEventTapOptions::ListenOnly, self.keys);
+        out[SLOT_PASTE] = (CGEventTapOptions::Default, self.paste);
         out
     }
 
     fn is_empty(&self) -> bool {
-        self.active == 0 && self.listen == 0 && self.keys == 0
+        self.active == 0 && self.listen == 0 && self.keys == 0 && self.paste == 0
     }
 }
 
@@ -575,10 +679,21 @@ fn plan(spec: &HookSpec, monitoring: bool) -> TapPlan {
     if spec.double_tap.is_some() {
         listen |= mask_of(CGEventType::FlagsChanged) | key_down;
     }
-    if spec.bobber && monitoring && listen & key_down == 0 {
+    let mut paste: CGEventMask = 0;
+    if !spec.paste_keys.is_empty() {
+        // keyDown 改由连续粘贴的 tap 送达（没吞掉的照常做浮标 / 双击判定），同一个事件不经过两个 tap
+        paste = key_down | mask_of(CGEventType::KeyUp);
+        listen &= !key_down;
+    }
+    if spec.bobber && monitoring && listen & key_down == 0 && paste == 0 {
         keys = key_down;
     }
-    TapPlan { active, listen, keys }
+    TapPlan {
+        active,
+        listen,
+        keys,
+        paste,
+    }
 }
 
 /// tap 创建失败时的原因归类：只有确实订阅了键盘事件的 tap 才归因到输入监控
@@ -638,6 +753,7 @@ fn install_taps(
     spec: HookSpec,
     sink: Arc<dyn Fn(InputSignal) + Send + Sync>,
     plan: TapPlan,
+    paste: Vec<PasteKeyCode>,
     key_tap: &Mutex<Option<KeyTap>>,
 ) -> Result<Installed, HookError> {
     let state = Box::new(TapState {
@@ -651,6 +767,8 @@ fn install_taps(
         double: RefCell::new(spec.double_tap.map(|d| (DoubleTapMachine::new(d.interval), d.key))),
         buttons: RefCell::new(Default::default()),
         disabled_count: Cell::new(0),
+        paste,
+        paste_held: Cell::new(None),
     });
     let state_ptr = (&raw const *state).cast_mut().cast::<c_void>();
     let mut installed = Installed {
@@ -741,13 +859,20 @@ fn install_taps(
 
 impl InputHooks for MacHooks {
     fn install(&self, spec: HookSpec, sink: Box<dyn Fn(InputSignal) + Send + Sync>) -> Result<HookHandle, HookError> {
+        let pasting = !spec.paste_keys.is_empty();
         // 鼠标规格里一个键都没绑定时等于没有鼠标项
-        if !spec.bobber && spec.double_tap.is_none() && !mouse_bound(&spec) {
+        if !spec.bobber && spec.double_tap.is_none() && !mouse_bound(&spec) && !pasting {
             return Ok(HookHandle::noop());
         }
-        // 权限：鼠标键拦截（Default tap）与浮标（AX 取词）需要辅助功能，双击修饰键需要输入监控
-        if (mouse_bound(&spec) || spec.bobber) && !ax::trusted() {
+        // 权限：鼠标键拦截与粘贴键拦截（Default tap）、浮标（AX 取词）需要辅助功能，双击修饰键需要输入监控
+        if (mouse_bound(&spec) || spec.bobber || pasting) && !ax::trusted() {
             return Err(HookError::PermissionMissing(PermissionKind::Accessibility));
+        }
+        let paste = resolve_paste_keys(&self.ctx, &spec.paste_keys);
+        if pasting && paste.is_empty() {
+            return Err(HookError::Other(
+                "no paste key resolvable in the current keyboard layout".into(),
+            ));
         }
         let monitoring = input_monitoring() == PermissionState::Granted;
         if spec.double_tap.is_some() && !monitoring {
@@ -763,8 +888,19 @@ impl InputHooks for MacHooks {
         let key_tap: Arc<Mutex<Option<KeyTap>>> = Arc::new(Mutex::new(None));
         let tap_key_slot = key_tap.clone();
         let thread = LoopThread::spawn("wisp-input-tap", READY_WAIT, move |run_loop| {
-            install_taps(run_loop, tap_ctx, spec, tap_sink, plan, &tap_key_slot)
+            install_taps(run_loop, tap_ctx, spec, tap_sink, plan, paste, &tap_key_slot)
         })?;
+        // 锁屏即结束连续粘贴：观察者随 Handle 一起注销
+        let locked = pasting
+            .then(|| {
+                let lock_sink = sink.clone();
+                DistributedObserver::new(
+                    self.ctx.main.clone(),
+                    &[SCREEN_LOCKED],
+                    Arc::new(move || lock_sink(InputSignal::SessionLocked)),
+                )
+            })
+            .flatten();
         // 安装成功之后才接管浮标的消失回报与按键 tap：安装失败时，仍在工作的旧钩子保持原样（包括它对浮标窗口的所有权）
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         if spec.bobber {
@@ -776,16 +912,18 @@ impl InputHooks for MacHooks {
             self.ctx.bobber.set_key_tap(id, key_tap.lock().take());
         }
         log::info!(
-            "input tap installed: bobber={} double_tap={} mouse={} default_mask={:#x} listen_mask={:#x} key_mask={:#x}",
+            "input tap installed: bobber={} double_tap={} mouse={} paste_keys={} default_mask={:#x} listen_mask={:#x} key_mask={:#x}",
             spec.bobber,
             spec.double_tap.is_some(),
             mouse_bound(&spec),
+            pasting,
             plan.active,
             plan.listen,
             plan.keys
         );
         let ctx = self.ctx.clone();
         Ok(HookHandle::new(move || {
+            drop(locked);
             if spec.bobber {
                 // 先交出按键 tap（之后 tap 线程才注销它），再停线程
                 ctx.bobber.clear_key_tap(id);
@@ -797,6 +935,11 @@ impl InputHooks for MacHooks {
             }
             log::info!("input tap removed");
         }))
+    }
+
+    fn replay_paste(&self, chord: KeyChord) -> Result<(), HookError> {
+        // 带 Wisp 标记、只带组合键要求的修饰位（不发修饰键自己的按下 / 抬起）：用户仍按着的 ⌘ 不受影响
+        keyboard::post_combo(&self.ctx, &chord.to_combo()).map_err(HookError::Other)
     }
 }
 
@@ -829,6 +972,7 @@ mod tests {
                 interval: Duration::from_millis(300),
             }),
             mouse: Some(mouse(true, false, false)),
+            ..HookSpec::default()
         };
         let p = plan(&spec, true);
         // 主动过滤器只看额外鼠标键
@@ -895,6 +1039,39 @@ mod tests {
         assert_ne!(p.active, 0);
     }
 
+    #[test]
+    fn paste_keys_take_key_down_into_their_own_active_tap() {
+        use crate::common::combo::{Combo, KeyChord};
+        let chord = KeyChord::of(&Combo::parse("Super+KeyV").expect("combo")).expect("chord");
+        let only = HookSpec {
+            paste_keys: PasteKeys::new([chord]),
+            ..HookSpec::default()
+        };
+        let p = plan(&only, true);
+        assert_eq!(p.paste, mask_of(CGEventType::KeyDown) | mask_of(CGEventType::KeyUp));
+        assert_eq!((p.active, p.listen, p.keys), (0, 0, 0), "nothing else is subscribed");
+        // 与双击修饰键同装：keyDown 只经粘贴键的 tap 送达（不吞的照常做双击判定），listen tap 只留 flagsChanged
+        let both = HookSpec {
+            double_tap: Some(DoubleTapSpec {
+                key: ModifierKey::RightAlt,
+                interval: Duration::from_millis(300),
+            }),
+            bobber: true,
+            ..only
+        };
+        let p = plan(&both, true);
+        assert!(!has(p.listen, CGEventType::KeyDown));
+        assert!(has(p.listen, CGEventType::FlagsChanged));
+        assert_eq!(p.keys, 0, "the paste tap already sees every keyDown");
+        assert!(has(p.paste, CGEventType::KeyDown));
+        // 修饰位只看四个设备无关位
+        assert_eq!(
+            modifier_bits(&chord.modifiers),
+            FLAG_COMMAND_BIT,
+            "⌘V compares the command bit only"
+        );
+    }
+
     /// 扩展触发的开销测量：tap 回调里 Rust 侧的处理耗时（不含 WindowServer 把事件投递给 tap 的时间）。
     /// 三项全开（浮标 + 双击修饰键 + 「后退」键拦截），用合成事件（`CGEventCreate*`：只创建、不投递，不需要任何权限）
     /// 直接喂给 `TapState::handle`——与真实回调走同一段代码（含显示器定位、Wisp 窗口命中、sink 投递），按事件类型统计
@@ -929,6 +1106,7 @@ mod tests {
                 interval: Duration::from_millis(300),
             }),
             mouse: Some(mouse(false, true, false)),
+            ..HookSpec::default()
         };
         let state = TapState {
             ctx,
@@ -943,6 +1121,8 @@ mod tests {
             double: RefCell::new(spec.double_tap.map(|d| (DoubleTapMachine::new(d.interval), d.key))),
             buttons: RefCell::new(Default::default()),
             disabled_count: Cell::new(0),
+            paste: Vec::new(),
+            paste_held: Cell::new(None),
         };
         let mouse_ev = |t: CGEventType, x: f64, button: CGMouseButton| {
             CGEvent::new_mouse_event(None, t, CGPoint::new(x, 400.0), button).expect("mouse event")

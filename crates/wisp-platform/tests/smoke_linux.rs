@@ -13,7 +13,7 @@
 #[cfg(unix)]
 #[allow(unused_imports)]
 mod common {
-    pub use wisp_platform::common::{combo, double_tap, gesture, secrets_markers};
+    pub use wisp_platform::common::{bobber_glyph, combo, double_tap, gesture, secrets_markers};
 }
 
 /// 同上：`session.rs` 经 `crate::reason` 引用三端共用的原因 key

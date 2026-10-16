@@ -32,7 +32,7 @@ use super::paste::{
 };
 use super::port::{ClipView, OffscreenWait, PASTE_HIDE_WAIT, clip_view_of, wait_session_ended};
 use super::retention::{EXPIRY_RECHECK_MS, drop_expired, run_with};
-use super::tests::{Call, ICON_64, Offscreen, app, rig, rig_with, text_raw, wait_until};
+use super::tests::{Call, ICON_64, Offscreen, app, panel_item, rig, rig_with, text_raw, wait_until};
 
 const DAY_MS: i64 = 86_400_000;
 
@@ -93,7 +93,7 @@ fn a_second_paste_while_the_first_is_writing_is_rejected() {
     let second: Arc<Mutex<Option<Result<PasteOutcome, IpcError>>>> = Arc::default();
     let slot = Arc::clone(&second);
     *r.port.paste.during_write.lock() = Some(Box::new(move || {
-        *slot.lock() = Some(engine.paste(b.id, PasteMode::Normal, Some(app("target")), Instant::now()));
+        *slot.lock() = Some(engine.paste(panel_item(1, b.id)));
     }));
     let out = r.paste(a.id, PasteMode::Normal, Some(app("target"))).expect("粘贴");
     assert_eq!(out, PasteOutcome::Pasted);
@@ -226,7 +226,7 @@ fn the_toast_is_shown_after_the_gate_is_released() {
     *r.host.on_toast.lock() = Some(Box::new(move || {
         let stage = engine.paste_gate.stage();
         host.set_view(ClipView::Shown(9)); // 新的剪贴板面板会话
-        let second = engine.paste(b.id, PasteMode::Normal, Some(app("t")), Instant::now());
+        let second = engine.paste(panel_item(9, b.id));
         *slot.lock() = Some((stage, second));
     }));
     let out = r.paste(a.id, PasteMode::Normal, Some(app("t"))).expect("只复制");

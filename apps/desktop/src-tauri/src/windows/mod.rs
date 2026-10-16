@@ -9,11 +9,13 @@
 //! | sizing.rs | 弹簧、缓动、Css 阶梯规则等动效纯函数（与前端令牌对照） |
 //! | outside_click.rs | 外部点击 / 鼠标离开 / 全局 Esc / 失焦 |
 //! | pinned.rs | Pinned 固定窗口与交接 |
+//! | float.rs | 悬浮剪贴板（单例、不抢焦点、关闭即销毁）与面板到它的交接 |
 //! | overlay.rs | Overlay 截图覆盖层与预建复用 |
 //! | settings_window.rs | 设置 / 引导窗口（无白闪首显、位置记忆、ActivationPolicy） |
 //! | protocol.rs | `wisp://` 协议分发 |
 //! | native/ | 平台实现（唯一允许 `cfg(target_os)` 的位置） |
 
+pub mod float;
 #[cfg(any(debug_assertions, feature = "fake-llm"))]
 pub mod frame_lab;
 pub mod manager;
@@ -80,6 +82,7 @@ mod tests {
             payload: wisp_types::PanelPayload::Toast(wisp_types::ToastPayload {
                 reason: wisp_types::CopiedReason::CopyOnly,
                 paste_key: "Ctrl+V".to_owned(),
+                queue: None,
             }),
             geometry,
             focused: false,

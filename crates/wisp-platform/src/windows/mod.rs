@@ -53,7 +53,7 @@ use crate::error::PlatformError;
 use crate::traits::*;
 use crate::types::{ClickEvent, ClipSnapshot, HookHandle, LayoutInfo, ReadLimits, SuppressRange};
 #[cfg(feature = "mouse-hook")]
-use crate::types::{HookError, HookSpec, InputSignal};
+use crate::types::{HookError, HookSpec, InputSignal, KeyChord};
 use crate::{Platform, PlatformConfig};
 
 use clipboard::{SnapshotOutcome, WinSnapshot};
@@ -393,6 +393,13 @@ struct WinHooks(Arc<Core>);
 impl InputHooks for WinHooks {
     fn install(&self, spec: HookSpec, sink: Box<dyn Fn(InputSignal) + Send + Sync>) -> Result<HookHandle, HookError> {
         self.0.hooks.install(spec, sink)
+    }
+
+    fn replay_paste(&self, chord: KeyChord) -> Result<(), HookError> {
+        let combo = input::to_key_combo(&chord.to_combo())
+            .ok_or_else(|| HookError::Other(format!("no virtual key for {}", chord.code)))?;
+        // 一次 SendInput、带 WISP_TAG：钩子放行；用户仍按着、组合也需要的修饰键保持不动（keys::plan_combo）
+        input::send_combo(combo).map_err(HookError::Other)
     }
 }
 

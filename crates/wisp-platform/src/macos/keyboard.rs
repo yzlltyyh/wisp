@@ -131,8 +131,9 @@ pub(crate) struct KeyStroke {
     flags: CGEventFlags,
 }
 
-/// 组合键主键在当前布局下的键码（字母只读预建的缓存）
-fn keycode_for(ctx: &Ctx, combo: &Combo) -> Result<u16, String> {
+/// 组合键主键在当前布局下的键码（字母只读预建的缓存）。连续粘贴的按键拦截在安装时用它把粘贴键换成键码，回调里只比较
+/// 键码与修饰位
+pub(crate) fn keycode_for(ctx: &Ctx, combo: &Combo) -> Result<u16, String> {
     match combo.letter() {
         Some(letter) => letter_keycode(ctx, letter),
         None => combo

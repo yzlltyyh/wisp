@@ -39,6 +39,8 @@ fn remote_text(text: &str, created_at: i64, last_used_at: i64, pinned: Option<bo
         image_path: None,
         source: None,
         truncated: false,
+        name: None,
+        expires_at: None,
     }
 }
 
@@ -56,6 +58,8 @@ fn as_remote(item: &SyncItem) -> RemoteItem {
         image_path: item.image.as_ref().map(|i| i.path.clone()),
         source: item.source.clone(),
         truncated: item.truncated,
+        name: item.name.clone(),
+        expires_at: item.expires_at,
     }
 }
 
@@ -234,6 +238,8 @@ fn remote_text_unchecked(text: &str) -> RemoteItem {
         image_path: None,
         source: None,
         truncated: false,
+        name: None,
+        expires_at: None,
     }
 }
 
@@ -520,6 +526,8 @@ fn image_blobs_self_heal_from_a_remote_copy() {
         image_path: Some(write_tmp(spool.path(), "img.png", &bytes)),
         source: None,
         truncated: false,
+        name: None,
+        expires_at: None,
     };
     assert_eq!(apply_one(&f.store, item), RemoteApplied::Unchanged(m.id));
     assert_eq!(std::fs::read(&blob).expect("读"), bytes, "原图被补回");
@@ -818,4 +826,177 @@ fn ingest_still_records_with_now_times() {
         (m.created_at, m.last_used_at, m.pinned, m.use_count),
         (NOW, NOW, false, 1)
     );
+}
+
+// ---------- 收藏的名称与验证码的过期时间 ----------
+
+const OTP_TEXT: &str = "Your verification code is 482915. It expires in 10 minutes.";
+
+#[test]
+fn export_carries_favorite_names_and_otp_expiry() {
+    let f = Fixture::new();
+    let otp = f.text(OTP_TEXT, NOW);
+    let note = f.text("plain note", NOW + 1);
+    f.store.set_name(note.id, Some("Pinned note")).expect("命名");
+    let rows = f.store.sync_rows().expect("rows");
+    let by_hash = |id: i64| {
+        let h = f.store.hash_of(id).expect("hash").expect("存在");
+        rows.iter().find(|r| r.hash == h).cloned().expect("在 rows 里")
+    };
+    let r = by_hash(otp.id);
+    assert_eq!(
+        (r.otp, r.expires_at, r.name.as_deref()),
+        (true, Some(NOW + wisp_clipboard::OTP_TTL_MS), None)
+    );
+    let r = by_hash(note.id);
+    assert_eq!(
+        (r.otp, r.expires_at, r.pinned, r.name.as_deref()),
+        (false, None, true, Some("Pinned note"))
+    );
+    let item = f.store.sync_export(&r.hash).expect("导出").expect("存在");
+    assert_eq!(item.name.as_deref(), Some("Pinned note"));
+    // 验证码标记与收藏无关（收藏后据此补发内容）；不存在的条目不是
+    assert!(f.store.is_otp(otp.id).expect("查询") && !f.store.is_otp(note.id).expect("查询"));
+    f.store.set_pinned(otp.id, true).expect("收藏");
+    assert!(f.store.is_otp(otp.id).expect("查询"));
+    assert!(!f.store.is_otp(i64::MAX).expect("查询"));
+    // Debug 不含名称
+    assert!(!format!("{item:?}").contains("Pinned note") && !format!("{r:?}").contains("Pinned note"));
+}
+
+#[test]
+fn remote_favorites_bring_their_name_and_unfavoriting_drops_it() {
+    let f = Fixture::new();
+    let mut item = remote_text("shared snippet", NOW, NOW, Some(true));
+    item.name = Some("  Shared ".into());
+    let RemoteApplied::Inserted(m) = apply_one(&f.store, item) else {
+        panic!("应插入")
+    };
+    assert!(m.pinned);
+    assert_eq!(m.name.as_deref(), Some("Shared"), "名称按本机规则清理");
+    // 只改名称也算变化
+    let mut renamed = remote_text("shared snippet", NOW, NOW, Some(true));
+    renamed.name = Some("Renamed".into());
+    let RemoteApplied::Merged { meta, moved } = apply_one(&f.store, renamed) else {
+        panic!("应合并")
+    };
+    assert_eq!((meta.name.as_deref(), moved), (Some("Renamed"), false));
+    // 没有收藏记录：保留本机的名称
+    let RemoteApplied::Unchanged(id) = apply_one(&f.store, remote_text("shared snippet", NOW, NOW, None)) else {
+        panic!("应不变")
+    };
+    assert_eq!(id, m.id);
+    // 取消收藏：名称一并去掉
+    let RemoteApplied::Merged { meta, moved } =
+        apply_one(&f.store, remote_text("shared snippet", NOW, NOW, Some(false)))
+    else {
+        panic!("应合并")
+    };
+    assert!(!meta.pinned && meta.name.is_none() && moved);
+    // 不合规的名称按没有名称处理
+    let mut bad = remote_text("shared snippet", NOW, NOW, Some(true));
+    bad.name = Some("bad\u{202E}name".into());
+    let RemoteApplied::Merged { meta, .. } = apply_one(&f.store, bad) else {
+        panic!("应合并")
+    };
+    assert!(meta.pinned && meta.name.is_none());
+}
+
+#[test]
+fn favorite_by_hash_sets_and_clears_the_name() {
+    let f = Fixture::new();
+    let m = f.text("by hash", NOW);
+    let h = f.store.hash_of(m.id).expect("hash").expect("存在");
+    let meta = f
+        .store
+        .set_favorite_by_hash(&h, true, Some("Named"))
+        .expect("收藏")
+        .expect("存在");
+    assert_eq!((meta.pinned, meta.name.as_deref()), (true, Some("Named")));
+    let meta = f
+        .store
+        .set_favorite_by_hash(&h, true, None)
+        .expect("收藏")
+        .expect("存在");
+    assert!(meta.pinned && meta.name.is_none());
+    f.store.set_favorite_by_hash(&h, true, Some("Again")).expect("收藏");
+    let meta = f
+        .store
+        .set_favorite_by_hash(&h, false, Some("ignored"))
+        .expect("取消")
+        .expect("存在");
+    assert!(!meta.pinned && meta.name.is_none());
+    // 按 hash 置顶沿用同一条规则：取消置顶去掉名称
+    f.store.set_favorite_by_hash(&h, true, Some("Again")).expect("收藏");
+    let meta = f.store.set_pinned_by_hash(&h, true).expect("置顶").expect("存在");
+    assert_eq!(meta.name.as_deref(), Some("Again"), "置顶不动名称");
+    assert!(
+        f.store
+            .set_pinned_by_hash(&h, false)
+            .expect("取消")
+            .expect("存在")
+            .name
+            .is_none()
+    );
+    assert_eq!(
+        f.store.set_favorite_by_hash(&[9; 32], true, None).expect("不存在"),
+        None
+    );
+}
+
+#[test]
+fn remote_otp_items_keep_the_absolute_expiry_and_expired_ones_are_rejected() {
+    let f = Fixture::new();
+    let ttl = wisp_clipboard::OTP_TTL_MS;
+    // 远端给出过期时间：沿用
+    let mut item = remote_text(OTP_TEXT, NOW - 60_000, NOW - 60_000, None);
+    item.expires_at = Some(NOW + 120_000);
+    let RemoteApplied::Inserted(m) = apply_one(&f.store, item) else {
+        panic!("应插入")
+    };
+    assert_eq!(m.expires_at, Some(NOW + 120_000));
+    // 没给，但本机识别为验证码：按 created_at 计算（各设备一致）
+    let other = Fixture::new();
+    let RemoteApplied::Inserted(m) = apply_one(&other.store, remote_text(OTP_TEXT, NOW - 1_000, NOW - 1_000, None))
+    else {
+        panic!("应插入")
+    };
+    assert_eq!(m.expires_at, Some(NOW - 1_000 + ttl));
+    // 已经过期：不接收
+    let late = Fixture::new();
+    assert_eq!(
+        reject_reason(
+            &late.store,
+            remote_text(OTP_TEXT, NOW - ttl, NOW - ttl, None),
+            &policy(),
+            &keep_all()
+        ),
+        RejectReason::Retention
+    );
+    let mut explicit = remote_text(OTP_TEXT, NOW, NOW, None);
+    explicit.expires_at = Some(NOW);
+    assert_eq!(
+        reject_reason(&late.store, explicit, &policy(), &keep_all()),
+        RejectReason::Retention
+    );
+    // 收藏的验证码不过期，照常接收
+    let RemoteApplied::Inserted(m) = apply_one(&late.store, remote_text(OTP_TEXT, NOW - ttl, NOW - ttl, Some(true)))
+    else {
+        panic!("应插入")
+    };
+    assert!(m.pinned && m.expires_at.is_none());
+    // 本机关闭了自动删除：不写过期时间，过期的也接收
+    let off = IngestPolicy {
+        otp_ttl_ms: None,
+        ..policy()
+    };
+    let keep = Fixture::new();
+    let mut old = remote_text(OTP_TEXT, NOW - ttl * 3, NOW - ttl * 3, None);
+    old.expires_at = Some(NOW - ttl * 2);
+    let prepared = keep.store.prepare_remote(old, &off, &keep_all(), NOW).expect("接收");
+    let out = keep.store.apply_remote_many(vec![prepared]).expect("落库");
+    let [RemoteApplied::Inserted(m)] = out.as_slice() else {
+        panic!("应插入：{out:?}")
+    };
+    assert!(m.expires_at.is_none());
 }

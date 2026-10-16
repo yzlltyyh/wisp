@@ -1,6 +1,6 @@
 /**
  * 剪贴板的时间格式。行尾一律是相对时间（刚刚 / N 分钟 / N 小时 / N 天 / 超过 7 天显示日期，同一种表达
- * 贯穿置顶与最近两组）；全文预览的元信息给出完整时间。
+ * 贯穿收藏与最近两组）；全文预览的元信息给出完整时间。
  */
 import { getLocale, t } from '../../shared/i18n/i18n'
 import { relativeTime } from '../../shared/i18n/relativeTime'
@@ -62,4 +62,39 @@ export function warmRowTimeFormats(now = Date.now()): void {
   const day = 86_400_000
   for (const ago of [30 * day, 400 * day]) rowTime(now - ago, now)
   fullTime(now - 3 * day, now)
+}
+
+const MINUTE = 60_000
+const HOUR = 60 * MINUTE
+const DAY = 24 * HOUR
+/** 下一次刷新最晚的间隔：没有任何标签要变时也不睡过一小时（跨天的分组、系统时钟被调整） */
+const CLOCK_MAX = HOUR
+/** 最短间隔：标签恰好在这一刻变化时不立即再醒 */
+const CLOCK_MIN = 1_000
+
+/** 这个时间点的相对时间标签（「刚刚 / N 分钟 / N 小时 / N 天」）多久之后变化；超过 7 天显示日期，不再变化 */
+function nextRelativeChange(ts: number, now: number): number {
+  const age = Math.max(0, now - ts)
+  if (age < MINUTE) return MINUTE - age
+  if (age < HOUR) return MINUTE - (age % MINUTE)
+  if (age < DAY) return HOUR - (age % HOUR)
+  if (age < 7 * DAY) return DAY - (age % DAY)
+  return Infinity
+}
+
+/**
+ * 视图的分钟时钟下一次要醒的间隔：列出来的行里最早要变的那个标签（行尾的相对时间、验证码的「N 分钟后删除」）。
+ * 视图常驻（悬浮剪贴板）时不必每分钟醒一次——行都是几小时前的就一小时醒一次
+ */
+export function nextClockDelay(
+  items: Iterable<{ readonly last_used_at: number; readonly expires_at?: number | null }>,
+  now: number,
+): number {
+  let next = CLOCK_MAX
+  for (const it of items) {
+    next = Math.min(next, nextRelativeChange(it.last_used_at, now))
+    const at = it.expires_at
+    if (at != null && at > now) next = Math.min(next, (at - now) % MINUTE || MINUTE)
+  }
+  return Math.max(CLOCK_MIN, Math.ceil(next))
 }

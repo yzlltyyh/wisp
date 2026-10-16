@@ -28,8 +28,8 @@ Wisp 进程（Rust，tokio 2 个 worker）
   app            启动顺序、运行时、日志、外观、权限、诊断导出、单实例与命令行
   hotkeys        全局快捷键的注册与回退、冲突检测、录制、扩展触发
   orchestrator   翻译 / 输入 / OCR / 截图直接翻译四条流程的状态机，流式请求的登记与回放
-  windows        WindowManager：面板显示管线、定位与尺寸、固定窗口、截图覆盖层、设置窗口、wisp:// 协议
-  clipboard_svc  剪贴板监听、记录、检索、粘贴回原应用
+  windows        WindowManager：面板显示管线、定位与尺寸、固定窗口、悬浮剪贴板、截图覆盖层、设置窗口、wisp:// 协议
+  clipboard_svc  剪贴板监听、记录、检索、识别与变换、统一的粘贴管线、连续粘贴
   settings       settings.json 等配置文件、热加载、钥匙串、模型能力缓存、同步凭据
   sync_svc       多设备同步：改动捕获、触发与去抖、同步状态广播（同步关闭时不打开任何资源）
   tray · updater · ipc · bus
@@ -41,7 +41,7 @@ Wisp 进程（Rust，tokio 2 个 worker）
         │ ▼
 
 WebView（React 19 + Motion + Tailwind CSS 4）
-  panel（翻译 · OCR · 剪贴板 · 输入 · 提示）· settings / onboarding · pinned · overlay（原生 TS）
+  panel（翻译 · OCR · 剪贴板 · 输入 · 提示）· settings / onboarding · pinned · clipfloat · overlay（原生 TS）
 ```
 
 几条贯穿全局的约束：
@@ -58,7 +58,7 @@ wisp/
 ├── apps/desktop/                 Tauri 应用
 │   ├── src/                      前端（React + TypeScript）
 │   ├── src-tauri/                Rust 入口（crate 名 wisp-desktop）
-│   └── panel.html / settings.html / pinned.html / overlay.html   四个页面入口
+│   └── panel.html / settings.html / pinned.html / clipfloat.html / overlay.html   五个页面入口
 ├── crates/
 │   ├── wisp-types/               共享数据类型（IPC、配置、持久化）
 │   ├── wisp-llm/                 四种协议的流式客户端
@@ -95,7 +95,7 @@ crate 之间的横向依赖只允许指向 `wisp-types`。
 | `wisp-types` | 所有跨 crate、跨进程（IPC）与持久化用到的数据类型及其默认值；事件名常量；宽松的配置解析 | 业务逻辑 |
 | `wisp-llm` | OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 四种协议的请求构造与 SSE 流式解析；`<think>` 标签剥离；错误归一化；Base URL 规范化；模型列表与视觉能力判定；连接测试；参数降级与能力缓存；超时、重试、取消；16 ms 合并器；服务模板 | 提示词内容、Key 的存储 |
 | `wisp-prompts` | 内置风格与用户覆盖的合并；模板渲染；翻译、词典式、润色、校对、提升译文、OCR 的提示词装配；语言检测与翻译方向；术语匹配；token 估算；流式安全的后处理；缓存键；评测运行器（`eval` feature） | 发请求 |
-| `wisp-clipboard` | SQLite（WAL）的打开与迁移；记录管线（隐私规则 → 规范化 → 去重 → 写入 → 缓存）；类型推断；疑似密钥检测与应用排除名单；FTS5 trigram 检索与高亮；保留策略与清理；图片与缩略图文件；最近条目的内存缓存；识别历史 | 读取系统剪贴板（属于平台层） |
+| `wisp-clipboard` | SQLite（WAL）的打开与迁移；记录管线（隐私规则 → 规范化 → 去重 → 验证码的到期时间 → 写入 → 缓存）；类型推断；疑似密钥检测与应用排除名单；FTS5 trigram 检索与高亮（含收藏的名称）；收藏与命名；保留策略与清理；图片与缩略图文件；最近条目的内存缓存；识别历史；`smart/` 下的智能识别：识别器注册表（`recognize.rs`，电话、邮箱、链接、验证码、单号、金额、证件号等，每种一个 `Recognizer` 实现并登记）、变换注册表（`transform.rs`，「粘贴为…」的各项，每种一个 `Transform`）与验证码检测（`otp.rs`，记录时据此定到期时间） | 读取系统剪贴板（属于平台层）；识别结果不落库，按需计算 |
 | `wisp-capture` | 并行捕获所有显示器（macOS 用 ScreenCaptureKit，Windows 用 xcap，X11 用 MIT-SHM / GetImage）；逻辑坐标到物理像素的换算与裁剪；按长边缩放；PNG / JPEG 编码与体积回退；窗口列表 | 覆盖层窗口（属于桌面应用） |
 | `wisp-platform` | 取词、粘贴、焦点、权限、应用信息、显示器与外观、剪贴板读写与监听、外部点击、快捷键环境、输入钩子与浮标的 trait 及三端实现，见[平台层](#平台层) | 窗口的创建与绘制 |
 | `wisp-sync` | 多设备同步，见[多设备同步](#多设备同步)：加密（PBKDF2 主密钥、HKDF 子密钥、ChaCha20-Poly1305 封装与分块流式封装）；混合逻辑时钟；记录、日志段与 head 的编解码；`Remote` trait、WebDAV 客户端（reqwest + quick-xml）与测试用的内存远端；本机副本 `sync.db`；settings / styles / glossary 的投影与反投影；连接、同步循环、压缩与清除服务器数据 | 读写本机的配置、剪贴板与钥匙串（由桌面应用实现 `LocalStore` 提供）；决定何时同步 |
@@ -111,9 +111,9 @@ crate 之间的横向依赖只允许指向 `wisp-types`。
 | `app/` | 启动顺序（托盘就绪之后的工作全部异步）、tokio 运行时与 WebView 创建前的环境预检、路径、日志、外观、托盘与通知的文案（`i18n.rs`）、权限状态、开机自启、单实例与 `--trigger` 命令行、诊断导出、性能埋点、冒烟模式、设置变化的统一副作用（`reactor.rs`） |
 | `bus.rs` | 应用内命令总线：托盘、快捷键、扩展触发、命令行、引导页把动作投递到这里，由 `orchestrator` 消费 |
 | `orchestrator/` | 每次由快捷键等发起的流程是一个状态机（`fsm.rs` 的「状态 × 事件」转移表）：取词 → 未就绪检查 → 语言与方向 → 词典式判定 → 长文本确认 → 缓存 → 请求 → 后处理 → 合并 → 推送。`registry.rs` 保存每个流的事件日志，支持回放与所有权转移（面板固定成独立窗口时流不中断）；`cache.rs` 是翻译结果的 LRU 缓存；`captures.rs` 管理截图的冻结帧与裁剪图；`env.rs` 是与外界的接缝，单元测试用内存实现驱动状态机 |
-| `windows/` | `WindowManager` 与面板显示管线（见[窗口体系](#窗口体系)）；`native/` 是窗口层的平台实现 |
+| `windows/` | `WindowManager` 与面板显示管线（见[窗口体系](#窗口体系)）；`float.rs` 是悬浮剪贴板；`native/` 是窗口层的平台实现 |
 | `hotkeys/` | 由设置算出每个动作的候选组合并按「首选 → 备选 → 留空」注册；分层冲突检测（静态表在 `data/`）；录制与测试；全局 Esc；扩展触发（浮标、双击修饰键、鼠标键） |
-| `clipboard_svc/` | 监听回调 → 工作线程读取 → `wisp-clipboard` 记录 → 推送 `clipboard:changed`；粘贴流程（写入剪贴板、抑制自身变更、隐藏面板、还原焦点、模拟粘贴键）；来源应用图标；空闲清理；同步的接入点（本机改动的 sink、远端改动的批量应用） |
+| `clipboard_svc/` | 监听回调 → 工作线程读取 → `wisp-clipboard` 记录 → 推送 `clipboard:changed`（悬浮剪贴板打开时同时推给它）；统一的粘贴管线（见下文）；连续粘贴（`queue.rs`）；条目检视的缓存与验证码到期（`smart.rs`，到期用一次性任务，读取时也过滤已过期的条目）；拖出数据（`drag.rs`）；来源应用图标；空闲清理；同步的接入点（本机改动的 sink、远端改动的批量应用） |
 | `settings/` | `settings.json`、`styles.json`、`glossary.json`、`state.json` 的读写（原子写入、JSON Merge Patch、文件监听热加载）；钥匙串；模型能力缓存；同步的接入点（改动钩子、`apply_synced`、同步凭据） |
 | `sync_svc/` | 多设备同步的桌面端：`LocalStore` 适配器（配置、Key、剪贴板、识别历史）、改动日志的写入线程、触发与去抖、退避、同步凭据的读取、`sync:status` 广播与托盘状态；同步关闭时不打开 `sync.db`、不建 HTTP 客户端与线程 |
 | `ipc/` | 全部 Tauri 命令。只做参数校验与分发，不写业务逻辑 |
@@ -121,16 +121,23 @@ crate 之间的横向依赖只允许指向 `wisp-types`。
 | `updater/` | 检查更新（启动 30 s 后一次，之后惰性检查，间隔至少 24 h）、下载、验签、安装；三种策略：只提示、自动安装、关闭 |
 | `assets.rs` | `wisp://` 协议的资源注册表：截图帧、裁剪图、剪贴板图片与缩略图、应用图标 |
 
+**剪贴板的粘贴管线**：所有粘贴都经 `clipboard_svc/paste.rs` 的 `PasteRequest`，由「来源 × 宿主」两部分组成。来源是整条条目、变换后的条目（「粘贴为…」）、一段文字（芯片的片段）或按顺序合并的多条；宿主由调用窗口推出，是面板、悬浮剪贴板或连续粘贴。写入剪贴板一律抑制自身变更，片段、变换与合并的结果不成为新的历史条目。宿主只决定交还焦点的方式：面板先隐藏再还原焦点、发粘贴键；悬浮剪贴板把前台交还给目标应用（`native::float_yield`）后再发粘贴键；连续粘贴只写入剪贴板，按键由钩子重放用户自己按下的那一次。新的粘贴入口只需要构造一个 `PasteRequest`。
+
+**连续粘贴**（`clipboard_svc/queue.rs`）：开始时立即粘贴第一条，之后才经 `HookSpec.paste_keys` 装上拦截粘贴键的钩子，并接管全局 Esc。用户在任何应用里按粘贴键时，钩子吞掉这次按键，工作线程写入下一条后再把按键重放给前台应用。钩子**只在队列进行中存在**：用完、Esc、10 分钟无操作、锁屏或用户取消时立即卸载，平时不拦截任何按键。
+
+**条目检视**：`clipboard_inspect`（按 id）与 `text_inspect`（OCR 结果等纯文本）一次返回片段与适用的变换，芯片条、「提取」与「粘贴为…」共用；Engine 以内容 hash 为键缓存最近 8 条，识别设置变化时整体作废。
+
 ## 前端
 
 ```text
 apps/desktop/src/
-├── entries/        四个页面的入口：panel.tsx、settings.tsx（也承载引导）、pinned.tsx、overlay.ts
+├── entries/        五个页面的入口：panel.tsx、settings.tsx（也承载引导）、pinned.tsx、clipfloat.tsx、overlay.ts
 ├── panel/          面板外壳：视图路由、进入 / 退出动效、高度上报、拖动
-├── views/          translate · ocr · clipboard · input · toast 五个视图（面板与固定窗口共用）
+├── views/          translate · ocr · clipboard · input · toast 五个视图（面板与固定窗口共用；剪贴板视图也用于悬浮剪贴板）
 ├── settings/       设置窗口的各个分组
 ├── onboarding/     首次启动引导
 ├── pinned/         固定窗口
+├── floating/       悬浮剪贴板的窗口外壳（首帧交接、拖动、关闭）
 ├── overlay/        截图框选（原生 TypeScript + DOM，不加载 React / Motion）
 ├── shared/
 │   ├── ipc/        唯一允许引用 @tauri-apps/* 的目录：命令封装、事件、类型镜像、黄金样例、浏览器 mock
@@ -144,7 +151,8 @@ apps/desktop/src/
 └── generated/      脚本生成的文件（第三方许可清单），不要手改
 ```
 
-- **页面入口**：Vite（Rolldown）构建四个 HTML 入口，共享的 chunk 自动拆分。面板的五个视图全部静态导入，首次唤出任何视图都不需要再加载代码；设置与引导互相懒加载；覆盖层入口不含 React / Motion 运行时。`scripts/check-size.mjs` 检查这些依赖关系与体积预算。
+- **页面入口**：Vite（Rolldown）构建五个 HTML 入口，共享的 chunk 自动拆分。面板的五个视图全部静态导入，首次唤出任何视图都不需要再加载代码；设置与引导互相懒加载；固定窗口的入口不含剪贴板视图，悬浮剪贴板（`clipfloat`）有自己的入口并静态带上剪贴板视图；覆盖层入口不含 React / Motion 运行时。`scripts/check-size.mjs` 检查这些依赖关系与体积预算。
+- **剪贴板的操作注册表**：剪贴板的每个操作（粘贴、收藏、提取、粘贴为、连续粘贴、悬浮……）在 `views/clipboard/actions/` 里声明一次：标签、图标、快捷键、作用于一条还是多条、出现在哪些界面、何时可用、怎么执行。右键菜单、⌘K、「⋯」菜单、头部按钮、提示条与键盘绑定都由它生成，测试保证 id 唯一、文案齐全、显示的快捷键与绑定一致、同一层没有冲突。面板与悬浮剪贴板的差异（高度、焦点、Esc、提示方式）集中在 `views/clipboard/host.ts`；片段与变换的图标、文案与顺序在 `views/clipboard/specs.ts`（识别与变换本身都在 Rust）。
 - **状态**：Zustand 保存视图状态；配置的快照来自 Rust（`settings_get` 与 `settings:changed`），前端不持有第二份权威数据。
 - **流式渲染**：Rust 已按 16 ms 合并增量，前端在 `requestAnimationFrame` 里批量追加到文本节点，避免每个 token 触发一次 React 渲染。
 - **动效**：时长和曲线只能引用 `shared/motion/` 的令牌或 `--dur-*` / `--ease-*` CSS 变量；颜色只能用设计令牌。「减少动效」打开后只保留简短的淡入淡出。
@@ -158,7 +166,7 @@ apps/desktop/src/
 | 通道 | 方向 | 用途 |
 | --- | --- | --- |
 | 命令（`invoke`） | 前端 → Rust | 所有操作，返回 `Result<T, IpcError>` |
-| 事件 | Rust → 前端 | 低频广播：`panel:prepare`、`clipboard:changed`、`settings:changed`、`glossary:changed`、`appearance:changed`、`permissions:changed`、`hotkeys:changed`、`update:status`、`sync:status` 等 |
+| 事件 | Rust → 前端 | 低频广播：`panel:prepare`、`clipboard:changed`、`clipboard:queue`、`settings:changed`、`glossary:changed`、`appearance:changed`、`permissions:changed`、`hotkeys:changed`、`update:status`、`sync:status` 等 |
 | Channel 流 | Rust → 前端 | 翻译与 OCR 的流式输出（`StreamEvent`） |
 | `wisp://` 协议 | 前端读取 | 截图帧、裁剪图、剪贴板图片与缩略图、应用图标等二进制资源 |
 
@@ -198,6 +206,7 @@ wisp-llm 的流 → 后处理 → 16 ms 合并 → Channel → 前端追加到�
 | --- | --- | --- |
 | `panel` | `panel.html` | 全部结果共用的浮动面板。启动后预先加载、隐藏复用；显示时不激活应用（翻译 / OCR 视图不抢原应用的焦点，剪贴板与输入视图需要打字，会成为 key 窗口）；不出现在任务栏与 Alt-Tab。macOS 上是非激活的 NSPanel |
 | `pinned-<id>` | `pinned.html` | 把面板结果「固定」成的独立窗口，可拖动、可调整大小、默认置顶；关闭即销毁 |
+| `clipfloat` | `clipfloat.html` | 悬浮剪贴板（单例）：可拖动、可调整大小、默认置顶（可切换），记住位置、大小与置顶状态（`state.json`）；点击条目粘贴进当前应用而不抢焦点；截图时隐藏；关闭即销毁 |
 | `settings` | `settings.html` | 设置窗口，按需创建，记住位置与尺寸；macOS 上存在期间应用切换为普通应用（出现在 Dock 与 ⌘Tab） |
 | `onboarding` | `settings.html` | 首次启动引导，与设置共用页面入口，按窗口 label 区分 |
 | `overlay-<n>` | `overlay.html` | 截图框选的全屏覆盖层，每个显示器一个；确认或取消后销毁（Windows 上主显示器的覆盖层预先建好、隐藏复用） |
@@ -211,6 +220,12 @@ wisp-llm 的流 → 后处理 → 16 ms 合并 → Channel → 前端追加到�
 - **Css（Windows / Linux）**：窗口是透明的，卡片在窗口内用 CSS 画出阴影与圆角；窗口按阶梯放大，卡片在窗口内做动画。卡片之外的透明区域不拦截点击：Windows 在面板可见期间用低级鼠标钩子按光标位置切换窗口的 `WS_EX_TRANSPARENT`；X11 在面板可见期间以 30 Hz 读取光标位置，光标落在卡片外时整窗忽略鼠标。面板隐藏后两者都停止。Wayland 或关闭了合成时窗口不透明，卡片铺满窗口。
 
 **关闭面板**：翻译 / OCR 视图不是 key 窗口，由全局 Esc 与外部点击监听关闭（在原应用里拖选文字不算点击）；剪贴板与输入视图失去焦点时关闭。
+
+**悬浮剪贴板**：从面板交接（⌘P 或头部按钮）时，悬浮窗先订阅事件、取初始状态（继承面板的查询、筛选与光标），首帧渲染完才请求显示，Rust 在同一次主线程回调里显示悬浮窗、隐藏面板，没有空帧。它要做到「点一下就粘贴进别的应用」，窗口本身不能拿走前台，平台差异集中在 `native::float_*`（`float_attach`、`float_set_on_top`、`float_set_focusable`、`float_yield`，三端同名同签名）：
+
+- **macOS**：非激活、可以成为 key 的 NSPanel（浮动层级，可出现在所有桌面与全屏应用旁）；粘贴前激活目标应用，等悬浮窗不再是 key 后再发粘贴键，超时则只复制并在窗口里提示。
+- **Windows**：常驻 `WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW`，点击不夺前台；搜索框需要输入时临时可激活，粘贴前把前台交还给目标窗口。
+- **X11**：平时不可聚焦，搜索时打开，粘贴前用 `_NET_ACTIVE_WINDOW` 交还；Wayland 只复制并提示。
 
 ## 平台层
 
@@ -227,7 +242,7 @@ wisp-llm 的流 → 后处理 → 16 ms 合并 → Channel → 前端追加到�
 | `ClipboardAccess` | 读取、全类型快照与恢复、变更监听、抑制自身写入 |
 | `OutsideClick` | 外部点击监听（关闭面板用） |
 | `HotkeyEnv` / `KeyGrab` | 系统保留的快捷键、键盘布局；X11 上的事件驱动快捷键注册 |
-| `InputHooks` / `BobberWindow` | 扩展触发的输入钩子与浮标窗口（`mouse-hook` feature） |
+| `InputHooks` / `BobberWindow` | 扩展触发的输入钩子与浮标窗口；连续粘贴期间拦截粘贴键的钩子（`HookSpec.paste_keys`）（`mouse-hook` feature） |
 
 约束：可能阻塞的调用（无障碍接口、UI Automation、X11 selection、剪贴板）都有硬超时；钩子回调只做常数时间的工作，然后交给工作线程；各实现惰性初始化，`Platform::create` 不阻塞。
 
@@ -240,6 +255,8 @@ wisp-llm 的流 → 后处理 → 16 ms 合并 → Channel → 前端追加到�
 | 隐私标记 | `org.nspasteboard.ConcealedType` 等 | `ExcludeClipboardContentFromMonitorProcessing` 等 | `x-kde-passwordManagerHint` |
 
 模拟复制的回退在读取之前对剪贴板做全类型快照，读完立即恢复，期间产生的变更不会进入剪贴板历史。
+
+连续粘贴的按键拦截只在队列进行中安装：macOS 用一个 CGEventTap、Windows 用低级键盘钩子，吞掉没有 Wisp 标记的粘贴键（包括按键的自动重复与抬起），交给工作线程写入下一条后再带标记重放；X11 把粘贴键加进被动抓取，抬起时触发，重放前先注销抓取再用 XTest 发送；Wayland 不提供（界面上置灰并说明）。锁屏（macOS 的锁屏通知、Windows 的桌面切换）作为信号上报，队列随之结束。
 
 Wayland 会话下取词、全局快捷键、截图与剪贴板监听都不可用，能力的可用性经 `Platform::info()` 报告给上层与界面。`wayland` feature 提供基于 wl-clipboard 与 XDG 门户的降级实现，发布版没有编入。
 
@@ -269,7 +286,7 @@ wisp/
 | `sty` | `styles.json`：顺序、每个内置风格的覆盖项、每个自定义风格；风格快捷键按系统区分 |
 | `glo` | 术语表：每条术语按原文 |
 | `key` | 模型服务的 Key，带设置它时服务的 `scheme://host:port`；与当前服务的地址不一致时不写入 |
-| `clip` | 剪贴板条目（按内容 hash）、置顶状态、清空；图片原图作为 blob |
+| `clip` | 剪贴板条目（按内容 hash；验证码带到期时间，收到时已过期的不导入；到期只删除本机的副本、不写墓碑，避免盖掉其他设备上的收藏）、收藏状态与名称、清空；图片原图作为 blob。「同步验证码」关闭时未收藏的验证码不发布也不导入 |
 | `ocr` | 识别记录、清空；缩略图与原图作为 blob |
 
 反投影从本机当前文档出发，只改动要应用的 key；本机文件里不认识的字段原样保留。`unproject(project(x), x) == x` 由测试保证。
@@ -320,7 +337,7 @@ wisp/
 - **严格 CSP**：没有远程资源，脚本只能来自应用自身；`freezePrototype` 开启。
 - **日志不含正文**：只记录耗时、状态码、模型名、取词方式等元数据；原文、译文、剪贴板内容、截图、Key、请求头的值与 URL 查询参数都不写入日志。诊断包导出时再次脱敏。
 - **截图只在内存里**：冻结帧随截图会话结束释放；只有用户打开「识别历史」时才写盘。
-- **剪贴板隐私**：疑似密码、令牌、私钥的内容不记录；密码管理器默认排除；遵守应用的「不要记录」标记。被隐私规则跳过的复制不留下任何痕迹（不取图标、不写日志正文）。
+- **剪贴板隐私**：疑似密码、令牌、私钥的内容不记录；密码管理器默认排除；遵守应用的「不要记录」标记。被隐私规则跳过的复制不留下任何痕迹（不取图标、不写日志正文）。智能识别只在本机进行，识别出的片段、变换结果与收藏的名称都不写日志（最多记数量）；证件号与银行卡号的识别默认关闭，显示时遮住中间几位。
 - **网络请求只有三类**：用户配置的模型服务；检查更新（可关闭）；用户自己配置并开启的同步服务器（WebDAV，默认关闭）。
 - **同步端到端加密**：服务器只见密文，以及文件的数量、大小与时间；明文的 `vault.json` 只有格式版本、随机 id、密钥派生参数与校验值。WebDAV 应用密码与同步密钥只在 Rust 与系统凭据存储里，同步密码本身不保存。
 - **同步的网络边界**：`http://` 只允许回环、私有与链路本地地址、`.local` 与单标签主机名，其余必须是 https（Basic 认证不能明文过公网）；只有 GET 跟随重定向（最多 3 次，跨主机只允许 https → https），离开服务器自身的源之后不再带 `Authorization`，从不发送 `Referer`；其他方法遇到重定向直接报错，请求体不会被重发到别处。
@@ -343,7 +360,8 @@ wisp/
 做法：
 
 - **常驻的只有必要的东西**：tokio 只开 2 个 worker；托盘、快捷键与剪贴板监听都由系统事件驱动（macOS 剪贴板是唯一的轮询：用户活跃时 4 Hz，安静 30 秒 / 5 分钟后降到 1 Hz / 0.2 Hz，锁屏或显示器睡眠时 30 秒一次）；扩展触发全部关闭时不安装任何钩子。
-- **按需创建**：设置、引导、固定窗口与覆盖层都在需要时创建、关闭即销毁；HTTP 客户端、SQLite 连接、钥匙串在第一次使用时初始化。
+- **按需创建**：设置、引导、固定窗口、悬浮剪贴板与覆盖层都在需要时创建、关闭即销毁；HTTP 客户端、SQLite 连接、钥匙串在第一次使用时初始化。悬浮剪贴板打开期间，列表里的相对时间按「下一次会变化的时刻」排一次性定时器，页面不可见时暂停。
+- **剪贴板的新能力不常驻**：智能识别与变换只在需要时运行（检视结果缓存最近 8 条）；验证码到期用一次性任务排程，读取时也过滤已过期的条目，不需要周期清理；连续粘贴的按键钩子只在队列进行中存在。
 - **同步关闭时几乎零成本**：不建 HTTP 客户端、不开 `sync.db`、不起线程、没有计时器、不发请求、不读钥匙串；只有两个常驻的异步任务分别等待设置变化与同步状态变化，由事件唤醒，平时不运行。开启后只由事件驱动：本机改动在有待上传的内容时安排一次性去抖（2 s，连续改动最长 10 s），这是同步唯一的计时器；取回远端改动只在用户活动时进行（面板显示、托盘打开、设置窗口获焦、再次启动），按间隔节流；暂时性失败只记下退避截止时间（1 min 起翻倍，最长 30 min），不设计时器，等下一次活动再判断。启动时只在托盘就绪后做本机工作，不联网、不读钥匙串；退出时只把改动日志落盘。没有变化的一轮只有 1 个请求；同步用自己的 HTTP 客户端（同一套 reqwest + rustls），在一轮同步的第一个请求时创建，排队的几轮跑完即随连接池一起释放；图片等 blob 按流加密、上传与下载，不整块读入内存。
 - **面板预热与复用**：托盘就绪后异步加载面板页面，之后一直复用。隐藏时前端停掉全部 `requestAnimationFrame`、定时器与 Observer，CSS 动画暂停；Windows 上把 WebView2 设为不可见并降低内存目标。
 - **面板回收**：macOS 上面板隐藏约 45 秒后释放 WebView 的页面内存，下次唤出时重新加载（仍在 100 ms 预算内）；「空闲时卸载面板」是可选的更激进策略。
@@ -356,7 +374,7 @@ wisp/
 
 | feature | 所在 crate | 默认 | 作用 |
 | --- | --- | --- | --- |
-| `mouse-hook` | wisp-desktop、wisp-platform | 开 | 编入扩展触发（浮标、双击修饰键、鼠标键）；运行时默认关闭 |
+| `mouse-hook` | wisp-desktop、wisp-platform | 开 | 编入扩展触发（浮标、双击修饰键、鼠标键，运行时默认关闭）与连续粘贴的按键拦截（只在连续粘贴期间安装） |
 | `fake-llm` | wisp-desktop（→ wisp-llm `fake`） | 关 | 内置假模型，设置 `WISP_FAKE_LLM=1` 时启用；`pnpm dev`、`pnpm build:debug`、冒烟与性能测试使用，发布版不编入 |
 | `wayland` | wisp-desktop、wisp-platform、wisp-capture | 关 | Wayland 会话的降级实现（wl-clipboard、XDG 门户截图） |
 | `wgc` | wisp-desktop、wisp-capture | 关 | Windows 截图改用 Windows.Graphics.Capture（GDI 截图异常时的备选） |

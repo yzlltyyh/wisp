@@ -79,6 +79,8 @@ pub fn template_overrides<'a, R: tauri::Runtime, M: tauri::Manager<R>>(
     let transparent = crate::app::runtime::transparent_windows();
     match kind {
         super::TemplateKind::Pinned => builder.decorations(false).transparent(transparent),
+        // 悬浮剪贴板：外观同 pinned；平时不接受焦点（WM_HINTS input = False），点击条目不夺走目标应用的焦点
+        super::TemplateKind::Floating => builder.decorations(false).transparent(transparent).focusable(false),
         super::TemplateKind::Panel | super::TemplateKind::Overlay if !transparent => builder.transparent(false),
         super::TemplateKind::Panel | super::TemplateKind::Regular | super::TemplateKind::Overlay => builder,
     }
@@ -646,6 +648,80 @@ pub fn pinned_hide(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
     window.hide()?;
     wait_visible(window, false);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// 悬浮剪贴板
+
+/// 悬浮剪贴板的平台属性：无装饰 / 透明 / 不接受焦点来自模板覆盖，置顶来自创建参数
+pub fn float_attach(window: &tauri::WebviewWindow, on_top: bool) -> Result<(), IpcError> {
+    let _ = (window, on_top);
+    Ok(())
+}
+
+/// 置顶 / 取消置顶（`_NET_WM_STATE_ABOVE`）
+pub fn float_set_on_top(window: &tauri::WebviewWindow, on_top: bool) -> Result<(), IpcError> {
+    Ok(window.set_always_on_top(on_top)?)
+}
+
+/// 搜索框要打字：临时接受焦点并取得它；`false` 时恢复不接受焦点（只改属性，不交出焦点：悬浮窗仍有焦点时由
+/// `WindowManager::float_focus` 把焦点还给打字之前的应用，粘贴时由 `paste_into` 用 `_NET_ACTIVE_WINDOW` 交还）
+pub fn float_set_focusable(window: &tauri::WebviewWindow, focusable: bool) -> Result<(), IpcError> {
+    window.set_focusable(focusable)?;
+    if focusable {
+        window.set_focus()?;
+    }
+    Ok(())
+}
+
+/// 发粘贴键之前：恢复不接受焦点，前台由随后的 `paste_into` 用 `_NET_ACTIVE_WINDOW` 交还目标窗口。总是返回 true
+/// （Wayland 下取不到目标，粘贴管线在这之前就改为只复制）
+pub fn float_yield(window: &tauri::WebviewWindow, target: &wisp_types::AppRef) -> bool {
+    let _ = target;
+    if let Err(e) = window.set_focusable(false) {
+        log::warn!("floating clipboard set_focusable(false) failed: {e}");
+    }
+    true
+}
+
+/// 交接：同一个主线程回调里显示悬浮窗、隐藏面板（两者的请求排进同一次主循环迭代，不出现空帧），等主循环执行完再返回
+pub fn float_handoff(
+    float: &tauri::WebviewWindow,
+    panel: Option<&tauri::WebviewWindow>,
+    rect: Rect,
+) -> Result<(), IpcError> {
+    let float_win = float.clone();
+    let panel = panel.cloned();
+    super::post_and_wait(
+        |job| float.run_on_main_thread(job),
+        move || {
+            let shown = set_frame(&float_win, rect).and_then(|()| Ok(float_win.show()?));
+            if let Some(panel) = panel
+                && let Err(e) = panel.hide()
+            {
+                log::warn!("hide panel failed: {e}");
+            }
+            shown
+        },
+        MAIN_LOOP_WAIT,
+    )??;
+    wait_visible(float, true);
+    Ok(())
+}
+
+/// 不激活地显示（窗口不接受焦点，WM 映射它时不给焦点）；最小化的还原
+pub fn float_show(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
+    if window.is_minimized()? {
+        window.unminimize()?;
+    }
+    window.show()?;
+    wait_visible(window, true);
+    Ok(())
+}
+
+/// 立即隐藏（截图前）
+pub fn float_hide(window: &tauri::WebviewWindow) -> Result<(), IpcError> {
+    pinned_hide(window)
 }
 
 // ---------------------------------------------------------------------------------------------------------------

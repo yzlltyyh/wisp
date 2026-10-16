@@ -17,9 +17,12 @@ use std::time::{Duration, Instant};
 
 use tauri::{Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
-use wisp_platform::{AppInfo, ClipboardAccess, FocusTracker, Paste, Platform};
+use wisp_platform::{
+    AppInfo, ClipboardAccess, FocusTracker, HookError, HookHandle, InputSignal, KeyChord, Paste, PasteKeys, Platform,
+};
 use wisp_types::{
-    AppRef, Capability, ClipboardChanged, HideReason, OcrHistoryChanged, PanelView, Settings, ToastPayload, event,
+    AppRef, Capability, ClipboardChanged, HideReason, OcrHistoryChanged, PanelView, QueueStatus, Settings,
+    ToastPayload, event,
 };
 
 use crate::app::perf::PerfMarks;
@@ -37,12 +40,24 @@ use super::texts::{self, Text};
 ///   这样：预激活会把最小化的窗口恢复、或把同一应用的其他窗口拉到前台，而 `paste_into` 对这些情形本来就只复制并提示
 pub(crate) type TargetCheck = Result<(), &'static str>;
 
+/// 连续粘贴拦下粘贴键的钩子（`queue.rs`）。生产实现是平台层的输入钩子（`mouse-hook` 没编入时不可用）
+pub(crate) trait PasteKeyHooks: Send + Sync {
+    /// 装上只含这些粘贴键的钩子；返回的句柄 drop 即卸载
+    fn install(&self, keys: PasteKeys, sink: Box<dyn Fn(InputSignal) + Send + Sync>) -> Result<HookHandle, HookError>;
+    /// 重放一次拦下的粘贴键。**阻塞**
+    fn replay(&self, chord: KeyChord) -> Result<(), HookError>;
+    /// 不可用的原因（i18n key）；可用时 None。不阻塞
+    fn unavailable(&self) -> Option<String>;
+}
+
 /// 平台能力
 pub(crate) trait Port: Send + Sync {
     fn clipboard(&self) -> &dyn ClipboardAccess;
     fn paste(&self) -> &dyn Paste;
     fn focus(&self) -> &dyn FocusTracker;
     fn apps(&self) -> &dyn AppInfo;
+    /// 连续粘贴的按键拦截
+    fn paste_hooks(&self) -> &dyn PasteKeyHooks;
     /// Windows 预激活之前的检查：与 `paste_into` 的判定一致的保守子集——只认 `AppRef.window` 记录的那个窗口，
     /// 不恢复最小化窗口、不改用同一进程的其他窗口、挂起时不等待。只在 Windows 上调用（其他平台不预激活）。
     /// 生产实现就是 `Paste::prepare_target`
@@ -77,6 +92,49 @@ impl Port for Platform {
         // `Platform::info` 只读已有的探测结果、不阻塞
         self.info().capabilities.paste_inject
     }
+
+    fn paste_hooks(&self) -> &dyn PasteKeyHooks {
+        self
+    }
+}
+
+impl PasteKeyHooks for Platform {
+    #[cfg(feature = "mouse-hook")]
+    fn install(&self, keys: PasteKeys, sink: Box<dyn Fn(InputSignal) + Send + Sync>) -> Result<HookHandle, HookError> {
+        self.hooks.install(
+            wisp_platform::HookSpec {
+                paste_keys: keys,
+                ..Default::default()
+            },
+            sink,
+        )
+    }
+
+    #[cfg(not(feature = "mouse-hook"))]
+    fn install(&self, keys: PasteKeys, sink: Box<dyn Fn(InputSignal) + Send + Sync>) -> Result<HookHandle, HookError> {
+        let _ = (keys, sink);
+        Err(HookError::Unsupported(
+            wisp_platform::reason::HOOKS_NOT_COMPILED.to_owned(),
+        ))
+    }
+
+    #[cfg(feature = "mouse-hook")]
+    fn replay(&self, chord: KeyChord) -> Result<(), HookError> {
+        self.hooks.replay_paste(chord)
+    }
+
+    #[cfg(not(feature = "mouse-hook"))]
+    fn replay(&self, chord: KeyChord) -> Result<(), HookError> {
+        let _ = chord;
+        Err(HookError::Unsupported(
+            wisp_platform::reason::HOOKS_NOT_COMPILED.to_owned(),
+        ))
+    }
+
+    fn unavailable(&self) -> Option<String> {
+        let caps = self.info().capabilities;
+        super::queue::unavailable_of(&caps.paste_inject, &caps.input_hooks)
+    }
 }
 
 /// 剪贴板视图在面板里的状态（`clipboard:changed` 何时可以推送）
@@ -100,6 +158,12 @@ impl ClipView {
     }
 }
 
+/// 连续粘贴的进度要不要用面板的 toast 显示：面板正显示（用户又打开了剪贴板）时不拿 toast 换掉它；悬浮剪贴板开着时
+/// 进度在它里面。正显示的是上一次的进度 toast 时照常换成新的，否则一直停在「1 / 5」
+pub(crate) fn queue_toast_shown(panel: Option<PanelView>, float_ready: bool) -> bool {
+    panel.is_none_or(|v| v == PanelView::Toast) && !float_ready
+}
+
 /// 由面板状态（会话 id 与视图）得出剪贴板视图的状态（纯函数，单测覆盖）
 pub(crate) fn clip_view_of(state: Option<(u64, PanelView)>, shown: impl FnOnce(u64) -> bool) -> ClipView {
     match state {
@@ -119,6 +183,20 @@ pub(crate) trait Host: Send + Sync {
     fn panel_visible(&self) -> bool;
     /// 某个面板会话是否仍然有效（`WindowManager::panel_session_live`：隐藏中、已结束、被取代的都是 false）
     fn session_live(&self, session: u64) -> bool;
+    /// 面板会话触发时的前台应用（面板宿主的粘贴目标；会话结束后取不到，必须在隐藏之前取）
+    fn panel_prev_app(&self, session: u64) -> Option<AppRef>;
+    /// 悬浮剪贴板发键之前交还键盘焦点：让目标应用成为接收按键的一方，并等悬浮窗不再是 key 窗口（有上限）。交还不了时
+    /// 返回 false，粘贴改为只复制——否则粘贴键会落进悬浮窗自己。**会阻塞**（主线程往返）
+    fn float_yield(&self, target: &AppRef) -> bool;
+    /// 悬浮剪贴板已就绪（页面已订阅事件）：`clipboard:changed` 同时推给它，投递视为「已显示」
+    fn float_ready(&self) -> bool;
+    /// 向悬浮剪贴板推送 `clipboard:changed`
+    fn emit_float(&self, change: &ClipboardChanged);
+    /// 连续粘贴的进度变了：推送 `clipboard:queue`（面板与悬浮剪贴板）、刷新托盘；`toast` 给出时（每粘贴一条）在原面板
+    /// 位置以 toast 视图提示进度——面板正显示着、或悬浮剪贴板开着（它自己显示进度）时不弹。**会阻塞**（toast 要主线程往返）
+    fn queue_changed(&self, status: &QueueStatus, toast: Option<ToastPayload>);
+    /// 连续粘贴期间的全局 Esc（按下即结束队列）。**会阻塞**（注册全局快捷键要与主线程往返）
+    fn queue_escape_guard(&self, active: bool);
     /// 面板会话结束的通知（值只是信号）；拿不到时返回 None，空闲清理退回按静默期重新检查
     fn panel_hidden(&self) -> Option<tokio::sync::watch::Receiver<u64>>;
     /// 向面板推送 `clipboard:changed`
@@ -256,6 +334,45 @@ impl Host for AppHost {
 
     fn session_live(&self, session: u64) -> bool {
         self.windows().is_some_and(|w| w.panel_session_live(session))
+    }
+
+    fn panel_prev_app(&self, session: u64) -> Option<AppRef> {
+        self.windows()?.panel_prev_app(session)
+    }
+
+    fn float_yield(&self, target: &AppRef) -> bool {
+        // 悬浮窗没开（例如刚关掉）时没有要交还的
+        self.windows().is_none_or(|w| w.float_yield(target))
+    }
+
+    fn float_ready(&self) -> bool {
+        self.windows().is_some_and(|w| w.float_ready())
+    }
+
+    fn emit_float(&self, change: &ClipboardChanged) {
+        if let Err(e) = self.app.emit_to(super::FLOAT_LABEL, event::CLIPBOARD_CHANGED, change) {
+            log::debug!("emit clipboard:changed to the floating clipboard failed: {e}");
+        }
+    }
+
+    fn queue_changed(&self, status: &QueueStatus, toast: Option<ToastPayload>) {
+        for label in [PANEL_LABEL, super::FLOAT_LABEL] {
+            if let Err(e) = self.app.emit_to(label, event::CLIPBOARD_QUEUE, status) {
+                log::debug!("emit clipboard:queue failed: {e}");
+            }
+        }
+        crate::tray::refresh(&self.app);
+        let Some(toast) = toast else { return };
+        let Some(windows) = self.windows() else { return };
+        if queue_toast_shown(windows.panel_state().map(|s| s.view), windows.float_ready()) {
+            windows.panel_show_toast(toast);
+        }
+    }
+
+    fn queue_escape_guard(&self, active: bool) {
+        if let Some(state) = self.app.try_state::<AppState>() {
+            state.hotkeys.queue_esc_guard(active);
+        }
     }
 
     fn panel_hidden(&self) -> Option<tokio::sync::watch::Receiver<u64>> {

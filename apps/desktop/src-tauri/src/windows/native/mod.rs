@@ -22,6 +22,7 @@
 //! | `template_overrides` | 模板的平台差异 |
 //! | `panel_*` | 面板的转换、定位、显示 / 隐藏、焦点、点击穿透、WebView2 可见性与内存目标 |
 //! | `pinned_*` | Pinned 的平台属性、交接（同一帧显示 pinned、隐藏面板）与展开过渡 |
+//! | `float_*` | 悬浮剪贴板：`float_attach`（不抢焦点的窗口属性）、`float_set_on_top`、`float_set_focusable`（搜索框要打字时临时可聚焦）、`float_yield`（发粘贴键前把键盘焦点交还目标应用）、`float_handoff` / `float_show` / `float_hide` |
 //! | `overlay_*` | Overlay 的转换、冻结帧图层、显示 / 隐藏 / 销毁 |
 //! | `window_frame` / `set_window_frame` | 任意窗口的桌面坐标矩形读写 |
 //! | `flush_after_hide` | 截图前隐藏窗口后等合成器出完下一帧 |
@@ -295,6 +296,8 @@ pub enum TemplateKind {
     Panel,
     /// `pinned-<id>`
     Pinned,
+    /// 悬浮剪贴板 `clipfloat`（与 Pinned 同样是独立的卡片窗口，但从不抢焦点）
+    Floating,
     /// settings / onboarding
     Regular,
     /// `overlay-<n>`
@@ -302,10 +305,11 @@ pub enum TemplateKind {
 }
 
 impl TemplateKind {
-    /// 按 label 分类：panel / settings / onboarding / pinned-<id> / overlay-<n>；未知 label 视为 panel
+    /// 按 label 分类：panel / settings / onboarding / pinned-<id> / clipfloat / overlay-<n>；未知 label 视为 panel
     pub fn of(label: &str) -> Self {
         match label {
             "settings" | "onboarding" => Self::Regular,
+            crate::clipboard_svc::FLOAT_LABEL => Self::Floating,
             l if l.starts_with("pinned-") => Self::Pinned,
             l if l.starts_with("overlay-") => Self::Overlay,
             _ => Self::Panel,
@@ -692,6 +696,7 @@ mod tests {
         assert_eq!(TemplateKind::of("settings"), TemplateKind::Regular);
         assert_eq!(TemplateKind::of("onboarding"), TemplateKind::Regular);
         assert_eq!(TemplateKind::of("pinned-p3"), TemplateKind::Pinned);
+        assert_eq!(TemplateKind::of("clipfloat"), TemplateKind::Floating);
         assert_eq!(TemplateKind::of("overlay-0"), TemplateKind::Overlay);
     }
 

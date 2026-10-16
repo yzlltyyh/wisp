@@ -5,12 +5,13 @@
 //!   并让这些域在下一轮重新应用；启动时被新建或重置成默认值的文件不发布任何东西，而是让服务器上的值在下一轮覆盖回来。
 //!   文件里有写错、被宽松解析丢掉的内容时（[`LoadState::Lossy`]），缺少的 key 不当作删除发布，只发布新增与修改。
 //! - API Key：副本里有、本机钥匙串里却没有的（Linux 只在内存里保存 Key 的会话重启之后）重新标为未应用，下一轮写回。
-//! - 剪贴板的置顶状态：在第一次成功同步之后单独核对（[`clip_pins`]），这时远端的置顶都已经应用过了。
+//! - 剪贴板的收藏状态与名称：在第一次成功同步之后单独核对（[`clip_pins`]），这时远端的收藏都已经应用过了。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use serde_json::Value;
+use wisp_sync::model::PinValue;
 use wisp_sync::model::keys::{self, ClipKey};
 use wisp_sync::projection::{self, ConfigDoc};
 use wisp_sync::{Domain, Engine, Hlc, Journal, JournalEntry, JournalValue, ShadowUpdate, SyncError};
@@ -119,7 +120,7 @@ pub fn run(s: &Startup<'_>) -> Result<Report, SyncError> {
     Ok(report)
 }
 
-/// 剪贴板置顶状态的核对：本机与副本不一致的（例如上次退出时还没来得及写进副本的置顶），以新的 t 补发 `p`。
+/// 剪贴板收藏状态与名称的核对：本机与副本不一致的（例如上次退出时还没来得及写进副本的收藏或改名），以新的 t 补发 `p`。
 /// 只看副本里有存活内容记录的条目；本机刚改过的跳过（它们自己会被记录）。返回补发的条数
 pub fn clip_pins(
     store: &wisp_clipboard::ClipStore,
@@ -139,7 +140,8 @@ pub fn clip_pins(
                 alive.insert(hash);
             }
             Some(ClipKey::Pin(hash)) => {
-                pins.insert(hash, record.v.as_ref().and_then(Value::as_bool).unwrap_or(false));
+                let value = record.v.as_ref().and_then(PinValue::parse).unwrap_or_default();
+                pins.insert(hash, value);
             }
             _ => {}
         }
@@ -149,7 +151,12 @@ pub fn clip_pins(
         if row.kind == ClipKind::Files || !alive.contains(&row.hash) || captures.clip_pending(&row.hash) {
             continue;
         }
-        if pins.get(&row.hash).copied().unwrap_or(false) == row.pinned {
+        // 收藏状态与名称一起比较（名称只属于收藏）
+        let local = PinValue {
+            pin: row.pinned,
+            name: row.name.clone().filter(|_| row.pinned),
+        };
+        if pins.get(&row.hash).cloned().unwrap_or_default() == local {
             continue;
         }
         let t = clock.now();
@@ -159,7 +166,7 @@ pub fn clip_pins(
                 d: Domain::Clip,
                 k: keys::clip_pin(&row.hash),
                 t,
-                value: JournalValue::Set(Value::Bool(row.pinned)),
+                value: JournalValue::Set(local.to_value()),
             },
             capture: CaptureKey::Clip(row.hash),
         };
@@ -169,4 +176,72 @@ pub fn clip_pins(
         sent += 1;
     }
     Ok(sent)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use wisp_clipboard::{ClipStore, IngestOutcome, IngestPolicy};
+    use wisp_types::{ClipboardSettings, RawClipboard};
+
+    use super::*;
+
+    /// 本机的收藏状态与名称与副本里的 `p/` 不一致时补发对象形态的值；一致（含旧的 bool 值）时不发
+    #[test]
+    fn favorite_names_are_reconciled_with_the_pin_register() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let engine = wisp_sync::Engine::open(
+            &dir.path().join("sync.db"),
+            &dir.path().join("spool"),
+            wisp_sync::DeviceInfo {
+                id: "0123456789abcdef".into(),
+                name: "test".into(),
+                os: OsKind::current(),
+                app_version: "0.0.0".into(),
+            },
+        )
+        .expect("open replica");
+        let journal = engine.journal().expect("journal");
+        let clock = engine.hlc();
+        let captures = Captures::default();
+        let store = ClipStore::open(&dir.path().join("clip")).expect("open clipboard");
+        let raw = RawClipboard {
+            change_id: 1,
+            text: Some("Guest network: wisp-guest".into()),
+            ..RawClipboard::default()
+        };
+        let policy = IngestPolicy::from(&ClipboardSettings::default());
+        let IngestOutcome::Inserted(meta) = store.ingest(&raw, &policy, 1_000).expect("ingest") else {
+            panic!("inserted")
+        };
+        let hash = store.hash_of(meta.id).expect("hash").expect("exists");
+        store.set_name(meta.id, Some("Wi-Fi")).expect("name");
+        let publish = |k: String, v: Value| {
+            journal
+                .record(
+                    vec![JournalEntry {
+                        d: Domain::Clip,
+                        k,
+                        t: clock.now(),
+                        value: JournalValue::Set(v),
+                    }],
+                    Vec::new(),
+                )
+                .expect("record");
+        };
+        publish(keys::clip_content(&hash), json!({"kind": "text"}));
+        // 副本里只有旧形态的 `true`：名称不一致，补发
+        publish(keys::clip_pin(&hash), json!(true));
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert_eq!(clip_pins(&store, &journal, &captures, &clock, &tx).expect("pins"), 1);
+        let Ok(Msg::Record { entry, .. }) = rx.try_recv() else {
+            panic!("record")
+        };
+        assert_eq!(entry.k, keys::clip_pin(&hash));
+        assert!(matches!(entry.value, JournalValue::Set(ref v) if *v == json!({"pin": true, "name": "Wi-Fi"})));
+        // 写进副本之后一致：不再补发
+        publish(keys::clip_pin(&hash), json!({"pin": true, "name": "Wi-Fi"}));
+        let captures = Captures::default();
+        assert_eq!(clip_pins(&store, &journal, &captures, &clock, &tx).expect("pins"), 0);
+    }
 }

@@ -365,6 +365,8 @@ pub fn on_run_event(app: &tauri::AppHandle, ev: tauri::RunEvent) {
         }
         RunEvent::Exit => {
             if let Some(state) = app.try_state::<AppState>() {
+                // 悬浮剪贴板还开着：退出不经过窗口的 Destroyed，位置与大小要在写盘之前记下
+                state.windows.float_save_on_exit();
                 state.settings.flush();
                 // 同步：把还在写入队列里的本机改动写进本机副本（只写本地，最多 200 ms）
                 state.sync.shutdown_flush();

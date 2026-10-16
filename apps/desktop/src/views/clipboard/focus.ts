@@ -70,8 +70,13 @@ export function keepSearchFocus(e: ReactMouseEvent<HTMLElement>): void {
   const target = e.target
   if (!(target instanceof Element)) return
   if (!target.closest(CONTROL) && target.closest(KEEP_DEFAULT)) return
+  // 可以拖出的行：阻止 mousedown 的默认行为会让拖拽开不了头；焦点由列表在松开 / 拖拽结束时还给搜索框
+  if (target.closest(DRAGGABLE)) return
   e.preventDefault()
 }
+
+/** 可以拖出的行（见 kinds.ts 的 `drag`） */
+const DRAGGABLE = '[draggable="true"]'
 
 /**
  * 焦点不在视图里（点过可选中的正文、按钮卸载之后）时，第一个可打印字符 / ⌫ / ⌦：把焦点送回搜索框，事件照常

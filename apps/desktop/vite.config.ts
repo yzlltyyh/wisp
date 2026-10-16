@@ -5,11 +5,12 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, loadEnv, type Plugin, type UserConfig } from 'vite'
 
-/** 前端入口：四个 HTML，交给 Rolldown 自动拆共享 chunk，不手动切 vendor */
+/** 前端入口：五个 HTML，交给 Rolldown 自动拆共享 chunk，不手动切 vendor */
 const entries = {
   panel: fileURLToPath(new URL('./panel.html', import.meta.url)),
   settings: fileURLToPath(new URL('./settings.html', import.meta.url)),
   pinned: fileURLToPath(new URL('./pinned.html', import.meta.url)),
+  clipfloat: fileURLToPath(new URL('./clipfloat.html', import.meta.url)),
   overlay: fileURLToPath(new URL('./overlay.html', import.meta.url)),
 }
 

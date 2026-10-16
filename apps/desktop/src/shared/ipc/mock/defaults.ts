@@ -14,6 +14,8 @@ import type {
   HotkeyTarget,
   OsKind,
   OverlayInit,
+  PasteMode,
+  PasteOutcome,
   PermissionSet,
   Provider,
   SettingsSnapshot,
@@ -26,6 +28,7 @@ import type { MockBus } from './bus'
 import type { MockDesktop } from './desktop'
 import { HOTKEY_ACTIONS, SAMPLE, type MockFixtures } from './fixtures'
 import type { MockRouter } from './router'
+import { mockInspect } from './smart'
 import { textStream, type MockStreams } from './streams'
 import { createSyncState, installSyncDefaults, type MockSync } from './sync'
 import { mockError } from './types'
@@ -39,6 +42,8 @@ export interface MockState {
   hotkeys: HotkeyStatus[]
   clipboard: ClipItemMeta[]
   clipboardPaused: boolean
+  /** 列表顶部「收藏」分组的折叠状态（本机） */
+  clipboardFavoritesCollapsed: boolean
   glossary: GlossaryEntry[]
   update: UpdateStatus
   onboardingDone: boolean
@@ -55,6 +60,7 @@ export function createState(f: MockFixtures): MockState {
     hotkeys: f.hotkeyStatuses(),
     clipboard: f.clipItems(),
     clipboardPaused: false,
+    clipboardFavoritesCollapsed: false,
     glossary: [],
     update: f.update(),
     onboardingDone: false,
@@ -218,19 +224,106 @@ export function installDefaults(d: DefaultsDeps): void {
       files: meta.files,
     }
   })
-  r.handle('clipboard_paste', ({ id, mode }) => {
-    const item = findClip(id)
-    item.last_used_at = Date.now()
-    item.use_count += 1
-    bus.emit('clipboard:changed', { change: 'touched', item })
+  /** 粘贴之后：更新来源条目的最近使用时间、隐藏面板（与 Rust 的面板粘贴一致）；只复制时给出 copied */
+  const pasted = (ids: readonly number[], mode: PasteMode): PasteOutcome => {
+    for (const id of ids) {
+      const item = findClip(id)
+      item.last_used_at = Date.now()
+      item.use_count += 1
+      bus.emit('clipboard:changed', { change: 'touched', item })
+    }
     if (d.panel?.currentSession != null) d.panel.hide(d.panel.currentSession, 'paste')
     return mode === 'copy_only' ? { type: 'copied', reason: 'copy_only' } : { type: 'pasted' }
+  }
+  r.handle('clipboard_paste', ({ id, mode }) => pasted([id], mode))
+  r.handle('clipboard_paste_text', ({ text, from, mode }) => {
+    if (text.length > 1024 * 1024) throw mockError('invalid_argument', 'text exceeds 1048576 bytes')
+    return pasted(from === null ? [] : [from], mode)
   })
+  r.handle('clipboard_paste_many', ({ ids, mode }) => {
+    if (ids.length === 0) throw mockError('invalid_argument', 'ids must not be empty')
+    return pasted(ids, mode)
+  })
+  r.handle('clipboard_inspect', ({ id }) => {
+    const item = findClip(id)
+    return mockInspect(
+      item.kind,
+      item.kind === 'image' || item.kind === 'files' ? null : item.preview,
+    )
+  })
+  r.handle('text_inspect', ({ text }) => mockInspect('text', text))
   r.handle('clipboard_pin', ({ id, pinned }) => {
     const item = findClip(id)
     item.pinned = pinned
+    // 与 Rust 一致：收藏去掉验证码的到期时间，取消收藏去掉名称
+    if (pinned) delete item.expires_at
+    else delete item.name
     return item
   })
+  r.handle('clipboard_set_name', ({ id, name }) => {
+    const item = findClip(id)
+    const clean = name?.trim() ?? ''
+    if (clean.length > 64) throw mockError('invalid_argument', 'name exceeds 64 characters')
+    // 命名即收藏；清除名称不取消收藏
+    if (clean) {
+      item.name = clean
+      item.pinned = true
+      delete item.expires_at
+    } else delete item.name
+    bus.emit('clipboard:changed', { change: 'updated', item })
+    return item
+  })
+  r.handle('clipboard_set_favorites_collapsed', ({ collapsed }) => {
+    state.clipboardFavoritesCollapsed = collapsed
+  })
+  r.handle('clipboard_drag_data', ({ ids }) => {
+    if (ids.length === 0) throw mockError('invalid_argument', 'ids must not be empty')
+    const items = ids.map(findClip)
+    const text = items
+      .filter((it) => it.kind !== 'image')
+      .map((it) =>
+        it.kind === 'files' ? (it.files ?? []).map((file) => file.path).join('\n') : it.preview,
+      )
+      .join('\n')
+    const one = items.length === 1 ? items[0] : undefined
+    return {
+      text,
+      html: one?.kind === 'rich_text' ? `<p>${one.preview}</p>` : null,
+      uri: one?.kind === 'link' ? one.preview : null,
+    }
+  })
+  r.handle('clipboard_queue_start', ({ ids }) => {
+    if (ids.length === 0) throw mockError('invalid_argument', 'ids must not be empty')
+    const status = { active: ids.length > 1, index: 1, total: ids.length }
+    pasted(ids.slice(0, 1), 'normal')
+    bus.emit('clipboard:queue', status)
+    return status
+  })
+  r.handle('clipboard_queue_cancel', () => {
+    bus.emit('clipboard:queue', { active: false, index: 0, total: 0 })
+  })
+  r.handle('clipboard_float_open', () => {
+    if (d.panel?.currentSession != null) d.panel.hide(d.panel.currentSession, 'pin')
+  })
+  r.handle('clipboard_float_close', () => undefined)
+  r.handle('clipboard_float_ready', () => ({
+    query: '',
+    filter: 'all',
+    selected_id: null,
+    on_top: true,
+    payload: {
+      kind: 'clipboard',
+      page: f.clipPage(state.clipboard),
+      paused: state.clipboardPaused,
+      hint_bar: true,
+      paste_on_double_click: false,
+      ...(state.clipboardFavoritesCollapsed ? { favorites_collapsed: true } : {}),
+    },
+  }))
+  r.handle('clipboard_float_reveal', () => undefined)
+  r.handle('clipboard_float_set_on_top', () => undefined)
+  r.handle('clipboard_float_focus', () => undefined)
+  r.handle('clipboard_float_hover', () => undefined)
   r.handle('clipboard_delete', ({ id, force }) => {
     const item = findClip(id)
     if (item.pinned && !force) throw mockError('conflict', 'pinned item requires force')

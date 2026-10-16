@@ -8,6 +8,10 @@
 //! 显示的其他消失信号一律丢弃；浮标因上层 `hide` 或超时开始淡出时也会立即认领，淡出期间的按键等不会再报告。
 //! 钩子线程不能取 hub 的锁（重配时 hub 持锁等待钩子线程的 ack），它发出的消失在分发线程上认领；其他来源在发出时
 //! 就认领。
+//!
+//! **连续粘贴的粘贴键**（`paste_keys`）：键盘钩子里比较虚拟键码与此刻按着的修饰键（`GetAsyncKeyState` 八次查询，
+//! O(1)），匹配的按下吞掉（返回非零）并发出 `PasteKey`，同一个键的自动重复与抬起一并吞掉；只放行带 `WISP_TAG` 的
+//! 事件（Wisp 自己的重放），软件 KVM 等注入的按键与物理按键一样拦下。桌面切换（锁屏、UAC）时发出 `SessionLocked`。
 
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
@@ -21,9 +25,12 @@ use ::windows::Win32::UI::WindowsAndMessaging::{
 };
 use wisp_types::{ModifierKey, MonitorId, MouseButtonKind, Rect};
 
+use crate::common::combo::Modifiers;
 use crate::common::double_tap::{DoubleTapMachine, TapInput};
 use crate::common::gesture::{self, LongPress, LongPressUp, MouseUpFacts};
-use crate::types::{DismissReason, DoubleTapSpec, HookError, HookHandle, HookSpec, InputSignal, MouseSpec};
+use crate::types::{
+    DismissReason, DoubleTapSpec, HookError, HookHandle, HookSpec, InputSignal, KeyChord, MouseSpec, PasteKeys,
+};
 
 use super::super::bobber::Bobber;
 use super::super::geom;
@@ -78,6 +85,7 @@ pub(super) struct ExtConfig {
     bobber_visible: Option<BobberGeom>,
     double_tap: Option<DoubleTapSpec>,
     mouse: MouseSpec,
+    paste: PasteKeys,
 }
 
 impl ExtConfig {
@@ -90,7 +98,12 @@ impl ExtConfig {
     }
 
     pub(super) fn wants_keyboard(&self) -> bool {
-        self.double_tap.is_some() || self.bobber_visible.is_some()
+        self.double_tap.is_some() || self.bobber_visible.is_some() || !self.paste.is_empty()
+    }
+
+    /// 连续粘贴进行中（桌面切换时要通知它结束）
+    pub(super) fn pasting(&self) -> bool {
+        !self.paste.is_empty()
     }
 }
 
@@ -145,6 +158,12 @@ impl ExtSubs {
             bobber_visible: self.bobber_visible.clone(),
             double_tap: self.subs.iter().find_map(|(_, s, _)| s.double_tap),
             mouse,
+            paste: self
+                .subs
+                .iter()
+                .map(|(_, s, _)| s.paste_keys)
+                .find(|p| !p.is_empty())
+                .unwrap_or_default(),
         }
     }
 }
@@ -181,6 +200,29 @@ pub(super) enum ExtEvent {
     Dismiss(Dismissal),
     DoubleTap,
     Mouse(MouseButtonKind),
+    /// 拦下了一组粘贴键
+    PasteKey(KeyChord),
+    /// 桌面切换（锁屏、UAC）：连续粘贴结束
+    SessionLocked,
+}
+
+/// 一组粘贴键：虚拟键码 + 修饰键（配置时由 `KeyChord` 换算好）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PasteVk {
+    vk: u16,
+    chord: KeyChord,
+}
+
+/// 此刻按着的修饰键（左右同义）
+fn held_modifier_set() -> Modifiers {
+    let held = input::held_modifiers();
+    let any = |a: u16, b: u16| held.iter().any(|v| *v == a || *v == b);
+    Modifiers {
+        control: any(vk::CTRL_L, vk::CTRL_R),
+        alt: any(vk::ALT_L, vk::ALT_R),
+        shift: any(vk::SHIFT_L, vk::SHIFT_R),
+        super_key: any(vk::WIN_L, vk::WIN_R),
+    }
 }
 
 fn button_index(b: MouseButtonKind) -> usize {
@@ -304,6 +346,10 @@ pub(super) struct ExtState {
     swallow: [bool; 3],
     pending: Option<Pending>,
     replay: Option<Replay>,
+    /// 连续粘贴的粘贴键（空 = 没有在进行的队列）
+    paste: Vec<PasteVk>,
+    /// 拦下的那一次按下的虚拟键：它的自动重复与抬起一并吞掉
+    paste_held: Option<u16>,
 }
 
 impl ExtState {
@@ -325,6 +371,8 @@ impl ExtState {
             swallow: [false; 3],
             pending: None,
             replay: None,
+            paste: Vec::new(),
+            paste_held: None,
         }
     }
 
@@ -335,6 +383,14 @@ impl ExtState {
     pub(super) fn reconfigure(&mut self, cfg: &ExtConfig) {
         self.bobber = cfg.bobber;
         self.mouse = cfg.mouse;
+        self.paste = cfg
+            .paste
+            .iter()
+            .filter_map(|chord| chord.to_combo().win_vk().map(|vk| PasteVk { vk, chord }))
+            .collect();
+        if self.paste.is_empty() {
+            self.paste_held = None;
+        }
         if self.visible.as_ref().map(|g| g.serial) != cfg.bobber_visible.as_ref().map(|g| g.serial) {
             self.dismissed = false;
         }
@@ -567,7 +623,32 @@ impl ExtState {
         }
     }
 
-    /// 键盘事件（从不吞键）
+    /// 连续粘贴：这个按键是不是要拦下的粘贴键（返回 (是否吞掉, 要送出的事件)）。只有第一次按下发出 `PasteKey`；拦下的
+    /// 那个键的自动重复与抬起同样吞掉。Wisp 自己的重放（`WISP_TAG`）由调用方事先放行
+    pub(super) fn on_paste_key(&mut self, msg: u32, kb: &KBDLLHOOKSTRUCT) -> (bool, Option<ExtEvent>) {
+        if self.paste.is_empty() {
+            return (false, None);
+        }
+        let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
+        let v = kb.vkCode as u16;
+        if self.paste_held == Some(v) {
+            if !down {
+                self.paste_held = None;
+            }
+            return (true, None);
+        }
+        if !down || !self.paste.iter().any(|p| p.vk == v) {
+            return (false, None);
+        }
+        let mods = held_modifier_set();
+        let Some(hit) = self.paste.iter().find(|p| p.vk == v && p.chord.modifiers == mods) else {
+            return (false, None);
+        };
+        self.paste_held = Some(v);
+        (true, Some(ExtEvent::PasteKey(hit.chord)))
+    }
+
+    /// 键盘事件（扩展触发从不吞键；吞掉粘贴键由 [`Self::on_paste_key`] 负责）
     pub(super) fn on_key(&mut self, msg: u32, kb: &KBDLLHOOKSTRUCT, mouse_hooked: bool) -> [Option<ExtEvent>; 2] {
         let mut ev: [Option<ExtEvent>; 2] = [None, None];
         let down = msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN;
@@ -737,6 +818,16 @@ impl HookHub {
             ExtEvent::DoubleTap => {
                 for (_, sink) in self.sinks(|s| s.double_tap.is_some()) {
                     call_guarded("input hook callback", || sink(InputSignal::DoubleTap));
+                }
+            }
+            ExtEvent::PasteKey(chord) => {
+                for (_, sink) in self.sinks(|s| !s.paste_keys.is_empty()) {
+                    call_guarded("input hook callback", || sink(InputSignal::PasteKey { chord }));
+                }
+            }
+            ExtEvent::SessionLocked => {
+                for (_, sink) in self.sinks(|s| !s.paste_keys.is_empty()) {
+                    call_guarded("input hook callback", || sink(InputSignal::SessionLocked));
                 }
             }
             ExtEvent::Mouse(button) => {

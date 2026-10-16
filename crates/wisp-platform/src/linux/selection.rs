@@ -108,7 +108,7 @@ fn shift_insert() -> Combo {
 
 /// 这个粘贴键在 X11 终端里读的是 PRIMARY 而不是 CLIPBOARD（xterm / urxvt 的 Shift+Insert）。GTK / Qt 应用的
 /// Shift+Insert 读 CLIPBOARD，此时同时占有 PRIMARY 也没有副作用，所以只看按键本身
-fn reads_primary(combo: &Combo) -> bool {
+pub(crate) fn reads_primary(combo: &Combo) -> bool {
     *combo == shift_insert()
 }
 
@@ -440,9 +440,11 @@ pub(crate) fn paste_into(x: &Arc<X11>, target: &AppRef, keymaps: &RwLock<Vec<App
         // 调用方没有经 Wisp 写剪贴板（或已被别的应用接管）：终端会粘贴它自己的 PRIMARY，只记日志
         log::info!("粘贴：无法同时占有 PRIMARY（{e}），{} 可能粘贴旧选区", target.id);
     }
-    keyboard::release_held_modifiers(x)
-        .and_then(|()| keyboard::send_combo(x, &combo))
-        .map_err(PasteError::Other)
+    // 连续粘贴进行中时粘贴键被抓取着：Wisp 自己发的这一下要绕开抓取，否则会被当成用户按的、变成一次队列前进
+    super::x11::hotkeys::send_outside_paste_grab(x, &combo, || {
+        keyboard::release_held_modifiers(x).and_then(|()| keyboard::send_combo(x, &combo))
+    })
+    .map_err(PasteError::Other)
 }
 
 #[cfg(test)]

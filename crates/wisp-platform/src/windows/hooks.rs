@@ -544,12 +544,25 @@ impl HookState {
         false
     }
 
-    fn on_key(&mut self, msg: u32, kb: &KBDLLHOOKSTRUCT) {
-        if kb.flags.contains(LLKHF_INJECTED) || kb.dwExtraInfo == WISP_TAG {
-            return;
+    /// 键盘事件；返回 true 表示吞掉（只有连续粘贴的粘贴键会被吞掉）
+    fn on_key(&mut self, msg: u32, kb: &KBDLLHOOKSTRUCT) -> bool {
+        if kb.dwExtraInfo == WISP_TAG {
+            return false;
         }
         #[cfg(feature = "mouse-hook")]
         {
+            // 粘贴键：注入的按键（软件 KVM、远程控制）与物理按键一样拦下，只放行 Wisp 自己的重放
+            let (swallow, ev) = self.ext.on_paste_key(msg, kb);
+            if let Some(e) = ev {
+                self.send(HubEvent::Ext(e));
+            }
+            if swallow {
+                return true;
+            }
+            // 扩展触发只认真实的物理输入
+            if kb.flags.contains(LLKHF_INJECTED) {
+                return false;
+            }
             let mouse_hooked = self.mouse_hook.is_some();
             for e in self.ext.on_key(msg, kb, mouse_hooked).into_iter().flatten() {
                 self.send(HubEvent::Ext(e));
@@ -557,6 +570,7 @@ impl HookState {
         }
         #[cfg(not(feature = "mouse-hook"))]
         let _ = (msg, kb);
+        false
     }
 
     fn on_thread_msg(&mut self, msg: &MSG) -> bool {
@@ -573,7 +587,13 @@ impl HookState {
                 true
             }
             WM_APP_REARM => {
-                self.rearm(Rearm::from_wparam(msg.wParam.0));
+                let why = Rearm::from_wparam(msg.wParam.0);
+                // 锁屏 / UAC 切到了安全桌面：连续粘贴立即结束（拦下粘贴键的钩子随之卸载）
+                #[cfg(feature = "mouse-hook")]
+                if why == Rearm::DesktopSwitch && self.cfg.ext.pasting() {
+                    self.send(HubEvent::Ext(extended::ExtEvent::SessionLocked));
+                }
+                self.rearm(why);
                 true
             }
             WM_APP_CHECK => {
@@ -739,17 +759,19 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
     if code == HC_ACTION as i32 {
         // SAFETY: HC_ACTION 时 lparam 指向系统提供的 KBDLLHOOKSTRUCT，回调期间有效
         let kb = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-        call_guarded("keyboard hook", || {
-            STATE.with(|s| {
-                if let Ok(mut g) = s.try_borrow_mut()
-                    && let Some(st) = g.as_mut()
-                {
-                    st.on_key(wparam.0 as u32, kb);
-                }
+        // panic 不能越过 extern "system" 边界：兜住后放行该事件
+        let swallow = call_guarded("keyboard hook", || {
+            STATE.with(|s| match s.try_borrow_mut() {
+                Ok(mut g) => g.as_mut().is_some_and(|st| st.on_key(wparam.0 as u32, kb)),
+                Err(_) => false,
             })
-        });
+        })
+        .unwrap_or(false);
+        if swallow {
+            return LRESULT(1);
+        }
     }
-    // SAFETY: 按约定传给下一个钩子（键盘钩子从不吞键）
+    // SAFETY: 按约定传给下一个钩子（只有连续粘贴的粘贴键会被吞掉）
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 

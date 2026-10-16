@@ -15,7 +15,7 @@ use bytes::Bytes;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use wisp_sync::crypto::{self, FileKind, Keys};
-use wisp_sync::model::{HeadPayload, SegmentPayload, keys};
+use wisp_sync::model::{HeadPayload, PinValue, SegmentPayload, keys};
 use wisp_sync::remote::memory::{Fault, Op};
 use wisp_sync::{
     ApplyOutcome, BlobRole, Clock, ConnectOutcome, CycleOptions, CycleReason, CycleReport, DeviceInfo, Domain, Engine,
@@ -88,6 +88,8 @@ pub struct ClipItem {
     pub created_at: i64,
     pub last_used_at: i64,
     pub pinned: bool,
+    /// 收藏的名称（与桌面端相同：只有收藏的条目才有，取消收藏时去掉）
+    pub name: Option<String>,
     pub image: Option<Vec<u8>>,
 }
 
@@ -231,6 +233,7 @@ impl FakeStore {
                 created_at: now,
                 last_used_at: now,
                 pinned: false,
+                name: None,
                 image: None,
             });
         self.capture(Domain::Clip, &format!("c/{h}"), JournalValue::Deferred);
@@ -248,17 +251,42 @@ impl FakeStore {
             created_at: now,
             last_used_at: now,
             pinned: false,
+            name: None,
             image: Some(bytes.to_vec()),
         });
         self.capture(Domain::Clip, &format!("c/{h}"), JournalValue::Deferred);
         h
     }
 
+    /// 收藏 / 取消收藏（取消收藏时名称一并去掉）
     pub fn pin(&self, h: &str, pinned: bool) {
         let mut s = self.state.lock();
         if let Some(item) = s.clip.get_mut(h) {
             item.pinned = pinned;
-            self.capture(Domain::Clip, &format!("p/{h}"), JournalValue::Set(Value::Bool(pinned)));
+            if !pinned {
+                item.name = None;
+            }
+            let value = PinValue {
+                pin: pinned,
+                name: item.name.clone(),
+            };
+            self.capture(Domain::Clip, &format!("p/{h}"), JournalValue::Set(value.to_value()));
+        }
+    }
+
+    /// 给条目命名（命名即收藏；None 只清除名称）
+    pub fn name(&self, h: &str, name: Option<&str>) {
+        let mut s = self.state.lock();
+        if let Some(item) = s.clip.get_mut(h) {
+            if name.is_some() {
+                item.pinned = true;
+            }
+            item.name = name.map(str::to_owned);
+            let value = PinValue {
+                pin: item.pinned,
+                name: item.name.clone(),
+            };
+            self.capture(Domain::Clip, &format!("p/{h}"), JournalValue::Set(value.to_value()));
         }
     }
 
@@ -332,6 +360,7 @@ impl FakeStore {
                 hash,
                 value,
                 pinned,
+                name,
                 blobs,
             } => {
                 let h = wisp_sync::model::hex(&hash);
@@ -356,6 +385,7 @@ impl FakeStore {
                         item.last_used_at = item.last_used_at.max(last);
                         if let Some(p) = pinned {
                             item.pinned = p;
+                            item.name = if p { name } else { None };
                         }
                         if item.image.is_none() {
                             item.image = image;
@@ -369,14 +399,18 @@ impl FakeStore {
                                 created_at: created,
                                 last_used_at: last,
                                 pinned: pinned.unwrap_or(false),
+                                name: name.filter(|_| pinned == Some(true)),
                                 image,
                             },
                         );
                     }
                 }
             }
-            RemoteChange::ClipPin { hash, pinned } => match s.clip.get_mut(&wisp_sync::model::hex(&hash)) {
-                Some(item) => item.pinned = pinned,
+            RemoteChange::ClipPin { hash, pinned, name } => match s.clip.get_mut(&wisp_sync::model::hex(&hash)) {
+                Some(item) => {
+                    item.pinned = pinned;
+                    item.name = if pinned { name } else { None };
+                }
                 // 与桌面端的约定：置顶一条本机没有的条目报 Evicted，引擎随后带着置顶状态重新导入它
                 None if pinned => return KeyApply::Evicted,
                 None => {}
@@ -537,9 +571,13 @@ impl LocalStore for FakeStore {
                         element: true,
                     });
                     if i.pinned {
+                        let value = PinValue {
+                            pin: true,
+                            name: i.name.clone(),
+                        };
                         out.push(LocalEntry {
                             key: format!("p/{h}"),
-                            value: Some(Value::Bool(true)),
+                            value: Some(value.to_value()),
                             item_ms: Some(i.last_used_at),
                             is_default: false,
                             element: true,
@@ -882,7 +920,7 @@ pub fn check_states_converged(states: &[(String, State)]) -> Result<(), String> 
     let clip = |s: &State| {
         s.clip
             .iter()
-            .map(|(h, i)| (h.clone(), (i.text.clone(), i.pinned, i.image.clone())))
+            .map(|(h, i)| (h.clone(), (i.text.clone(), i.pinned, i.name.clone(), i.image.clone())))
             .collect::<BTreeMap<_, _>>()
     };
     let ocr = |s: &State| s.ocr.keys().cloned().collect::<Vec<_>>();

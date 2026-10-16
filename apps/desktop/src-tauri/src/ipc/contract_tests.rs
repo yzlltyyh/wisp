@@ -63,6 +63,7 @@ const BOUNDED: &[&str] = &[
     "PasteMode",
     "ClipFilter",
     "SendTarget",
+    "TransformId",
     "Protocol",
     "ResizeSpring",
     "OsKind",

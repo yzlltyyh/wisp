@@ -153,11 +153,11 @@ describe('粘贴（↩ / ⇧↩ / ⌘↩ / ⌘1–9 / ⌥⌘1–9）', () => {
   })
 })
 
-describe('置顶与删除（⌘P / ⌫ / ⌘⌫）', () => {
-  it('⌘P 置顶 / 取消置顶', async () => {
+describe('收藏与删除（⌘D / ⌫ / ⌘⌫）', () => {
+  it('⌘D 收藏 / 取消收藏', async () => {
     mount()
     key('ArrowDown', { meta: true })
-    key('KeyP', { meta: true })
+    key('KeyD', { meta: true })
     await waitFor(() => expect(ipc.called('clipboard_pin')).toEqual([{ id: 8, pinned: true }]))
     // 乐观更新：条目进入置顶区，选中项跟随
     expect(selected()).toBe(rowId(8))
@@ -231,8 +231,12 @@ describe('过滤（Tab / ⇧Tab / ⌘F）', () => {
     search().focus()
     const ev = key('Tab')
     expect(ev.defaultPrevented).toBe(true)
-    expect(filterLabel()).toBe(t('clipboard.filter.text'))
+    // 全部 → 收藏 → 文本 …（收藏紧跟在「全部」后面）
+    expect(filterLabel()).toBe(t('clipboard.filter.favorite'))
     expect(document.activeElement).toBe(search())
+    key('Tab')
+    expect(filterLabel()).toBe(t('clipboard.filter.text'))
+    key('Tab', { shift: true })
     key('Tab', { shift: true })
     key('Tab', { shift: true })
     expect(filterLabel()).toBe(t('clipboard.filter.color'))
@@ -317,7 +321,7 @@ describe('按住不放（按键重复）', () => {
     expect(search().value).toBe('')
   })
 
-  it('按住 ⌫ / ⌘P / ↩：只执行一次，重复事件同样被拦下', async () => {
+  it('按住 ⌫ / ⌘D / ↩：只执行一次，重复事件同样被拦下', async () => {
     mount()
     key('ArrowDown', { meta: true })
     const first = key('Backspace')
@@ -325,8 +329,8 @@ describe('按住不放（按键重复）', () => {
     expect(key('Backspace', { repeat: true }).defaultPrevented).toBe(true)
     expect(key('Backspace', { repeat: true }).defaultPrevented).toBe(true)
     await waitFor(() => expect(ipc.called('clipboard_delete')).toHaveLength(1))
-    key('KeyP', { meta: true })
-    expect(key('KeyP', { meta: true, repeat: true }).defaultPrevented).toBe(true)
+    key('KeyD', { meta: true })
+    expect(key('KeyD', { meta: true, repeat: true }).defaultPrevented).toBe(true)
     await waitFor(() => expect(ipc.called('clipboard_pin')).toHaveLength(1))
   })
 })
@@ -338,7 +342,7 @@ describe('纯键盘到达全部操作', () => {
     key('KeyK', { meta: true })
     const menu = await screen.findByTestId('clip-context-menu')
     expect(menu.querySelector('[data-active]')?.textContent).toContain(t('clipboard.action.paste'))
-    for (const id of ['paste', 'pin', 'delete', 'pause', 'settings', 'clear']) {
+    for (const id of ['paste', 'favorite', 'delete', 'pause', 'settings', 'clear']) {
       expect(screen.getByTestId(`clip-context-menu-item-${id}`)).toBeTruthy()
     }
   })
@@ -357,6 +361,7 @@ describe('纯键盘到达全部操作', () => {
       el.getAttribute('data-testid'),
     )
     expect(items).toEqual([
+      'clip-more-menu-item-float_open',
       'clip-more-menu-item-pause',
       'clip-more-menu-item-settings',
       'clip-more-menu-item-clear',

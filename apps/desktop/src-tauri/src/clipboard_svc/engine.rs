@@ -48,7 +48,9 @@ use super::icons::IconState;
 use super::outbox::Outbox;
 use super::paste::PasteGate;
 use super::port::{Exec, Host, Port};
+use super::queue::PasteQueue;
 use super::retention::Idle;
+use super::smart::{ExpirySchedule, InspectCache};
 use super::sync::{ClipSyncSink, sync_ident};
 use super::watch::{Capture, WatchSignal};
 
@@ -125,6 +127,12 @@ pub(crate) struct Engine {
     /// 识别历史的改动（本机的新增 / 删除 / 清空与远端的应用）串行执行：同步层判断「本机有没有更新的改动」与应用远端
     /// 记录之间不会插进一次本机改动。识别历史不进剪贴板的串行区（写图片文件要几十毫秒，不该挡住记录与粘贴）
     pub(crate) ocr_serial: Mutex<()>,
+    /// 最近几条的检视结果（`smart.rs`）
+    pub(crate) inspect_cache: InspectCache,
+    /// 验证码条目的到期排程（`smart.rs`）
+    pub(crate) expiry: ExpirySchedule,
+    /// 连续粘贴（`queue.rs`）
+    pub(crate) queue: PasteQueue,
 }
 
 /// 存储层错误 → IPC 错误（message 只写英文简述，不含正文）
@@ -198,6 +206,9 @@ impl Engine {
             paste_gate: PasteGate::default(),
             sync_sink: RwLock::new(None),
             ocr_serial: Mutex::new(()),
+            inspect_cache: InspectCache::default(),
+            expiry: ExpirySchedule::default(),
+            queue: PasteQueue::default(),
         })
     }
 
@@ -394,6 +405,8 @@ impl Engine {
                 self.idle.mark();
                 // 上次退出 / 崩溃前没做完的缩略图在后台补上（否则这些图片条目一直只显示通用图标）
                 self.spawn(|e| e.repair_thumbs());
+                // 关闭期间到期的验证码现在删掉，并为还没到期的排上一次性任务
+                self.spawn(|e| e.expire_codes());
                 Ok(store)
             }
             Err(StoreError::SchemaTooNew { found, supported }) => {
@@ -453,11 +466,16 @@ impl Engine {
     }
 
     /// 分页。偏移 0 且缓存能完整回答时不查库。**会阻塞**
+    ///
+    /// 「收藏」筛选同样如此：缓存是数据库排序（收藏在前）的前缀，缓存里的收藏就是全部收藏的前缀——条数够一页时直接
+    /// 回答，否则（收藏比缓存多，或缓存不完整）查库，翻页偏移与数据库一致
     pub(crate) fn recent(&self, offset: u32, limit: u32, filter: ClipFilter) -> Result<ClipPage, IpcError> {
         let store = match self.open_store("recent") {
             Ok(s) => s,
             Err(_) => return Ok(ClipPage::empty(filter)),
         };
+        // 定时器因系统睡眠晚到时先把到期的验证码删掉：之后的缓存、查询与偏移都不再含它们
+        self.expire_if_overdue();
         if offset == 0 {
             let mut page = self.cache.read().page(filter, limit);
             if page.items.len() >= limit as usize || page.next_offset.is_none() {
@@ -470,9 +488,11 @@ impl Engine {
         Ok(page)
     }
 
-    /// 一页结果交给前端之前的共同处理：去掉已过期的条目（[`Engine::hide_expired`]），检查文件条目的 exists
+    /// 一页结果交给前端之前的共同处理：去掉按天数已过期的条目（[`Engine::hide_expired`]）与已到期的验证码
+    /// （[`Engine::hide_expired_codes`]），检查文件条目的 exists
     fn finish_page(&self, page: &mut ClipPage) {
         self.hide_expired(page);
+        self.hide_expired_codes(page);
         self.check_page_files(page);
     }
 
@@ -486,6 +506,7 @@ impl Engine {
                 return Ok(page);
             }
         };
+        self.expire_if_overdue();
         let mut page = store.search(query, filter, limit).map_err(store_error)?;
         self.finish_page(&mut page);
         Ok(page)
@@ -603,6 +624,10 @@ impl Engine {
                 log::debug!("clipboard item inserted id={} kind={:?}", meta.id, meta.kind);
                 self.after_record(meta, raw);
                 self.idle.mark();
+                // 验证码条目：到点自动删除（再次复制只 touch，不延长）
+                if let Some(at) = meta.expires_at {
+                    self.schedule_expiry(at);
+                }
             }
             IngestOutcome::Touched(meta) => {
                 log::debug!("clipboard item touched id={}", meta.id);
@@ -705,16 +730,43 @@ impl Engine {
         Ok(meta)
     }
 
-    /// 置顶 / 取消置顶。**会阻塞**
+    /// 收藏（置顶）/ 取消收藏。收藏去掉验证码的过期时间，取消收藏去掉名称（存储层的规则）。**会阻塞**
     pub(crate) fn pin(&self, id: i64, pinned: bool) -> Result<ClipItemMeta, IpcError> {
         let store = self.open_store("pin")?;
         let serial = self.serial();
-        let mut meta = store.set_pinned(id, pinned).map_err(store_error)?;
-        self.notify_sync(&store, id, meta.kind, |sink, hash| sink.pin(hash, pinned));
+        let meta = store.set_pinned(id, pinned).map_err(store_error)?;
+        Ok(self.favorite_changed(&serial, &store, meta))
+    }
+
+    /// 给收藏命名（`name` 已在 IPC 第一步清理；None 清除名称）。命名即收藏，排序位置可能改变。**会阻塞**
+    pub(crate) fn set_name(&self, id: i64, name: Option<&str>) -> Result<ClipItemMeta, IpcError> {
+        let store = self.open_store("name")?;
+        let serial = self.serial();
+        let meta = store.set_name(id, name).map_err(store_error)?;
+        Ok(self.favorite_changed(&serial, &store, meta))
+    }
+
+    /// 收藏状态或名称变了（调用方持串行锁）：通知同步（`p/` 的值带名称），更新缓存
+    fn favorite_changed(&self, serial: &Serial<'_>, store: &ClipStore, mut meta: ClipItemMeta) -> ClipItemMeta {
+        let (pinned, name) = (meta.pinned, meta.name.clone());
+        // 「同步验证码」关闭时验证码条目的内容在导出时被跳过；收藏之后它按普通条目同步，要补发一次内容，
+        // 否则其他设备只收到一个取不到内容的收藏
+        let republish = pinned
+            && self.sync_sink().is_some()
+            && store.is_otp(meta.id).unwrap_or_else(|e| {
+                log::warn!("clipboard verification code flag lookup failed: {e}");
+                false
+            });
+        self.notify_sync(store, meta.id, meta.kind, |sink, hash| {
+            sink.favorite(hash, pinned, name.as_deref());
+            if republish {
+                sink.content(hash);
+            }
+        });
         let mut cache = serial.cache();
         keep_checked_files(&cache, &mut meta);
         cache.upsert(&meta);
-        Ok(meta)
+        meta
     }
 
     /// 删除；置顶项要求 force（前端负责二次确认）。条目不存在时视为已删除。**会阻塞**
