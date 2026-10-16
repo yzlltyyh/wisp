@@ -789,7 +789,9 @@ describe('排版', () => {
     expect(callsOf('text_transform')).toEqual([
       ['text_transform', { text: PARAS, transform: 'remove_blank_lines' }],
     ])
-    expect(callsOf('ocr_recopy')).toEqual([['ocr_recopy', { capture_id: 'cap-1', text: TIGHT }]])
+    expect(callsOf('ocr_recopy')).toEqual([
+      ['ocr_recopy', { capture_id: 'cap-1', request_id: 'r-ocr', text: TIGHT }],
+    ])
     await waitFor(() => expect(screen.queryByTestId('inline-toast')).toBeNull(), { timeout: 1000 })
     expect(screen.getByTestId('ocr-announce')).toHaveTextContent(/^已切换为「去掉空行」$/)
     // 跟随成功：「已复制」重新出现；切回原样不用再求排版
@@ -799,7 +801,11 @@ describe('排版', () => {
     expect(box().value).toBe(PARAS)
     expect(toggle).toHaveAttribute('aria-pressed', 'false')
     expect(callsOf('text_transform')).toHaveLength(1)
-    expect(callsOf('ocr_recopy').at(-1)?.[1]).toEqual({ capture_id: 'cap-1', text: PARAS })
+    expect(callsOf('ocr_recopy').at(-1)?.[1]).toEqual({
+      capture_id: 'cap-1',
+      request_id: 'r-ocr',
+      text: PARAS,
+    })
     expect(screen.getByTestId('inline-toast')).toHaveTextContent('已复制')
     expect(screen.getByTestId('ocr-announce')).toHaveTextContent('已切换为「原样」，已复制')
   })

@@ -672,17 +672,19 @@ export function OcrView(props: OcrViewProps) {
   /**
    * 切换排版、新的文字就绪之后让剪贴板跟上：自动复制开着、在面板里（固定窗口不再带动剪贴板）、不是直接翻译（编辑过的
    * 文字不能切换排版）、识别是完整跑完的（被取消的半截文字不写进剪贴板，也不能替换掉之前那次完整结果的历史条目）；
-   * Rust 再核对这张截图自动复制之后剪贴板没有被别处改过，并替换掉那次复制新建的历史条目。写入了就再显示「已复制」，
-   * 否则收起（剪贴板里已不是眼前的内容）；等写入期间这次切换已不作数（`still`）时什么也不提示
+   * Rust 再核对眼前这次识别（request_id）的自动复制之后剪贴板没有被别处改过，并替换掉那次复制新建的历史条目。写入了
+   * 就再显示「已复制」，否则收起（剪贴板里已不是眼前的内容）；等写入期间这次切换已不作数（`still`）时什么也不提示
    */
   function followClipboard(next: string, still: () => boolean): Promise<boolean> {
+    const requestId = main.state.requestId
     const follow =
       host === 'panel' &&
       !direct &&
       main.state.phase === 'done' &&
+      requestId !== null &&
       snap?.settings.ocr.auto_copy === true
     const written = follow
-      ? api.ocrRecopy(payload.capture_id, next).catch((error: unknown) => {
+      ? api.ocrRecopy(payload.capture_id, requestId, next).catch((error: unknown) => {
           warnCode('ocr_recopy')(error)
           return false
         })
