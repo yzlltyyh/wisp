@@ -87,6 +87,8 @@ Wisp 不内置任何模型或 Key，翻译与 OCR 都通过你自己接入的服
 
 本机模板（Ollama、LM Studio）不要求 Key，首字超时与空闲超时放宽到 120 秒，以容纳模型的加载时间。
 
+服务列表与模板里显示的服务商标志是各自所有者的商标，只用来标明对应的服务。
+
 ## 模型与识图能力
 
 **模型列表**：连接测试与「拉取模型」从服务的模型列表端点获取（OpenAI 兼容端点 `GET /models`，Anthropic `GET /models?limit=1000`，Gemini `GET /models?pageSize=1000`，最多翻 5 页），与已保存的模型合并。Gemini 只保留支持 `generateContent` 的对话模型；Anthropic 过滤已退役的模型。拉取失败时可以手动添加模型 ID。

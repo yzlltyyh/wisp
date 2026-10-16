@@ -926,6 +926,14 @@
     color: var(--fg);
     background: var(--fill-pressed);
   }
+  /*
+   * 服务商标志（providers/logos.tsx，放在中性底上）：黑白标志是 currentColor；深色主题下对比度不够的品牌色
+   * 换成标志数据里给的同色相浅色（写在 --dk 上），浅色主题仍用原色
+   */
+  [data-theme='dark'] .st-logo-mark [data-dk] {
+    fill: var(--dk);
+    stop-color: var(--dk);
+  }
   .st-provider-row {
     display: flex;
     align-items: center;
@@ -2524,7 +2532,7 @@
     gap: 16px;
     margin: 0 4px 24px;
   }
-  /* 图标自带投影；不叠 CSS drop-shadow（WKWebView 会沿 SVG 画布边界画出矩形底框，见 onboarding.css 的欢迎图标） */
+  /* 平面图标，浅色 / 深色主题共用；不叠 CSS drop-shadow（WKWebView 会沿 SVG 画布边界画出矩形底框，见 onboarding.css 的欢迎图标） */
   .st-about-icon {
     width: 64px;
     height: 64px;

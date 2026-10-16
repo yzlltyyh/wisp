@@ -8,7 +8,8 @@ import type { ProviderTemplate, TemplateGroup } from '../../shared/ipc/types'
 import { useKeyScope } from '../../shared/keys/useKeyScope'
 import { Icon, IconButton, Section, Skeleton } from '../../shared/ui'
 import { useReselect, useSubviewTitle } from '../context'
-import { hostOf, monogram, OPENAI_TEMPLATES, templateName } from './model'
+import { ProviderLogo } from './logos'
+import { hostOf, OPENAI_TEMPLATES, templateName } from './model'
 
 const GROUPS: ReadonlyArray<{
   id: 'official' | 'other' | 'local'
@@ -55,9 +56,7 @@ export function TemplateTile({
       disabled={busy}
       data-testid={`template-${template.id}`}
     >
-      <span className="st-logo" data-tone="neutral" aria-hidden="true">
-        {monogram(name)}
-      </span>
+      <ProviderLogo templateId={template.id} name={name} tone="neutral" />
       <span className="st-tile-text">
         <b>{name}</b>
         <span>

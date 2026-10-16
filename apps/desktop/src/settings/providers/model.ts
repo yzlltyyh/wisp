@@ -104,7 +104,8 @@ export function hostOf(baseUrl: string): string {
 }
 
 /**
- * 服务名的头像标记（不使用厂商商标图）：两个字母，避免 OpenAI / Ollama / OpenRouter 都是「O」。
+ * 服务名的两字母头像（没有品牌标志时的退路，见 logos.tsx 的 ProviderLogo）：两个字母，避免 OpenAI / Ollama / OpenRouter
+ * 都是「O」。
  * - 去掉括号里的补充说明（「Ollama（本机）」→「Ollama」）；
  * - 以汉字开头：取第一个汉字（一个汉字的视觉宽度相当于两个字母）；
  * - 西文：取大写的词首与驼峰（「Google Gemini」→ GG、「DeepSeek」→ DS、「OpenAI」→ OA、「LM Studio」→ LM）；

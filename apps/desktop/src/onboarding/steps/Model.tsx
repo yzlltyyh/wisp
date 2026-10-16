@@ -31,13 +31,13 @@ import { revealGrowing } from '../../settings/lib/reveal'
 import { DefaultModelFields } from '../../settings/providers/DefaultModels'
 import { probedModel, useModelFetch, useProviderTest } from '../../settings/providers/hooks'
 import { KeyField } from '../../settings/providers/KeyField'
+import { ProviderLogo } from '../../settings/providers/logos'
 import type { KeyEntry } from '../../settings/providers/keyEntry'
 import {
   fillDefaults,
   hostOf,
   isFeaturedTemplate,
   localizedDraft,
-  monogram,
   OPENAI_TEMPLATES,
   placeholderRange,
   providerName,
@@ -401,9 +401,7 @@ function ProviderSetup({
   return (
     <div className="ob-setup" data-testid="onboarding-setup">
       <div className="ob-setup-head">
-        <span className="st-logo ob-setup-logo" data-tone="accent" aria-hidden="true">
-          {monogram(name)}
-        </span>
+        <ProviderLogo templateId={template.id} name={name} size={20} className="ob-setup-logo" />
         <span className="ob-setup-title">
           <h1 className="ob-title" tabIndex={-1} data-step-title>
             {isOpenAi ? t('settings.providers.template.openai') : templateName(template)}

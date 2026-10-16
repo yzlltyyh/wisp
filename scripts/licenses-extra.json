@@ -1,0 +1,9 @@
+[
+  {
+    "name": "@lobehub/icons-static-svg",
+    "version": "1.95.1",
+    "license": "MIT",
+    "repository": "https://github.com/lobehub/lobe-icons",
+    "used_in": "apps/desktop/src/settings/providers/logos.tsx（服务商标志的路径数据，Copyright (c) 2023 LobeHub）"
+  }
+]

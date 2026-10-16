@@ -290,6 +290,35 @@ describe('接入模型', () => {
     expect(h.callsOf('secret_delete')).toHaveLength(0)
   })
 
+  it('大卡片、「其他服务」里的模板与表单头部都用服务商标志（读屏不念，旁边就是服务名）', async () => {
+    const h = installHarness()
+    h.handle('provider_templates', () => TEMPLATES)
+    h.handle('provider_new', ({ template_id }) => ({
+      ...TEMPLATES.find((t) => t.id === template_id)?.provider,
+      id: template_id,
+    }))
+    start(2)
+    await screen.findByTestId('template-cards')
+    for (const id of ['openai-responses', 'anthropic', 'gemini']) {
+      const logo = screen.getByTestId(`card-${id}`).querySelector('.st-logo')
+      expect(logo).toHaveAttribute('data-brand', id)
+      expect(logo).toHaveAttribute('aria-hidden', 'true')
+      expect(logo?.querySelector('svg')).not.toBeNull()
+      expect(logo?.textContent).toBe('')
+    }
+    // 「其他服务」不是某个服务：没有品牌标志
+    expect(screen.getByTestId('card-others').querySelector('.st-logo')).not.toHaveAttribute(
+      'data-brand',
+    )
+    await userEvent.click(screen.getByTestId('card-others'))
+    const tile = await screen.findByTestId('template-deepseek')
+    expect(tile.querySelector('.st-logo')).toHaveAttribute('data-brand', 'deepseek')
+    await userEvent.click(tile)
+    const head = (await screen.findByTestId('onboarding-setup')).querySelector('.ob-setup-logo')
+    expect(head).toHaveAttribute('data-brand', 'deepseek')
+    expect(head).toHaveAttribute('aria-hidden', 'true')
+  })
+
   it('OpenAI 卡片可以切换为 Chat；无效 Key 只在 Key 字段就地提示；跳过这一步保留草稿；凭据存储从头到尾没有被碰过', async () => {
     const h = installHarness()
     h.handle('provider_templates', () => TEMPLATES)

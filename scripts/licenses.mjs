@@ -12,7 +12,9 @@
  *     x86_64-pc-windows-msvc、x86_64-unknown-linux-gnu）分别取 wisp-desktop 的**普通依赖**传递闭包后取并集
  *     （不含 dev / build 依赖与 workspace 自身的 crate）；
  *   - npm：`pnpm --filter @wisp/desktop licenses list --prod --json`（只含打进前端包的 dependencies），
- *     仓库地址取各包 package.json 的 repository。
+ *     仓库地址取各包 package.json 的 repository；
+ *   - 手写清单 scripts/licenses-extra.json：不经 lockfile、直接嵌进源码的第三方素材（如服务商标志的路径数据），
+ *     每项同样是 `{ name, version, license, repository }`，另可写 `used_in` 注明用在哪里（不进生成的清单）。
  * 输出 `{ name, version, license, repository }[]`，按名称、版本排序，与运行平台无关（可复现）。设置 → 关于
  * 按许可证分组展示，所以 license 统一成规范的 SPDX 表达式（normalizeLicense：`MIT/Apache-2.0`、`Apache-2.0 OR MIT`、
  * `MIT OR Apache-2.0` 都写成 `Apache-2.0 OR MIT`），repository 统一成 https 地址。
@@ -25,6 +27,7 @@ import { parseArgs } from 'node:util'
 import { APP_DIR, ROOT, error, info, isMain, ok, rel, run } from './lib/common.mjs'
 
 export const OUT = join(APP_DIR, 'src', 'generated', 'third-party-licenses.json')
+export const EXTRA = join(ROOT, 'scripts', 'licenses-extra.json')
 export const TARGETS = [
   'aarch64-apple-darwin',
   'x86_64-pc-windows-msvc',
@@ -219,6 +222,24 @@ function npmEntries() {
   return out
 }
 
+/** 手写清单（scripts/licenses-extra.json）：校验必填字段，许可证与仓库地址同样规范化 */
+export function extraEntries(text) {
+  const list = JSON.parse(text)
+  if (!Array.isArray(list)) throw new Error(`${rel(EXTRA)} 应当是数组`)
+  return list.map((e, i) => {
+    for (const key of ['name', 'version', 'license', 'repository']) {
+      if (typeof e?.[key] !== 'string' || !e[key].trim())
+        throw new Error(`${rel(EXTRA)} 第 ${i + 1} 项缺少 ${key}`)
+    }
+    return {
+      name: e.name,
+      version: e.version,
+      license: normalizeLicense(e.license),
+      repository: normalizeRepo(e.repository),
+    }
+  })
+}
+
 const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
 
 /** 去重并排序，返回最终的 JSON 文本 */
@@ -282,7 +303,20 @@ function selfTest() {
     [undefined, null],
   ]
   for (const [input, want] of repos) assert.equal(normalizeRepo(input), want, String(input))
-  ok(`licenses 自检通过（${cases.length} 个许可表达式、${repos.length} 个仓库地址）`)
+  assert.deepEqual(
+    extraEntries(
+      '[{"name":"x","version":"1.0.0","license":"MIT","repository":"git+https://github.com/a/b.git","used_in":"src"}]',
+    ),
+    [{ name: 'x', version: '1.0.0', license: 'MIT', repository: 'https://github.com/a/b' }],
+  )
+  assert.throws(
+    () => extraEntries('[{"name":"x","version":"1.0.0","license":"MIT"}]'),
+    /repository/,
+  )
+  assert.throws(() => extraEntries('{}'), /数组/)
+  // 手写清单本身也要能通过校验
+  extraEntries(readFileSync(EXTRA, 'utf8'))
+  ok(`licenses 自检通过（${cases.length} 个许可表达式、${repos.length} 个仓库地址、手写清单）`)
 }
 
 function main() {
@@ -300,8 +334,10 @@ function main() {
   if (values['self-test']) return selfTest()
   const rust = cargoEntries()
   const npm = npmEntries()
-  const text = render([...rust, ...npm])
+  const extra = extraEntries(readFileSync(EXTRA, 'utf8'))
+  const text = render([...rust, ...npm, ...extra])
   const count = JSON.parse(text).length
+  const parts = `Rust ${rust.length}、npm ${npm.length}、手写 ${extra.length}`
   let current = ''
   try {
     current = readFileSync(OUT, 'utf8')
@@ -310,7 +346,7 @@ function main() {
   }
   if (values.check) {
     if (current === text) {
-      ok(`第三方许可清单与 lockfile 同步（${count} 项：Rust ${rust.length}、npm ${npm.length}）`)
+      ok(`第三方许可清单与 lockfile 同步（${count} 项：${parts}）`)
       return
     }
     const key = (e) => `${e.name}@${e.version}（${e.license}）`
@@ -332,7 +368,10 @@ function main() {
       info(
         `移除：${removed.slice(0, 30).join('、')}${removed.length > 30 ? ` 等 ${removed.length} 项` : ''}`,
       )
-    error(`${rel(OUT)} 与 lockfile 不同步：执行 pnpm licenses 重新生成并提交`, rel(OUT))
+    error(
+      `${rel(OUT)} 与 lockfile（或 ${rel(EXTRA)}）不同步：执行 pnpm licenses 重新生成并提交`,
+      rel(OUT),
+    )
     throw new Error('第三方许可清单需要重新生成')
   }
   if (current === text) {
@@ -340,7 +379,7 @@ function main() {
     return
   }
   writeFileSync(OUT, text)
-  ok(`已生成 ${rel(OUT)}（${count} 项：Rust ${rust.length}、npm ${npm.length}）`)
+  ok(`已生成 ${rel(OUT)}（${count} 项：${parts}）`)
 }
 
 if (isMain(import.meta.url)) await run(main)

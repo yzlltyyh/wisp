@@ -47,11 +47,11 @@ import { applySnapshot, dropQueued, notify, useRuntime, useSettings, useStyles }
 import { useModelFetch, useProviderTest } from './hooks'
 import { KeyField } from './KeyField'
 import { useKeyEntry } from './keyEntry'
+import { ProviderLogo } from './logos'
 import { ModelTable } from './ModelTable'
 import { providerQueueKey } from './persist'
 import {
   hostOf,
-  monogram,
   placeholderRange,
   PROTOCOLS,
   providerName,
@@ -272,9 +272,7 @@ export function ProviderEditor({
           onClick={isNew ? cancelNew : onBack}
           data-testid="provider-back"
         />
-        <span className="st-logo" data-tone="accent" aria-hidden="true">
-          {monogram(display)}
-        </span>
+        <ProviderLogo templateId={provider.template_id} name={display} size={20} />
         <span className="st-editor-title">
           <h2 tabIndex={-1} data-subview-title>
             {display}

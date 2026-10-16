@@ -1,6 +1,6 @@
 /**
  * 模板大卡片：引导「接入模型」的 4 张卡片与设置里服务列表为空时的快捷入口共用同一套视觉——
- * 头像（两字母，aria-hidden）、名称、一句说明、右侧箭头；按下有 presets.press 的缩放反馈（减少动效时没有）。
+ * 头像（服务商标志，aria-hidden）、名称、一句说明、右侧箭头；按下有 presets.press 的缩放反馈（减少动效时没有）。
  * `FEATURED_CARDS` 给出卡片顺序与文案 key（OpenAI 一张卡片，表单里再切换 Responses / Chat）。
  */
 import { ChevronRight, Sparkles } from 'lucide-react'
@@ -11,13 +11,13 @@ import type { ProviderTemplate } from '../../shared/ipc/types'
 import { presets } from '../../shared/motion/presets'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
 import { Icon } from '../../shared/ui'
-import { FEATURED_TEMPLATES, monogram, OPENAI_TEMPLATES, templateName } from './model'
+import { ProviderLogo } from './logos'
+import { FEATURED_TEMPLATES, OPENAI_TEMPLATES, templateName } from './model'
 
 export function TemplateCard({
   title,
   detail,
-  mark,
-  neutral = false,
+  logo,
   loading = false,
   disabled = false,
   onClick,
@@ -25,8 +25,8 @@ export function TemplateCard({
 }: {
   title: string
   detail: string
-  mark: ReactNode
-  neutral?: boolean
+  /** 左侧 36 px 的头像（.st-logo.st-bigcard-logo） */
+  logo: ReactNode
   loading?: boolean
   disabled?: boolean
   onClick: () => void
@@ -43,13 +43,7 @@ export function TemplateCard({
       data-testid={testId}
       whileTap={reduced ? undefined : presets.press}
     >
-      <span
-        className="st-logo st-bigcard-logo"
-        data-tone={neutral ? 'neutral' : 'accent'}
-        aria-hidden="true"
-      >
-        {mark}
-      </span>
+      {logo}
       <span className="st-bigcard-text">
         <b>{title}</b>
         <span>{detail}</span>
@@ -89,7 +83,9 @@ export function FeaturedCards({
             key={id}
             title={title}
             detail={t(`settings.providers.card.${id}`)}
-            mark={title ? monogram(title) : ''}
+            logo={
+              <ProviderLogo templateId={id} name={title} size={20} className="st-bigcard-logo" />
+            }
             loading={busyId === id}
             disabled={!tpl || busyId !== null}
             onClick={() => tpl && onPick(tpl)}
@@ -100,8 +96,11 @@ export function FeaturedCards({
       <TemplateCard
         title={t('settings.providers.card_others')}
         detail={t('settings.providers.card_others_detail')}
-        mark={<Icon icon={Sparkles} size={16} />}
-        neutral
+        logo={
+          <span className="st-logo st-bigcard-logo" data-tone="neutral" aria-hidden="true">
+            <Icon icon={Sparkles} size={16} />
+          </span>
+        }
         disabled={busyId !== null}
         onClick={onOthers}
         testId="card-others"
