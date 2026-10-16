@@ -1,0 +1,28 @@
+      Notes — design.md
+
+Wisp —设计笔记
+
+常驻后台的工具首先要安静：空闲时几乎不占CPU，不弹无关的通知，也不抢走你正在使用的应用的焦
+点。Wisp stays out of your way: it idles at near-zero CPU, wakes in milliseconds, and streams the
+translation right next to your cursor.
+
+The 性能预算	X d purposeful — it explains
+wher 面板唤出 p95 ≤ 100 ms
+        首 token p95 ≤ 1.2 s
+        空闲 CPU ≈ 0%	640 × 240 pt
+截图常驻内存 ≤ 60 MB	纯文本·qwen3-vl-plus	各由在三端保持一致，平台差异
+收敛性能预算
+       面板唤出 p95 ≤ 100 ms
+       首 token p95 ≤ 1.2 s
+       空闲 CPU ≈ 0%
+       常驻内存 ≤ 60 MB
+
+       qwen3-vl-plus · 2.1 s	石文A翻译
+
+       中文 → 英语	自然
+       Performance budget
+       Panel show p95 ≤ 100 ms
+       First token p95 ≤ 1.2 s
+       Idle CPU ≈ 0%
+       Resident memory ≤ 60 MB
+       GPT-5.4 mini · 980 ms · 42 tokens

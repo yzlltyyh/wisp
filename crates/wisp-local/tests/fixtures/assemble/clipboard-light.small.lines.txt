@@ -1,0 +1,21 @@
+      Notes — design.md
+
+Wisp —设计笔记
+常驻后台的工具首先要安静：空闲时几乎不占 Q搜索剪贴板历史	全部
+点。Wisp stays out of your way: it idles at n
+        收藏
+translation right next to your cursor.
+        T 收货地址：上海市徐汇区漕溪北路88号12层...	3天
+The panel appears where your attention alre
+where things come from and where they go,	https://github.com/yzlltyyh/wisp	10月7日
+截图OCR、划词翻译与剪贴板共用同一套面板最近
+收敛在系统集成层。	<> export function useCopy(): (text: s.…	2分钟
+
+        T Latency budget: prepare ≤ 40 ms · first tok... 14 分钟
+
+        #3B82F6	21分钟
+
+        2560 × 1440 1.6 MB	33 分钟
+
+        季度报告.pdf, design-v3.fig	47 分钟
+        粘贴☆纯文本t仅复制删除HF筛选关闭

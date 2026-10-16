@@ -1,0 +1,27 @@
+Notes — design.md
+
+Wisp —设计笔记
+
+常驻后台的工具首先要安静：空闲时几乎不占CPU，不弹无关的通知，也不抢走你正在使用的应用的焦
+
+点。Wisp stays out of your way: it idles at near-zero CPU, wakes in milliseconds, and streams the
+
+translation right next to your cursor.
+
+The 英语 → 中文
+
+自然…
+
+and purposeful — it explains 'ay.
+
+wher
+
+Wisp 从不打扰你:空闲时几乎不占 CPU，唤出只需几毫秒，截图译文就在光标旁边逐字流出。面板高度随内容平滑增长，达到
+
+盘路由在三端保持一致，平台差异
+
+收敛上限后改为内部滚动；你在原应用里继续滚动、选择文字，面
+
+板都不会抢走焦点。
+
+GPT-5.4 mini · 606 ms · 38 tokens

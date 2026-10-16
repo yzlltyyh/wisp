@@ -1,0 +1,11 @@
+The protocol negotiates a shared inter-
+face before any data is sent. Since COVID-
+19 the team works remotely using Wi-
+Fi hotspots and a well-
+known VPN; see https://example.com/long-
+path for details.
+
+Version 2020-
+2021 changed the API. The value is -
+5 degrees and the range is 3 -
+7 units.
