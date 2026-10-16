@@ -2,6 +2,8 @@
 
 提示词模板的权威版本。`src/templates.rs` 用 `include_str!` 把它们编译进二进制（运行时零文件 IO），`tests/template_sync.rs` 核对文件格式与嵌入内容，`tests/snapshots/` 的快照测试覆盖渲染与装配结果。
 
+离线翻译模型 Index-Translate 不用这里的模板：它对提示词格式敏感，按官方的单条指令格式（中文语言名、风格与术语写成约束要求）在 `src/index.rs`（`PromptProfile::IndexTranslate`）里拼装。改这里的翻译模板不影响离线翻译。
+
 ## 约定
 
 - 保留模板里的换行和缩进；每个文件以**恰好一个**换行结尾（编辑器约定），编译期去掉这一个换行；不允许 CRLF（`../.gitattributes` 强制 LF 检出）。

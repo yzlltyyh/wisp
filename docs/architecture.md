@@ -184,10 +184,10 @@ apps/desktop/src/
 约定：
 
 - 命令名、事件名、字段名、枚举值统一用 snake_case；事件名形如 `域:动作`。前端的封装函数用 camelCase（`api.translateStart(...)`），但参数对象的键保持 snake_case。
-- 命令按领域分在 `ipc/cmd_*.rs`：窗口与面板、流式请求与截图覆盖层、剪贴板、设置与风格、模型服务与 Key、离线模型（`cmd_models.rs`：`offline_models_get`、下载 / 暂停 / 取消 / 删除、删除推理组件、释放内存、打开文件夹、重新检测显卡）、快捷键、应用与权限、更新、同步。离线模型的选用走 `settings_patch`（`offline.*`）。命令清单只在 `ipc/mod.rs` 的 `commands!` 宏里写一处。
+- 命令按领域分在 `ipc/cmd_*.rs`：窗口与面板、流式请求与截图覆盖层、剪贴板、设置与风格、模型服务与 Key、离线模型（`cmd_models.rs`：`offline_models_get`、下载 / 暂停 / 取消 / 删除、删除推理组件、释放内存、打开文件夹、重新检测显卡）、快捷键、应用与权限、更新、同步。离线模型的选用走 `settings_patch`（`offline.*`）；下拉里的「下载并使用」给 `offline_model_download` 传 `select: true`，安装成功后才写入 `offline.*`，下载期间用户改过同类别的选择则不覆盖。命令清单只在 `ipc/mod.rs` 的 `commands!` 宏里写一处。
 - **API Key 只进不出**：前端可以设置、删除 Key，没有读取 Key 的命令；所有请求由 Rust 发出。PaddleOCR 的访问令牌就是这个服务的 Key，走同一套 `secret_set` / `secret_delete`。WebDAV 应用密码与同步密码同样只进不出：只作为 `sync_probe` / `sync_connect` / `sync_reset_remote` 的参数传入，没有读回的命令。
 - 字符串、浮点数与集合参数在命令函数体的第一步校验（长度、条数、有限性），校验失败返回 `invalid_argument`。
-- 流式事件的序列是 `Start` →（`Meta` | `Phase` | `Notice` | `Delta`）* → 恰好一个 `Done` 或 `Error`（`Phase` 也用来报告离线模型加载中 `loading_model` 与云端排队 `queued`）；取消时以 `Error{code: cancelled}` 结束。`Delta` 是经过后处理与合并之后的增量，前端只追加。`stream_attach` 先回放已有事件再推送实时事件，固定窗口接管面板里进行中的流就是靠它。
+- 流式事件的序列是 `Start` →（`Meta` | `Phase` | `Notice` | `Delta`）* → 恰好一个 `Done` 或 `Error`（`Phase` 也用来报告离线模型加载中 `loading_model` 与云端排队 `queued`；`Notice{partial}` 表示 PaddleOCR-VL 的文档里有区域没能识别、已跳过）；取消时以 `Error{code: cancelled}` 结束。`Delta` 是经过后处理与合并之后的增量，前端只追加。`stream_attach` 先回放已有事件再推送实时事件，固定窗口接管面板里进行中的流就是靠它。
 
 **类型同步**：Rust 类型在 `crates/wisp-types`，TypeScript 镜像在 `apps/desktop/src/shared/ipc/types.ts`。两边由黄金样例绑定——`cargo test -p wisp-types` 把每个类型的标准样例序列化后与 `shared/ipc/fixtures/*.json` 逐字比对，前端测试读取同一组文件。改动类型时两边一起改，再用 `UPDATE_GOLDEN=1 cargo test -p wisp-types` 重新生成样例。命令集合与每条命令的参数键由 `ipc::contract_tests` 与 `scripts/check-contract.mjs` 比对前后端。
 
@@ -358,10 +358,10 @@ Wisp 主进程（models_svc）
 - **守护进程**（macOS / Linux）：Wisp 二进制的 `--wisp-guard` 模式。它自成进程组，按需把优先级降到 nice 5，启动目标后先报告目标的 pid，再原样转发目标的输出；目标的环境只含调用方显式列出的变量（值经守护进程自己的环境传递，不进命令行）。守护进程读自己的 stdin，读到 EOF（Wisp 退出或崩溃）就向目标发 SIGTERM，最多等 1 秒再 SIGKILL，然后退出；强制结束时向整个进程组发 SIGKILL。
 - **Windows**：子进程以挂起状态创建，加入带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object 后再恢复，并带 `CREATE_NO_WINDOW` 与 `BELOW_NORMAL_PRIORITY_CLASS`；Wisp 持有的 Job 句柄关闭（包括崩溃）时，由内核结束整棵进程树。
 - **pid 文件**：每个推理进程写 `models/run/<槽位>.pid`（pid、启动时间与可执行文件路径）。启动链里（面板预热之后，且只有 `models/` 存在、有 pid 文件时）与第一次启动槽位之前各清扫一次：三者都匹配才结束，避免误杀复用了 pid 的其他进程。
-- **槽位与生命周期**（`models_svc`）：三个槽位互不阻塞，`stopped → starting → ready`；加载单飞，并发的请求等同一次启动；同一模型因同一原因 30 秒内连续失败时不再重启、直接报错，避免抖动。每次请求开始与结束都重排这个槽位的一次性闲置定时器（`offline.idle_release_min`，默认 5 分钟），没有槽位加载时不存在任何定时器。至少一个槽位加载时才安装内存压力监听：警告时停止空闲的槽位，严重时忙的槽位也在当前请求完成后停止；全部停止后卸载监听。加载前按目录里的内存估计与可用内存比较，不够时先停其他空闲槽位，仍不够返回「可用内存不足」，不硬启动。换模型、关闭 GPU 加速、删除模型时停止相应槽位。退出（以及 Windows 安装更新之前）关闭所有槽位的 stdin，最多等 1 秒再强制结束，并删除 pid 文件。
+- **槽位与生命周期**（`models_svc`）：三个槽位互不阻塞，`stopped → starting → ready`；加载单飞，并发的请求等同一次启动；同一模型因同一原因 30 秒内连续失败时不再重启、直接报错，避免抖动。每次请求开始与结束都重排这个槽位的一次性闲置定时器（`offline.idle_release_min`，默认 5 分钟），没有槽位加载时不存在任何定时器。至少一个槽位加载时才安装内存压力监听：警告时停止空闲的槽位，严重时忙的槽位也在当前请求完成后停止；全部停止后卸载监听。加载前做内存预算：Windows / Linux 按可用内存比较（留 512 MB 余量）；macOS 的「可用内存」不含可回收的文件缓存与可压缩的内存，所以改为与内存总量比较（需要量超过总量的 70%，或系统内存压力已是严重时才拒绝），其他空闲槽位只在加起来放不下时才先停；仍不够返回「可用内存不足」，不硬启动。同一槽位换进程时，新进程等旧进程完全退出后才启动（停止在取下旧进程的同一把锁里登记），内存预算也在旧进程退出之后再算，两个模型不会短暂共存。换模型、关闭 GPU 加速、「立即释放内存」时，正在启动或正在处理的槽位先完成手上的请求再停（只有删除与退出会立即中断）；两个 PP-OCR 档位之间切换不停 ORT 工作进程（一个进程服务两档）。用显卡推理的模型安装完成后会预热一次：槽位空着、内存够、不需要停别的槽位时后台启动一次，就绪后按普通闲置处理，把 Metal / Vulkan 着色器的首次编译提前做完；只有集成显卡时不预热。退出（以及 Windows 安装更新之前）关闭所有槽位的 stdin，最多等 1 秒再强制结束，并删除 pid 文件。
 - **取消**：编排器的取消令牌一直传到槽位：llama-server 在连接断开时停止生成；PP-OCR 的一次识别很短，取消后丢弃结果；VL 文档流水线在区域之间检查取消。
 - **线程与优先级**：llama-server 的线程数取性能核数的一半（2–8），ORT 工作进程取一半（1–4）；推理进程的优先级略低于正常，不和前台应用抢 CPU。
-- **设备适配**（`fitness`）：按内存总量、是否 Apple 芯片、显卡显存与「使用 GPU 加速」，给每个模型「适合 / 较慢 / 内存不足 / 待检测」。Windows / Linux 的显卡在 llama.cpp 运行时安装之后用 `llama-server --list-devices` 探测一次，结果缓存在 `models/runtimes/llama.cpp/devices.json`（带运行时版本），用户可以重新检测；macOS 直接按 Metal 与统一内存判断。
+- **设备适配**（`fitness`）：按内存总量、是否 Apple 芯片、显卡显存与「使用 GPU 加速」，给每个模型「适合 / 较慢 / 内存不足 / 待检测」。Windows / Linux 的显卡在 llama.cpp 运行时安装之后用 `llama-server --list-devices` 探测一次，结果缓存在 `models/runtimes/llama.cpp/devices.json`（带运行时版本），用户可以重新检测；macOS 直接按 Metal 与统一内存判断。集成显卡（按设备名，或显存占到系统内存一半左右）报告的「显存」是共享的系统内存，适配按 CPU 档评估（推理仍交给 llama.cpp 的自动卸载）。下载一个适配为「待检测」的模型时分两段：先装推理组件、探测显卡，再重新评估；变成「较慢」或「内存不足」时任务停在已暂停，等用户在界面上确认后才下载模型本身。
 
 **下载**（`download`）：独立的 reqwest 客户端，用户开始下载时创建、任务结束即丢弃；只允许 https，不带鉴权头与 `Referer`，读系统代理，最多跟随 5 次重定向。续传用 `.part` 文件加 `Range` / `If-Range`，服务器不支持区间时从头下载，CDN 签名过期时重新解析地址再续。`auto` 源同时探测 ModelScope 与 Hugging Face，按先成功响应的选；出错或持续 20 秒低于 50 KB/s 时换源，在同一个部分文件上续传。写盘与 SHA-256 在专用线程里进行（有界通道背压，GB 级文件不占 tokio 线程）；单个文件校验通过后才改名，全部完成后整体移进模型目录、最后写 `installed.json`；哈希不符时丢弃并换源重试一次。同一时刻只下载一个文件；开始前检查磁盘空间。运行时解包只取需要的文件（llama-server 与它加载的动态库、ggml 后端模块），拒绝绝对路径与 `..`，解到临时目录、写好记录后整体改名。
 
