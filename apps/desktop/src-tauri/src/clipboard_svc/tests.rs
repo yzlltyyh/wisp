@@ -20,7 +20,7 @@ use wisp_platform::{
 };
 use wisp_types::{
     AppRef, Capability, ClipFilter, ClipItemMeta, ClipKind, ClipPayload, ClipboardChanged, CopiedReason,
-    OcrHistoryChanged, OcrMode, OsKind, PasteMode, PasteOutcome, RawClipboard, Settings, ToastPayload,
+    OcrHistoryChanged, OcrMode, OsKind, PanelView, PasteMode, PasteOutcome, RawClipboard, Settings, ToastPayload,
 };
 
 use crate::assets::AssetRegistry;
@@ -350,6 +350,8 @@ pub(super) struct MockHost {
     view: Mutex<ClipView>,
     /// 面板正显示别的视图（剪贴板视图为 Hidden 时也算面板可见）
     pub(super) other_view: AtomicBool,
+    /// 面板正显示 OCR 视图的会话（剪贴板视图为 Hidden 时才看它）
+    pub(super) ocr_session: Mutex<Option<u64>>,
     /// `hide_for_paste` 是否结束会话（false：模拟隐藏还没反映到面板状态里）
     pub(super) hide_ends_session: AtomicBool,
     pub(super) offscreen: Mutex<Offscreen>,
@@ -391,6 +393,19 @@ impl MockHost {
     pub(super) fn view(&self) -> ClipView {
         *self.view.lock()
     }
+
+    /// 面板当前的会话与视图：剪贴板视图，否则 OCR 视图
+    fn panel(&self) -> Option<(u64, PanelView)> {
+        self.view()
+            .session()
+            .map(|s| (s, PanelView::Clipboard))
+            .or_else(|| self.ocr_session.lock().map(|s| (s, PanelView::Ocr)))
+    }
+
+    /// 某个会话仍是面板当前的会话（与窗口层一致：隐藏、结束之后都不是）
+    fn current(&self, session: u64) -> bool {
+        self.panel().is_some_and(|(s, _)| s == session)
+    }
 }
 
 impl Host for MockHost {
@@ -403,20 +418,25 @@ impl Host for MockHost {
         self.view()
     }
 
+    fn panel_view(&self) -> Option<(u64, PanelView)> {
+        self.panel()
+    }
+
     fn panel_visible(&self) -> bool {
-        self.view() != ClipView::Hidden || self.other_view.load(Ordering::SeqCst)
+        self.panel().is_some() || self.other_view.load(Ordering::SeqCst)
     }
 
     fn session_live(&self, session: u64) -> bool {
-        self.view().session() == Some(session)
+        self.current(session)
     }
 
     fn panel_prev_app(&self, session: u64) -> Option<AppRef> {
         // 只有当前会话有记录（与窗口层一致：会话结束后取不到）
-        self.view()
-            .session()
-            .filter(|s| *s == session)
-            .and_then(|_| self.prev_app.lock().clone())
+        if self.current(session) {
+            self.prev_app.lock().clone()
+        } else {
+            None
+        }
     }
 
     fn float_yield(&self, target: &AppRef) -> bool {
@@ -458,8 +478,9 @@ impl Host for MockHost {
 
     fn hide_for_paste(&self, session: u64) -> Option<Box<dyn OffscreenWait>> {
         self.log.lock().push(Call::Hide);
-        if self.hide_ends_session.load(Ordering::SeqCst) && self.view().session() == Some(session) {
+        if self.hide_ends_session.load(Ordering::SeqCst) && self.current(session) {
             self.set_view(ClipView::Hidden);
+            *self.ocr_session.lock() = None;
         }
         let arrives = match *self.offscreen.lock() {
             Offscreen::NoChannel => return None,
@@ -636,6 +657,7 @@ pub(super) fn mock_host(log: &Log) -> Arc<MockHost> {
         settings: RwLock::new(Arc::new(Settings::default())),
         view: Mutex::new(ClipView::Shown(1)),
         other_view: AtomicBool::new(false),
+        ocr_session: Mutex::default(),
         hide_ends_session: AtomicBool::new(true),
         offscreen: Mutex::new(Offscreen::NoChannel),
         hidden_tx: tokio::sync::watch::Sender::new(0),
@@ -791,7 +813,7 @@ impl Rig {
         mode: PasteMode,
         target: Option<AppRef>,
     ) -> Result<PasteOutcome, IpcError> {
-        let host = PasteHost::of_window(label, self.host.view().session())?;
+        let host = PasteHost::of_window(label, self.host.panel_view(), source.kind())?;
         if label == PANEL_LABEL {
             *self.host.prev_app.lock() = target;
         } else {
@@ -808,7 +830,16 @@ impl Rig {
     /// 重新打开剪贴板面板（新的会话，已显示）
     pub(super) fn reopen(&self) -> u64 {
         let next = self.host.sessions.fetch_add(1, Ordering::SeqCst) + 1;
+        *self.host.ocr_session.lock() = None;
         self.host.set_view(ClipView::Shown(next));
+        next
+    }
+
+    /// 面板换成显示 OCR 结果（新的会话；剪贴板视图随之 Hidden）
+    pub(super) fn show_ocr(&self) -> u64 {
+        let next = self.host.sessions.fetch_add(1, Ordering::SeqCst) + 1;
+        self.host.set_view(ClipView::Hidden);
+        *self.host.ocr_session.lock() = Some(next);
         next
     }
 

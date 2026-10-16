@@ -7,10 +7,10 @@ use tauri::{State, WebviewWindow};
 use wisp_clipboard::clean_favorite_name;
 use wisp_types::{
     ClipDragData, ClipFilter, ClipFloatInit, ClipInspect, ClipItemDetail, ClipItemMeta, ClipPage, OcrHistoryItem,
-    PanelView, PasteMode, PasteOutcome, QueueStatus, SendTarget, SourceApp, TransformId,
+    PasteMode, PasteOutcome, QueueStatus, SendTarget, SourceApp, TransformId,
 };
 
-use crate::clipboard_svc::{FLOAT_LABEL, PasteHost, PasteRequest, PasteSource};
+use crate::clipboard_svc::{FLOAT_LABEL, PasteHost, PasteKind, PasteRequest, PasteSource};
 use crate::error::IpcError;
 use crate::ipc::{MAX_QUERY_BYTES, MAX_TEXT_BYTES, check_len, check_list_len};
 use crate::state::AppState;
@@ -55,14 +55,10 @@ fn check_name(name: Option<&str>) -> Result<Option<String>, IpcError> {
     }
 }
 
-/// 粘贴的宿主：按调用窗口推出（面板要正显示剪贴板视图，见 `PasteHost::of_window`）
-fn paste_host(window: &WebviewWindow, app_state: &AppState) -> Result<PasteHost, IpcError> {
-    let session = app_state
-        .windows
-        .panel_state()
-        .filter(|p| p.view == PanelView::Clipboard)
-        .map(|p| p.session_id);
-    PasteHost::of_window(window.label(), session)
+/// 粘贴的宿主：按调用窗口与面板当前的会话、视图推出（面板要正显示能承接 `kind` 的视图，见 `PasteHost::of_window`）
+fn paste_host(window: &WebviewWindow, app_state: &AppState, kind: PasteKind) -> Result<PasteHost, IpcError> {
+    let panel = app_state.windows.panel_state().map(|p| (p.session_id, p.view));
+    PasteHost::of_window(window.label(), panel, kind)
 }
 
 async fn paste(
@@ -125,12 +121,14 @@ pub async fn clipboard_paste(
     transform: Option<TransformId>,
 ) -> Result<PasteOutcome, IpcError> {
     let selected_at = Instant::now();
-    let host = paste_host(&webview_window, &app_state)?;
+    let host = paste_host(&webview_window, &app_state, PasteKind::Items)?;
     let source = PasteSource::Item { id, transform };
     paste(&app_state, source, mode, host, selected_at).await
 }
 
-/// 粘贴一段文字（芯片条的片段、识别结果里的片段）：写入带自写抑制、不进历史；`from` 是片段所在的条目（touch 它）
+/// 粘贴一段文字（芯片条的片段、识别结果里的片段）：写入带自写抑制、不进历史；`from` 是片段所在的条目（touch 它）。
+/// 面板宿主除了剪贴板视图，也可以是正显示 OCR 结果的面板：与剪贴板的芯片一样粘贴回触发时的应用并收起面板
+/// （固定窗口不是宿主，前端在那里退回复制）
 #[tauri::command(rename_all = "snake_case")]
 pub async fn clipboard_paste_text(
     webview_window: WebviewWindow,
@@ -141,7 +139,7 @@ pub async fn clipboard_paste_text(
 ) -> Result<PasteOutcome, IpcError> {
     check_paste_text(&text)?;
     let selected_at = Instant::now();
-    let host = paste_host(&webview_window, &app_state)?;
+    let host = paste_host(&webview_window, &app_state, PasteKind::Fragment)?;
     paste(
         &app_state,
         PasteSource::Fragment { from, text },
@@ -162,7 +160,7 @@ pub async fn clipboard_paste_many(
 ) -> Result<PasteOutcome, IpcError> {
     check_ids(&ids)?;
     let selected_at = Instant::now();
-    let host = paste_host(&webview_window, &app_state)?;
+    let host = paste_host(&webview_window, &app_state, PasteKind::Items)?;
     paste(&app_state, PasteSource::Many { ids }, mode, host, selected_at).await
 }
 
@@ -226,7 +224,7 @@ pub async fn clipboard_queue_start(
 ) -> Result<QueueStatus, IpcError> {
     check_ids(&ids)?;
     let selected_at = Instant::now();
-    let host = paste_host(&webview_window, &app_state)?;
+    let host = paste_host(&webview_window, &app_state, PasteKind::Items)?;
     app_state.clipboard.queue_start(ids, host, selected_at).await
 }
 
@@ -259,7 +257,7 @@ pub async fn clipboard_float_open(
     selected_id: Option<i64>,
 ) -> Result<(), IpcError> {
     check_len("query", &query, MAX_QUERY_BYTES)?;
-    let PasteHost::Panel { session } = paste_host(&webview_window, &app_state)? else {
+    let PasteHost::Panel { session } = paste_host(&webview_window, &app_state, PasteKind::Items)? else {
         return Err(IpcError::invalid_argument(
             "only the clipboard panel opens the floating clipboard",
         ));

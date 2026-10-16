@@ -6,7 +6,8 @@
 //!   同样带自写抑制，不会成为新的历史条目，只 touch 来源条目；
 //! - **宿主**（[`PasteHost`]，决定 Handoff 怎么交接、目标应用是谁、只复制时谁来提示）：面板（隐藏面板、等离屏、Rust 弹
 //!   toast）、悬浮剪贴板（不隐藏，先交还键盘焦点）、连续粘贴的队列（按键由队列重放，这里只写入）。宿主由调用窗口的 label
-//!   推出（[`PasteHost::of_window`]），不信任前端自报。
+//!   与面板当前的视图推出（[`PasteHost::of_window`]），不信任前端自报：条目只能在剪贴板视图里粘贴，片段还可以在 OCR
+//!   视图里粘贴（[`PasteKind`]）。
 //!
 //! 加一种来源 = 给 [`PasteSource`] 加一个变体并在 Writing 里给出载荷；加一种宿主 = 给 [`PasteHost`] 加一个变体并实现它的交接。
 //!
@@ -22,10 +23,10 @@
 //! | Pasting | Busy | 非法 | 非法 | 非法 | 非法 | 非法 | → Idle |
 //!
 //! - **重入**：粘贴进行中（任何非 Idle 阶段）再来的请求直接拒绝（`conflict`），不写入、不 touch、不 toast；
-//! - **按面板会话去重**：一个剪贴板面板会话只交接一次——进入 Handoff 并离开之后（面板已隐藏或已被结束），同一会话再来
-//!   的请求也拒绝；面板没有显示剪贴板视图（已隐藏、正在隐藏）时的请求同样拒绝。单击粘贴模式下双击条目、Windows 写剪贴板
-//!   （`EmptyClipboard` 最长约 1.5 s）期间再按一次 ↩，都只粘贴一次，也不会多出 touch 与 toast。悬浮窗与队列没有会话，
-//!   只单飞；
+//! - **按面板会话去重**：一个面板会话只交接一次——进入 Handoff 并离开之后（面板已隐藏或已被结束），同一会话再来
+//!   的请求也拒绝；面板已不在显示这个会话（已隐藏、正在隐藏、换了会话）时的请求同样拒绝。单击粘贴模式下双击条目、
+//!   Windows 写剪贴板（`EmptyClipboard` 最长约 1.5 s）期间再按一次 ↩，都只粘贴一次，也不会多出 touch 与 toast。
+//!   悬浮窗与队列没有会话，只单飞；
 //! - **失败**（取载荷、文件都已不存在、写入失败）：回到 Idle，面板保持打开，同一会话可以换一条或重试；
 //! - **取消**：写入期间面板被别人结束（Esc、失焦、截图前隐藏）时不再发键、不弹 toast，内容留在剪贴板里；
 //! - **toast 在闸门之外**：显示 toast 要与主线程往返（最长约 1 s），状态机先回到 Idle 再显示——这期间用户新打开的剪贴板
@@ -59,8 +60,8 @@ use wisp_clipboard::{ClipStore, smart};
 use wisp_platform::common::keymap::{self, KeyChoice};
 use wisp_platform::{PasteError, PlatformError, SuppressRange, WriteOpts, reason};
 use wisp_types::{
-    AppRef, Capability, ClipPayload, CopiedReason, OsKind, PasteMode, PasteOutcome, RawClipboard, ToastPayload,
-    TransformId,
+    AppRef, Capability, ClipPayload, CopiedReason, OsKind, PanelView, PasteMode, PasteOutcome, RawClipboard,
+    ToastPayload, TransformId,
 };
 
 use crate::error::{IpcError, IpcErrorCode};
@@ -224,7 +225,7 @@ impl PasteGate {
     fn begin(&self, session: Option<u64>) -> Result<PasteRun<'_>, IpcError> {
         let mut g = self.inner.lock();
         if session.is_some() && g.handed_off == session {
-            return Err(rejected("this clipboard panel has already pasted"));
+            return Err(rejected("this panel session has already pasted"));
         }
         match paste_step(g.stage, PasteEvent::Begin) {
             PasteStep::Next(next) => {
@@ -236,7 +237,7 @@ impl PasteGate {
     }
 }
 
-/// 被拒绝的粘贴请求（重入、同一会话再次粘贴、面板已不显示剪贴板）：前端静默忽略
+/// 被拒绝的粘贴请求（重入、同一会话再次粘贴、面板已不显示能承接这次粘贴的视图）：前端静默忽略
 fn rejected(why: &str) -> IpcError {
     log::debug!("clipboard paste rejected: {why}");
     IpcError::new(IpcErrorCode::Conflict, why)
@@ -328,13 +329,44 @@ impl PasteSource {
             Self::Many { ids } => ids.iter().rev().copied().collect(),
         }
     }
+
+    /// 这次粘贴属于哪一种（决定面板的哪些视图能当宿主）
+    pub(crate) fn kind(&self) -> PasteKind {
+        match self {
+            Self::Item { .. } | Self::Many { .. } => PasteKind::Items,
+            Self::Fragment { .. } => PasteKind::Fragment,
+        }
+    }
 }
 
-/// 粘贴发生在哪里。由调用窗口的 label 推出（[`PasteHost::of_window`]），不由前端自报——这同时就是权限校验；
-/// 队列只由 Rust 内部发起
+/// 粘贴的种类：决定面板正显示哪些视图时可以当宿主（[`PasteKind::panel_hosts`]）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasteKind {
+    /// 剪贴板历史里的条目（整条、「粘贴为…」、多条合并、连续粘贴），以及从剪贴板面板交接出悬浮剪贴板：条目 id 来自
+    /// 剪贴板视图列出的行，只有它能承接
+    Items,
+    /// 一段文字（芯片条的片段、OCR 结果里识别出的片段）：不引用历史条目，剪贴板视图与 OCR 视图都能承接
+    Fragment,
+}
+
+impl PasteKind {
+    /// 面板正显示 `view` 时能不能当这种粘贴的宿主。OCR 视图与剪贴板视图一样记下了触发时的前台应用（截图之前取），
+    /// 粘贴后隐藏面板、把内容送回那个应用的流程对两者相同；翻译、输入视图没有可以粘贴的片段，toast 不接受交互
+    pub fn panel_hosts(self, view: PanelView) -> bool {
+        match view {
+            PanelView::Clipboard => true,
+            PanelView::Ocr => self == Self::Fragment,
+            PanelView::Translate | PanelView::Input | PanelView::Toast => false,
+        }
+    }
+}
+
+/// 粘贴发生在哪里。由调用窗口的 label 与面板当前的视图推出（[`PasteHost::of_window`]），不由前端自报——这同时就是
+/// 权限校验；队列只由 Rust 内部发起
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PasteHost {
-    /// 剪贴板面板的这个会话：写入后立即隐藏面板、等它离屏再发键；一个会话只交接一次。目标应用是会话的 `prev_app`
+    /// 面板的这个会话（剪贴板视图，或承接片段的 OCR 视图）：写入后立即隐藏面板、等它离屏再发键；一个会话只交接一次。
+    /// 目标应用是会话的 `prev_app`
     Panel { session: u64 },
     /// 悬浮剪贴板：窗口不隐藏，发键前把键盘焦点交还目标应用（[`Host::float_yield`](super::port::Host::float_yield)）。
     /// 目标应用是当前的前台应用（平台的前台查询跳过 Wisp 自己的窗口）
@@ -344,13 +376,13 @@ pub enum PasteHost {
 }
 
 impl PasteHost {
-    /// 由调用窗口推出宿主：面板必须正显示剪贴板视图（`clipboard_session` 是它的会话），悬浮剪贴板窗口为
-    /// [`PasteHost::Floating`]，其余窗口不能粘贴
-    pub fn of_window(label: &str, clipboard_session: Option<u64>) -> Result<Self, IpcError> {
+    /// 由调用窗口推出宿主（纯函数）：面板必须正显示能承接 `kind` 的视图（`panel` 是面板当前的会话与视图，隐藏中、
+    /// 已结束时为 None），否则返回 `conflict`（前端静默）；悬浮剪贴板窗口为 [`PasteHost::Floating`]；其余窗口不能粘贴
+    pub fn of_window(label: &str, panel: Option<(u64, PanelView)>, kind: PasteKind) -> Result<Self, IpcError> {
         if label == PANEL_LABEL {
-            return clipboard_session
+            return hosting_session(panel, kind)
                 .map(|session| Self::Panel { session })
-                .ok_or_else(|| rejected("clipboard panel is not showing"));
+                .ok_or_else(|| rejected("the panel is not showing a view that can paste this"));
         }
         if label == FLOAT_LABEL {
             return Ok(Self::Floating);
@@ -363,6 +395,14 @@ impl PasteHost {
     fn toasts(self) -> bool {
         matches!(self, Self::Panel { .. })
     }
+}
+
+/// 面板里能承接这种粘贴的会话：面板正显示（准备中或已显示）、且视图能承接 `kind`。命令层推出宿主与管线开始时的核对
+/// 用的是同一条规则
+fn hosting_session(panel: Option<(u64, PanelView)>, kind: PasteKind) -> Option<u64> {
+    panel
+        .filter(|&(_, view)| kind.panel_hosts(view))
+        .map(|(session, _)| session)
 }
 
 /// 一次粘贴请求（所有粘贴的唯一入口 [`Engine::paste`]）
@@ -422,7 +462,7 @@ impl Engine {
 
     /// 状态机驱动的粘贴流程（持有单飞闸门；返回时闸门已回到 Idle）
     fn run_paste(&self, req: &PasteRequest) -> Result<Finished, IpcError> {
-        let mut run = self.paste_gate.begin(self.gate_key(req.host)?)?;
+        let mut run = self.paste_gate.begin(self.gate_key(req)?)?;
         // 目标应用在写入之前取：面板会话结束之后就取不到它的 prev_app 了
         let target = self.paste_target(req.host);
         // Writing
@@ -450,11 +490,17 @@ impl Engine {
         })
     }
 
-    /// 闸门的键：面板按会话去重（一个会话只交接一次），且面板必须仍在显示这个会话的剪贴板视图；悬浮窗与队列只单飞
-    fn gate_key(&self, host: PasteHost) -> Result<Option<u64>, IpcError> {
-        match host {
-            PasteHost::Panel { session } if self.host.clipboard_view().session() == Some(session) => Ok(Some(session)),
-            PasteHost::Panel { .. } => Err(rejected("clipboard panel is not showing")),
+    /// 闸门的键：面板按会话去重（一个会话只交接一次），且面板必须仍在显示这个会话、视图仍能承接这次粘贴（命令层推出
+    /// 宿主之后，面板可能已经隐藏或换成了别的会话）；悬浮窗与队列只单飞
+    fn gate_key(&self, req: &PasteRequest) -> Result<Option<u64>, IpcError> {
+        match req.host {
+            PasteHost::Panel { session } => {
+                if hosting_session(self.host.panel_view(), req.source.kind()) == Some(session) {
+                    Ok(Some(session))
+                } else {
+                    Err(rejected("the panel is no longer showing this session"))
+                }
+            }
             PasteHost::Floating | PasteHost::Queue => Ok(None),
         }
     }
@@ -480,7 +526,7 @@ impl Engine {
         let host = PasteHost::Panel { session };
         // 写入期间（Windows 最长约 1.5 s）面板可能已被用户关掉——不再发键，内容留在剪贴板里
         if !self.host.session_live(session) {
-            log::info!("clipboard panel closed while writing; paste cancelled (content stays copied)");
+            log::info!("panel closed while writing; paste cancelled (content stays copied)");
             run.advance(PasteEvent::Cancelled);
             return Finished::silent(CopiedReason::CopyOnly);
         }
@@ -625,11 +671,11 @@ impl Engine {
         };
         if !offscreen.wait(PASTE_HIDE_WAIT) {
             log::info!(
-                "clipboard panel not confirmed off-screen within {}ms; pasting anyway",
+                "panel not confirmed off-screen within {}ms; pasting anyway",
                 PASTE_HIDE_WAIT.as_millis()
             );
         } else {
-            log::debug!("clipboard panel off-screen after {}ms", started.elapsed().as_millis());
+            log::debug!("panel off-screen after {}ms", started.elapsed().as_millis());
         }
     }
 

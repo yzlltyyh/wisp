@@ -1,4 +1,5 @@
-//! 统一粘贴管线的单测：每种来源（整条、「粘贴为…」变换、片段、多条合并）× 每种宿主（面板、悬浮剪贴板、队列）。
+//! 统一粘贴管线的单测：每种来源（整条、「粘贴为…」变换、片段、多条合并）× 每种宿主（面板的剪贴板 / OCR 视图、悬浮
+//! 剪贴板、队列）。
 //! 不调用真实平台，用 `tests.rs` 的测试替身；断言写入了什么、调用的先后、touch 了哪些条目、谁来提示。
 
 use std::sync::Arc;
@@ -7,14 +8,14 @@ use std::time::Instant;
 
 use parking_lot::Mutex;
 use wisp_platform::{ClipboardAccess, PasteError};
-use wisp_types::{ClipKind, CopiedReason, PasteMode, PasteOutcome, RawClipboard, TransformId};
+use wisp_types::{ClipKind, CopiedReason, OsKind, PanelView, PasteMode, PasteOutcome, RawClipboard, TransformId};
 
 use crate::error::{IpcError, IpcErrorCode};
 use crate::windows::panel::PANEL_LABEL;
 
-use super::paste::{FLOAT_LABEL, PasteHost, PasteRequest, PasteSource, PasteStage};
+use super::paste::{FLOAT_LABEL, PasteHost, PasteKind, PasteRequest, PasteSource, PasteStage};
 use super::port::ClipView;
-use super::tests::{Call, ICON_64, Rig, app, panel_item, rig};
+use super::tests::{Call, ICON_64, Rig, app, panel_item, rig, rig_with};
 
 /// 最近一次写入剪贴板的文本
 fn last_written(r: &Rig) -> Option<String> {
@@ -160,23 +161,237 @@ fn merged_pastes_follow_the_pick_order_and_skip_items_without_text() {
 
 // ---------- 宿主 ----------
 
+const KINDS: [PasteKind; 2] = [PasteKind::Items, PasteKind::Fragment];
+
 #[test]
-fn hosts_come_from_the_calling_window() {
+fn hosts_come_from_the_calling_window_and_the_view_it_shows() {
+    let panel = |view| Some((3, view));
+    // 剪贴板视图：条目与片段都能粘贴
+    for kind in KINDS {
+        assert_eq!(
+            PasteHost::of_window(PANEL_LABEL, panel(PanelView::Clipboard), kind).expect("剪贴板视图"),
+            PasteHost::Panel { session: 3 },
+            "{kind:?}"
+        );
+    }
+    // OCR 视图：识别出的片段粘贴回原应用；条目（整条、变换、合并、连续粘贴、交接悬浮窗）只属于剪贴板视图
     assert_eq!(
-        PasteHost::of_window(PANEL_LABEL, Some(3)).expect("面板"),
+        PasteHost::of_window(PANEL_LABEL, panel(PanelView::Ocr), PasteKind::Fragment).expect("OCR 的片段"),
         PasteHost::Panel { session: 3 }
     );
-    let err = PasteHost::of_window(PANEL_LABEL, None).expect_err("面板没显示剪贴板");
+    let err = PasteHost::of_window(PANEL_LABEL, panel(PanelView::Ocr), PasteKind::Items).expect_err("OCR 的条目");
     assert_eq!(err.code, IpcErrorCode::Conflict);
-    // 悬浮剪贴板不依赖面板会话
-    assert_eq!(
-        PasteHost::of_window(FLOAT_LABEL, None).expect("悬浮"),
-        PasteHost::Floating
-    );
-    for other in ["settings", "pinned-1", "overlay-0", "onboarding"] {
-        let err = PasteHost::of_window(other, Some(1)).expect_err(other);
-        assert_eq!(err.code, IpcErrorCode::InvalidArgument, "{other}");
+    // 其他视图、面板没在显示：conflict（前端静默）
+    for kind in KINDS {
+        for view in [PanelView::Translate, PanelView::Input, PanelView::Toast] {
+            let err = PasteHost::of_window(PANEL_LABEL, panel(view), kind).expect_err("其他视图");
+            assert_eq!(err.code, IpcErrorCode::Conflict, "{view:?} {kind:?}");
+        }
+        let err = PasteHost::of_window(PANEL_LABEL, None, kind).expect_err("面板没在显示");
+        assert_eq!(err.code, IpcErrorCode::Conflict, "{kind:?}");
     }
+    // 悬浮剪贴板不依赖面板的会话与视图
+    for kind in KINDS {
+        for shown in [None, panel(PanelView::Clipboard), panel(PanelView::Ocr)] {
+            assert_eq!(
+                PasteHost::of_window(FLOAT_LABEL, shown, kind).expect("悬浮"),
+                PasteHost::Floating,
+                "{shown:?} {kind:?}"
+            );
+        }
+    }
+    // 其余窗口（包括显示 OCR 结果的固定窗口）不能粘贴，与面板显示着什么无关
+    for other in ["settings", "pinned-1", "overlay-0", "onboarding"] {
+        for kind in KINDS {
+            for shown in [None, panel(PanelView::Clipboard), panel(PanelView::Ocr)] {
+                let err = PasteHost::of_window(other, shown, kind).expect_err(other);
+                assert_eq!(err.code, IpcErrorCode::InvalidArgument, "{other} {shown:?} {kind:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn only_fragments_count_as_fragments() {
+    assert_eq!(item(1).kind(), PasteKind::Items);
+    let transformed = PasteSource::Item {
+        id: 1,
+        transform: Some(TransformId::Upper),
+    };
+    assert_eq!(transformed.kind(), PasteKind::Items);
+    assert_eq!(PasteSource::Many { ids: vec![1, 2] }.kind(), PasteKind::Items);
+    let fragment = PasteSource::Fragment {
+        from: Some(1),
+        text: "x".into(),
+    };
+    assert_eq!(fragment.kind(), PasteKind::Fragment);
+}
+
+fn loose_fragment(text: &str) -> PasteSource {
+    PasteSource::Fragment {
+        from: None,
+        text: text.into(),
+    }
+}
+
+#[test]
+fn ocr_results_paste_fragments_back_into_the_original_app() {
+    let r = rig();
+    // 识别完成时自动复制进历史的全文
+    let full = r.copy_text(101, "Order 482915 ships today");
+    r.show_ocr();
+    r.calls();
+    let out = r
+        .paste_from(
+            PANEL_LABEL,
+            loose_fragment("482915"),
+            PasteMode::Normal,
+            Some(app("editor")),
+        )
+        .expect("粘贴");
+    assert_eq!(out, PasteOutcome::Pasted);
+    assert_eq!(last_written(&r).as_deref(), Some("482915"));
+    let change = r.port.clipboard.change_id();
+    assert_eq!(
+        r.calls(),
+        vec![
+            Call::Write,
+            Call::Suppress(change),
+            Call::Hide,
+            Call::PasteInto { plain: false },
+            Call::Perf("cg_event".into()),
+        ],
+        "与剪贴板面板的芯片相同：写入、收起面板、等它离屏，再向原应用发粘贴键"
+    );
+    assert_eq!(r.ids(), vec![full.id], "片段不进历史");
+    assert_eq!(r.top().use_count, 1, "识别结果里的片段不属于任何条目，不 touch");
+    assert!(r.host.ocr_session.lock().is_none(), "面板已收起");
+    assert_eq!(r.engine.paste_gate.stage(), PasteStage::Idle);
+}
+
+#[test]
+fn an_ocr_result_hands_off_only_once() {
+    // 第二次单击到达时面板还没反映出隐藏（同一会话仍可见）：按会话去重，不写第二次
+    let r = rig();
+    let session = r.show_ocr();
+    r.host.hide_ends_session.store(false, Ordering::SeqCst);
+    r.calls();
+    r.paste_from(PANEL_LABEL, loose_fragment("a"), PasteMode::Normal, Some(app("editor")))
+        .expect("粘贴");
+    let err = r
+        .paste_from(PANEL_LABEL, loose_fragment("b"), PasteMode::Normal, Some(app("editor")))
+        .expect_err("同一会话");
+    assert_eq!(err.code, IpcErrorCode::Conflict);
+    assert_eq!(r.port.paste.writes.lock().len(), 1);
+    assert_eq!(last_written(&r).as_deref(), Some("a"));
+    // 命令层推出宿主之后面板换成了别的会话：同样拒绝
+    let next = r.show_ocr();
+    assert_ne!(next, session);
+    let err = r
+        .engine
+        .paste(PasteRequest {
+            source: loose_fragment("c"),
+            mode: PasteMode::Normal,
+            host: PasteHost::Panel { session },
+            selected_at: Instant::now(),
+        })
+        .expect_err("会话已变");
+    assert_eq!(err.code, IpcErrorCode::Conflict);
+    assert_eq!(r.port.paste.writes.lock().len(), 1);
+}
+
+#[test]
+fn ocr_results_do_not_host_item_pastes() {
+    let r = rig();
+    let a = r.copy_text(101, "first");
+    let b = r.copy_text(102, "second");
+    let session = r.show_ocr();
+    r.calls();
+    // 命令层就会拒绝；绕过它直接带着 OCR 会话进入管线的条目粘贴也在开始前被拒绝
+    let err = r
+        .paste_from(PANEL_LABEL, item(a.id), PasteMode::Normal, Some(app("editor")))
+        .expect_err("命令层");
+    assert_eq!(err.code, IpcErrorCode::Conflict);
+    for source in [
+        item(a.id),
+        PasteSource::Item {
+            id: a.id,
+            transform: Some(TransformId::Upper),
+        },
+        PasteSource::Many { ids: vec![a.id, b.id] },
+    ] {
+        let err = r
+            .engine
+            .paste(PasteRequest {
+                source: source.clone(),
+                mode: PasteMode::Normal,
+                host: PasteHost::Panel { session },
+                selected_at: Instant::now(),
+            })
+            .expect_err("管线");
+        assert_eq!(err.code, IpcErrorCode::Conflict, "{source:?}");
+    }
+    assert!(r.calls().is_empty(), "没有写入、没有隐藏");
+    assert_eq!(r.ids(), vec![b.id, a.id], "没有 touch");
+    // 面板仍显示着 OCR 结果，片段照常粘贴
+    r.paste_from(PANEL_LABEL, loose_fragment("x"), PasteMode::Normal, Some(app("editor")))
+        .expect("片段");
+}
+
+#[test]
+fn ocr_results_without_a_known_app_copy_and_say_so() {
+    let r = rig();
+    r.show_ocr();
+    r.calls();
+    let out = r
+        .paste_from(PANEL_LABEL, loose_fragment("x"), PasteMode::Normal, None)
+        .expect("只复制");
+    assert_eq!(
+        out,
+        PasteOutcome::Copied {
+            reason: CopiedReason::Manual
+        }
+    );
+    let change = r.port.clipboard.change_id();
+    assert_eq!(
+        r.calls(),
+        vec![
+            Call::Write,
+            Call::Suppress(change),
+            Call::Hide,
+            Call::Toast(CopiedReason::Manual)
+        ],
+        "收起面板，在原位置提示按粘贴键"
+    );
+}
+
+#[test]
+fn windows_hands_the_foreground_back_before_hiding_an_ocr_result() {
+    // OCR 面板默认不抢焦点，用户按下卡片后才成为前台：无论哪种情形，都先把前台交还原应用，再收起面板、发键
+    let r = rig_with(OsKind::Windows, tempfile::tempdir().expect("临时目录"));
+    r.show_ocr();
+    r.calls();
+    let out = r
+        .paste_from(
+            PANEL_LABEL,
+            loose_fragment("482915"),
+            PasteMode::Normal,
+            Some(app("notepad.exe")),
+        )
+        .expect("粘贴");
+    assert_eq!(out, PasteOutcome::Pasted);
+    let change = r.port.clipboard.change_id();
+    assert_eq!(
+        r.calls(),
+        vec![
+            Call::Write,
+            Call::Suppress(change),
+            Call::Activate("notepad.exe".into()),
+            Call::Hide,
+            Call::PasteInto { plain: false },
+            Call::Perf("send_input".into()),
+        ]
+    );
 }
 
 #[test]

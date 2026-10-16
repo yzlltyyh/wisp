@@ -149,7 +149,8 @@ pub(crate) enum ClipView {
 }
 
 impl ClipView {
-    /// 当前剪贴板面板会话（准备中或已显示）
+    /// 当前剪贴板面板会话（准备中或已显示；单测用：粘贴核对的是 [`Host::panel_view`]，它也认 OCR 视图）
+    #[cfg(test)]
     pub(crate) fn session(self) -> Option<u64> {
         match self {
             Self::Hidden => None,
@@ -179,6 +180,8 @@ pub(crate) trait Host: Send + Sync {
     fn settings(&self) -> Arc<Settings>;
     /// 剪贴板视图的状态（`clipboard:changed` 只在已显示时推送；准备中的先排队）
     fn clipboard_view(&self) -> ClipView;
+    /// 面板当前的会话与视图（准备中或已显示；隐藏中、已结束时为 None）：粘贴开始前核对面板宿主的会话仍在、视图仍能承接
+    fn panel_view(&self) -> Option<(u64, PanelView)>;
     /// 面板（任一视图）可见：空闲清理要等它隐藏
     fn panel_visible(&self) -> bool;
     /// 某个面板会话是否仍然有效（`WindowManager::panel_session_live`：隐藏中、已结束、被取代的都是 false）
@@ -326,6 +329,10 @@ impl Host for AppHost {
         clip_view_of(windows.panel_state().map(|p| (p.session_id, p.view)), |s| {
             windows.panel_shown(s)
         })
+    }
+
+    fn panel_view(&self) -> Option<(u64, PanelView)> {
+        self.windows()?.panel_state().map(|p| (p.session_id, p.view))
     }
 
     fn panel_visible(&self) -> bool {
