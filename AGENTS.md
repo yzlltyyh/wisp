@@ -4,11 +4,11 @@
 
 ## 项目
 
-Wisp 是常驻后台的轻量桌面工具：划词翻译、截图 OCR、剪贴板历史。Tauri 2（Rust）+ React 19 + Motion + Tailwind CSS 4，支持 macOS（Apple Silicon）、Windows（x64）、Linux（x64，完整功能需要 X11）。所有 AI 能力都通过用户自己配置的模型服务完成。
+Wisp 是常驻后台的轻量桌面工具：划词翻译、截图 OCR、剪贴板历史，可经用户自己的 WebDAV 在多台设备之间端到端加密同步。Tauri 2（Rust）+ React 19 + Motion + Tailwind CSS 4，支持 macOS（Apple Silicon）、Windows（x64）、Linux（x64，完整功能需要 X11）。所有 AI 能力都通过用户自己配置的模型服务完成。
 
 ```text
-apps/desktop/src/          前端：entries/（五个页面入口）、panel/、views/、settings/、onboarding/、pinned/、overlay/、shared/、locales/
-apps/desktop/src-tauri/    Rust 应用（wisp-desktop）：app/、orchestrator/、windows/、hotkeys/、clipboard_svc/、settings/、ipc/、tray/、updater/
+apps/desktop/src/          前端：entries/（五个页面入口）、panel/、views/、settings/、onboarding/、pinned/、floating/（悬浮剪贴板）、overlay/、shared/、locales/
+apps/desktop/src-tauri/    Rust 应用（wisp-desktop）：app/、orchestrator/、windows/、hotkeys/、clipboard_svc/、settings/、sync_svc/、ipc/、tray/、updater/
 crates/wisp-types          跨 crate / IPC / 持久化的共享类型
 crates/wisp-llm            四种协议的流式 LLM 客户端
 crates/wisp-prompts        提示词模板（templates/）、风格、语言检测、后处理
@@ -48,7 +48,7 @@ pnpm i18n:check && pnpm check:contract && pnpm check:size
 - **类型同步**：改 `crates/wisp-types` 时同步 `apps/desktop/src/shared/ipc/types.ts`，并重新生成 `shared/ipc/fixtures/`（不要手改生成的文件）。
 - **前端**：`@tauri-apps/*` 只能在 `apps/desktop/src/shared/ipc/` 里引用；动效时长与曲线只用 `shared/motion/` 的令牌或 `--dur-*` / `--ease-*`；颜色只用设计令牌；覆盖层（`overlay/`）是原生 TS，不引入 React / Motion。
 - **文案**：用户可见的字符串一律经 i18n，`zh-CN` 与 `en-US` 两份 locales 同时添加；Rust 显示的托盘 / 通知文案在 `src-tauri/src/app/i18n.rs`。
-- **隐私**：不得把原文、译文、剪贴板内容、截图、API Key、请求头的值或 URL 查询参数写进日志、错误信息或诊断包。API Key 只能由 Rust 读取，不提供把 Key 返回前端的接口。
+- **隐私**：不得把原文、译文、剪贴板内容（包括识别出的片段与变换结果）、截图、API Key、请求头的值、URL 查询参数，以及同步服务器的地址、账号、密码、同步密码、远端路径与设备名写进日志、错误信息或诊断包。API Key 与同步凭据只能由 Rust 读取，不提供返回前端的接口。
 - **性能**：不引入常驻的周期定时器或轮询；新资源（连接、线程、钩子）按需创建、用完释放。面板首屏的五个视图保持静态导入；`pnpm check:size` 检查体积与入口依赖图。
 - **Rust 细节**：`unsafe` 前写 `// SAFETY:`；错误类型用 `thiserror`；可能阻塞的系统调用放进 `spawn_blocking` 或工作线程并设超时。
 - **依赖**：不随意新增依赖；需要时锁定精确版本，并运行 `pnpm run licenses`。
@@ -59,6 +59,7 @@ pnpm i18n:check && pnpm check:contract && pnpm check:size
 - Rust 单元测试写在模块内 `#[cfg(test)]`，集成测试放 crate 的 `tests/`；需要系统权限或真实 GUI 的测试标 `#[ignore = "原因"]`。
 - 前端测试放在被测代码旁的 `__tests__/`（Vitest），浏览器级用例放在 `__e2e__/`（Playwright）。
 - `wisp-llm` 的协议测试使用录制的 SSE 样本，不需要真实 Key；不要在测试或示例里写入真实的 Key。
+- `wisp-sync` 的测试用内存远端与 wiremock，不需要真实账号；对真实 WebDAV 的测试标 `#[ignore]`，只从 `WISP_SYNC_TEST_URL` / `WISP_SYNC_TEST_USER` / `WISP_SYNC_TEST_PASS` 读取账号（见 docs/development.md），不要把真实的地址与账号写进仓库。
 
 ## 提交
 

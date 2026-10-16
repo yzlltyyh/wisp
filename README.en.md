@@ -245,6 +245,7 @@ Common keys inside the panel: <kbd>Esc</kbd> closes it, <kbd>⌘ C</kbd> copies,
 - **Shortcuts**: once <kbd>⌥</kbd> + a letter is a shortcut, the special character it used to type (such as ∂, ß, or √) can no longer be typed in any app. If Terminal or iTerm2 uses Option as Meta, you lose combinations such as `M-d`; consider the alternative shortcuts. Shortcuts may not fire while Secure Input is active, for example in password fields.
 - **Reading the selection**: a few apps don't expose the selected text through the accessibility APIs. Wisp then simulates a copy and restores your clipboard afterwards. On Windows, windows running as administrator can't be read or pasted into automatically.
 - **Sync**: only WebDAV is supported (HTTP Basic authentication; https is required except for local network addresses). Wisp doesn't sync on a timer in the background, so changes made on another device are picked up only when you use Wisp. File items on the clipboard and images larger than 10 MB are not synced. The sync password can't be changed directly and can't be recovered if forgotten: the only way out is to clear the data on the server and connect again (the data on each device is not affected).
+- **Clipboard**: paste in sequence and the floating clipboard rely on global keys and window focus, so they don't work in Linux Wayland sessions (there the floating clipboard can only copy, not paste). Dragging out currently supports text, links, and rich text; images and files can't be dragged into other apps yet. Verification-code detection is deliberately cautious: a message without an explicit word such as "verification code" and without an expiry or "don't share" hint isn't treated as a code.
 - **Memory**: for a few dozen seconds after the panel is used, the system WebView holds extra memory (on macOS about 84 MiB, peaking around 90 MiB, until the panel is recycled about 45 seconds after it hides). After recycling it uses about 53–54 MiB (about 49 MiB if the panel was never opened). The main process uses about 13 MiB if the panel was never opened and about 15 MiB afterwards. WebView2 on Windows usually uses more memory than WebKit on macOS.
 
 ## Non-goals
@@ -268,7 +269,7 @@ Planned directions (not implemented yet, with no entry points in the UI):
 - more service templates; a local OCR engine as an offline fallback (not the main path);
 - more thorough Linux testing, plus global shortcuts and screenshots on Wayland through the GlobalShortcuts and Screenshot portals;
 - macOS Developer ID signing and notarization, Windows code signing; distribution through Homebrew Cask, winget, and the AUR;
-- clipboard database encryption and searching clipboard images by the text they contain.
+- clipboard database encryption, searching clipboard images by the text they contain, and dragging clipboard images and files straight into other apps.
 
 Reading translations aloud (text-to-speech) is one of the non-goals above. Whether it is ever added as a small feature will be evaluated separately.
 

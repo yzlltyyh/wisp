@@ -53,11 +53,11 @@
 | `tray/tray-template-paused.png` / `-attention.png` | macOS，监听暂停 / 权限缺失（同为模板图） |
 | `tray/tray-light.png` / `-paused` / `-attention` | Windows / Linux 浅色任务栏（32 px） |
 | `tray/tray-dark.png` / `-paused` / `-attention` | Windows / Linux 深色任务栏、Linux 默认（32 px） |
-| `tray/tray-{light,dark}{,-paused,-attention}-{16,20,24,40,48}.png` | 同上，按托盘图标的实际像素尺寸选用 |
+| `tray/tray-{light,dark}{,-paused,-attention}-{16,20,24,40,48}.png` | 同上的各尺寸版本，为按 DPI 选图准备；`icon.rs` 目前还没有引用它们 |
 
 状态图标在托盘状态变化时切换（`TrayIcon::set_icon`），文件名与上表一致。
 
-**Windows 按 DPI 选尺寸**：通知区域图标是 `SM_CXSMICON` 大小——100 % 缩放 16 px、125 % 20 px、150 % 24 px、
+**按 DPI 选尺寸（尚未接入）**：目前 Windows / Linux 只加载 32 px 的无后缀文件，由系统缩放到托盘的实际尺寸。以后接入时的规则：Windows 通知区域图标是 `SM_CXSMICON` 大小——100 % 缩放 16 px、125 % 20 px、150 % 24 px、
 200 % 32 px（无后缀的文件）、250 % 40 px、300 % 48 px。给系统一张恰好等大的图，它就不会再重采样；介于两档之间
 （例如 175 % = 28 px）时取**较大**的一档交给系统缩小。缩放变化（`WM_DPICHANGED` / 换显示器）时重新选一次。
 Linux 的 StatusNotifierItem 由宿主按需缩放，32 px 即可；也可以按面板报告的尺寸选用。

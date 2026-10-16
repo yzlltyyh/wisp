@@ -112,7 +112,7 @@ node scripts/bump.mjs --check   # 各处版本号一致
 | 发布脚本、`cliff.toml`、`CHANGELOG.md` | `node scripts/release/self-test.mjs` |
 | GitHub 工作流或 shell 脚本 | `actionlint`、`shellcheck` |
 | 假模型、提示词评测 | `cargo test -p wisp-llm --features fake --locked`、`cargo test -p wisp-prompts --features eval --locked` |
-| 多设备同步（`crates/wisp-sync`） | `cargo test -p wisp-sync --locked`：加解密与篡改检测、投影往返、合并性质（proptest）、多设备收敛模拟（内存远端）与 WebDAV 客户端（wiremock），都不需要真实账号。对真实服务器的冒烟测试默认忽略：`WISP_SYNC_TEST_URL=https://… WISP_SYNC_TEST_USER=… WISP_SYNC_TEST_PASS=… cargo test -p wisp-sync --locked --test live_webdav -- --ignored`，只在地址下 `wisp/` 里的随机子目录中读写并在结束时删除。不要把真实的地址与账号写进仓库 |
+| 多设备同步（`crates/wisp-sync`） | `cargo test -p wisp-sync --locked`：加解密与篡改检测、投影往返、合并性质（proptest）、多设备收敛模拟（内存远端）与 WebDAV 客户端（wiremock），都不需要真实账号。对真实服务器的测试默认忽略，用环境变量提供账号：`WISP_SYNC_TEST_URL=https://… WISP_SYNC_TEST_USER=… WISP_SYNC_TEST_PASS=… cargo test -p wisp-sync --locked --test live_webdav --test live_engine -- --ignored`。`live_webdav` 是传输层冒烟，只在地址下 `wisp/` 里的随机子目录中读写；`live_engine` 让两台模拟设备经真实服务器走完连接、加入、同步、删除与清空、清除服务器数据，在地址下单独的 `e2e-<随机 id>/` 目录里进行，不碰真实的同步数据。两者结束时（包括失败时）都会删除自己建的目录。不要把真实的地址与账号写进仓库 |
 | 界面交互（焦点、键盘、逐帧布局） | 浏览器级用例：`pnpm -C apps/desktop exec playwright install webkit chromium`（第一次），然后 `pnpm -C apps/desktop exec playwright test`（配置在 `apps/desktop/playwright.config.ts`，运行 `src/**/__e2e__/*.e2e.ts`） |
 | Linux 平台层 | `xvfb-run -a cargo test -p wisp-platform --test smoke_linux -- --ignored --test-threads=1`（需要 `bash scripts/ci/linux-deps.sh smoke` 安装的依赖） |
 
