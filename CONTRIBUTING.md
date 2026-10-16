@@ -32,7 +32,7 @@
 - **用户可见的文字一律走 i18n**：界面文案在 `apps/desktop/src/locales/zh-CN/` 与 `en-US/` 同时添加；托盘与系统通知的文案在 `apps/desktop/src-tauri/src/app/i18n.rs`。`pnpm i18n:check` 会拦下硬编码的界面文字。
 - **平台差异收敛在平台层**：`#[cfg(target_os)]` 只写在 `crates/wisp-platform`（取词、粘贴、焦点等系统能力）、`crates/wisp-capture`（截图）、`apps/desktop/src-tauri/src/windows/native/`（窗口）以及 `lib.rs` 的插件注册里，其他位置通过 trait 调用（见[架构 · 总览](docs/architecture.md#总览)）。
 - **隐私**：日志只记录元数据（耗时、状态码、模型名等），绝不写入原文、译文、剪贴板内容、截图、API Key、请求头的值或 URL 查询参数。
-- **依赖**：新增依赖需要说明理由，并锁定精确版本；改了 lockfile 后运行 `pnpm licenses` 重新生成第三方许可清单并一起提交。
+- **依赖**：新增依赖需要说明理由，并锁定精确版本；改了 lockfile 后运行 `pnpm run licenses` 重新生成第三方许可清单并一起提交。
 
 ### Rust
 

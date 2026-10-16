@@ -53,7 +53,7 @@ Rust 依赖在第一次 `cargo` 或 `pnpm dev` 时下载。`vendor/` 下是通�
 
 产物在 `target/<debug|release>/bundle/`。正式的 release 安装包只由 CI 的发布工作流生成（见[发布流程](#发布流程)）。
 
-**浏览器 mock**：`dev:mock` 启动后打开 `http://localhost:1420/panel.html?scenario=translate.streaming-learn` 之类的地址。常用 URL 参数：`label`（`panel` / `settings` / `onboarding` / `pinned` / `overlay`）、`scenario`（场景 id，定义在 `apps/desktop/src/shared/ipc/mock/scenarios/`，id 前缀即文件名）、`theme=dark`、`os=windows|linux|macos`、`lang=en-US`、`reduced=1`（减少动效）、`material=solid`、`frame=native|css`。
+**浏览器 mock**：`dev:mock` 启动后打开 `http://localhost:1420/panel.html?scenario=translate.streaming-learn` 之类的地址。常用 URL 参数：`label`（`panel` / `settings` / `onboarding` / `pinned` / `clipfloat` / `overlay`）、`scenario`（场景 id，定义在 `apps/desktop/src/shared/ipc/mock/scenarios/`，id 前缀即文件名）、`theme=dark`、`os=windows|linux|macos`、`lang=en-US`、`reduced=1`（减少动效）、`material=solid`、`frame=native|css`。
 
 **已经装有 Wisp 时**：Wisp 是单实例应用，本机正在运行安装版时，用相同 identifier 启动的开发构建会被转交给已运行的实例，自己直接退出。开发前请先退出安装版。确实需要并行运行时，可以给开发构建换一个 identifier（例如 `pnpm dev --config '{"identifier":"io.github.yzlltyyh.wisp.dev"}'`），但配置、数据与日志目录不随 identifier 变化，两个实例会共用同一份配置与剪贴板数据库，也会争抢同样的全局快捷键。
 
@@ -106,7 +106,7 @@ node scripts/bump.mjs --check   # 各处版本号一致
 
 | 改动 | 命令 |
 | --- | --- |
-| 依赖（`Cargo.lock`、`pnpm-lock.yaml`） | `pnpm licenses` 重新生成第三方许可清单并一起提交；CI 用 `node scripts/licenses.mjs --check` 核对 |
+| 依赖（`Cargo.lock`、`pnpm-lock.yaml`） | `pnpm run licenses` 重新生成第三方许可清单并一起提交；CI 用 `node scripts/licenses.mjs --check` 核对 |
 | `cfg(windows)` / `cfg(linux)` 代码（在 macOS 上开发时） | `pnpm check:cross`（`scripts/cross-check.sh`：对 Windows / Linux 目标做类型检查与 clippy，不链接） |
 | `wisp-types` 的类型或其他生成前端样例的 Rust 代码 | `node scripts/gen-fixtures.mjs` 重写 `apps/desktop/src/shared/ipc/fixtures/` 下的样例；只核对用 `--check` |
 | 发布脚本、`cliff.toml`、`CHANGELOG.md` | `node scripts/release/self-test.mjs` |

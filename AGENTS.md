@@ -7,7 +7,7 @@
 Wisp 是常驻后台的轻量桌面工具：划词翻译、截图 OCR、剪贴板历史。Tauri 2（Rust）+ React 19 + Motion + Tailwind CSS 4，支持 macOS（Apple Silicon）、Windows（x64）、Linux（x64，完整功能需要 X11）。所有 AI 能力都通过用户自己配置的模型服务完成。
 
 ```text
-apps/desktop/src/          前端：entries/（四个页面入口）、panel/、views/、settings/、onboarding/、pinned/、overlay/、shared/、locales/
+apps/desktop/src/          前端：entries/（五个页面入口）、panel/、views/、settings/、onboarding/、pinned/、overlay/、shared/、locales/
 apps/desktop/src-tauri/    Rust 应用（wisp-desktop）：app/、orchestrator/、windows/、hotkeys/、clipboard_svc/、settings/、ipc/、tray/、updater/
 crates/wisp-types          跨 crate / IPC / 持久化的共享类型
 crates/wisp-llm            四种协议的流式 LLM 客户端
@@ -35,7 +35,7 @@ pnpm lint && pnpm format:check && pnpm typecheck && pnpm test
 pnpm i18n:check && pnpm check:contract && pnpm check:size
 ```
 
-按需：`pnpm check:cross`（在 macOS 上对 Windows / Linux 目标做类型检查）、`node scripts/gen-fixtures.mjs`（改了 `wisp-types` 后重新生成前端黄金样例）、`pnpm licenses`（改了依赖后）、`node scripts/release/self-test.mjs`（改了发布脚本或 `CHANGELOG.md` 后）、`cargo test -p wisp-llm --features fake`、`cargo test -p wisp-prompts --features eval`、`pnpm -C apps/desktop exec playwright test`（浏览器级用例，配置在 `apps/desktop/playwright.config.ts`）。
+按需：`pnpm check:cross`（在 macOS 上对 Windows / Linux 目标做类型检查）、`node scripts/gen-fixtures.mjs`（改了 `wisp-types` 后重新生成前端黄金样例）、`pnpm run licenses`（改了依赖后）、`node scripts/release/self-test.mjs`（改了发布脚本或 `CHANGELOG.md` 后）、`cargo test -p wisp-llm --features fake`、`cargo test -p wisp-prompts --features eval`、`pnpm -C apps/desktop exec playwright test`（浏览器级用例，配置在 `apps/desktop/playwright.config.ts`）。
 
 完成改动前至少运行与改动相关的格式化、lint、类型检查与测试，并在结果里如实说明哪些检查跑过、哪些没有跑。
 
@@ -51,7 +51,7 @@ pnpm i18n:check && pnpm check:contract && pnpm check:size
 - **隐私**：不得把原文、译文、剪贴板内容、截图、API Key、请求头的值或 URL 查询参数写进日志、错误信息或诊断包。API Key 只能由 Rust 读取，不提供把 Key 返回前端的接口。
 - **性能**：不引入常驻的周期定时器或轮询；新资源（连接、线程、钩子）按需创建、用完释放。面板首屏的五个视图保持静态导入；`pnpm check:size` 检查体积与入口依赖图。
 - **Rust 细节**：`unsafe` 前写 `// SAFETY:`；错误类型用 `thiserror`；可能阻塞的系统调用放进 `spawn_blocking` 或工作线程并设超时。
-- **依赖**：不随意新增依赖；需要时锁定精确版本，并运行 `pnpm licenses`。
+- **依赖**：不随意新增依赖；需要时锁定精确版本，并运行 `pnpm run licenses`。
 - **应用标识不可更改**：identifier `io.github.yzlltyyh.wisp`、`tauri.conf.json` 里的更新器公钥与端点都不要改。
 
 ## 测试
