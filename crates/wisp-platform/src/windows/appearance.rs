@@ -7,6 +7,10 @@
 //! `SPI_SET*`），只有与外观相关的几种才启动合并定时器（见 [`setting_affects_appearance`]），上层不会为无关的广播
 //! 重新读取外观、向所有 WebView 广播；`WM_DWMCOLORIZATIONCOLORCHANGED` / `WM_THEMECHANGED` / `WM_SYSCOLORCHANGE`
 //! 本身就只在外观变化时发出，照常处理。
+//!
+//! 显示缩放也算在内（托盘按 `SM_CXSMICON` 选图，见 `monitor::tray_icon_size`）：窗口建在 (0, 0)，也就是主显示器上，
+//! 并且是 Per-Monitor V2 感知的，主显示器的缩放变化时收到 `WM_DPICHANGED`；换主显示器、改分辨率、接入或拔掉
+//! 显示器时收到广播的 `WM_DISPLAYCHANGE`。两者都很少发生，照常合并后回调。
 
 use std::cell::RefCell;
 use std::sync::{Arc, mpsc};
@@ -17,15 +21,15 @@ use ::windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
 use ::windows::Win32::UI::WindowsAndMessaging::{
     DefWindowProcW, DestroyWindow, KillTimer, PostMessageW, PostQuitMessage, SPI_GETCLIENTAREAANIMATION,
     SPI_SETANIMATION, SPI_SETCLIENTAREAANIMATION, SPI_SETHIGHCONTRAST, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetTimer,
-    SystemParametersInfoW, WM_CLOSE, WM_DESTROY, WM_DWMCOLORIZATIONCOLORCHANGED, WM_SETTINGCHANGE, WM_SYSCOLORCHANGE,
-    WM_THEMECHANGED, WM_TIMER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
+    SystemParametersInfoW, WM_CLOSE, WM_DESTROY, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_DWMCOLORIZATIONCOLORCHANGED,
+    WM_SETTINGCHANGE, WM_SYSCOLORCHANGE, WM_THEMECHANGED, WM_TIMER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use ::windows::core::BOOL;
 
 use crate::error::PlatformError;
 use crate::types::HookHandle;
 
-use super::util::{RawHwnd, call_guarded, reg_dword};
+use super::util::{DpiScope, RawHwnd, call_guarded, reg_dword};
 use super::wnd;
 
 const PERSONALIZE: &str = r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
@@ -147,6 +151,9 @@ pub(crate) fn watch(cb: Box<dyn Fn() + Send + Sync>) -> Result<HookHandle, Platf
                 let _ = ready_tx.send(Err("register class failed".into()));
                 return;
             }
+            // 只有 Per-Monitor 感知的窗口才收得到 `WM_DPICHANGED`：进程一般已经是 V2（tao 启动时设置），这里在建窗前
+            // 再明确一次，不依赖调用顺序；作用域随线程一直保留，窗口的感知方式在创建时就定下了
+            let _dpi = DpiScope::per_monitor();
             // 顶层、从不显示的工具窗口：能收到广播，不进任务栏 / Alt-Tab
             let hwnd = match wnd::create_window(CLASS, WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, WS_POPUP, None) {
                 Ok(h) => h,
@@ -177,7 +184,12 @@ pub(crate) fn watch(cb: Box<dyn Fn() + Send + Sync>) -> Result<HookHandle, Platf
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_SETTINGCHANGE if !setting_affects_appearance(wparam, lparam) => LRESULT(0),
-        WM_SETTINGCHANGE | WM_DWMCOLORIZATIONCOLORCHANGED | WM_THEMECHANGED | WM_SYSCOLORCHANGE => {
+        WM_SETTINGCHANGE
+        | WM_DWMCOLORIZATIONCOLORCHANGED
+        | WM_THEMECHANGED
+        | WM_SYSCOLORCHANGE
+        | WM_DPICHANGED
+        | WM_DISPLAYCHANGE => {
             // SAFETY: 定时器属于本窗口；重复 SetTimer 会重置计时，从而合并突发广播
             unsafe {
                 SetTimer(Some(hwnd), TIMER_COALESCE, COALESCE_MS, None);

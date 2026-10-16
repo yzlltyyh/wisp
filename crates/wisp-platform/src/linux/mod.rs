@@ -391,6 +391,11 @@ impl CursorScreen for Imp {
         None
     }
 
+    fn tray_icon_size(&self) -> Option<u32> {
+        // StatusNotifierItem 只交出图像，由面板按自己的图标尺寸缩放，应用拿不到实际尺寸；32 px 在常见面板上足够清晰
+        None
+    }
+
     fn watch_appearance(&self, cb: Box<dyn Fn() + Send + Sync>) -> Result<HookHandle, PlatformError> {
         self.0.appearance.watch(cb)
     }

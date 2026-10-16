@@ -141,10 +141,15 @@ pub trait CursorScreen: Send + Sync {
     /// 任务栏 / 托盘区是否为浅色（选托盘图标用）：只有 Windows 返回 Some（注册表 `SystemUsesLightTheme`），
     /// macOS 用模板图、Linux 跟随面板主题，都返回 None
     fn taskbar_light(&self) -> Option<bool>;
-    /// 监听系统外观变化（明暗、强调色、降低动效 / 透明度、Windows 任务栏明暗）。回调不带参数，调用方收到后重新读取
-    /// 上面几项并广播 `appearance:changed`；可能合并或重复触发，调用方自行去重。返回的 Handle 被 drop 时注销。
-    /// 必须事件驱动（macOS 分布式通知 / KVO，Windows `WM_SETTINGCHANGE`，Linux portal `SettingChanged`），
-    /// 空闲时零唤醒，**不得轮询**
+    /// 通知区域图标的实际边长（物理像素；选一张恰好等大的托盘图标，系统就不必再重采样）：只有 Windows 返回 Some——
+    /// 主显示器当前有效 DPI 下的 `SM_CXSMICON`（通知区域只在主任务栏上；100 % 16、150 % 24、200 % 32……），
+    /// 每次调用都按当前缩放计算。macOS 用固定 18 pt 的模板图、Linux 的 StatusNotifierItem 宿主自行缩放，都返回 None。
+    /// 只是几个进程内的系统查询（微秒级、不阻塞），可以在主线程上调用
+    fn tray_icon_size(&self) -> Option<u32>;
+    /// 监听系统外观变化（明暗、强调色、降低动效 / 透明度、Windows 任务栏明暗与显示缩放）。回调不带参数，调用方收到后
+    /// 重新读取上面几项并广播 `appearance:changed`；可能合并或重复触发，调用方自行去重。返回的 Handle 被 drop 时注销。
+    /// 必须事件驱动（macOS 分布式通知 / KVO，Windows `WM_SETTINGCHANGE` / `WM_DPICHANGED` / `WM_DISPLAYCHANGE`，
+    /// Linux portal `SettingChanged`），空闲时零唤醒，**不得轮询**
     fn watch_appearance(&self, cb: Box<dyn Fn() + Send + Sync>) -> Result<HookHandle, PlatformError>;
 }
 

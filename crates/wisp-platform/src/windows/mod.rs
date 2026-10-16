@@ -272,6 +272,10 @@ impl CursorScreen for WinScreen {
         Some(appearance::taskbar_light())
     }
 
+    fn tray_icon_size(&self) -> Option<u32> {
+        monitor::tray_icon_size()
+    }
+
     fn watch_appearance(&self, cb: Box<dyn Fn() + Send + Sync>) -> Result<HookHandle, PlatformError> {
         appearance::watch(cb)
     }

@@ -272,6 +272,11 @@ impl CursorScreen for MacScreen {
         None
     }
 
+    fn tray_icon_size(&self) -> Option<u32> {
+        // 菜单栏图标固定 18 pt，模板图按 @2x 出 36 px，由系统按屏幕的缩放显示，不需要按缩放选图
+        None
+    }
+
     fn watch_appearance(&self, cb: Box<dyn Fn() + Send + Sync>) -> Result<HookHandle, PlatformError> {
         let relay = Arc::new(Relay {
             cb: Arc::from(cb),

@@ -51,13 +51,18 @@
 | --- | --- |
 | `tray/tray-template.png` | macOS，`icon_as_template(true)` |
 | `tray/tray-template-paused.png` / `-attention.png` | macOS，监听暂停 / 权限缺失（同为模板图） |
-| `tray/tray-light.png` / `-paused` / `-attention` | Windows / Linux 浅色任务栏（32 px） |
-| `tray/tray-dark.png` / `-paused` / `-attention` | Windows / Linux 深色任务栏、Linux 默认（32 px） |
-| `tray/tray-{light,dark}{,-paused,-attention}-{16,20,24,40,48}.png` | 同上的各尺寸版本，为按 DPI 选图准备；`icon.rs` 目前还没有引用它们 |
+| `tray/tray-light.png` / `-paused` / `-attention` | Windows 浅色任务栏（32 px，200 % 缩放） |
+| `tray/tray-dark.png` / `-paused` / `-attention` | Windows 深色任务栏（32 px，200 % 缩放）；Linux 一律用它（另加描边，见下） |
+| `tray/tray-{light,dark}{,-paused,-attention}-{16,20,24,40,48}.png` | 同上的各尺寸版本，Windows 按缩放选用（见下） |
 
-状态图标在托盘状态变化时切换（`TrayIcon::set_icon`），文件名与上表一致。
+状态图标在托盘状态变化时切换（`TrayIcon::set_icon`），文件名与上表一致。「有新版本」的蓝点与疑似密钥时闪一次的琥珀色点
+没有对应的文件，运行时合成在右下角；Linux 上在 `tray-dark*` 外加一圈半透明深色描边，浅色面板上也清晰。圆点与描边都按
+图标边长等比缩放（有下限，16 px 上仍看得出、轮廓不断）。
 
-**按 DPI 选尺寸（尚未接入）**：目前 Windows / Linux 只加载 32 px 的无后缀文件，由系统缩放到托盘的实际尺寸。以后接入时的规则：Windows 通知区域图标是 `SM_CXSMICON` 大小——100 % 缩放 16 px、125 % 20 px、150 % 24 px、
-200 % 32 px（无后缀的文件）、250 % 40 px、300 % 48 px。给系统一张恰好等大的图，它就不会再重采样；介于两档之间
-（例如 175 % = 28 px）时取**较大**的一档交给系统缩小。缩放变化（`WM_DPICHANGED` / 换显示器）时重新选一次。
-Linux 的 StatusNotifierItem 由宿主按需缩放，32 px 即可；也可以按面板报告的尺寸选用。
+**按缩放选尺寸**：Windows 通知区域图标是 `SM_CXSMICON` 大小——100 % 缩放 16 px、125 % 20 px、150 % 24 px、
+200 % 32 px（无后缀的文件）、250 % 40 px、300 % 48 px。`wisp-platform` 按主显示器（通知区域所在的主任务栏）当前的
+DPI 查询这个尺寸，`icon.rs` 从尺寸表里选恰好等大的一张交给系统，它就不会再重采样；介于两档之间（例如 175 % = 28 px）
+时取**较大**的一档交给系统缩小，超过 300 % 时用 48 px。不需要定时器：每次托盘刷新（任何托盘状态变化）、托盘菜单打开时、
+任一应用窗口的缩放变化（`ScaleFactorChanged`）、以及系统外观监听收到主显示器缩放变化（`WM_DPICHANGED`）或显示器配置
+变化（`WM_DISPLAYCHANGE`）时重新选一次，尺寸没变就不重新设置图标。macOS 菜单栏固定使用 36 px 模板图；Linux 的
+StatusNotifierItem 由宿主按面板尺寸缩放，应用拿不到实际尺寸，固定使用 32 px。

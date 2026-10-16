@@ -10,6 +10,13 @@
 //!   语言 / 固定窗口项 / 快捷键变化时整份重建菜单。设置变化（`app::reactor`）、`hotkeys:changed`、权限变化、更新器状态
 //!   变化都会触发；其他模块在改变了托盘相关状态（暂停剪贴板、固定窗口增减）后也应调用它；
 //! - [`flash`]：疑似密钥被跳过时闪一次（`clipboard.secret_tray_flash` 关闭时不闪）；
+//! - **图标尺寸**：Windows 通知区域的图标随主显示器的缩放变化（`SM_CXSMICON`，见 [`icon`]），每次算图标时即时查询
+//!   （几个进程内的 DPI 查询，不阻塞），尺寸是 [`IconKey`] 的一部分，没变就不重新设置图标。重新选尺寸不靠定时器或
+//!   轮询，而是挂在已有的时机上：① 每一次 [`refresh`]（上面列出的各种状态变化）；② 托盘菜单打开时（[`on_opened`]
+//!   顺带刷新一次，作为兜底：下面两种通知没送到时，用户一点开托盘就纠正过来）；③ 任一应用窗口的 `ScaleFactorChanged`
+//!   （`app::bootstrap`；预热后隐藏的面板也是窗口，改缩放、窗口换到缩放不同的显示器时 tao 发出）；④ 平台层的外观监听
+//!   （`app::appearance`；Windows 上监听窗口建在主显示器上，主显示器缩放变化收到 `WM_DPICHANGED`、显示器配置变化收到
+//!   `WM_DISPLAYCHANGE`，回调里刷新托盘）。macOS 模板图与 Linux 图标尺寸固定，这些刷新在它们上面不会改变图标；
 //! - 点开托盘时顺带刷新一次权限状态并惰性检查更新，没有任何常驻定时器。Windows 上 tray-icon 自己的
 //!   「离开检测」定时器（悬停期间 15 ms 一拍）在上游会在光标停住之后漏关、从此常驻（光标停在图标上、或停住后第一下移动
 //!   就离开图标时），靠 vendor/tray-icon 的补丁修正：每一拍对照缓存的图标矩形，离开即关，停住约 0.5 s 也关
@@ -223,7 +230,7 @@ fn refresh_now(app: &tauri::AppHandle) {
         },
     }
 
-    // 图标：底图（任务栏明暗）、状态图或圆点变化时才重新设置
+    // 图标：底图（任务栏明暗）、尺寸（显示缩放）、状态图或圆点变化时才重新设置
     let key = icon_key(app, &model.status, None);
     if old_icon != Some(key) {
         set_icon(&tray, key);
@@ -269,18 +276,24 @@ fn tooltip(m: &MenuModel) -> String {
     }
 }
 
-fn current_glyph(app: &tauri::AppHandle) -> Glyph {
-    let light = app
-        .try_state::<AppState>()
-        .and_then(|s| s.platform.screen.taskbar_light());
-    Glyph::for_platform(OsKind::current(), light)
+/// 当前平台的底图与边长：任务栏明暗（注册表的一个值）与通知区域图标尺寸（主显示器的 DPI）都是即时查询、不缓存，
+/// 缩放变化之后的下一次刷新就会换成新尺寸
+fn current_base(app: &tauri::AppHandle) -> (Glyph, u32) {
+    let (light, wanted) = app.try_state::<AppState>().map_or((None, None), |s| {
+        let screen = &s.platform.screen;
+        (screen.taskbar_light(), screen.tray_icon_size())
+    });
+    let glyph = Glyph::for_platform(OsKind::current(), light);
+    (glyph, glyph.size_for(wanted))
 }
 
-/// 当前图标：平台底图 + 状态（-paused / -attention）+ 圆点（`dot` 覆盖状态自带的圆点，闪烁时用）
+/// 当前图标：平台底图与尺寸 + 状态（-paused / -attention）+ 圆点（`dot` 覆盖状态自带的圆点，闪烁时用）
 fn icon_key(app: &tauri::AppHandle, status: &TrayStatus, dot: Option<Dot>) -> IconKey {
     let (variant, status_dot) = status.icon();
+    let (glyph, size) = current_base(app);
     IconKey {
-        glyph: current_glyph(app),
+        glyph,
+        size,
         variant,
         dot: dot.or(status_dot),
     }
@@ -329,6 +342,8 @@ fn on_icon_event(app: &tauri::AppHandle, ev: &TrayIconEvent) {
 
 /// 托盘菜单即将打开（鼠标按下或无障碍「按下」）
 fn on_opened(app: &tauri::AppHandle) {
+    // 兜底：隐藏窗口能否收到缩放变化的通知没有文档保证，用户点开托盘时再核对一次图标尺寸（其余状态没变时不做任何事）
+    refresh(app);
     crate::app::permissions::refresh(app);
     crate::updater::maybe_check(app);
     crate::updater::note_activity();

@@ -31,6 +31,7 @@ Each version ends with an English summary.
 
 - 用 Windows 记事本等编辑器保存、带 UTF-8 BOM 的 settings.json、styles.json、glossary.json 与 state.json 不再被当成损坏的文件而恢复默认。
 - 设置窗口里的模型服务与术语表改为逐条保存：手动修改配置文件或从其他设备同步来的改动，不会被设置窗口里打开着的旧内容整组覆盖。
+- Windows 在 100 %、125 %、150 %、250 %、300 % 等缩放下，托盘图标不再发虚：通知区域改用按它实际尺寸绘制的图标，更改缩放或换主显示器后自动换成对应的尺寸。
 
 ### English summary
 
@@ -52,6 +53,7 @@ Each version ends with an English summary.
 - A new app and tray icon: a little sprite carrying a scrap of paper, with a simplified version drawn for the tray and menu bar in light, dark, and macOS menu bar variants; the floating trigger on Windows and Linux uses the same mark.
 - Model services now show their real logos (OpenAI, Anthropic, Google Gemini, DeepSeek, Qwen, Zhipu, Volcengine Ark, Kimi, SiliconFlow, MiniMax, OpenRouter, Groq, Ollama, LM Studio), adapted for dark mode; custom services still show their initial.
 - Fixes: configuration files saved with a UTF-8 BOM (for example by Windows Notepad) are no longer treated as corrupt and reset; providers and glossary entries in Settings are now saved one at a time, so changes made in the files or synced from another device aren't overwritten by stale values in an open Settings window.
+- Windows: the tray icon is no longer blurry at 100%, 125%, 150%, 250%, 300%, and similar display scaling. The notification area now gets an icon drawn for its actual size, and Wisp switches to the matching size when you change the scaling or the primary display.
 
 ## 0.1.1（2026-10-14）
 

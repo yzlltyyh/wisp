@@ -3,7 +3,8 @@
 //!
 //! - **跟随系统**：启动时经 `platform.screen.watch_appearance` 订阅（事件驱动、空闲零唤醒）。系统一次切换往往连发
 //!   几条通知（明暗、强调色、任务栏明暗），回调只排一次 [`COALESCE`] 后的一次性重算；结果与上次广播的不同才
-//!   `WindowManager::broadcast_appearance`（`appearance:changed`），并刷新托盘图标（Windows 任务栏明暗）；
+//!   `WindowManager::broadcast_appearance`（`appearance:changed`），并刷新托盘图标（Windows 任务栏明暗；Windows 的监听还包括
+//!   显示缩放与显示器配置的变化，托盘据此按通知区域的新尺寸选图）；
 //! - **设置变化**（主题 / 强调色 / 字号 / 材质 / 减少动效 / 界面语言）由 `app::reactor` 调 [`refresh`]（只在这些设置
 //!   变了时），同样只在结果变化时广播；
 //! - [`current`] / [`refresh`] 会读系统明暗与强调色，macOS 上各是一次主线程同步往返：**不要在 tokio worker 上调用**，
@@ -197,7 +198,8 @@ pub fn watch(app: &tauri::AppHandle) {
             if let Err(e) = tauri::async_runtime::spawn_blocking(move || refresh(&h)).await {
                 log::warn!("appearance refresh failed: {e}");
             }
-            // 任务栏明暗不在 AppearanceState 里，托盘图标单独判断（没变化时 refresh 不做任何事）
+            // 任务栏明暗与通知区域图标尺寸（Windows 显示缩放）不在 AppearanceState 里，托盘图标单独判断
+            // （没变化时 refresh 不重新设置图标）
             crate::tray::refresh(&handle);
         });
     }));

@@ -8,10 +8,11 @@
 use ::windows::Win32::Foundation::{LPARAM, POINT, RECT};
 use ::windows::Win32::Graphics::Gdi::{
     DISPLAY_DEVICEW, EnumDisplayDevicesW, EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR,
-    MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITORINFO, MONITORINFOEXW, MonitorFromPoint,
+    MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTONULL, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MONITORINFOEXW,
+    MonitorFromPoint,
 };
-use ::windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
-use ::windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, MONITORINFOF_PRIMARY};
+use ::windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetSystemMetricsForDpi, MDT_EFFECTIVE_DPI};
+use ::windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, MONITORINFOF_PRIMARY, SM_CXSMICON};
 use ::windows::core::{BOOL, PCWSTR};
 use wisp_types::{MonitorId, MonitorInfo, Point};
 
@@ -67,6 +68,34 @@ pub(crate) fn monitor_nearest(x: i32, y: i32) -> Option<MonitorInfo> {
 #[cfg_attr(not(feature = "mouse-hook"), allow(dead_code))]
 pub(crate) fn monitor_by_id(id: &str) -> Option<MonitorInfo> {
     enumerate(false).into_iter().find(|m| m.id == id)
+}
+
+/// 通知区域图标的边长（物理像素）：主显示器当前有效 DPI 下的 `SM_CXSMICON`。
+///
+/// 通知区域只在主任务栏上，主任务栏总在主显示器上，所以取主显示器的 DPI。不能用 `GetSystemMetrics`：它返回的是
+/// 登录时的系统 DPI，用户在设置里改缩放之后要注销重登才变，而资源管理器（Per-Monitor 感知）按显示器当前的 DPI
+/// 画通知区域。三次调用都是进程内的查询（微秒级），不阻塞
+pub(crate) fn tray_icon_size() -> Option<u32> {
+    let _dpi = DpiScope::per_monitor();
+    // SAFETY: 纯查询；(0, 0) 总是主显示器的左上角，MONITOR_DEFAULTTOPRIMARY 保证返回主显示器
+    let h = unsafe { MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY) };
+    if h.is_invalid() {
+        return None;
+    }
+    let (mut dpi_x, mut dpi_y) = (0u32, 0u32);
+    // SAFETY: 输出参数指向局部变量；在 Per-Monitor V2 作用域内调用，取到的是显示器的实际有效 DPI，不是虚拟化后的值
+    unsafe { GetDpiForMonitor(h, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }.ok()?;
+    small_icon_for_dpi(dpi_x)
+}
+
+/// 指定 DPI 下的小图标边长（`SM_CXSMICON`，96 DPI 时 16 px，按 DPI 等比放大）；DPI 为 0 或系统给出非正值时为 None
+fn small_icon_for_dpi(dpi: u32) -> Option<u32> {
+    if dpi == 0 {
+        return None;
+    }
+    // SAFETY: 纯计算，不依赖调用线程的 DPI 感知
+    let px = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, dpi) };
+    u32::try_from(px).ok().filter(|px| *px > 0)
 }
 
 /// 光标的物理坐标
@@ -166,4 +195,34 @@ fn friendly_name(device: &str) -> String {
         .then(|| from_wide_buf(&dd.DeviceString).trim().to_owned())
         .filter(|s| !s.is_empty());
     name.unwrap_or_else(|| bare_device(device))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn small_icon_follows_the_notification_area_steps() {
+        // 与图标 README 的表一致：100 % 16、125 % 20、150 % 24、175 % 28、200 % 32、250 % 40、300 % 48
+        for (dpi, px) in [
+            (96, 16),
+            (120, 20),
+            (144, 24),
+            (168, 28),
+            (192, 32),
+            (240, 40),
+            (288, 48),
+        ] {
+            assert_eq!(small_icon_for_dpi(dpi), Some(px), "{dpi} DPI");
+        }
+        assert_eq!(small_icon_for_dpi(0), None);
+    }
+
+    #[test]
+    fn tray_icon_size_is_a_small_icon_size() {
+        // 无显示器的会话里可能取不到；取到时一定是合理的小图标边长
+        if let Some(px) = tray_icon_size() {
+            assert!((16..=256).contains(&px), "{px}");
+        }
+    }
 }
