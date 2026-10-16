@@ -11,12 +11,10 @@ use crate::join::{MixedSpacing, join_break};
 ///
 /// 与流式版本 [`BlankSqueezer`](crate::stream::BlankSqueezer) 的结果逐字相同。幂等；去掉所有空白后与输入相同。
 pub fn squeeze_blanks(text: &str) -> String {
-    // \r\n 先合成一个换行，否则按 \r、\n 分别断行时中间会多出一个空行
-    let text = text.replace("\r\n", "\n");
     let mut out = String::with_capacity(text.len());
     // 上一个非空行之后是否出现过空行（开头的空行不算：那时 out 还是空的）
     let mut gap = false;
-    for line in text.split(['\n', '\r']).map(str::trim_end) {
+    for line in line_contents(text).map(str::trim_end) {
         if line.is_empty() {
             gap |= !out.is_empty();
             continue;
@@ -31,7 +29,10 @@ pub fn squeeze_blanks(text: &str) -> String {
 }
 
 /// 按 `\n`、`\r\n`、单独的 `\r` 断开的物理行：`(内容, 连同换行符的整行)`，最后一行可能没有换行符。
-/// 末尾的换行符不算再起一个空行（与 [`str::lines`] 相同），所以 `"a\n"` 只有一行
+/// 末尾的换行符不算再起一个空行（与 [`str::lines`] 相同），所以 `"a\n"` 只有一行。
+///
+/// 本模块按行处理的操作都经这里断行，三种换行符处处含义相同（流式版本的规则也一样）。不用 [`str::lines`]：
+/// 它不把单独的 `\r` 当换行，同一段老式 Mac 换行的文字在「合成一行」里会留下 `\r`，在其他操作里却被断开
 fn lines_with_breaks(text: &str) -> impl Iterator<Item = (&str, &str)> {
     let mut rest = text;
     std::iter::from_fn(move || {
@@ -49,6 +50,11 @@ fn lines_with_breaks(text: &str) -> impl Iterator<Item = (&str, &str)> {
     })
 }
 
+/// 各行的内容（不含换行符），断行同 [`lines_with_breaks`]
+fn line_contents(text: &str) -> impl Iterator<Item = &str> {
+    lines_with_breaks(text).map(|(content, _)| content)
+}
+
 /// 只含空白（含全角空格、不换行空格）或什么都没有的行
 fn is_blank(content: &str) -> bool {
     content.trim().is_empty()
@@ -57,7 +63,7 @@ fn is_blank(content: &str) -> bool {
 /// 文中是否有空行（只含空白的行，开头与结尾的也算）。与 `remove_blank_lines(text) != text` 等价，但不分配、
 /// 遇到第一个空行就停：「粘贴为…」检视时每移动一次光标都要判断一次，长文本不应每次都复制一份
 pub fn has_blank_lines(text: &str) -> bool {
-    lines_with_breaks(text).any(|(content, _)| is_blank(content))
+    line_contents(text).any(is_blank)
 }
 
 /// 去掉全部空行（只含空白的行，包括开头与结尾的空行），其余每一行连同它自己的换行符逐字保留：
@@ -73,14 +79,14 @@ pub fn remove_blank_lines(text: &str) -> String {
     out
 }
 
-/// 把所有非空行合成一行：每行去掉首尾空白、跳过空行，相邻两行按 [`join_break`] 相连；东亚文字与字母数字之间
-/// 断行处补不补空格，按全文的惯例推断（[`MixedSpacing::infer`]）。
+/// 把所有非空行合成一行（`\n`、`\r\n` 与单独的 `\r` 都是换行）：每行去掉首尾空白、跳过空行，相邻两行按
+/// [`join_break`] 相连；东亚文字与字母数字之间断行处补不补空格，按全文的惯例推断（[`MixedSpacing::infer`]）。
 ///
 /// 幂等；除被还原的断词连字符与软连字符外，不增删任何非空白字符。
 pub fn join_all(text: &str) -> String {
-    let spacing = MixedSpacing::infer(text.lines());
+    let spacing = MixedSpacing::infer(line_contents(text));
     let mut out = String::with_capacity(text.len());
-    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+    for line in line_contents(text).map(str::trim).filter(|l| !l.is_empty()) {
         join_break(&mut out, line, spacing);
     }
     out
@@ -186,6 +192,9 @@ mod tests {
             ("src/\ntests/\ndocs/", "src/ tests/ docs/"),
             ("https://a.com/\nhttps://b.com/", "https://a.com/ https://b.com/"),
             ("Visit:\nhttps://a.com/\nNext", "Visit: https://a.com/ Next"),
+            // 单独的 \r 与 \n、\r\n 一样是换行
+            ("a\rb\nc", "a b c"),
+            ("old\rmac\r\r text\r", "old mac text"),
         ] {
             assert_eq!(join_all(input), want, "{input:?}");
         }
@@ -300,7 +309,30 @@ mod tests {
         fn join_all_is_idempotent(s in text()) {
             let once = join_all(&s);
             prop_assert_eq!(join_all(&once), once.clone());
-            prop_assert!(!once.contains('\n'));
+            prop_assert!(!once.contains(['\n', '\r']));
+        }
+
+        /// 内部的断行与参照实现（按 \r\n、\r、\n 断开）一致，整行拼回去与原文相同
+        #[test]
+        fn lines_with_breaks_matches_reference(s in spacey_text()) {
+            let contents: Vec<&str> = lines_with_breaks(&s).map(|(c, _)| c).collect();
+            let mut want = physical_lines(&s);
+            // 末尾的换行符不再起一个空行（与 str::lines 相同）
+            if want.last() == Some(&"") {
+                want.pop();
+            }
+            prop_assert_eq!(contents, want);
+            prop_assert_eq!(lines_with_breaks(&s).map(|(_, l)| l).collect::<String>(), s);
+        }
+
+        /// 三种换行符（\n、\r\n、单独的 \r）在各个操作里含义相同：换成统一的 \n 不改变结果
+        #[test]
+        fn line_break_styles_are_equivalent(s in spacey_text(), t in text()) {
+            let unify = |x: &str| x.replace("\r\n", "\n").replace('\r', "\n");
+            prop_assert_eq!(join_all(&t), join_all(&unify(&t)));
+            prop_assert_eq!(squeeze_blanks(&s), squeeze_blanks(&unify(&s)));
+            prop_assert_eq!(unify(&remove_blank_lines(&s)), remove_blank_lines(&unify(&s)));
+            prop_assert_eq!(has_blank_lines(&s), has_blank_lines(&unify(&s)));
         }
 
         #[test]
