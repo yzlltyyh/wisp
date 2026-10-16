@@ -89,32 +89,34 @@ pub(crate) fn inspect_text(text: &str, smart: &SmartSettings) -> ClipInspect {
     smart::inspect(ClipKind::Text, text, &RecognizeOpts::from(smart))
 }
 
+/// 按文本条目执行一种变换：不适用时把输入原样交回（`Ok`），失败时连同输入一起交回，由调用方决定报错还是退回原文。
+/// [`transform_text`] 与 [`layout_text`] 共用这一处：同样的输入逐字得到同样的结果
+fn apply_text(text: String, id: TransformId) -> Result<String, (String, TransformError)> {
+    match smart::apply(id, ClipKind::Text, &text) {
+        Ok(out) => Ok(out),
+        Err(TransformError::NotApplicable) => Ok(text),
+        Err(e) => Err((text, e)),
+    }
+}
+
 /// 纯文本的变换（识别结果的排版等）：与 [`inspect_text`] 一样按文本条目对待，所以列出的变换都能在这里执行。
 /// 不适用时原样返回输入——调用方比较前后是否相同就知道有没有变化，不必先检视一次。
 /// 错误信息只有变换的原因，不含正文
 pub(crate) fn transform_text(text: String, id: TransformId) -> Result<String, IpcError> {
-    match smart::apply(id, ClipKind::Text, &text) {
-        Ok(out) => Ok(out),
-        Err(TransformError::NotApplicable) => Ok(text),
-        Err(e) => Err(IpcError::invalid_argument(e.to_string())),
-    }
+    apply_text(text, id).map_err(|(_, e)| IpcError::invalid_argument(e.to_string()))
 }
 
-/// OCR 结果的排版：执行排版对应的变换，与 [`transform_text`]（前端切换排版时调用的 `text_transform`）走同一条路径、
-/// 同样按文本条目对待，同样的输入逐字得到同样的结果——识别完成时自动复制的文本因此与视图显示的一致。「原样」与变换
-/// 不适用时原样返回；排版只动空白与换行，不会失败，万一失败也按原文交付（日志只有变换的原因，不含正文）
+/// OCR 结果的排版：执行排版对应的变换，与 [`transform_text`]（前端切换排版时调用的 `text_transform`）走同一条路径，
+/// 识别完成时自动复制的文本因此与视图显示的一致。「原样」与变换不适用时原样返回；排版只动空白与换行，不会失败，万一
+/// 失败也按原文交付（日志只有变换的原因，不含正文）
 pub(crate) fn layout_text(text: String, layout: OcrLayout) -> String {
     let Some(id) = layout.transform() else {
         return text;
     };
-    match smart::apply(id, ClipKind::Text, &text) {
-        Ok(out) => out,
-        Err(TransformError::NotApplicable) => text,
-        Err(e) => {
-            log::warn!("ocr layout {} failed: {e}", layout.as_str());
-            text
-        }
-    }
+    apply_text(text, id).unwrap_or_else(|(text, e)| {
+        log::warn!("ocr layout {} failed: {e}", layout.as_str());
+        text
+    })
 }
 
 /// 到期删除失败后至少隔这么久再试（毫秒）

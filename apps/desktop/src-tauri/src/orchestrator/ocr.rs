@@ -57,8 +57,8 @@ use super::env::{EngineImage, EngineRequest};
 use super::fsm::{Event, Flow, Stage};
 use super::not_ready;
 use super::plan::{
-    EngineRef, OcrTarget, TextInput, adapt_for, build_ocr_prompt, default_ocr_layout, default_ocr_mode, plan_text,
-    resolve_style,
+    EngineRef, OcrTarget, TextInput, adapt_for, build_ocr_prompt, default_ocr_mode, plan_text, resolve_style,
+    session_ocr_layout,
 };
 use super::registry::{Lane, OpenSpec, Owner, PumpEnd, Sink, pump};
 use super::translate::TextJob;
@@ -705,11 +705,7 @@ impl Core {
             image_size: PhysSize { width: 0, height: 0 },
             target_lang: settings.translate.primary_lang,
             not_ready: Some(nr),
-            layout: if direct {
-                OcrLayout::Keep
-            } else {
-                default_ocr_layout(&settings)
-            },
+            layout: session_ocr_layout(&settings, direct, None),
         };
         let req = PanelShowRequest {
             view: PanelView::Ocr,
@@ -969,12 +965,7 @@ impl Core {
         } else {
             target.effective_mode(default_ocr_mode(&settings))
         };
-        // 直接翻译不排版（包括它的「查看原文」）：会话的排版恒为原样
-        let layout = if direct {
-            OcrLayout::Keep
-        } else {
-            default_ocr_layout(&settings)
-        };
+        let layout = session_ocr_layout(&settings, direct, None);
         let lane = if direct { Lane::OcrTranslate } else { Lane::Ocr };
         let id = self.registry.new_id();
         let token = self.registry.open(
@@ -1852,8 +1843,9 @@ impl Core {
                         two_step: req.mode == OcrMode::Translate && !target.can_translate(),
                         target,
                         mode: req.mode,
-                        // 视图带回会话里当前的排版，交付的文本与视图显示的一致；旧前端不带时按设置
-                        layout: req.layout.unwrap_or_else(|| default_ocr_layout(&settings)),
+                        // 视图带回会话里当前的排版，交付的文本与视图显示的一致；旧前端不带时按设置。直接翻译的截图
+                        // 与 commit 时一样恒为原样
+                        layout: session_ocr_layout(&settings, crop.direct, req.layout),
                         target_lang,
                         crop,
                         run: None,

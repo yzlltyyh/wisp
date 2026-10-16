@@ -532,6 +532,16 @@ pub fn default_ocr_layout(settings: &Settings) -> OcrLayout {
     }
 }
 
+/// 一次识别的会话排版：直接翻译的截图（包括它的「查看原文」）恒为原样；其余取视图带回的排版（`requested`，重新识别
+/// 时），没有时取设置里的默认。截图 commit、未就绪卡片与 `ocr_start` 都经这里，两条路径的规则只有这一份
+pub fn session_ocr_layout(settings: &Settings, direct: bool, requested: Option<OcrLayout>) -> OcrLayout {
+    if direct {
+        OcrLayout::Keep
+    } else {
+        requested.unwrap_or_else(|| default_ocr_layout(settings))
+    }
+}
+
 /// 组装文本请求
 pub fn chat_request(
     id: &RequestId,
@@ -944,6 +954,28 @@ pub(crate) mod tests {
         assert_eq!(info.chars, 3001);
         assert_eq!(info.est_tokens, 3001);
         assert!(info.est_seconds.is_some_and(|s| s > 10.0));
+    }
+
+    /// 会话排版：直接翻译的截图无论视图带回什么都是原样（重新识别、「查看原文」与 commit 一致）；其余优先视图带回的
+    /// 排版，没有时取设置，设置里不允许的合并为一行退回原样
+    #[test]
+    fn session_layout_is_keep_for_direct_translation_on_every_path() {
+        let mut s = configured();
+        s.ocr.layout = OcrLayout::RemoveBlankLines;
+        for requested in [None, Some(OcrLayout::RemoveBlankLines), Some(OcrLayout::JoinLines)] {
+            assert_eq!(
+                session_ocr_layout(&s, true, requested),
+                OcrLayout::Keep,
+                "{requested:?}"
+            );
+        }
+        assert_eq!(session_ocr_layout(&s, false, None), OcrLayout::RemoveBlankLines);
+        assert_eq!(
+            session_ocr_layout(&s, false, Some(OcrLayout::JoinLines)),
+            OcrLayout::JoinLines
+        );
+        s.ocr.layout = OcrLayout::JoinLines;
+        assert_eq!(session_ocr_layout(&s, false, None), OcrLayout::Keep);
     }
 
     #[test]
