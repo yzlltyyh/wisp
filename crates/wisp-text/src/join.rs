@@ -52,10 +52,12 @@ impl MixedSpacing {
 /// 1. `text` 以软连字符结尾：删掉它，直接相连；
 /// 2. 以 `-` 或 U+2010 结尾、且前一个字符是字母（不含中日韩文字）：像断词就删掉连字符直接相连（`inter-` 接 `face`
 ///    得 `interface`），否则保留连字符直接相连（`COVID-19`、`Wi-Fi`、`state-of-the-art`、URL 与路径）。
-///    断词的条件见 [`hyphen_breaks_word`]；恰好断在复合词的连字符处时（`well-` 接 `known`）会被当成断词；
+///    像断词指下一行以小写字母开头，且末尾的词看起来是普通单词：不像链接、路径、标识符或邮箱，词里没有别的连字符，
+///    至少两个字母、不全是大写、不含数字。恰好断在复合词的连字符处时（`well-` 接 `known`）会被当成断词；
 /// 3. 任一侧已是空白：直接相连；
-/// 4. 以紧跟在文字后的连字符、破折号、斜杠或下划线结尾：直接相连（`2020-2021`、`他说——我`、`and/or`）；
-///    这些符号前是空白时（`3 -` 接 `7`）补一个空格，与原文的写法对称；
+/// 4. 以紧跟在文字后的连字符或破折号结尾：直接相连（`2020-2021`、`他说——我`）；这些符号前是空白时（`3 -` 接 `7`）
+///    补一个空格，与原文的写法对称。行尾的斜杠与下划线不在此列，按下面的规则处理（与西文之间补空格：`src/` 接
+///    `tests/` 得 `src/ tests/`）；
 /// 5. 任一侧是东亚标点：`，`、`。`、`「` 这类，以及紧挨着东亚文字的中性标点（`他说——`、`等等……`、`然后,`、
 ///    `“出发”`）。直接相连；
 /// 6. 两侧都是不用空格分词的东亚文字：直接相连；谚文按拉丁文处理，不在此列；
@@ -159,9 +161,14 @@ fn hyphen_breaks_word(head: &str, next: &str) -> bool {
         && next.chars().next().is_some_and(char::is_lowercase)
 }
 
-/// 紧跟在文字后时把两侧直接连起来的符号：连字符、各种破折号、斜杠、下划线
+/// 紧跟在文字后时把两侧直接连起来的符号：连字符与各种破折号。
+///
+/// 斜杠与下划线刻意不算：以斜杠结尾的行常常本身就是一个完整的条目（`ls -F` 列出的目录、末尾带斜杠的链接），
+/// 直接相连会把两个条目粘成一个错误的路径或链接，还很难看出来；断在斜杠后的词（`and/` 接 `or`）多出一个空格，
+/// 却一眼可见、删掉即可。「两侧都像普通单词才相连」也挡不住 `src/` 接 `README` 这样的目录列表，所以不做这种猜测。
+/// 下划线在断行规则里与字母同类，本来就不是排版断行的位置，以它结尾的行几乎都是完整的标识符。
 fn is_connector(c: char) -> bool {
-    matches!(c, '-' | '\u{2010}'..='\u{2015}' | '\u{2E3A}' | '\u{2E3B}' | '/' | '_')
+    matches!(c, '-' | '\u{2010}'..='\u{2015}' | '\u{2E3A}' | '\u{2E3B}')
 }
 
 /// 中性标点：中西文共用的通用标点（破折号、弯引号、省略号、项目符号、间隔号）与 ASCII 标点符号
@@ -371,12 +378,10 @@ mod tests {
             ("an X-", "ray", Tight, "an X-ray"),
             ("an API-", "based", Tight, "an API-based"),
             ("H2O-", "free", Tight, "H2O-free"),
-            // 连字符、破折号、斜杠紧跟文字：直接相连；前面是空白：补空格
+            // 连字符、破折号紧跟文字：直接相连；前面是空白：补空格
             ("a 2020-", "2021 plan", Tight, "a 2020-2021 plan"),
             ("pages 10–", "20", Tight, "pages 10–20"),
             ("it was—", "as expected—fine", Tight, "it was—as expected—fine"),
-            ("and/", "or", Tight, "and/or"),
-            ("snake_", "case", Tight, "snake_case"),
             ("中文-", "English", Tight, "中文-English"),
             ("the value is -", "5", Tight, "the value is - 5"),
             ("range 3 –", "7", Tight, "range 3 – 7"),
@@ -429,6 +434,37 @@ mod tests {
             ("", "next", Tight, "next"),
             ("prev", "", Tight, "prev"),
             ("hyphen\u{AD}", "", Tight, "hyphen\u{AD}"),
+        ] {
+            assert_eq!(joined(prev, next, spacing), want, "{prev:?} + {next:?} ({spacing:?})");
+        }
+    }
+
+    /// 行尾的斜杠与下划线不是连接符：以它们结尾的行常常是一个完整的条目（目录、末尾带斜杠的链接），与下一行之间
+    /// 照常补空格，不把两个条目粘成一个
+    #[test]
+    fn slash_and_underscore_do_not_glue_lines() {
+        use MixedSpacing::{Spaced, Tight};
+        for (prev, next, spacing, want) in [
+            // 目录列表（`ls -F`）、网址列表
+            ("src/", "tests/", Tight, "src/ tests/"),
+            ("src/", "README", Tight, "src/ README"),
+            (
+                "https://a.com/",
+                "https://b.com/",
+                Tight,
+                "https://a.com/ https://b.com/",
+            ),
+            ("Visit: https://a.com/", "Next", Tight, "Visit: https://a.com/ Next"),
+            ("see /usr/local/", "bin", Tight, "see /usr/local/ bin"),
+            // 断在斜杠或下划线后的词同样补空格：多一个空格一眼可见，粘错的路径与链接却很难发现
+            ("and/", "or", Tight, "and/ or"),
+            ("input/", "output", Spaced, "input/ output"),
+            ("snake_", "case", Tight, "snake_ case"),
+            ("__init__", "self", Tight, "__init__ self"),
+            // 前面是空白时与原来一样补空格；紧挨东亚文字时按东亚标点直接相连
+            ("a /", "b", Tight, "a / b"),
+            ("目录/", "文件", Tight, "目录/文件"),
+            ("目录/", "src", Spaced, "目录/src"),
         ] {
             assert_eq!(joined(prev, next, spacing), want, "{prev:?} + {next:?} ({spacing:?})");
         }

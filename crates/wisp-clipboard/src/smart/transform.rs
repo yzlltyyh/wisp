@@ -728,6 +728,10 @@ mod tests {
                 "这是一段被硬换行的中文with English",
             ),
             ("使用 Wisp 时会\nCPU 占用很低", "使用 Wisp 时会 CPU 占用很低"),
+            // 目录列表、网址列表：以斜杠结尾的行各自分开，不粘成一个路径或链接
+            ("src/\ntests/\ndocs/", "src/ tests/ docs/"),
+            ("https://a.com/\nhttps://b.com/", "https://a.com/ https://b.com/"),
+            ("Visit:\nhttps://a.com/\nNext", "Visit: https://a.com/ Next"),
         ] {
             assert_eq!(run(TransformId::JoinLines, input), want, "{input:?}");
             assert_ne!(want, input, "适用时结果与原文不同");

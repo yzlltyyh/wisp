@@ -182,6 +182,10 @@ mod tests {
                 "COVID-19 and Wi-Fi in 2020-2021",
             ),
             ("an inter-\nface", "an interface"),
+            // 以斜杠结尾的行多半是完整的条目：目录列表、网址列表合并后各自分开
+            ("src/\ntests/\ndocs/", "src/ tests/ docs/"),
+            ("https://a.com/\nhttps://b.com/", "https://a.com/ https://b.com/"),
+            ("Visit:\nhttps://a.com/\nNext", "Visit: https://a.com/ Next"),
         ] {
             assert_eq!(join_all(input), want, "{input:?}");
         }
