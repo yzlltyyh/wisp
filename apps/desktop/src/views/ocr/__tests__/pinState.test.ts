@@ -67,6 +67,7 @@ function input(patch: Partial<PinInput> = {}): PinInput {
     src: run(),
     mode: 'lines' as OcrMode,
     ocrText: '',
+    layers: null,
     style: 'natural',
     target: null,
     trOpen: false,
@@ -254,7 +255,7 @@ describe('还原', () => {
       text: '译文',
       extra: {},
       phase: 'done',
-      basis: { text: '原文', style: 'formal', target: null },
+      basis: { raw: '原文', edit: null, style: 'formal', target: null },
     })
   })
 
@@ -281,6 +282,7 @@ describe('还原', () => {
       main: { attach: 'r-dt', text: 'Hi', extra: {}, phase: 'done' },
       source: { text: null, open: false },
       translation: null,
+      text: null,
     })
     expect(pinRestoreOf({ ...p, ocr_text: '你好' }, true).source).toEqual({
       text: '你好',
@@ -288,23 +290,57 @@ describe('还原', () => {
     })
   })
 
-  it('组装出的状态还原回来：文字、请求与译文依据与面板一致', () => {
+  it('组装出的状态还原回来：识别文本、排版、编辑、请求与译文依据与面板一致', () => {
     const p = pinStateOf(
       input({
-        main: recognized('原文'),
+        main: recognized('原文\n\n第二段'),
         ocrText: '改过的原文',
+        layers: { raw: '原文\n\n第二段', layout: 'remove_blank_lines', edit: '改过的原文' },
         trOpen: true,
         tr: run({ phase: 'done', requestId: 'r-tr', done: done() }, '译文'),
         style: 'formal',
       }),
     )
+    // 旧前端仍按 ocr_text 显示
+    expect(p.ocr_text).toBe('改过的原文')
     const plan = pinRestoreOf(p, false)
-    expect(plan.main).toMatchObject({ attach: null, text: '改过的原文', phase: 'done' })
+    expect(plan.main).toMatchObject({ attach: null, text: '原文\n\n第二段', phase: 'done' })
     expect(plan.main.extra.start?.model_label).toBe('Vision')
+    expect(plan.text).toEqual({
+      layout: 'remove_blank_lines',
+      edit: '改过的原文',
+      shown: '改过的原文',
+    })
     expect(plan.translation).toMatchObject({
       attach: 'r-tr',
       text: '译文',
-      basis: { text: '改过的原文', style: 'formal' },
+      basis: { raw: '原文\n\n第二段', edit: '改过的原文', style: 'formal' },
+    })
+  })
+
+  it('还在识别时只交接会话排版；旧面板没有三层时把显示的文字当作识别文本、按原样还原', () => {
+    const live = pinStateOf(
+      input({
+        main: run({ phase: 'streaming', requestId: 'r-ocr' }, '半'),
+        layers: { raw: '半', layout: 'join_lines', edit: null },
+      }),
+    )
+    expect(live.ocr_layers).toEqual({ raw: '', layout: 'join_lines', edit: null })
+    expect(pinRestoreOf(live, false).text).toBeNull()
+    // 直接翻译不交接
+    expect(pinStateOf(input({ direct: true })).ocr_layers).toBeUndefined()
+
+    const old = pinRestoreOf(
+      pin({ ocr_text: '显示的', show_source: true, result_text: 'T' }),
+      false,
+    )
+    expect(old.main.text).toBe('显示的')
+    expect(old.text).toEqual({ layout: 'keep', edit: null, shown: '显示的' })
+    expect(old.translation?.basis).toEqual({
+      raw: '显示的',
+      edit: null,
+      style: 'natural',
+      target: null,
     })
   })
 })

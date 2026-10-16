@@ -140,6 +140,15 @@ function snapshot(autoCopy = true): SettingsSnapshot {
 const NO_ENTITIES: ClipInspect = { entities: [], transforms: [] }
 /** text_inspect 的结果：undefined 模拟没实现这条命令的替身（未知命令一律返回 undefined），'fail' 模拟命令失败 */
 let inspectResult: ClipInspect | undefined | 'fail' = NO_ENTITIES
+/** ocr_recopy 的结果：Rust 是否写入了剪贴板 */
+let recopyResult: boolean
+
+/** text_transform 的替身（只为用例里的几段文字给出结果；真实规则在 Rust） */
+function fakeTransform(text: string, transform: string): string {
+  if (transform === 'remove_blank_lines') return text.replace(/\n{2,}/g, '\n')
+  if (transform === 'join_lines') return text.replace(/\n+/g, '')
+  return text
+}
 
 function fakeTransport(): Transport {
   return {
@@ -147,10 +156,22 @@ function fakeTransport(): Transport {
     invoke: <T,>(cmd: string, args?: Record<string, unknown>) => {
       calls.push([cmd, args ?? {}])
       if (cmd === 'panel_pin') return Promise.resolve('p-1' as T)
+      if (cmd === 'text_transform') {
+        return Promise.resolve(fakeTransform(args?.text as string, args?.transform as string) as T)
+      }
+      if (cmd === 'ocr_recopy') return Promise.resolve(recopyResult as T)
       // 识别完成后视图会检视文字（芯片）：默认没有片段，用例需要芯片时改 inspectResult
       if (cmd === 'text_inspect') {
         if (inspectResult === 'fail') {
           return Promise.reject({ code: 'internal', message: 'inspect failed', llm: null })
+        }
+        // 默认没有片段；可用的排版按替身的结果列出（与 Rust 一样：列出的恰好是会改变文字的那些）
+        if (inspectResult === NO_ENTITIES) {
+          const text = args?.text as string
+          const transforms = (['join_lines', 'remove_blank_lines'] as const).filter(
+            (id) => fakeTransform(text, id) !== text,
+          )
+          return Promise.resolve({ entities: [], transforms } as T)
         }
         return Promise.resolve(inspectResult as T)
       }
@@ -300,6 +321,7 @@ beforeEach(() => {
   rejectTranslate = false
   replays = new Map()
   inspectResult = NO_ENTITIES
+  recopyResult = true
   setTransport(fakeTransport())
   resetSettingsSnapshot(snapshot())
   // 用例里的断言用中文文案
@@ -426,7 +448,7 @@ describe('识别流程', () => {
   })
 
   it('载荷没有 request_id 时自己发起 ocr_start', async () => {
-    view({}, payload({ request_id: null, mode: 'paragraphs' }))
+    view({}, payload({ request_id: null, mode: 'paragraphs', layout: 'remove_blank_lines' }))
     await started()
     expect(callsOf('ocr_start')[0]?.[1]).toEqual({
       req: {
@@ -435,6 +457,8 @@ describe('识别流程', () => {
         mode: 'paragraphs',
         model_ref: null,
         target_lang: null,
+        // 会话排版（初值是载荷里的设置默认值）：Rust 按它自动复制
+        layout: 'remove_blank_lines',
       },
     })
   })
@@ -731,6 +755,186 @@ describe('重新识别', () => {
     await push('r-ocr', start('r-ocr'), delta('半'))
     act(() => mod('KeyR'))
     expect(callsOf('cancel')).toEqual([['cancel', { request_id: 'r-ocr' }]])
+  })
+})
+
+describe('排版', () => {
+  const PARAS = '第一段\n\n第二段'
+  const TIGHT = '第一段\n第二段'
+  const box = () => screen.getByTestId('ocr-text') as HTMLTextAreaElement
+
+  it('逐行模式有文字时底栏出现排版按钮；切换后正文更新、aria-pressed；剪贴板跟随时「已复制」重新出现、否则收起，并播报', async () => {
+    view()
+    await recognize('r-ocr', PARAS)
+    await settle()
+    const toggle = screen.getByTestId('ocr-layout-toggle')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(toggle).toHaveAccessibleName('去掉空行')
+    // 剪贴板没能跟随（期间被别处复制过等）：「已复制」收起
+    recopyResult = false
+    fireEvent.click(toggle)
+    await settle()
+    expect(box().value).toBe(TIGHT)
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+    expect(callsOf('text_transform')).toEqual([
+      ['text_transform', { text: PARAS, transform: 'remove_blank_lines' }],
+    ])
+    expect(callsOf('ocr_recopy')).toEqual([['ocr_recopy', { capture_id: 'cap-1', text: TIGHT }]])
+    await waitFor(() => expect(screen.queryByTestId('inline-toast')).toBeNull(), { timeout: 1000 })
+    expect(screen.getByTestId('ocr-announce')).toHaveTextContent(/^已切换为「去掉空行」$/)
+    // 跟随成功：「已复制」重新出现；切回原样不用再求排版
+    recopyResult = true
+    fireEvent.click(toggle)
+    await settle()
+    expect(box().value).toBe(PARAS)
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    expect(callsOf('text_transform')).toHaveLength(1)
+    expect(callsOf('ocr_recopy').at(-1)?.[1]).toEqual({ capture_id: 'cap-1', text: PARAS })
+    expect(screen.getByTestId('inline-toast')).toHaveTextContent('已复制')
+    expect(screen.getByTestId('ocr-announce')).toHaveTextContent('已切换为「原样」，已复制')
+  })
+
+  it('设置默认去掉空行：一开始就是按下状态，识别完成后显示排版结果（Rust 已按它复制，不再复制）；菜单是单选', async () => {
+    view({}, payload({ mode: 'paragraphs', layout: 'remove_blank_lines' }))
+    await recognize('r-ocr', PARAS)
+    await settle()
+    expect(box().value).toBe(TIGHT)
+    expect(screen.getByTestId('ocr-layout-toggle')).toHaveAttribute('aria-pressed', 'true')
+    expect(callsOf('ocr_recopy')).toHaveLength(0)
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    const menu = await screen.findByTestId('ocr-layout-menu')
+    const items = within(menu).getAllByRole('menuitemradio')
+    expect(items.map((el) => el.getAttribute('aria-checked'))).toEqual(['false', 'true', 'false'])
+    expect(items[0]).toHaveTextContent('原样保留识别出的换行与空行')
+    fireEvent.click(screen.getByTestId('ocr-layout-menu-item-join_lines'))
+    await settle()
+    expect(box().value).toBe('第一段第二段')
+    // 左半按钮改为在原样与「合并为一行」之间切换
+    expect(screen.getByTestId('ocr-layout-toggle')).toHaveAccessibleName('合并为一行')
+  })
+
+  it('不适用的整理方式（按芯片检视的结果）：菜单里置灰并写明原因；左半在原样时也按不动', async () => {
+    inspectResult = { entities: [], transforms: ['join_lines'] }
+    view()
+    await recognize('r-ocr', '第一行\n第二行')
+    await settle()
+    const toggle = screen.getByTestId('ocr-layout-toggle')
+    expect(toggle).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(toggle)
+    act(() => mod('KeyL'))
+    await settle()
+    expect(callsOf('text_transform')).toHaveLength(0)
+    // 检视只请求了一次（排版不另外检视）
+    expect(callsOf('text_inspect')).toHaveLength(1)
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    const remove = await screen.findByTestId('ocr-layout-menu-item-remove_blank_lines')
+    expect(remove).toHaveAttribute('aria-disabled', 'true')
+    expect(remove).toHaveTextContent('文字里没有空行')
+    fireEvent.click(screen.getByTestId('ocr-layout-menu-item-join_lines'))
+    await settle()
+    expect(box().value).toBe('第一行第二行')
+  })
+
+  it('有编辑时：排版按钮置灰、⌘L 不切换；菜单里「放弃修改」先确认，确认后回到识别结果', async () => {
+    view()
+    await recognize('r-ocr', PARAS)
+    await settle()
+    fireEvent.change(box(), { target: { value: '改了' } })
+    expect(screen.getByTestId('ocr-layout-toggle')).toHaveAttribute('aria-disabled', 'true')
+    act(() => mod('KeyL'))
+    await settle()
+    expect(callsOf('text_transform')).toHaveLength(0)
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    const menu = await screen.findByTestId('ocr-layout-menu')
+    for (const item of within(menu).getAllByRole('menuitemradio')) {
+      expect(item).toHaveAttribute('aria-disabled', 'true')
+    }
+    fireEvent.click(screen.getByTestId('ocr-layout-menu-item-discard'))
+    expect(screen.getByTestId('ocr-confirm')).toHaveTextContent('放弃修改会恢复为识别结果')
+    expect(box().value).toBe('改了')
+    fireEvent.click(screen.getByTestId('ocr-confirm-ok'))
+    expect(box().value).toBe(PARAS)
+    expect(screen.getByTestId('ocr-layout-toggle')).not.toHaveAttribute('aria-disabled')
+    expect(screen.getByTestId('ocr-footer')).not.toHaveTextContent('已编辑')
+  })
+
+  it('结构化与直接翻译没有排版按钮', async () => {
+    const md = view({}, payload({ mode: 'markdown' }))
+    await recognize('r-ocr', PARAS)
+    await settle()
+    expect(screen.getByTestId('ocr-footer')).toBeInTheDocument()
+    expect(screen.queryByTestId('ocr-layout')).toBeNull()
+    md.unmount()
+    view({}, payload({ mode: 'translate' }))
+    await recognize('r-ocr', 'Hello\n\nWorld')
+    await settle()
+    expect(screen.getByTestId('ocr-footer')).toBeInTheDocument()
+    expect(screen.queryByTestId('ocr-layout')).toBeNull()
+  })
+
+  it('切换排版不算「原文已修改」（收起再展开复用译文），编辑才算；重新识别时请求带上会话排版', async () => {
+    view()
+    await recognize('r-ocr', PARAS)
+    fireEvent.click(screen.getByTestId('ocr-translate-toggle'))
+    await push('r-1', start('r-1'), delta('Hi'), done())
+    fireEvent.click(screen.getByTestId('ocr-layout-toggle'))
+    await settle()
+    expect(box().value).toBe(TIGHT)
+    expect(screen.queryByTestId('ocr-retranslate')).toBeNull()
+    expect(screen.getByTestId('ocr-translation-foot')).not.toHaveTextContent('原文已修改')
+    fireEvent.click(screen.getByTestId('ocr-translate-toggle'))
+    fireEvent.click(screen.getByTestId('ocr-translate-toggle'))
+    expect(callsOf('translate_start')).toHaveLength(1)
+    fireEvent.change(box(), { target: { value: '改了' } })
+    expect(screen.getByTestId('ocr-retranslate')).toBeInTheDocument()
+    // 重新识别（先确认会覆盖修改）：请求带上会话排版，Rust 按它自动复制
+    fireEvent.pointerDown(box())
+    act(() => mod('KeyR'))
+    act(() => mod('KeyR'))
+    expect(callsOf('ocr_start').at(-1)?.[1]).toMatchObject({
+      req: { mode: 'lines', layout: 'remove_blank_lines' },
+    })
+  })
+
+  it('⌘L 在原样与最近用过的整理方式之间切换', async () => {
+    view()
+    await recognize('r-ocr', PARAS)
+    await settle()
+    act(() => mod('KeyL'))
+    await settle()
+    expect(box().value).toBe(TIGHT)
+    act(() => mod('KeyL'))
+    await settle()
+    expect(box().value).toBe(PARAS)
+  })
+
+  it('固定：PinState 带上三层；固定窗口里还原为同样的显示，可以继续切换但不再带动剪贴板', async () => {
+    const first = view()
+    await recognize('r-ocr', PARAS)
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-toggle'))
+    await settle()
+    act(() => mod('KeyP'))
+    const state = (callsOf('panel_pin')[0]?.[1] as { state: PinState } | undefined)?.state
+    if (!state) throw new Error('没有固定')
+    expect(state).toMatchObject({
+      ocr_text: TIGHT,
+      ocr_layers: { raw: PARAS, layout: 'remove_blank_lines', edit: null },
+    })
+    first.unmount()
+    calls = []
+    view(
+      { host: 'pinned', sessionId: 0, pin: state },
+      payload({ request_id: null, layout: 'remove_blank_lines' }),
+    )
+    await settle()
+    expect(box().value).toBe(TIGHT)
+    expect(callsOf('text_transform')).toHaveLength(0)
+    expect(screen.getByTestId('ocr-layout-toggle')).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByTestId('ocr-layout-toggle'))
+    await settle()
+    expect(box().value).toBe(PARAS)
+    expect(callsOf('ocr_recopy')).toHaveLength(0)
   })
 })
 

@@ -2,10 +2,11 @@
  * OCR 结果里识别出的片段（电话、验证码、单号…）：在底栏上方排成一行芯片，与剪贴板的芯片条同一个部件与同一份展示
  * 注册表（shared/smart 的 EntityChip.tsx / specs.ts）。识别在 Rust（`text_inspect`），只在识别完成、有文字时进行；
  * 编辑文字之后停下来再重新识别（不逐键请求）。单击粘贴片段、⌥ 单击只复制，由视图决定怎么做。片段的值不写日志。
+ * 检视结果里的可用变换交给视图（`onInspect`）：排版菜单据此置灰不适用的整理方式，不再为它另请求一次。
  */
 import { useEffect, useState } from 'react'
 import { api, WispIpcError } from '../../shared/ipc'
-import type { Entity, OsKind } from '../../shared/ipc/types'
+import type { Entity, OsKind, TransformId } from '../../shared/ipc/types'
 import { useT } from '../../shared/i18n/useT'
 import { EntityChip, useChipTip, type ChipMode } from '../../shared/smart/EntityChip'
 import { inspectOrEmpty, orderEntities } from '../../shared/smart/specs'
@@ -19,11 +20,17 @@ export function OcrChips({
   text,
   os,
   onPick,
+  onInspect,
 }: {
-  /** 当前的 OCR 文字（编辑过的以编辑后的为准） */
+  /**
+   * 要检视的 OCR 文字：编辑过的以编辑后的为准，否则是识别文本——排版只改空白，片段不随排版变化（切换排版时芯片不会
+   * 先收起再出现），排版菜单要的也正是识别文本的可用变换
+   */
   text: string
   os: OsKind
   onPick(entity: Entity, mode: ChipMode): void
+  /** 每次检视成功（文字已经变了的那次也报，带着它检视的文字） */
+  onInspect?(text: string, transforms: readonly TransformId[]): void
 }) {
   const t = useT()
   const tip = useChipTip(os)
@@ -39,7 +46,9 @@ export function OcrChips({
       api
         .textInspect(text)
         .then((r) => {
-          if (live) setFound({ text, entities: orderEntities(inspectOrEmpty(r).entities) })
+          const result = inspectOrEmpty(r)
+          onInspect?.(text, result.transforms)
+          if (live) setFound({ text, entities: orderEntities(result.entities) })
         })
         .catch((error: unknown) => {
           // 识别失败不打扰用户（芯片只是不出现）；只记错误码

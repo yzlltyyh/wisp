@@ -321,6 +321,36 @@ async function pinnedOcr(ctx: MockContext, state: Partial<PinState>, height = 36
 const pinnedScenario = (spec: Spec): Scenario => ({ ...scenario(spec), view: 'pinned' })
 
 // ---------------------------------------------------------------------------
+// 排版（逐行 / 段落的 [整理 | ▾]）
+
+/**
+ * 排版场景的文字：逐行与段落取 Rust 变换样例表里的输入（mock 的 text_transform 只认样例表，切换后看到的就是真实结果），
+ * 结构化用带表格的 Markdown（同一位置是「源码 / 预览」）
+ */
+const LAYOUT_TEXT = {
+  lines: '第一行\n第二行\n第三行',
+  paragraphs: '第一段，被\n硬换行的中文。\n\n第二段。',
+  markdown: OCR_MARKDOWN,
+} as const
+type LayoutMode = keyof typeof LAYOUT_TEXT
+
+/** 窄面板（360 px）上识别完成 */
+async function layoutPanel(ctx: MockContext, mode: LayoutMode): Promise<void> {
+  const text = LAYOUT_TEXT[mode]
+  ctx.stream('r-ocr', ocrStream(ctx, text))
+  show(ctx, await ocrPayload(ctx, { mode, thumbLines: text.split('\n').slice(0, 6) }), {
+    width: 360,
+  })
+  await until(phase('done'))
+}
+
+/** URL 的 `mode`（lines / paragraphs / markdown），默认段落 */
+function layoutMode(): LayoutMode {
+  const mode = new URLSearchParams(location.search).get('mode')
+  return mode === 'lines' || mode === 'markdown' ? mode : 'paragraphs'
+}
+
+// ---------------------------------------------------------------------------
 // 离线模型与 PaddleOCR 云端
 
 const OFFLINE_SMALL = {
@@ -705,6 +735,24 @@ export const scenarios: readonly Scenario[] = [
       click('[data-testid="ocr-translate-toggle"]')
       await until(() => $('[data-testid="ocr-translation-body"][data-phase="done"]') !== null)
       await pause(1800)
+    },
+  }),
+  scenario({
+    id: 'layout',
+    label: 'OCR · 窄面板（360 px）的排版按钮（?mode=lines / paragraphs / markdown）',
+    async run(ctx) {
+      await layoutPanel(ctx, layoutMode())
+      await pause(300)
+    },
+  }),
+  scenario({
+    id: 'layout-menu',
+    label: 'OCR · 排版菜单（原样 / 去掉空行 / 合并为一行）',
+    async run(ctx) {
+      await layoutPanel(ctx, 'paragraphs')
+      click('[data-testid="ocr-layout-caret"]')
+      await until(() => $('[data-testid="ocr-layout-menu"]') !== null)
+      await pause(400)
     },
   }),
   scenario({

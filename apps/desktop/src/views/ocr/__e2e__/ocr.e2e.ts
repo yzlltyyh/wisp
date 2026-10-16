@@ -5,7 +5,8 @@
  * - 分体按钮两半各自的焦点标识；面板里 Tab 在视图内循环；
  * - 展开 / 收起译文区时逐帧采样：内容放得下时底栏不动；卡片已到上限时底栏只朝一个方向平滑移动、文本框与底栏之间
  *   没有空白、卡片高度不变；
- * - 窄面板没有「ResizeObserver loop」之类的页面错误。
+ * - 窄面板没有「ResizeObserver loop」之类的页面错误；
+ * - 排版按钮：360 px 宽、中英文、三种模式下底栏放得下、各控件点得到；切换排版后正文更新、剪贴板跟随。
  * 运行方式见 apps/desktop/playwright.config.ts。
  */
 import { expect, test, type Page } from '@playwright/test'
@@ -412,4 +413,86 @@ test('窄面板：没有页面错误（ResizeObserver loop 等）', async ({ pag
   await open(page, 'ocr.narrow')
   await page.waitForTimeout(1200)
   expect(errors).toEqual([])
+})
+
+test.describe('排版按钮：360 px 宽的底栏放得下、各控件点得到（中英文 × 逐行 / 段落 / 结构化）', () => {
+  for (const lang of ['zh-CN', 'en-US'] as const) {
+    for (const mode of ['lines', 'paragraphs', 'markdown'] as const) {
+      test(`${lang} · ${mode}`, async ({ page }) => {
+        await page.goto(`/panel.html?scenario=ocr.layout&mode=${mode}&os=macos&lang=${lang}&hud=0`)
+        await page.waitForSelector('html[data-settled]')
+        const footer = page.getByTestId('ocr-footer')
+        // 底栏没有溢出；状态行里的「已复制」（场景在识别完成后 0.3 s 就绪，它还在）完整可见——状态行先按段隐藏，
+        // 仍放不下时「翻译」只留图标
+        expect(await footer.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(
+          0,
+        )
+        const status = footer.locator('.ocr-status')
+        expect(await status.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(
+          0,
+        )
+        // 结构化在同一位置放「源码 / 预览」，没有排版按钮
+        await expect(page.getByTestId('ocr-layout')).toHaveCount(mode === 'markdown' ? 0 : 1)
+        // 逐行的样例文字没有空行：左半（去掉空行）不适用、aria-disabled，只核对它在底栏里看得见
+        if (mode === 'lines') await expect(page.getByTestId('ocr-layout-toggle')).toBeVisible()
+        const own =
+          mode === 'markdown'
+            ? ['ocr-source-toggle']
+            : mode === 'lines'
+              ? ['ocr-layout-caret']
+              : ['ocr-layout-toggle', 'ocr-layout-caret']
+        for (const id of [
+          ...own,
+          'ocr-copy',
+          'ocr-translate-toggle',
+          'ocr-translate-menu',
+          'ocr-recognize-again',
+          'ocr-recognize-menu',
+          'ocr-pin',
+        ]) {
+          // trial：只核对可点性（可见、稳定、没有被别的元素盖住），不真的点
+          // oxlint-disable-next-line no-await-in-loop -- 逐个核对
+          await page.getByTestId(id).click({ trial: true })
+        }
+      })
+    }
+  }
+})
+
+test('切换排版：左半去掉空行，▾ 上按 ↓ 打开菜单选「合并为一行」，⌘L 回到原样；正文随之更新、剪贴板跟随', async ({
+  page,
+}) => {
+  const calls = await open(page, 'ocr.layout', '&mode=paragraphs')
+  const text = page.getByTestId('ocr-text')
+  const toggle = page.getByTestId('ocr-layout-toggle')
+  await expect(text).toHaveValue('第一段，被\n硬换行的中文。\n\n第二段。')
+  await toggle.click()
+  await expect(text).toHaveValue('第一段，被\n硬换行的中文。\n第二段。')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  await expect.poll(() => calls.filter(([c]) => c === 'ocr_recopy').length).toBe(1)
+  await page.getByTestId('ocr-layout-caret').focus()
+  await page.keyboard.press('ArrowDown')
+  await expect(page.getByTestId('ocr-layout-menu')).toBeFocused()
+  // 打开时高亮当前项（去掉空行），再 ↓ 是「合并为一行」
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await expect(text).toHaveValue('第一段，被硬换行的中文。第二段。')
+  await expect(toggle).toHaveAccessibleName('合并为一行')
+  await page.keyboard.press('Meta+KeyL')
+  await expect(text).toHaveValue('第一段，被\n硬换行的中文。\n\n第二段。')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+})
+
+test('逐行：没有空行时「去掉空行」置灰并写明原因，左半按不动；菜单里选「合并为一行」', async ({
+  page,
+}) => {
+  await open(page, 'ocr.layout', '&mode=lines')
+  const text = page.getByTestId('ocr-text')
+  await expect(page.getByTestId('ocr-layout-toggle')).toHaveAttribute('aria-disabled', 'true')
+  await page.getByTestId('ocr-layout-caret').click()
+  const remove = page.getByTestId('ocr-layout-menu-item-remove_blank_lines')
+  await expect(remove).toHaveAttribute('aria-disabled', 'true')
+  await expect(remove).toContainText('文字里没有空行')
+  await page.getByTestId('ocr-layout-menu-item-join_lines').click()
+  await expect(text).toHaveValue('第一行第二行第三行')
 })

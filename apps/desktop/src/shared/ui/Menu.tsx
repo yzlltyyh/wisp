@@ -1,7 +1,7 @@
 /**
  * Menu / DropdownMenu / ContextMenu。StyleChip、LangBar、⋯、FilterMenu、Select 共用。
  *
- * - 数据驱动：`items` 为菜单项 / 分隔线 / 分组标题；菜单项可带图标、勾选、快捷键列、右侧提示、第二行说明
+ * - 数据驱动：`items` 为菜单项 / 分隔线 / 分组标题；菜单项可带图标、勾选（复选或单选）、快捷键列、右侧提示、第二行说明
  *   （`description`，例如置灰的原因）、危险色、禁用；
  * - 前导列：菜单里有勾选项或图标时，每一项都有同一个 16 px 的前导列——勾选项显示 ✓，其余显示自己的
  *   图标（勾选中的项以 ✓ 代替图标），文字左缘始终对齐；没有图标的项留空；
@@ -49,6 +49,8 @@ export interface MenuItemEntry {
   shortcut?: string | null
   /** 勾选项：true / false；undefined 表示不是勾选项 */
   checked?: boolean
+  /** 勾选项属于一组单选（role = menuitemradio，读屏读作「单选」）；默认是可以各自勾选的复选项 */
+  radio?: boolean
   disabled?: boolean
   danger?: boolean
   /** 右侧的次要说明（例如风格描述、模型名） */
@@ -419,7 +421,12 @@ export function MenuEntryView({
     </div>
   ) : (
     // oxlint-disable-next-line jsx-a11y/click-events-have-key-events -- 见上
-    <div role="menuitemcheckbox" aria-checked={entry.checked} tabIndex={-1} {...common}>
+    <div
+      role={entry.radio ? 'menuitemradio' : 'menuitemcheckbox'}
+      aria-checked={entry.checked}
+      tabIndex={-1}
+      {...common}
+    >
       {body}
     </div>
   )

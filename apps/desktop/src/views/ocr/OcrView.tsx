@@ -3,12 +3,14 @@
  *
  * 结构（视觉稿 design.ocr-recognizing / design.ocr-done）：
  * - 头部：缩略图（≤ 72 px 高，卡片上限低时 48 px；点击弹出整张截图）· 截图尺寸（物理像素）· 模式 · 模型 / 识别中… · ✕；
- * - 文本区：骨架（2–3 条宽度递减、1 Hz 脉冲）→ 流式只读（逐段 120 ms 淡入）→ 完成（或取消）后变为可编辑的原始文本
- *   （结构化模式也显示 Markdown 源码，不渲染）；`no_text` →「未检测到文字」+ [切换模式 ▾]；
+ * - 文本区：骨架（2–3 条宽度递减、1 Hz 脉冲）→ 流式只读（逐段 120 ms 淡入）→ 完成（或取消）后变为可编辑的文本
+ *   （逐行 / 段落模式按会话排版显示，见 text/；结构化模式显示 Markdown 源码，不渲染）；`no_text` →「未检测到文字」+
+ *   [切换模式 ▾]；
  *   思考耗尽（`truncated = max_tokens` 且没有文字）优先于「未检测到文字」，提示在状态行，空状态给出
  *   下一步 [切换模型 ▾]；
  * - 底栏（第一次完成后淡入，之后重新识别期间保留）：状态行（模型 · 耗时 · tokens；识别中… /
- *   已取消 / 提示 / 已复制）· 复制 · [翻译 | ▾] · [重新识别 | ▾] · 固定；没有文字时只留 [重新识别 | ▾] 与固定；
+ *   已取消 / 提示 / 已复制）· [排版 | ▾]（逐行 / 段落；结构化在同一位置放「源码 / 预览」）· 复制 · [翻译 | ▾] ·
+ *   [重新识别 | ▾] · 固定；没有文字时只留 [重新识别 | ▾] 与固定；
  * - 译文区（[翻译] 展开）：语言条 · 风格 chip（⌘1–9）· 复制；译文流式；状态行从展开起就占位（翻译中… → 结果）；
  *   以（可能编辑过的）OCR 文本为原文，复用翻译管线（translate_start）；切换风格 / 目标语言即重新翻译，旧译文变淡 +
  *   模糊直到新结果到达；
@@ -24,12 +26,14 @@
  *
  * 键盘：⌘C 先复制选区，没有选区时译文区存在就复制译文、否则复制 OCR 文本；⌘R 作用于最近一次
  * 交互的区域（OCR 文本 → 重新识别；译文 → 重新翻译）；编辑后再 ⌘R 先确认（会覆盖修改，再按一次 ⌘R 即确认）；
- * ⌘P 固定整个面板；有文字时 ⌘1–9 按该风格翻译（译文区收起时展开它）。Esc 先收起放大的截图与菜单，其余由外壳处理。
+ * ⌘P 固定整个面板；有文字时 ⌘1–9 按该风格翻译（译文区收起时展开它）；⌘L 在「原样」与最近用过的整理方式之间切换排版。
+ * Esc 先收起放大的截图与菜单，其余由外壳处理。
  * 面板里 Tab 在视图内循环（最后一个控件之后回到第一个）。
  *
  * 自动复制：由编排器在识别完成时写入剪贴板（转录模式、非直接翻译、设置开启、有文字；commit 与重新识别
- * 都适用）；视图在同样的条件下于底栏显示「已复制」约 1.5 s，自己不再写一次。编辑只改视图里的文本，
- * 不会触发复制；文本一被编辑或开始重新识别，「已复制」立即收起（剪贴板里已不是眼前的内容）。
+ * 都适用，按会话排版处理）；视图在同样的条件下于底栏显示「已复制」约 1.5 s，自己不再写一次。编辑只改视图里的文本，
+ * 不会触发复制；文本一被编辑或开始重新识别，「已复制」立即收起（剪贴板里已不是眼前的内容）。切换排版后剪贴板跟随
+ * （`ocr_recopy`，写入了才再显示「已复制」）。
  *
  * 固定窗口（PinnedApp，`host = 'pinned'`）：经 `usePinnedHost()` 取 PinState 恢复内容（见 OcrViewProps.pin），
  * 首帧就绪由本视图负责（`usePinnedReadyHold`，接入的流回放完才 `ready()`）；窗口控件用 PinnedApp 的 36 px 标题栏
@@ -161,8 +165,11 @@ import {
   ZoomImage,
   type FlipHandle,
 } from './parts'
-import { pinRestoreOf, pinStateOf, type RunSeed } from './pinState'
+import { pinRestoreOf, pinStateOf, type RunSeed, type TranslationBasis } from './pinState'
 import { useSettingsSnapshot } from './settings'
+import { LayoutSplit, layoutLabel } from './text/LayoutSplit'
+import { useOcrText } from './text/useOcrText'
+import { useTextSwap } from './text/useTextSwap'
 import { useRun, type Run, type RunState } from './useRun'
 
 export interface OcrViewProps extends ViewProps<'ocr'> {
@@ -170,6 +177,7 @@ export interface OcrViewProps extends ViewProps<'ocr'> {
    * 固定窗口里的初始内容（kind = ocr 的 PinState）。不传时取 `usePinnedHost()` 的 PinState（PinnedApp 的做法）；面板宿主
    * 两者都没有。OCR 视图产出的 PinState（`panel_pin`）约定：
    * - `ocr_text`：识别完成（可能编辑过）时为当前文本，还在识别时为 null；
+   * - `ocr_layers`：OCR 模式下正文的三层（识别文本、会话排版、编辑），固定窗口里可以继续切换排版；还在识别时只带排版；
    * - `show_source`：OCR 模式 = 译文区是否展开**且有可接入的译文请求**；直接翻译 = 「原文」是否展开；
    * - `request_id`：**总是**当前要接上的请求，流结束了也填（编排器据此把截图随固定交接给固定窗口）——
    *   还在识别 → 识别请求；译文区展开且译文请求已发出 → 译文请求；直接翻译 → 译文请求；其余 → 已结束的识别请求
@@ -188,6 +196,8 @@ interface Rerun {
   mode?: OcrMode
   model?: ModelRef | null
 }
+/** 会丢掉编辑的操作先确认：重新识别（再按一次 ⌘R 也能确认），或排版菜单里的「放弃修改」 */
+type Confirm = { rerun: Rerun } | { discard: true }
 /** 识别菜单：底栏 ▾（模式页 / 视觉模型页，同一个浮层里换页）或错误卡片 / 空状态的入口（模型页） */
 interface MenuState {
   open: boolean
@@ -252,9 +262,16 @@ export function OcrView(props: OcrViewProps) {
 
   const [mode, setMode] = useState<OcrMode>(pinned?.ocr_mode ?? payload.mode)
   const [model, setModel] = useState<ModelRef | null>(null)
-  /** 用户编辑后的文本；null = 未编辑（显示识别结果） */
-  const [edit, setEdit] = useState<string | null>(null)
-  const [confirm, setConfirm] = useState<Rerun | null>(null)
+  /**
+   * 正文的三层（识别文本 → 排版 → 编辑，见 text/model.ts）：排版只在逐行 / 段落模式下作用，结构化与直接翻译不出现
+   */
+  const layoutOn = !direct && (mode === 'lines' || mode === 'paragraphs')
+  const content = useOcrText(main, {
+    initial: payload.layout,
+    enabled: layoutOn,
+    follow: followClipboard,
+  })
+  const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [trOpen, setTrOpen] = useState(false)
   const [srcOpen, setSrcOpen] = useState(false)
   const [styleId, setStyleId] = useState<string | null>(pinned?.style_id ?? null)
@@ -263,7 +280,7 @@ export function OcrView(props: OcrViewProps) {
   const [mainGhost, setMainGhost] = useState<string | null>(null)
   /** 译文区切换风格 / 目标语言时，新结果到达前继续显示的旧译文 */
   const [trGhost, setTrGhost] = useState<string | null>(null)
-  const basis = useRef<{ text: string; style: string; target: Lang | null } | null>(null)
+  const basis = useRef<TranslationBasis | null>(null)
   const [zoom, setZoom] = useState(false)
   const [menu, setMenu] = useState<MenuState>({
     open: false,
@@ -312,8 +329,11 @@ export function OcrView(props: OcrViewProps) {
       snap?.settings.providers ?? [],
     )
   const engine = engineFor(model)
-  const ocrText = edit ?? main.text()
-  const edited = edit !== null && edit !== main.text()
+  /** 显示的正文：编辑过的以编辑后的为准，否则是排版后的；复制、芯片粘贴、翻译、固定都取它 */
+  const ocrText = content.display
+  const edited = content.edited
+  /** 译文依据里的编辑：编辑后又改回与排版结果一样的不算 */
+  const editKey = edited ? content.edit : null
 
   // ---- 请求 ----
 
@@ -323,6 +343,8 @@ export function OcrView(props: OcrViewProps) {
     mode: ocrMode,
     model_ref: mdl,
     target_lang: tl,
+    // 识别完成时 Rust 按它自动复制、写入识别历史，与面板里显示的排版一致（直接翻译不排版）
+    ...(direct ? null : { layout: content.session }),
   })
   const trReq = (
     text: string,
@@ -402,7 +424,10 @@ export function OcrView(props: OcrViewProps) {
       }
       setSrcOpen(plan.source.open)
     }
-    const restored = seedRun(main, plan.main)
+    // 识别已结束：识别文本写入正文区，排版与编辑绑到这次结果上
+    const restored = plan.text
+      ? content.restore(main.seed(plan.main.text, plan.main.extra, plan.main.phase), plan.text)
+      : seedRun(main, plan.main)
     if (!plan.translation) return restored
     setTrOpen(true)
     basis.current = plan.translation.basis
@@ -412,7 +437,10 @@ export function OcrView(props: OcrViewProps) {
   /** 写入一个区：有请求就接入，日志已释放（not_found）时退回 PinState 里的文字 */
   function seedRun(run: Run, seed: RunSeed): Promise<void> | void {
     const id = seed.attach
-    if (id === null) return run.seed(seed.text, seed.extra, seed.phase)
+    if (id === null) {
+      run.seed(seed.text, seed.extra, seed.phase)
+      return
+    }
     return run.begin(
       (cb) =>
         api.streamAttach(id, cb).catch(() => {
@@ -426,7 +454,7 @@ export function OcrView(props: OcrViewProps) {
   function recognize(next: Rerun = {}, force = false): void {
     if (blocked && !pinned) return
     if (!force && edited && !direct) {
-      setConfirm(next)
+      setConfirm({ rerun: next })
       return
     }
     setConfirm(null)
@@ -438,7 +466,6 @@ export function OcrView(props: OcrViewProps) {
     setMainGhost(settled(main) && previous.trim() !== '' ? previous : null)
     setMode(nextMode)
     setModel(mdl)
-    setEdit(null)
     area.current = 'ocr'
     if (direct) {
       if (styleId !== null) return directTranslate(styleId, target, true, mdl)
@@ -461,13 +488,13 @@ export function OcrView(props: OcrViewProps) {
   function translate(
     opts: { style?: string; target?: Lang | null; bypass?: boolean; confirm?: boolean } = {},
   ): void {
-    const text = edit ?? main.text()
+    const text = ocrText
     if (text.trim() === '') return
     const style = opts.style ?? effStyle
     const tl = opts.target !== undefined ? opts.target : target
     if (opts.confirm) confirmedLong.current = text
     setTrGhost(tr.state.phase === 'idle' || tr.state.phase === 'confirm' ? null : tr.text() || null)
-    basis.current = { text, style, target: tl }
+    basis.current = { raw: main.text(), edit: editKey, style, target: tl }
     area.current = 'translation'
     const confirmLong = confirmedLong.current === text
     tr.begin((cb) =>
@@ -483,7 +510,7 @@ export function OcrView(props: OcrViewProps) {
     }
     setTrOpen(true)
     const b = basis.current
-    const fresh = b !== null && b.text === ocrText && b.style === effStyle && b.target === target
+    const fresh = sameSource(b) && b.style === effStyle && b.target === target
     if (fresh && tr.state.phase === 'done') return
     // 原文 / 风格变过：重新翻译，上一次的译文变淡留在原处直到新结果到达（与换风格同一表现，区的高度不先塌成骨架）
     translate()
@@ -602,14 +629,19 @@ export function OcrView(props: OcrViewProps) {
     }
   }
 
-  // OCR 重新识别完成后，展开着的译文区跟着重新翻译（文本或目标语言变了）
+  /** 译文依据的原文与眼前的一致：识别文本与编辑都没变（切换排版不算原文改变） */
+  function sameSource(b: TranslationBasis | null): b is TranslationBasis {
+    return b !== null && b.raw === main.text() && b.edit === editKey
+  }
+
+  // OCR 重新识别完成后，展开着的译文区跟着重新翻译（文本或目标语言变了）；要排版时等排版结果到了再翻译排版后的文字
   useEffect(() => {
     if (direct || !trOpen || main.state.phase !== 'done' || !main.state.hasText) return
-    const b = basis.current
-    if (b?.text === main.text() && b.target === target) return
+    if (content.pending) return
+    if (sameSource(basis.current) && basis.current?.target === target) return
     translate()
-    // oxlint-disable-next-line react/exhaustive-deps -- 每次识别结束检查一次
-  }, [main.state.key, main.state.phase])
+    // oxlint-disable-next-line react/exhaustive-deps -- 每次识别结束（排版结果到达）检查一次
+  }, [main.state.key, main.state.phase, content.pending])
 
   // 第一次有结果之后保留底栏
   useEffect(() => {
@@ -634,7 +666,27 @@ export function OcrView(props: OcrViewProps) {
   function onEdit(value: string): void {
     // 剪贴板里是识别结果、不是编辑后的文本：「已复制」立即收起
     toast.hide()
-    setEdit(value)
+    content.setEdit(value)
+  }
+
+  /**
+   * 切换排版、新的文字就绪之后让剪贴板跟上：自动复制开着、在面板里（固定窗口不再带动剪贴板）、不是直接翻译（编辑过的
+   * 文字不能切换排版）；Rust 再核对这张截图自动复制之后剪贴板没有被别处改过，并替换掉那次复制新建的历史条目。写入了就
+   * 再显示「已复制」，否则收起（剪贴板里已不是眼前的内容）
+   */
+  function followClipboard(next: string): Promise<boolean> {
+    const follow = host === 'panel' && !direct && snap?.settings.ocr.auto_copy === true
+    const written = follow
+      ? api.ocrRecopy(payload.capture_id, next).catch((error: unknown) => {
+          warn('ocr_recopy')(error)
+          return false
+        })
+      : Promise.resolve(false)
+    return written.then((ok) => {
+      if (ok) toast.show(t('common.state.copied'))
+      else toast.hide()
+      return ok
+    })
   }
 
   // ---- 复制 / 固定 / 设置 ----
@@ -677,6 +729,7 @@ export function OcrView(props: OcrViewProps) {
       src,
       mode,
       ocrText,
+      layers: direct ? null : content.layers(),
       style: effStyle,
       target,
       trOpen,
@@ -692,8 +745,16 @@ export function OcrView(props: OcrViewProps) {
     if (host === 'panel') requestHide('other')
   }
 
+  /** 确认条上的确认（或再按一次 ⌘R 确认重新识别） */
+  function confirmNow(): void {
+    if (!confirm) return
+    if ('rerun' in confirm) return recognize(confirm.rerun, true)
+    setConfirm(null)
+    content.discard()
+  }
+
   function regenerate(): void {
-    if (confirm) return recognize(confirm, true)
+    if (confirm && 'rerun' in confirm) return confirmNow()
     if (!direct && area.current === 'translation' && trOpen) return translate({ bypass: true })
     recognize()
   }
@@ -728,6 +789,8 @@ export function OcrView(props: OcrViewProps) {
     { combo: 'Mod+KeyC', allowInInput: true, run: () => copyByKey() },
     { combo: 'Mod+KeyR', allowInInput: true, run: () => regenerate() },
     { combo: 'Mod+KeyP', allowInInput: true, when: () => host === 'panel', run: pin },
+    // 排版控件在底栏时：⌘L 等同点左半按钮（不能切换时什么也不做）
+    { combo: 'Mod+KeyL', allowInInput: true, when: () => layoutShown, run: () => content.toggle() },
   ]
   styles.slice(0, 9).forEach((st, i) => {
     bindings.push({
@@ -840,6 +903,13 @@ export function OcrView(props: OcrViewProps) {
     if (textRef.current && active) syncFadeEdges(textRef.current)
     if (previewRef.current && active) syncFadeEdges(previewRef.current)
   })
+  const trackScroll = useTextSwap(
+    textRef,
+    content.base,
+    content.edit !== null,
+    content.turned,
+    reducedMotion,
+  )
   const editableNow = !direct && (main.state.phase === 'done' || main.state.phase === 'cancelled')
   useEffect(() => {
     const el = textRef.current
@@ -1119,7 +1189,12 @@ export function OcrView(props: OcrViewProps) {
     else if (cancelled) announce = t('panel.status.cancelled')
     else if (exhausted) announce = t('ocr.empty.no_result')
     else if (noText) announce = t('ocr.empty.no_text')
-    else if (done) announce = t(direct ? 'ocr.a11y.translated' : 'ocr.a11y.recognized')
+    else if (content.notice) {
+      const { layout: switched, copied } = content.notice
+      announce = t(copied ? 'ocr.layout.switched_copied' : 'ocr.layout.switched', {
+        name: t(layoutLabel(switched)),
+      })
+    } else if (done) announce = t(direct ? 'ocr.a11y.translated' : 'ocr.a11y.recognized')
   }
 
   /** 状态行的提示（优先级见 notes.ts）：短句放不下时省略号截断，全文在 title 里 */
@@ -1139,7 +1214,7 @@ export function OcrView(props: OcrViewProps) {
   }
   const note = noteOf(mainNote(s, edited))
   const ts = tr.state
-  const stale = basis.current !== null && basis.current.text !== ocrText
+  const stale = basis.current !== null && !sameSource(basis.current)
   const trNote = noteOf(translationNote(ts, stale))
 
   const errorCard = (run: Run, onRetry: () => void, chooseModel: boolean): ReactNode =>
@@ -1254,7 +1329,10 @@ export function OcrView(props: OcrViewProps) {
         spellCheck={false}
         aria-label={t('ocr.a11y.text')}
         className="ocr-text"
-        onScroll={(e) => syncFadeEdges(e.currentTarget)}
+        onScroll={(e) => {
+          syncFadeEdges(e.currentTarget)
+          trackScroll(e.currentTarget)
+        }}
         onFocus={() => {
           area.current = 'ocr'
         }}
@@ -1291,6 +1369,8 @@ export function OcrView(props: OcrViewProps) {
   const footerOn = !notReady && s.phase !== 'error' && (settled(main) || footerSeen)
   const busy = live(main)
   const hasText = !busy && s.hasText && !noText
+  /** 排版控件：逐行 / 段落模式、有文字时（重新识别期间置灰保留，底栏不跳） */
+  const layoutShown = footerOn && layoutOn && !noText && !notReady
   const markOcr = () => {
     area.current = 'ocr'
   }
@@ -1298,6 +1378,7 @@ export function OcrView(props: OcrViewProps) {
     area.current = 'translation'
   }
   const recognizeOpen = menu.open && menu.at === 'footer'
+  const discarding = confirm !== null && 'discard' in confirm
   // 展开区：卡片已到上限（或马上会到）时展开 / 收起用高度过渡，正文区逐帧让出 / 拿回
   const sectionRoom = LAYOUT.section + LAYOUT.status + lh
   const willMax = atMax || (sizes.current?.view ?? 0) + sectionRoom > layout.viewMax
@@ -1376,30 +1457,34 @@ export function OcrView(props: OcrViewProps) {
       <FlipBox handle={tailRef} className="ocr-tail">
         <InlineConfirm
           open={confirm !== null}
-          // 按钮由这里放进条内：警示语调，确认按钮带上 ⌘R 提示（再按一次 ⌘R 也能确认）
+          // 按钮由这里放进条内：警示语调；重新识别的确认按钮带上 ⌘R 提示（再按一次 ⌘R 也能确认）
           message={
             <span className="ocr-confirm-row">
-              <span className="ocr-confirm-text">{t('ocr.confirm.overwrite')}</span>
+              <span className="ocr-confirm-text">
+                {t(discarding ? 'ocr.layout.discard_confirm' : 'ocr.confirm.overwrite')}
+              </span>
               <ConfirmActions
                 onCancel={() => setConfirm(null)}
-                onConfirm={() => {
-                  if (confirm) recognize(confirm, true)
-                }}
-                label={t('ocr.confirm.overwrite_action')}
+                onConfirm={confirmNow}
+                label={t(discarding ? 'ocr.layout.discard_action' : 'ocr.confirm.overwrite_action')}
+                combo={discarding ? null : 'Mod+KeyR'}
               />
             </span>
           }
           buttons={false}
           tone="warning"
           className="ocr-confirm"
-          onConfirm={() => {
-            if (confirm) recognize(confirm, true)
-          }}
+          onConfirm={confirmNow}
           onCancel={() => setConfirm(null)}
           data-testid="ocr-confirm"
         />
         {footerOn && settledStatus && hasText && !direct ? (
-          <OcrChips text={ocrText} os={os} onPick={pasteFragment} />
+          <OcrChips
+            text={content.edit ?? main.text()}
+            os={os}
+            onPick={pasteFragment}
+            onInspect={content.inspected}
+          />
         ) : null}
         {footerOn ? (
           <Footer data-testid="ocr-footer">
@@ -1423,6 +1508,12 @@ export function OcrView(props: OcrViewProps) {
                   onClick={() => setShowSource((v) => !v)}
                   data-testid="ocr-source-toggle"
                 />
+              ) : layoutShown ? (
+                <LayoutSplit
+                  text={content}
+                  disabled={!hasText}
+                  onDiscard={() => setConfirm({ discard: true })}
+                />
               ) : null}
               {noText ? null : (
                 <CopyButton
@@ -1440,6 +1531,8 @@ export function OcrView(props: OcrViewProps) {
                       variant="subtle"
                       icon={ScanText}
                       selected={srcOpen}
+                      // 底栏太挤时只留图标（ocr.css 的 data-compact），名称仍要读得出来
+                      aria-label={t('ocr.action.source')}
                       aria-pressed={srcOpen}
                       aria-expanded={srcOpen}
                       onClick={toggleSource}
@@ -1455,6 +1548,7 @@ export function OcrView(props: OcrViewProps) {
                     variant="subtle"
                     icon={Languages}
                     selected={trOpen}
+                    aria-label={t('common.action.translate')}
                     disabled={!hasText}
                     onClick={toggleTranslate}
                     aria-expanded={trOpen}
@@ -1662,15 +1756,18 @@ export function OcrView(props: OcrViewProps) {
   )
 }
 
-/** 确认覆盖修改的按钮（InlineConfirm 的条内，警示语调；确认按钮带 ⌘R 提示） */
+/** 确认丢掉修改的按钮（InlineConfirm 的条内，警示语调；重新识别的确认按钮带 ⌘R 提示） */
 function ConfirmActions({
   onCancel,
   onConfirm,
   label,
+  combo,
 }: {
   onCancel: () => void
   onConfirm: () => void
   label: string
+  /** 再按一次就能确认的快捷键（重新识别的 ⌘R） */
+  combo: string | null
 }) {
   const t = useT()
   return (
@@ -1680,7 +1777,7 @@ function ConfirmActions({
       </Button>
       <Button size="sm" variant="secondary" onClick={onConfirm} data-testid="ocr-confirm-ok">
         {label}
-        <Kbd combo="Mod+KeyR" variant="inline" />
+        {combo ? <Kbd combo={combo} variant="inline" /> : null}
       </Button>
     </span>
   )

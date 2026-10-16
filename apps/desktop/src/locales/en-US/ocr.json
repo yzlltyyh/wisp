@@ -59,6 +59,26 @@
     "overwrite": "This replaces your edits",
     "overwrite_action": "Recognize anyway"
   },
+  "layout": {
+    "title": "Layout",
+    "keep": "As recognized",
+    "hint": {
+      "keep": "Keep line breaks and blank lines as recognized",
+      "remove_blank_lines": "No blank lines between paragraphs",
+      "join_lines": "For search boxes and subtitles"
+    },
+    "unavailable": {
+      "remove_blank_lines": "The text has no blank lines",
+      "join_lines": "The text is a single line"
+    },
+    "menu": "Layout options",
+    "edited": "Text edited",
+    "discard": "Discard edits",
+    "discard_confirm": "Discarding restores the recognized text",
+    "discard_action": "Discard",
+    "switched": "Switched to “{name}”",
+    "switched_copied": "Switched to “{name}”, copied"
+  },
   "translation": {
     "stale": "Source edited",
     "source_title": "Source",

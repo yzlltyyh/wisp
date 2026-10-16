@@ -73,12 +73,15 @@ export interface Run {
   begin(open: Opener, requestId?: string | null): Promise<void>
   /** 取消进行中的请求（等 Rust 的终止事件；还没拿到 request_id 时，拿到后立即取消） */
   cancel(): void
-  /** 用现成的文字直接置为完成（缓存的结果、固定窗口的初始内容；固定前已取消的结果为 cancelled） */
+  /**
+   * 用现成的文字直接置为完成（缓存的结果、固定窗口的初始内容；固定前已取消的结果为 cancelled）。返回这次结果的 key
+   * （同一次提交里 `state` 还没更新，要把别的状态绑到这次结果上时用它）
+   */
   seed(
     text: string,
     extra?: Partial<Omit<RunState, 'key' | 'phase'>>,
     phase?: 'done' | 'cancelled',
-  ): void
+  ): number
   /** 回到 idle（仍在进行的请求先取消：被丢弃的结果不再继续计费） */
   clear(): void
 }
@@ -260,6 +263,7 @@ export function useRun(): Run {
       const next: RunState = { ...IDLE, ...extra, key: k, phase, hasText: hasText.current }
       current.current = next
       setState(next)
+      return k
     },
     [],
   )

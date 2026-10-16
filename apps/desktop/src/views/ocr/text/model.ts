@@ -1,0 +1,160 @@
+/**
+ * OCR 结果文字的三层（纯函数，不碰 React / IPC）：
+ * - R：识别文本，即识别请求的流式全文（Run 的 `text()`），以 Run 的 `key` 区分每一次结果；
+ * - V：排版结果 = layout(R)，由 Rust 的 `text_transform` 求得（与识别完成时自动复制、写入识别历史的是同一个函数、
+ *   同一份输入），按 (key, 排版) 缓存；
+ * - E：用户编辑，从 V 开始。
+ * 显示 E ?? V；「已编辑」是 E 不为空且与 V 不同。排版只在逐行 / 段落模式、识别已结束时作用（`applies`），其余时候
+ * V = R。会话排版与左半按钮的切换目标跨识别保留，其余字段只属于某一个 key：key 变了（重新识别、从固定交接还原）就
+ * 一起作废，不需要在识别开始时逐个清空。
+ */
+import type { OcrLayout, TransformId } from '../../../shared/ipc'
+
+/** 可以切换到的整理方式（「原样」之外） */
+export type Tidy = Exclude<OcrLayout, 'keep'>
+
+export interface OcrTextState {
+  /** 下面这些按 key 记录的字段属于哪一次识别结果 */
+  key: number
+  /** 会话排版（用户选的；结构化与直接翻译下不作用，但保留到下一次逐行 / 段落结果） */
+  layout: OcrLayout
+  /** 左半按钮在「原样」与它之间切换：本次会话最近用过的整理方式 */
+  recent: Tidy
+  /** 这次结果已经求得的排版结果 */
+  laid: Partial<Record<Tidy, string>>
+  edit: string | null
+  /** 切换后新结果还没到时继续显示的文字（切换前显示的排版结果）；null = 识别文本 */
+  stale: string | null
+  /** 用户切换过排版或放弃过修改（正文替换时按比例保持滚动位置；识别完成后第一次排好不算） */
+  turned: boolean
+  /** 识别文本适用的变换（芯片检视的结果）；null = 还不知道，按都适用处理 */
+  applicable: readonly TransformId[] | null
+  /** 最近一次切换的结果（读屏播报）：切到哪种排版、剪贴板有没有跟着更新 */
+  notice: { layout: OcrLayout; copied: boolean } | null
+}
+
+/** 计算显示文字所需的外部输入 */
+export interface TextInput {
+  /** 当前结果（Run 的 key） */
+  key: number
+  /** 识别文本 R */
+  raw: string
+  /** 排版是否作用：逐行 / 段落模式、非直接翻译、识别已结束 */
+  applies: boolean
+}
+
+export type TextAction =
+  | { type: 'layout'; layout: OcrLayout; input: TextInput }
+  | { type: 'laid'; key: number; layout: Tidy; text: string }
+  | { type: 'edit'; key: number; text: string }
+  | { type: 'discard'; key: number }
+  | { type: 'inspected'; key: number; transforms: readonly TransformId[] }
+  | { type: 'notice'; key: number; layout: OcrLayout; copied: boolean }
+  | { type: 'restore'; key: number; layout: OcrLayout; edit: string | null; shown: string }
+
+export function initialText(layout: OcrLayout): OcrTextState {
+  return {
+    key: 0,
+    layout,
+    recent: layout === 'keep' ? 'remove_blank_lines' : layout,
+    laid: {},
+    edit: null,
+    stale: null,
+    turned: false,
+    applicable: null,
+    notice: null,
+  }
+}
+
+/** 换到另一次结果：按 key 记录的字段作废，会话排版与切换目标保留 */
+function at(s: OcrTextState, key: number): OcrTextState {
+  if (s.key === key) return s
+  return { ...initialText(s.layout), recent: s.recent, key }
+}
+
+export interface TextView {
+  /** 实际作用的排版（不作用时为 keep） */
+  layout: OcrLayout
+  /** 排版后的文字 V（还在等结果时是切换前的文字） */
+  base: string
+  /** 显示的文字 E ?? V */
+  display: string
+  edit: string | null
+  edited: boolean
+  /** 正在等这次排版的结果 */
+  pending: boolean
+  turned: boolean
+  notice: OcrTextState['notice']
+}
+
+export function viewOf(s: OcrTextState, input: TextInput): TextView {
+  const own = s.key === input.key ? s : at(s, input.key)
+  const layout = input.applies ? s.layout : 'keep'
+  const done = layout === 'keep' ? input.raw : own.laid[layout]
+  const base = done ?? own.stale ?? input.raw
+  const edit = own.edit
+  return {
+    layout,
+    base,
+    display: edit ?? base,
+    edit,
+    edited: edit !== null && edit !== base,
+    pending: done === undefined,
+    turned: own.turned,
+    notice: own.notice,
+  }
+}
+
+/** 某种排版是否适用（「原样」总是适用；检视结果还没到时都当作适用，不先置灰） */
+export function canApply(s: OcrTextState, key: number, layout: OcrLayout): boolean {
+  if (layout === 'keep' || s.key !== key || s.applicable === null) return true
+  return s.applicable.includes(layout)
+}
+
+export function reduceText(s: OcrTextState, a: TextAction): OcrTextState {
+  switch (a.type) {
+    case 'layout': {
+      const before = viewOf(s, a.input)
+      const own = at(s, a.input.key)
+      return {
+        ...own,
+        layout: a.layout,
+        recent: a.layout === 'keep' ? own.recent : a.layout,
+        stale: before.base,
+        turned: true,
+        notice: null,
+        // 编辑后又改回与排版结果一样：不算编辑，跟着新排版走
+        edit: before.edited ? own.edit : null,
+      }
+    }
+    case 'laid': {
+      // 更早一次结果迟到的排版：丢弃
+      if (a.key < s.key) return s
+      const own = at(s, a.key)
+      return { ...own, laid: { ...own.laid, [a.layout]: a.text } }
+    }
+    case 'edit':
+      if (a.key < s.key) return s
+      return { ...at(s, a.key), edit: a.text }
+    case 'discard':
+      if (a.key !== s.key) return s
+      return { ...s, edit: null, turned: true, notice: null }
+    case 'inspected':
+      if (a.key < s.key) return s
+      return { ...at(s, a.key), applicable: a.transforms }
+    case 'notice':
+      if (a.key !== s.key) return s
+      return { ...s, notice: { layout: a.layout, copied: a.copied } }
+    case 'restore': {
+      const own = at(s, a.key)
+      return {
+        ...own,
+        layout: a.layout,
+        recent: a.layout === 'keep' ? own.recent : a.layout,
+        edit: a.edit,
+        // 没有编辑时交接的文字就是排版结果：固定窗口首帧直接显示它，不必再等一次 text_transform
+        laid: a.edit === null && a.layout !== 'keep' ? { [a.layout]: a.shown } : {},
+      }
+    }
+  }
+}

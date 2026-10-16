@@ -59,6 +59,26 @@
     "overwrite": "重新识别会覆盖你的修改",
     "overwrite_action": "仍然识别"
   },
+  "layout": {
+    "title": "排版",
+    "keep": "原样",
+    "hint": {
+      "keep": "保留识别出的换行与空行",
+      "remove_blank_lines": "段落之间不再空行",
+      "join_lines": "适合搜索框与字幕"
+    },
+    "unavailable": {
+      "remove_blank_lines": "文字里没有空行",
+      "join_lines": "文字只有一行"
+    },
+    "menu": "排版方式",
+    "edited": "文字已修改",
+    "discard": "放弃修改，恢复识别结果",
+    "discard_confirm": "放弃修改会恢复为识别结果",
+    "discard_action": "放弃修改",
+    "switched": "已切换为「{name}」",
+    "switched_copied": "已切换为「{name}」，已复制"
+  },
   "translation": {
     "stale": "原文已修改",
     "source_title": "原文",

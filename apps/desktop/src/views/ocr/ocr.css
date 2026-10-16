@@ -344,6 +344,14 @@
     flex: none;
     gap: 6px;
   }
+  /* 底栏太挤（各段都去掉了状态行仍放不下，useStatusFit）：分体按钮里的「翻译」/「原文」只留图标，名称在 aria-label 里 */
+  .ocr-footer[data-compact] .ocr-split > .ui-chip > .ui-chip-label {
+    display: none;
+  }
+  /* 只剩 14 px 图标：两侧各 7 px，与图标按钮同为 28 px 宽 */
+  .ocr-footer[data-compact] .ocr-split > .ui-chip {
+    padding-left: 7px;
+  }
   .ocr-status.ui-status {
     flex: 1;
     min-width: 0;
@@ -440,6 +448,22 @@
   }
   .ocr-split[data-selected] > .ui-chip[data-selected]:hover {
     background: var(--fill-hover);
+  }
+  /* 排版的左半（图标按钮，按下 = 已整理）：底色由外框的选中态给出，按钮自己不再叠一层 */
+  .ocr-split[data-selected] .ui-iconbtn[aria-pressed='true'] {
+    background: transparent;
+  }
+  .ocr-split[data-selected] .ui-iconbtn[aria-pressed='true']:hover:not(:disabled) {
+    background: var(--fill-hover);
+  }
+  /* 不能切换（文字已修改 / 不适用）：与禁用同样的灰，但仍可悬停看 tooltip 里的原因 */
+  .ocr-split .ui-iconbtn[aria-disabled='true'] {
+    color: var(--fg-3);
+    opacity: 0.6;
+  }
+  .ocr-split .ui-iconbtn[aria-disabled='true']:is(:hover, :active) {
+    background: transparent;
+    transform: none;
   }
 
   /* ---- 展开区（译文 / 原文）：外层不带内外边距，折叠到 0 时不露出边距；随 flex 收缩（正文区收缩到下限之后） ---- */

@@ -398,8 +398,10 @@ export function RunBody({
 
 /**
  * 状态行放不下时按段整体隐藏：先去掉 tokens，再去掉耗时，再去掉模型名，绝不截断数字；提示（思考耗尽、已截断……）
- * 最后才以省略号截断，全文在 title 里。只在状态行的尺寸或内容变化时量（ResizeObserver + MutationObserver，合并到
- * 一帧），最多量 4 次
+ * 最后才以省略号截断，全文在 title 里。各段都去掉了仍放不下（「已复制」不截断，窄面板上排版、翻译、识别三组按钮
+ * 挤在一起时会这样）：分体按钮里的文字按钮（「翻译」/「原文」）只留图标（底栏的 data-compact）。只留图标之后不随
+ * 「已复制」的出现与消失来回切换，底栏变宽了才重新判断。只在状态行的尺寸或内容变化时量（ResizeObserver +
+ * MutationObserver，合并到一帧）
  */
 export function useStatusFit(container: RefObject<HTMLElement | null>): void {
   useEffect(() => {
@@ -407,6 +409,13 @@ export function useStatusFit(container: RefObject<HTMLElement | null>): void {
     if (!root || typeof ResizeObserver === 'undefined') return
     let frame = 0
     let watched: Element | null = null
+    /** 只留图标时底栏的宽度（0 = 没有只留图标） */
+    let compactAt = 0
+    const over = (el: HTMLElement) => el.scrollWidth > el.clientWidth + 0.5
+    const drop = (el: HTMLElement) => {
+      delete el.dataset.drop
+      for (let level = 1; level <= 3 && over(el); level++) el.dataset.drop = String(level)
+    }
     const fit = () => {
       frame = 0
       const el = root.querySelector<HTMLElement>('.ocr-status')
@@ -416,10 +425,15 @@ export function useStatusFit(container: RefObject<HTMLElement | null>): void {
         watched = el
         ro.observe(el)
       }
-      delete el.dataset.drop
-      for (let level = 1; level <= 3 && el.scrollWidth > el.clientWidth + 0.5; level++) {
-        el.dataset.drop = String(level)
+      if (compactAt && root.clientWidth > compactAt) {
+        delete root.dataset.compact
+        compactAt = 0
       }
+      drop(el)
+      if (compactAt || !over(el) || !root.querySelector('.ocr-split > .ui-chip')) return
+      root.dataset.compact = ''
+      compactAt = root.clientWidth
+      drop(el)
     }
     const schedule = () => {
       frame ||= requestAnimationFrame(fit)
