@@ -1,7 +1,7 @@
 /**
  * 识别出的片段（芯片）：列表底部的芯片条（光标所在条目）与预览里的芯片组。识别在 Rust，这里只按展示注册表
- * （specs.ts）画出来（芯片本身见 ../entities.tsx）；点芯片 = 粘贴这个片段（⌥ 点击只复制），都经操作注册表的
- * paste_fragment。
+ * （shared/smart/specs.ts）画出来（芯片本身见 shared/smart/EntityChip.tsx）；点芯片 = 粘贴这个片段（⌥ 点击
+ * 只复制），都经操作注册表的 paste_fragment。
  *
  * - 芯片条停靠在卡片底部的浮层里（与确认条、轻提示同一层），不改变行高：列表末尾始终留着它的高度（CHIP_STRIP_INSET），
  *   光标移到最后一行时不会被它盖住；只在光标条目有片段时出现，确认条 / 命名条 / 全文预览打开时让位；
@@ -14,8 +14,8 @@ import { useLayoutEffect, useRef } from 'react'
 import { useStore } from 'zustand'
 import { useT } from '../../../shared/i18n/useT'
 import { usePreset } from '../../../shared/motion/presets'
+import { EntityChip, useChipTip } from '../../../shared/smart/EntityChip'
 import type { ClipRunner } from '../actions'
-import { EntityChip, useChipTip } from '../entities'
 import type { ClipStore } from '../store'
 
 /** 芯片条里芯片的 DOM id（搜索框的 aria-activedescendant 指向有键盘焦点的那一个） */
@@ -57,7 +57,7 @@ export function ChipStrip({ store, runner, hidden }: ChipStripProps) {
             ref={box}
             className="clip-chips clip-chips-float"
             role="toolbar"
-            aria-label={t('clipboard.a11y.chips')}
+            aria-label={t('smart.a11y.chips')}
             data-focus={chip !== null || undefined}
             data-testid="clip-chips"
             {...motion}
@@ -104,7 +104,7 @@ export function EntityChips({
     <div
       className="clip-chips clip-chips-inline"
       role="toolbar"
-      aria-label={t('clipboard.a11y.chips')}
+      aria-label={t('smart.a11y.chips')}
       data-testid="clip-preview-chips"
     >
       {entities.map((e, index) => (

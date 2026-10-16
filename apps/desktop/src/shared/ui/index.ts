@@ -42,7 +42,12 @@ export {
 export { HotkeyRecorder, type HotkeyRecorderProps } from './HotkeyRecorder'
 export { Icon, ICON_STROKE, type IconProps } from './Icon'
 export { InlineConfirm, type InlineConfirmProps } from './InlineConfirm'
-export { InlineToast, useInlineToast, type InlineToastProps } from './InlineToast'
+export {
+  InlineToast,
+  useInlineToast,
+  type InlineToastControl,
+  type InlineToastProps,
+} from './InlineToast'
 export { Kbd, type KbdProps } from './Kbd'
 export { LangBar, type LangBarProps } from './LangBar'
 export { Highlight, ListRow, type ListRowProps } from './ListRow'

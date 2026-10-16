@@ -1,0 +1,34 @@
+{
+  "entity": {
+    "otp": "Verification code",
+    "phone": "Phone",
+    "email": "Email",
+    "url": "Link",
+    "tracking": "Tracking number",
+    "order": "Order number",
+    "amount": "Amount",
+    "datetime": "Date and time",
+    "ip": "IP address",
+    "id_card": "ID number",
+    "bank_card": "Card number"
+  },
+  "transform": {
+    "join_lines": "Join lines",
+    "trim": "Trim whitespace",
+    "upper": "Uppercase",
+    "lower": "Lowercase",
+    "title": "Title case",
+    "half_width": "Half-width",
+    "full_width": "Full-width",
+    "json_pretty": "Format JSON",
+    "json_minify": "Minify JSON",
+    "strip_tracking": "Remove tracking parameters"
+  },
+  "chip": {
+    "label": "{kind}: {value}",
+    "tip": "Click to paste, {alt}-click to copy"
+  },
+  "a11y": {
+    "chips": "Detected items"
+  }
+}

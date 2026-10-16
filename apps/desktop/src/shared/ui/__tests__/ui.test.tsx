@@ -10,6 +10,7 @@ import { setTransport, type Transport } from '../../ipc'
 import type { ConflictReport, LlmError } from '../../ipc/types'
 import { installKeyRouter, registerScope } from '../../keys/keyRouter'
 import { MotionRoot } from '../../motion/MotionRoot'
+import { ms, timing } from '../../motion/tokens'
 import {
   computePosition,
   DropdownMenu,
@@ -23,7 +24,9 @@ import {
   TextArea,
   Thumbnail,
   Tooltip,
+  useInlineToast,
   VirtualList,
+  type InlineToastControl,
   type MenuEntry,
 } from '..'
 import { WispIpcError } from '../../ipc'
@@ -734,6 +737,45 @@ describe('InlineConfirm', () => {
     // 已过去 3 s：自动取消只触发一次，用的是最新的回调
     expect(cancelled).toHaveBeenCalledTimes(1)
     expect(cancelled.mock.calls[0]?.[0]).toBeGreaterThanOrEqual(6)
+  })
+})
+
+describe('useInlineToast', () => {
+  function Probe({ expose }: { expose: (toast: InlineToastControl) => void }) {
+    const toast = useInlineToast()
+    expose(toast)
+    return (
+      <div data-testid="toast-probe" data-visible={toast.visible || undefined}>
+        {toast.node}
+      </div>
+    )
+  }
+
+  it('show 停留后自动收起、再次 show 重新计时；hide 立即收起，不等停留结束', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const hold = ms(timing.toastHold)
+    let toast!: InlineToastControl
+    wrap(<Probe expose={(c) => (toast = c)} />)
+    const probe = screen.getByTestId('toast-probe')
+    expect(probe).not.toHaveAttribute('data-visible')
+
+    act(() => toast.show('已复制'))
+    expect(probe).toHaveAttribute('data-visible')
+    expect(screen.getByTestId('inline-toast')).toHaveTextContent('已复制')
+    act(() => vi.advanceTimersByTime(hold - 100))
+    act(() => toast.show('又复制了'))
+    act(() => vi.advanceTimersByTime(hold - 100))
+    // 从第一次算已超过停留时长：第二次 show 重新计时，仍在显示
+    expect(probe).toHaveAttribute('data-visible')
+    act(() => vi.advanceTimersByTime(100))
+    expect(probe).not.toHaveAttribute('data-visible')
+
+    act(() => toast.show('再一次'))
+    act(() => toast.hide())
+    expect(probe).not.toHaveAttribute('data-visible')
+    // 没有显示时 hide 什么也不做
+    act(() => toast.hide())
+    expect(probe).not.toHaveAttribute('data-visible')
   })
 })
 

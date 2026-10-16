@@ -10,7 +10,6 @@
     "favorite": "已收藏",
     "actions": "操作",
     "back": "返回操作菜单",
-    "chips": "识别出的内容",
     "marked": "已选择，第 {n} 个",
     "favorites_one": "收藏，{n} 条",
     "favorites_other": "收藏，{n} 条",
@@ -171,35 +170,6 @@
   "rename": {
     "placeholder": "给这条收藏起个名字",
     "hint": "留空则去掉名称"
-  },
-  "chip": {
-    "label": "{kind}：{value}",
-    "tip": "单击粘贴，{alt} 单击只复制"
-  },
-  "entity": {
-    "otp": "验证码",
-    "phone": "电话",
-    "email": "邮箱",
-    "url": "链接",
-    "tracking": "快递单号",
-    "order": "订单号",
-    "amount": "金额",
-    "datetime": "日期时间",
-    "ip": "IP 地址",
-    "id_card": "身份证号",
-    "bank_card": "银行卡号"
-  },
-  "transform": {
-    "join_lines": "合并为一行",
-    "trim": "去掉首尾空白",
-    "upper": "全部大写",
-    "lower": "全部小写",
-    "title": "首字母大写",
-    "half_width": "转为半角",
-    "full_width": "转为全角",
-    "json_pretty": "格式化 JSON",
-    "json_minify": "压缩 JSON",
-    "strip_tracking": "去掉跟踪参数"
   },
   "status": {
     "saved": "已保存图片",

@@ -20,8 +20,9 @@
  *     要为压低热状态内存而放宽这条规则，前提是两件事一起到位：懒加载的实现与内存实测（能省多少），以及「懒加载视图的
  *     chunk 在首次唤出前已预取」的门禁（依赖图里核对预取清单，或冒烟每次启动后各唤出一次并按视图判 ≤ 100 ms）；
  *   - settings 入口静态可达的模块里没有 src/settings、src/onboarding（设置与引导互相 lazy()，各自只加载自己的代码）；
- *   - pinned（翻译 / OCR 的固定窗口）入口里没有剪贴板视图本身（它只在悬浮剪贴板的入口里）；clipfloat（悬浮剪贴板）
- *     入口静态导入剪贴板视图，不带翻译 / 输入视图与设置、引导、Overlay；
+ *   - pinned（翻译 / OCR 的固定窗口）入口里没有 src/views/clipboard 下的任何模块（剪贴板视图只在面板与悬浮剪贴板的
+ *     入口里；OCR 的芯片条与剪贴板共用的部件在 src/shared/smart）；clipfloat（悬浮剪贴板）入口静态导入剪贴板视图，
+ *     不带翻译 / 输入视图与设置、引导、Overlay；
  *   - overlay 入口静态可达的模块里没有 React / Motion 运行时。
  * 另外打印 panel 入口首屏（静态可达）的 JS / CSS 体积与各视图的渲染后字节数（只报告，不设预算），供懒加载取舍参考。
  */
@@ -86,8 +87,7 @@ export const GRAPH_RULES = {
       'src/settings/',
       'src/onboarding/',
       'src/overlay/',
-      'src/views/clipboard/ClipboardView',
-      'src/views/clipboard/ClipList',
+      'src/views/clipboard/',
       'src/floating/',
     ],
     require: [],
@@ -398,8 +398,8 @@ function selfTest() {
   const base = () => [
     entry('settings', [`${root}src/window/settings.tsx`]),
     entry('overlay', [`${root}src/overlay/index.ts`]),
-    // 固定窗口可以用剪贴板目录里的小部件（OCR 的芯片条），但不带剪贴板视图本身
-    entry('pinned', [`${root}src/pinned/PinnedApp.tsx`, `${root}src/views/clipboard/entities.tsx`]),
+    // 固定窗口里 OCR 的芯片条用的是共享部件（shared/smart），不经过剪贴板视图的目录
+    entry('pinned', [`${root}src/pinned/PinnedApp.tsx`, `${root}src/shared/smart/EntityChip.tsx`]),
     entry('clipfloat', [
       `${root}src/floating/FloatingApp.tsx`,
       `${root}src/views/clipboard/ClipboardView.tsx`,
@@ -469,6 +469,17 @@ function selfTest() {
   )
   assert.ok(
     checkGraph(heavyPinned).some((p) => p.startsWith('pinned') && p.includes('ClipboardView')),
+  )
+  // 剪贴板目录里的小模块同样不行：共用的部件应放进 shared，固定窗口不反向依赖剪贴板视图
+  const clipPinned = staticViews.map((c) =>
+    c.fileName === 'pinned.js'
+      ? { ...c, moduleIds: [...c.moduleIds, `${root}src/views/clipboard/specs.ts`] }
+      : c,
+  )
+  assert.ok(
+    checkGraph(clipPinned).some(
+      (p) => p.startsWith('pinned') && p.includes('src/views/clipboard/specs.ts'),
+    ),
   )
   // 悬浮剪贴板把剪贴板视图 lazy() 出去：首帧交接前多一次请求
   const lazyFloat = staticViews.map((c) =>

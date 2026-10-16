@@ -306,8 +306,8 @@ describe('粘贴为…', () => {
     // 返回行 + 两种变换
     expect(items.map((i) => i.textContent)).toEqual([
       t('clipboard.action.paste_as'),
-      t('clipboard.transform.trim'),
-      t('clipboard.transform.upper'),
+      t('smart.transform.trim'),
+      t('smart.transform.upper'),
     ])
     fireEvent.click(screen.getByTestId('clip-menu-paste_as-item-transform-upper'))
     expect(ipc.called('clipboard_paste')).toEqual([{ id: 1, mode: 'normal', transform: 'upper' }])

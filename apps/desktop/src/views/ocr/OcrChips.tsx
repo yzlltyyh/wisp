@@ -1,14 +1,14 @@
 /**
  * OCR 结果里识别出的片段（电话、验证码、单号…）：在底栏上方排成一行芯片，与剪贴板的芯片条同一个部件与同一份展示
- * 注册表（views/clipboard 的 entities.tsx / specs.ts）。识别在 Rust（`text_inspect`），只在识别完成、有文字时进行；
+ * 注册表（shared/smart 的 EntityChip.tsx / specs.ts）。识别在 Rust（`text_inspect`），只在识别完成、有文字时进行；
  * 编辑文字之后停下来再重新识别（不逐键请求）。单击粘贴片段、⌥ 单击只复制，由视图决定怎么做。片段的值不写日志。
  */
 import { useEffect, useState } from 'react'
 import { api, WispIpcError } from '../../shared/ipc'
 import type { Entity, OsKind } from '../../shared/ipc/types'
 import { useT } from '../../shared/i18n/useT'
-import { EntityChip, useChipTip, type ChipMode } from '../clipboard/entities'
-import { inspectOrEmpty, orderEntities } from '../clipboard/specs'
+import { EntityChip, useChipTip, type ChipMode } from '../../shared/smart/EntityChip'
+import { inspectOrEmpty, orderEntities } from '../../shared/smart/specs'
 
 /** 编辑停下来多久之后重新识别（识别本身在 Rust 里很快，这里只是不逐键请求） */
 const EDIT_SETTLE_MS = 300
@@ -62,7 +62,7 @@ export function OcrChips({
     <div
       className="clip-chips ocr-chips"
       role="toolbar"
-      aria-label={t('clipboard.a11y.chips')}
+      aria-label={t('smart.a11y.chips')}
       data-testid="ocr-chips"
     >
       {entities.map((e) => (

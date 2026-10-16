@@ -41,20 +41,15 @@ import {
   BrainCircuit,
   Code,
   Table2,
-  CircleAlert,
   Crop,
   Ellipsis,
   History,
   Settings2,
-  Info,
   Languages,
-  Pencil,
-  PencilLine,
   Pin,
   RotateCw,
   ScanText,
   SlidersHorizontal,
-  Zap,
 } from 'lucide-react'
 import { m } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
@@ -65,7 +60,6 @@ import { copyText } from '../../shared/hooks/useCopy'
 import { usePanelDrag } from '../../shared/hooks/usePanelDrag'
 import { useViewActive } from '../../shared/hooks/useViewActive'
 import { keepQuoted } from '../../shared/i18n/keepQuoted'
-import { formatDuration } from '../../shared/i18n/format'
 import { useT, useTKey } from '../../shared/i18n/useT'
 import {
   api,
@@ -86,7 +80,6 @@ import type { SettingsAnchor } from '../../shared/ipc/sections'
 import type { KeyBinding } from '../../shared/keys/keyRouter'
 import { useKeyScope } from '../../shared/keys/useKeyScope'
 import { usePreset } from '../../shared/motion/presets'
-import { ms, timing } from '../../shared/motion/tokens'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
 import {
   Button,
@@ -97,7 +90,6 @@ import {
   ErrorCard,
   IconButton,
   InlineConfirm,
-  InlineToast,
   Kbd,
   LangBar,
   NotReadyCard,
@@ -113,6 +105,7 @@ import {
   type StatusLineProps,
   type StyleMenuOption,
   type StyleMenuProps,
+  useInlineToast,
 } from '../../shared/ui'
 import { syncFadeEdges } from '../../shared/ui/ScrollArea'
 import {
@@ -143,9 +136,17 @@ import {
 } from './model'
 import { useStructuredModule } from './structuredModule'
 import { isOfflineNotReady, OfflineCard } from '../../shared/offline/OfflineCard'
-import type { ChipMode } from '../clipboard/entities'
+import type { ChipMode } from '../../shared/smart/EntityChip'
 import { LongTextPrompt } from '../translate/LongTextPrompt'
 import { registerOcrMessages } from './i18n'
+import {
+  isExhausted,
+  mainNote,
+  NOTE_SPECS,
+  translationNote,
+  type NoteKind,
+  type NoteSpec,
+} from './notes'
 import { OcrChips } from './OcrChips'
 import {
   FlipBox,
@@ -160,8 +161,9 @@ import {
   ZoomImage,
   type FlipHandle,
 } from './parts'
+import { pinRestoreOf, pinStateOf, type RunSeed } from './pinState'
 import { useSettingsSnapshot } from './settings'
-import { pinStatusOf, seedOf, useRun, type Run, type RunState } from './useRun'
+import { useRun, type Run, type RunState } from './useRun'
 
 export interface OcrViewProps extends ViewProps<'ocr'> {
   /**
@@ -286,28 +288,8 @@ export function OcrView(props: OcrViewProps) {
   const mediaRef = useRef<HTMLDivElement>(null)
   const area = useRef<Area>('ocr')
 
-  // 底栏的「已复制」：自己管显示（内容一变就立即收起，useInlineToast 没有收起的入口）
-  const [toast, setToast] = useState<{ text: string; on: boolean }>({ text: '', on: false })
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const showToast = (text: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    setToast({ text, on: true })
-    toastTimer.current = setTimeout(
-      () => setToast((cur) => ({ ...cur, on: false })),
-      ms(timing.toastHold),
-    )
-  }
-  const hideToast = () => {
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    toastTimer.current = null
-    setToast((cur) => (cur.on ? { ...cur, on: false } : cur))
-  }
-  useEffect(
-    () => () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current)
-    },
-    [],
-  )
+  // 底栏的「已复制」：内容一变（编辑、重新识别）就立即收起，剪贴板里已不是眼前的内容
+  const toast = useInlineToast()
 
   const styles = styleList(snap)
   const effStyle = styleId ?? defaultStyleId(snap)
@@ -409,40 +391,35 @@ export function OcrView(props: OcrViewProps) {
     pinnedHost.ready()
   })
 
-  /** 从 PinState 恢复（约定见 OcrViewProps.pin）；resolve 时内容已经写入（接入的流已回放） */
+  /** 从 PinState 恢复（怎么还原见 pinState.ts）；resolve 时内容已经写入（接入的流已回放） */
   async function seedFromPin(p: PinState): Promise<void> {
-    // 正文区（识别；直接翻译时是译文）的模型 / 耗时 / 用量来自结构化状态行
-    const restored = seedOf(p.status ?? null, p.model_ref ?? null)
-    const restoredPhase = p.status?.cancelled ? 'cancelled' : 'done'
-    // 接入；日志已释放（not_found）时退回 PinState 里的文字
-    const attach = (run: Run, id: string, fallback: string, extra: Partial<RunState> = {}) =>
-      run.begin(
-        (cb) =>
-          api.streamAttach(id, cb).catch(() => {
-            run.seed(fallback, extra, run === main ? restoredPhase : 'done')
-          }),
-        id,
-      )
-    if (direct) {
-      if (p.ocr_text !== null) {
-        src.seed(p.ocr_text)
+    const plan = pinRestoreOf(p, direct)
+    if (plan.source) {
+      if (plan.source.text !== null) {
+        src.seed(plan.source.text)
+        // 记作默认模型（model = null）的转录：展开「原文」时不再重新请求
         srcFor.current = ''
       }
-      setSrcOpen(p.show_source && p.ocr_text !== null)
-      if (p.request_id) return attach(main, p.request_id, p.result_text, restored)
-      return main.seed(p.result_text, restored, restoredPhase)
+      setSrcOpen(plan.source.open)
     }
-    if (p.ocr_text === null) {
-      if (p.request_id) return attach(main, p.request_id, p.source_text, restored)
-      return main.seed(p.source_text, restored, restoredPhase)
-    }
-    // 识别已结束：文字用 ocr_text（可能编辑过），模型 / 耗时 / 用量取结构化状态行，头部与状态行与面板一致
-    main.seed(p.ocr_text, restored, restoredPhase)
-    if (!p.show_source) return
+    const restored = seedRun(main, plan.main)
+    if (!plan.translation) return restored
     setTrOpen(true)
-    basis.current = { text: p.ocr_text, style: p.style_id, target: null }
-    if (p.request_id) return attach(tr, p.request_id, p.result_text)
-    tr.seed(p.result_text)
+    basis.current = plan.translation.basis
+    return seedRun(tr, plan.translation)
+  }
+
+  /** 写入一个区：有请求就接入，日志已释放（not_found）时退回 PinState 里的文字 */
+  function seedRun(run: Run, seed: RunSeed): Promise<void> | void {
+    const id = seed.attach
+    if (id === null) return run.seed(seed.text, seed.extra, seed.phase)
+    return run.begin(
+      (cb) =>
+        api.streamAttach(id, cb).catch(() => {
+          run.seed(seed.text, seed.extra, seed.phase)
+        }),
+      id,
+    )
   }
 
   /** 识别（重新识别、换模式 / 模型）；编辑过的文本会被覆盖时先确认 */
@@ -453,7 +430,7 @@ export function OcrView(props: OcrViewProps) {
       return
     }
     setConfirm(null)
-    hideToast()
+    toast.hide()
     const nextMode = next.mode ?? mode
     const mdl = next.model !== undefined ? next.model : model
     // 旧文字变淡留在原处（叠加骨架同节奏的脉冲），新结果到达时替换，文本区与底栏不塌陷
@@ -649,14 +626,14 @@ export function OcrView(props: OcrViewProps) {
       return
     autoCopied.current = s.key
     if (snap.settings.ocr.auto_copy && !s.done.no_text && s.hasText) {
-      showToast(t('common.state.copied'))
+      toast.show(t('common.state.copied'))
     }
     // oxlint-disable-next-line react/exhaustive-deps -- 每次识别结束（设置就绪后）判断一次
   }, [main.state.key, main.state.phase, snap])
 
   function onEdit(value: string): void {
     // 剪贴板里是识别结果、不是编辑后的文本：「已复制」立即收起
-    hideToast()
+    toast.hide()
     setEdit(value)
   }
 
@@ -669,7 +646,7 @@ export function OcrView(props: OcrViewProps) {
   function pasteFragment(entity: Entity, how: ChipMode): void {
     const copy = () =>
       void copyText(entity.value).then((ok) =>
-        showToast(t(ok ? 'common.state.copied' : 'common.state.copy_failed')),
+        toast.show(t(ok ? 'common.state.copied' : 'common.state.copy_failed')),
       )
     if (how === 'copy_only') {
       copy()
@@ -685,69 +662,26 @@ export function OcrView(props: OcrViewProps) {
     const text = copyTarget(selectedText(), translation, direct ? main.text() : ocrText)
     if (text.trim() === '') return false
     void copyText(text).then((ok) =>
-      showToast(t(ok ? 'common.state.copied' : 'common.state.copy_failed')),
+      toast.show(t(ok ? 'common.state.copied' : 'common.state.copy_failed')),
     )
     return true
   }
 
-  function statusText(r: Run): string | null {
-    const parts = [
-      r.state.start?.model_label,
-      r.state.done && !r.state.done.cached ? formatDuration(r.state.done.elapsed_ms) : null,
-    ].filter(Boolean)
-    return parts.length ? parts.join(' · ') : null
-  }
-
-  /** 固定交接的共同字段：正文区的结构化状态行、实际模型、缩略图与原图尺寸 */
-  function pinExtras(r: Run): Pick<PinState, 'status' | 'model_ref' | 'thumb_url' | 'image_size'> {
-    const st = r.state.start
-    return {
-      status: pinStatusOf(r.state),
-      model_ref: st ? { provider_id: st.provider_id, model_id: st.model_id } : null,
-      thumb_url: payload.thumb_url || null,
-      image_size:
-        payload.image_size.width > 0 && payload.image_size.height > 0 ? payload.image_size : null,
-    }
-  }
-
   function pin(): void {
     if (host !== 'panel' || blocked) return
-    const ocrDone = settled(main)
-    // 译文区展开但译文请求还没有 id：固定窗口不能把识别请求接到译文区上（见 OcrViewProps.pin）
-    const trAttach = trOpen && tr.state.requestId !== null
-    const state: PinState = direct
-      ? {
-          kind: 'ocr',
-          source_text: src.state.hasText ? src.text() : '',
-          result_text: main.text(),
-          task: 'translate',
-          style_id: effStyle,
-          target_lang: main.state.meta?.target_lang ?? target ?? payload.target_lang,
-          detected_lang: main.state.meta?.detected_source_lang ?? null,
-          request_id: main.state.requestId,
-          capture_id: payload.capture_id,
-          ocr_text: src.state.phase === 'done' ? src.text() : null,
-          ocr_mode: 'translate',
-          show_source: srcOpen,
-          status_line: statusText(main),
-          ...pinExtras(main),
-        }
-      : {
-          kind: 'ocr',
-          source_text: ocrDone ? ocrText : '',
-          result_text: trAttach ? tr.text() : '',
-          task: 'translate',
-          style_id: effStyle,
-          target_lang: tr.state.meta?.target_lang ?? target ?? payload.target_lang,
-          detected_lang: tr.state.meta?.detected_source_lang ?? null,
-          request_id: ocrDone && trAttach ? tr.state.requestId : main.state.requestId,
-          capture_id: payload.capture_id,
-          ocr_text: ocrDone ? ocrText : null,
-          ocr_mode: mode,
-          show_source: ocrDone && trAttach,
-          status_line: statusText(main),
-          ...pinExtras(main),
-        }
+    const state = pinStateOf({
+      direct,
+      payload,
+      main,
+      tr,
+      src,
+      mode,
+      ocrText,
+      style: effStyle,
+      target,
+      trOpen,
+      srcOpen,
+    })
     void api.panelPin(sessionId, state, false).catch(warn('panel_pin'))
   }
 
@@ -1137,7 +1071,7 @@ export function OcrView(props: OcrViewProps) {
   const s = main.state
   const done = s.phase === 'done'
   const cancelled = s.phase === 'cancelled'
-  const exhausted = done && s.done?.truncated === 'max_tokens' && !s.hasText
+  const exhausted = isExhausted(s)
   const noText = done && (exhausted || s.done?.no_text === true || !s.hasText)
   const editable = !direct && ((done && !noText) || (cancelled && s.hasText))
   const notReady: NotReady | null = pinned || !blocked ? null : payload.not_ready
@@ -1188,60 +1122,25 @@ export function OcrView(props: OcrViewProps) {
     else if (done) announce = t(direct ? 'ocr.a11y.translated' : 'ocr.a11y.recognized')
   }
 
-  /** 状态行里的短提示：全文放在 title 里（放不下时省略号截断） */
-  const noteText = (short: string, full: string = short) => (
-    <span className="ocr-note-text" title={full}>
-      {short}
-    </span>
-  )
-  // 思考耗尽：与翻译视图同一句话、同一个图标（放不下时省略号截断，全文在 title 里）
-  const exhaustedNote = {
-    icon: BrainCircuit,
-    text: noteText(t('panel.status.thinking_exhausted')),
-    tone: 'warning' as const,
+  /** 状态行的提示（优先级见 notes.ts）：短句放不下时省略号截断，全文在 title 里 */
+  const noteOf = (kind: NoteKind | null): StatusLineProps['note'] => {
+    if (kind === null) return null
+    const spec: NoteSpec = NOTE_SPECS[kind]
+    const text = t(spec.label)
+    return {
+      icon: spec.icon,
+      text: (
+        <span className="ocr-note-text" title={text}>
+          {text}
+        </span>
+      ),
+      tone: spec.tone,
+    }
   }
-  const truncatedNote = {
-    icon: CircleAlert,
-    text: noteText(t('panel.status.truncated')),
-    tone: 'warning' as const,
-  }
-  const cachedNote = { icon: Zap, text: noteText(t('panel.status.cached')) }
-  // 文档解析有区域没能识别（结果不完整）：一句安静的提示，不用警示色——识别出的部分照常可用
-  const partialNote = { icon: Info, text: noteText(t('ocr.meta.partial')) }
-  const degradedNote = { icon: Info, text: noteText(t('panel.status.param_degraded')) }
-  // 重新识别期间头部已显示「识别中…」，状态行留空（不重复）；思考耗尽且没有结果时正文区的空状态已经说明原因，状态行
-  // 只留模型 · 耗时（不再用琥珀色重复）
-  const note: StatusLineProps['note'] = live(main)
-    ? null
-    : exhausted
-      ? null
-      : s.done?.truncated
-        ? truncatedNote
-        : s.notices.includes('partial')
-          ? partialNote
-          : edited
-            ? { icon: Pencil, text: noteText(t('ocr.meta.edited')) }
-            : s.done?.cached
-              ? cachedNote
-              : s.notices.includes('param_degraded')
-                ? degradedNote
-                : null
-
-  // 译文区的状态行提示：思考耗尽 > 已截断 > 原文已修改 > 来自缓存 > 参数降级
+  const note = noteOf(mainNote(s, edited))
   const ts = tr.state
-  const trExhausted = ts.phase === 'done' && ts.done?.truncated === 'max_tokens' && !ts.hasText
   const stale = basis.current !== null && basis.current.text !== ocrText
-  const trNote: StatusLineProps['note'] = trExhausted
-    ? exhaustedNote
-    : ts.done?.truncated
-      ? truncatedNote
-      : stale
-        ? { icon: PencilLine, text: noteText(t('ocr.translation.stale')) }
-        : ts.done?.cached
-          ? cachedNote
-          : ts.notices.includes('param_degraded')
-            ? degradedNote
-            : null
+  const trNote = noteOf(translationNote(ts, stale))
 
   const errorCard = (run: Run, onRetry: () => void, chooseModel: boolean): ReactNode =>
     run.state.error ? (
@@ -1511,8 +1410,8 @@ export function OcrView(props: OcrViewProps) {
               state={cancelled ? 'cancelled' : null}
               // 「已复制」只停留一两秒：显示期间由它占住提示的位置，之后提示（部分区域未能识别、来自缓存……）再回来——
               // 两者并排时底栏放不下，「已复制」会被裁掉一半
-              note={toast.on ? null : note}
-              trailing={<InlineToast show={toast.on}>{toast.text}</InlineToast>}
+              note={toast.visible ? null : note}
+              trailing={toast.node}
               className="ocr-status"
             />
             <span className="ocr-actions">

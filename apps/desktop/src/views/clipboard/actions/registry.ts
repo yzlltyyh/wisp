@@ -62,10 +62,10 @@ import {
 } from 'lucide-react'
 import { copyText } from '../../../shared/hooks/useCopy'
 import type { ClipItemMeta, ClipKind, ClipInspect, PasteMode } from '../../../shared/ipc/types'
+import { entityText, ENTITY_SPECS, TRANSFORM_SPECS } from '../../../shared/smart/specs'
 import { plainNthCombo } from '../keys'
 import { allFilesMissing, hasTextBody, isTextual } from '../kinds'
 import { cycleFilter, firstItemIndex, indexOfId, lastItemIndex, nthItem, stepItem } from '../model'
-import { entityText, ENTITY_SPECS, TRANSFORM_SPECS } from '../specs'
 import { isSearching, visibleHits } from '../store'
 import {
   pageItem,

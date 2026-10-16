@@ -322,7 +322,7 @@
     margin-left: auto;
   }
 
-  /* ---- 识别出的片段（芯片）：正文下方、底栏上方一行，放不下时横向滚动（芯片本身的样式在剪贴板的 entities.css） ---- */
+  /* ---- 识别出的片段（芯片）：正文下方、底栏上方一行，放不下时横向滚动（芯片本身的样式在 shared/smart 的 chips.css） ---- */
   .ocr-chips {
     margin-top: 10px;
   }

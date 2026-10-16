@@ -1,8 +1,8 @@
 /**
  * 智能识别的展示注册表：片段种类（`EntityKind`）与「粘贴为…」变换（`TransformId`）在界面上的图标、文案与顺序。
  * 识别与变换本身都在 Rust（wisp-clipboard 的 smart 模块），这里只负责怎么显示；`satisfies Record<…>` 让 Rust 新增
- * 一种识别 / 变换时，前端在编译期就必须补上它的展示。芯片条、预览里的芯片、「提取」与「粘贴为…」子页、OCR 视图
- * 都从这里取，不各自写一份。
+ * 一种识别 / 变换时，前端在编译期就必须补上它的展示。剪贴板的芯片条、预览里的芯片、「提取」与「粘贴为…」子页，
+ * 以及 OCR 视图的芯片条都从这里取，不各自写一份。
  */
 import {
   Banknote,
@@ -28,8 +28,12 @@ import {
   WrapText,
   type LucideIcon,
 } from 'lucide-react'
-import type { ClipInspect, ClipKind, Entity, EntityKind, TransformId } from '../../shared/ipc/types'
-import type { MessageKey } from '../../shared/i18n/i18n'
+import type { ClipInspect, ClipKind, Entity, EntityKind, TransformId } from '../ipc/types'
+import type { MessageKey } from '../i18n/i18n'
+import { loadSmartMessages } from './i18n'
+
+// 下面的文案 key 都在 `smart` 命名空间：用到展示注册表的模块（剪贴板、OCR 的芯片条）随它一起拿到文案
+loadSmartMessages()
 
 export interface EntitySpec {
   readonly icon: LucideIcon
@@ -42,17 +46,17 @@ export interface EntitySpec {
 }
 
 export const ENTITY_SPECS = {
-  otp: { icon: KeyRound, label: 'clipboard.entity.otp', order: 0 },
-  phone: { icon: Phone, label: 'clipboard.entity.phone', order: 1 },
-  email: { icon: Mail, label: 'clipboard.entity.email', order: 2 },
-  url: { icon: Link, label: 'clipboard.entity.url', order: 3, hideIn: ['link'] },
-  tracking: { icon: Package, label: 'clipboard.entity.tracking', order: 4 },
-  order: { icon: Receipt, label: 'clipboard.entity.order', order: 5 },
-  amount: { icon: Banknote, label: 'clipboard.entity.amount', order: 6 },
-  datetime: { icon: CalendarClock, label: 'clipboard.entity.datetime', order: 7 },
-  ip: { icon: Network, label: 'clipboard.entity.ip', order: 8 },
-  id_card: { icon: IdCard, label: 'clipboard.entity.id_card', order: 9 },
-  bank_card: { icon: CreditCard, label: 'clipboard.entity.bank_card', order: 10 },
+  otp: { icon: KeyRound, label: 'smart.entity.otp', order: 0 },
+  phone: { icon: Phone, label: 'smart.entity.phone', order: 1 },
+  email: { icon: Mail, label: 'smart.entity.email', order: 2 },
+  url: { icon: Link, label: 'smart.entity.url', order: 3, hideIn: ['link'] },
+  tracking: { icon: Package, label: 'smart.entity.tracking', order: 4 },
+  order: { icon: Receipt, label: 'smart.entity.order', order: 5 },
+  amount: { icon: Banknote, label: 'smart.entity.amount', order: 6 },
+  datetime: { icon: CalendarClock, label: 'smart.entity.datetime', order: 7 },
+  ip: { icon: Network, label: 'smart.entity.ip', order: 8 },
+  id_card: { icon: IdCard, label: 'smart.entity.id_card', order: 9 },
+  bank_card: { icon: CreditCard, label: 'smart.entity.bank_card', order: 10 },
 } as const satisfies Record<EntityKind, EntitySpec>
 
 export interface TransformSpec {
@@ -63,16 +67,16 @@ export interface TransformSpec {
 }
 
 export const TRANSFORM_SPECS = {
-  join_lines: { icon: WrapText, label: 'clipboard.transform.join_lines', order: 0 },
-  trim: { icon: Scissors, label: 'clipboard.transform.trim', order: 1 },
-  upper: { icon: CaseUpper, label: 'clipboard.transform.upper', order: 2 },
-  lower: { icon: CaseLower, label: 'clipboard.transform.lower', order: 3 },
-  title: { icon: CaseSensitive, label: 'clipboard.transform.title', order: 4 },
-  half_width: { icon: Shrink, label: 'clipboard.transform.half_width', order: 5 },
-  full_width: { icon: Expand, label: 'clipboard.transform.full_width', order: 6 },
-  json_pretty: { icon: Braces, label: 'clipboard.transform.json_pretty', order: 7 },
-  json_minify: { icon: Minimize2, label: 'clipboard.transform.json_minify', order: 8 },
-  strip_tracking: { icon: Unlink, label: 'clipboard.transform.strip_tracking', order: 9 },
+  join_lines: { icon: WrapText, label: 'smart.transform.join_lines', order: 0 },
+  trim: { icon: Scissors, label: 'smart.transform.trim', order: 1 },
+  upper: { icon: CaseUpper, label: 'smart.transform.upper', order: 2 },
+  lower: { icon: CaseLower, label: 'smart.transform.lower', order: 3 },
+  title: { icon: CaseSensitive, label: 'smart.transform.title', order: 4 },
+  half_width: { icon: Shrink, label: 'smart.transform.half_width', order: 5 },
+  full_width: { icon: Expand, label: 'smart.transform.full_width', order: 6 },
+  json_pretty: { icon: Braces, label: 'smart.transform.json_pretty', order: 7 },
+  json_minify: { icon: Minimize2, label: 'smart.transform.json_minify', order: 8 },
+  strip_tracking: { icon: Unlink, label: 'smart.transform.strip_tracking', order: 9 },
 } as const satisfies Record<TransformId, TransformSpec>
 
 /**

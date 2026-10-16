@@ -44,10 +44,15 @@ import { useHidden } from '../../shared/hooks/useHidden'
 import { t, tKey } from '../../shared/i18n/i18n'
 import { formatHotkey } from '../../shared/keys/formatHotkey'
 import { duration, ms, timing } from '../../shared/motion/tokens'
+import {
+  inspectOrEmpty,
+  NO_INSPECT,
+  orderEntities,
+  orderTransforms,
+} from '../../shared/smart/specs'
 import { copiedNotice, queueNotice } from './copied'
 import type { ClipHost } from './host'
 import { isTextual } from './kinds'
-import { inspectOrEmpty, NO_INSPECT, orderEntities, orderTransforms } from './specs'
 import {
   appendPage,
   HOVER_HEAD_CHARS,

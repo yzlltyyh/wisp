@@ -23,8 +23,9 @@ import {
   type KeySpec,
   type MenuSurface,
 } from '../actions'
+import { SMART_MESSAGES } from '../../../shared/smart/i18n'
+import { ENTITY_SPECS, TRANSFORM_SPECS } from '../../../shared/smart/specs'
 import { CLIPBOARD_MESSAGES, loadClipboardMessages } from '../i18n'
-import { ENTITY_SPECS, TRANSFORM_SPECS } from '../specs'
 import { initialState } from '../store'
 import { meta, NOW, payload } from './helpers'
 
@@ -127,11 +128,15 @@ function contexts(os: OsKind): ActionCtx[] {
   return out
 }
 
-/** 按 `clipboard.a.b` 在原始文案里查找（两种语言各查一次） */
+/** 剪贴板操作用到的命名空间：自己的 `clipboard`，以及片段 / 变换展示注册表的 `smart` */
+const MESSAGES = { clipboard: CLIPBOARD_MESSAGES, smart: SMART_MESSAGES }
+
+/** 按 `clipboard.a.b` / `smart.a.b` 在原始文案里查找（两种语言各查一次） */
 function hasMessage(locale: 'zh-CN' | 'en-US', key: string): boolean {
   const parts = key.split('.')
-  if (parts.shift() !== 'clipboard') return false
-  let node: unknown = CLIPBOARD_MESSAGES[locale]
+  const ns = parts.shift()
+  if (ns !== 'clipboard' && ns !== 'smart') return false
+  let node: unknown = MESSAGES[ns][locale]
   for (const p of parts) {
     if (typeof node !== 'object' || node === null || !(p in node)) return false
     node = (node as Record<string, unknown>)[p]
