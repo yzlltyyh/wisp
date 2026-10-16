@@ -763,8 +763,7 @@ impl WindowManager {
         })
     }
 
-    /// 面板显示管线（只给 debug 构建的实验台用）
-    #[cfg(any(debug_assertions, feature = "fake-llm"))]
+    /// 面板显示管线：悬浮剪贴板从面板交接时要隐藏面板并取它最后一帧的卡片位置，调试实验台也用它
     pub(crate) fn panel_controller(&self) -> &Arc<PanelController> {
         &self.panel
     }
