@@ -211,8 +211,13 @@ pub fn needs_space(a: &str, b: &str, gap: Option<f32>) -> bool {
 ///
 /// - 项目符号（`•`、`●`、`■`、`►`、`✓`、`☐` 等），后跟空格的 `-` / `*` / `+`；
 /// - 带圈、带括号、带句点的编号（`①`、`⑴`、`⒈`、`❶`、`➊`、`㈠`、`㊀`、`⒜`、`ⓐ`）；
-/// - 最多三位的数字编号：`1.`、`1)`、`1）` 后跟空格，`1、`、`1）`、`(1)`、`（1）`；多级编号 `1.2.3 `、`1.2. `；
-/// - 单个字母的编号：`a.`、`a)`、`A）` 后跟空格，`(a)`、`（a）`；
+/// - 最多三位的数字编号：`1.`、`1)`、`1）` 后跟空格，`1、`、`1）`、`(1)`、`（1）`；
+/// - 多级编号：每级最多三位，三级以上（`1.2.3 Heading`）或两级以上再跟一个点（`1.2. heading`），后跟空格。
+///   没有结尾点的，后面的内容要以大写字母或东亚文字开头（标题的写法；`1.2.3 is out` 是版本号）；
+///   正好四级的不算（`192.168.1.1` 是 IPv4 地址）；
+/// - 单个字母的编号：小写字母加点 `a.`，以及 `a)`、`A）` 后跟空格，`(a)`、`（A）`。大写字母加点不算（`A. Smith`、
+///   `J. K. Rowling` 这样的人名缩写远比字母编号常见，罗马数字的 `I.` 因此也不认）；后面紧跟另一个「单字母 + 点」的
+///   也不算（`e. e. cummings`、`p. s.`）；
 /// - 中文数字编号：`一、`、`十二、`、`(一)`、`（一）`。
 ///
 /// 「1.5 GB」「2026 年」「-5 degrees」「*bold*」「e.g. this」「a lot」这类不算。
@@ -287,17 +292,23 @@ fn starts_with_numbering(text: &str) -> bool {
         Some(rest) => (true, rest),
         None => (false, text),
     };
-    let (label, count) = match rest.chars().next() {
-        Some(c) if c.is_ascii_digit() => (Label::Digits, rest.chars().take_while(char::is_ascii_digit).count()),
+    let Some(first) = rest.chars().next() else {
+        return false;
+    };
+    let (label, count) = match first {
+        c if c.is_ascii_digit() => (Label::Digits, rest.chars().take_while(char::is_ascii_digit).count()),
         // 只认单个字母：后面紧跟的若还是字母，就是普通单词，下面的分隔符检查会把它排除
-        Some(c) if c.is_ascii_alphabetic() => (Label::Letter, 1),
-        Some(c) if is_han_numeral(c) => (Label::Han, rest.chars().take_while(|&c| is_han_numeral(c)).count()),
+        c if c.is_ascii_alphabetic() => (Label::Letter, 1),
+        c if is_han_numeral(c) => (Label::Han, rest.chars().take_while(|&c| is_han_numeral(c)).count()),
         _ => return false,
     };
     if count > 3 {
         return false;
     }
-    let mut after = rest.chars().skip(count);
+    let mut after = rest.chars();
+    for _ in 0..count {
+        after.next();
+    }
     let (a, b) = (after.next(), after.next());
     if paren {
         return matches!(a, Some(')' | '）'));
@@ -308,17 +319,33 @@ fn starts_with_numbering(text: &str) -> bool {
             (Some('.' | ')' | '）'), Some(' ')) | (Some('、' | '）'), _) => true,
             _ => false,
         },
-        Label::Letter => matches!((a, b), (Some('.' | ')' | '）'), Some(' '))),
+        Label::Letter => match (a, b) {
+            // 加点的只认小写字母：大写字母加点多半是人名缩写（`A. Smith`）。紧跟着又一个「单字母 + 点」的
+            // （`e. e. cummings`、`p. s.`）同样是缩写
+            (Some('.'), Some(' ')) => first.is_ascii_lowercase() && !starts_with_initial(after.as_str()),
+            (Some(')' | '）'), Some(' ')) => true,
+            _ => false,
+        },
         Label::Han => a == Some('、'),
     }
 }
 
-/// 多级编号：至少三级（`1.2.3 `），或两级后再跟一个点（`1.2. `），每级最多三位，后跟空格。
-/// 两级且没有结尾点的（`1.5 GB`、`3.14 is`）是小数，不算
+/// 以「单个字母 + 点」开头（`K. Rowling`、`s. note`）
+fn starts_with_initial(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(char::is_alphabetic) && chars.next() == Some('.')
+}
+
+/// 多级编号：至少三级（`1.2.3 `），或两级后再跟一个点（`1.2. `），每级最多三位，后跟空格。这些不算：
+///
+/// - 两级且没有结尾点的（`1.5 GB`、`3.14 is`）：小数；
+/// - 正好四级的（`192.168.1.1`，后面带不带点都一样）：IPv4 地址的形态，远比四级标题常见；
+/// - 没有结尾点、后面的内容又不以大写字母或东亚文字开头的（`1.2.3 is out`）：多半是行首的版本号。标题的编号后面
+///   通常紧跟大写开头的标题或中日韩文字；以点结尾的编号（`1.2.`）本身就是标题的写法，不再看后面
 fn is_multilevel(text: &str) -> bool {
     let mut levels = 0;
     let mut rest = text;
-    loop {
+    let trailing_dot = loop {
         let n = rest.bytes().take_while(u8::is_ascii_digit).count();
         if !(1..=3).contains(&n) {
             return false;
@@ -327,9 +354,26 @@ fn is_multilevel(text: &str) -> bool {
         rest = &rest[n..];
         match rest.strip_prefix('.') {
             Some(r) if r.starts_with(|c: char| c.is_ascii_digit()) => rest = r,
-            Some(r) => return levels >= 2 && r.starts_with(' '),
-            None => return levels >= 3 && rest.starts_with(' '),
+            Some(r) => {
+                rest = r;
+                break true;
+            }
+            None => break false,
         }
+    };
+    let Some(content) = rest.strip_prefix(' ') else {
+        return false;
+    };
+    if levels == 4 {
+        return false;
+    }
+    if trailing_dot {
+        levels >= 2
+    } else {
+        levels >= 3
+            && content
+                .trim_start_matches(' ')
+                .starts_with(|c: char| c.is_uppercase() || is_east_asian(c))
     }
 }
 
@@ -528,17 +572,23 @@ mod tests {
             "⒜ item",
             "a. item",
             "B) item",
+            "A） 项",
             "c） 项",
             "(a) item",
+            "(A) item",
             "（b）项",
-            "I. Introduction",
+            "（A）项",
             "一、项",
             "十二、项",
             "(一) 项",
             "（三）项",
             "1.2.3 Heading",
+            "1.2.3 概述",
+            "1.2.3 Équipe",
             "1.2. Heading",
+            "1.2. heading",
             "10.2.11 Heading",
+            "1.2.3.4.5 Heading",
         ] {
             assert!(starts_list_item(yes), "{yes}");
         }
@@ -564,6 +614,22 @@ mod tests {
             "一二三四、",
             "(see below)",
             "",
+            // 大写字母加点是人名缩写的常见写法，不认作编号（罗马数字的章节号 `I.` 因此也不认）
+            "J. K. Rowling wrote",
+            "A. Smith said",
+            "P. S. note",
+            "I. Introduction",
+            // 后面紧跟另一个「单字母 + 点」：缩写，不是编号
+            "e. e. cummings",
+            "p. s. note",
+            "a. m. tomorrow",
+            // 四段的纯数字是 IPv4 地址
+            "192.168.1.1 is the gateway",
+            "10.0.0.1 Router",
+            "10.0.0.1. Then",
+            // 没有结尾点的多级编号后面要像标题：大写字母或东亚文字开头
+            "1.2.3 is out",
+            "1.2.3 (beta)",
         ] {
             assert!(!starts_list_item(no), "{no}");
         }
