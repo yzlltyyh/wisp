@@ -225,7 +225,7 @@ describe('等待阶段', () => {
     expect(screen.getByTestId('view-ocr')).not.toHaveTextContent('正在加载离线模型…')
   })
 
-  it('云端排队：头部「云端处理中…」；PP-StructureV3 在骨架下方注明要等约半分钟', async () => {
+  it('云端排队：头部「云端处理中…」；PP-StructureV3 在骨架下方注明可能要等几十秒', async () => {
     resetSettingsSnapshot({
       ...snapshot(),
       settings: {
@@ -239,7 +239,9 @@ describe('等待阶段', () => {
       phase: 'queued',
     })
     expect(screen.getByTestId('view-ocr')).toHaveTextContent('云端处理中…')
-    expect(screen.getByTestId('ocr-stream')).toHaveTextContent('PP-StructureV3 每张约需半分钟')
+    expect(screen.getByTestId('ocr-stream')).toHaveTextContent(
+      'PP-StructureV3 通常较慢，服务繁忙时要等几十秒',
+    )
   })
 })
 
