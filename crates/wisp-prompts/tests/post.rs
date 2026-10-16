@@ -5,6 +5,7 @@
 //! 若干伪随机切法。
 
 use wisp_prompts::{PostKind, PostProcessor, is_no_text, split_edit_output};
+use wisp_text::lines::squeeze_blanks;
 use wisp_types::OcrMode;
 
 const TR: PostKind = PostKind::Translate;
@@ -506,6 +507,77 @@ fn ocr_fences_and_prefixes() {
 }
 
 #[test]
+fn ocr_default_tidy() {
+    // 逐行与段落模式：统一换行符、去掉行尾空白、连续空行压成一个、去掉首尾空行；缩进与行内空格不动
+    let cases = [
+        // 行尾空白（空格、制表符、全角空格、不换行空格）
+        (
+            "第一行  \n第二行\t\n第三行\u{3000}\nlast\u{A0}",
+            "第一行\n第二行\n第三行\nlast",
+        ),
+        // 连续空行，含只有空白的行
+        ("a\n\n\n\nb\n  \n\t\n\nc", "a\n\nb\n\nc"),
+        // 首尾空行；第一行的缩进保留
+        ("\n \n\n  a\n\n\n", "  a"),
+        ("\u{3000}\u{3000}首行缩进\n\n\n正文", "\u{3000}\u{3000}首行缩进\n\n正文"),
+        // 缩进与行内空格
+        (
+            "    at App (App.jsx:12:18)  \n\n\n\n    at main   (x)",
+            "    at App (App.jsx:12:18)\n\n    at main   (x)",
+        ),
+        // 制表符分栏的行：行内制表符保留，行尾的去掉
+        ("名称\t数量\t\n苹果\t3\t\t\n梨\t\t5\n", "名称\t数量\n苹果\t3\n梨\t\t5"),
+        // \r\n 与单独的 \r
+        ("a\r\n\r\n\r\nb\rc  \r\n", "a\n\nb\nc"),
+        // 与围栏剥离组合：围栏里的多余空白同样整理
+        ("```text\nline 1  \n\n\n\nline 2\t\n```", "line 1\n\nline 2"),
+        ("```\n\n\n  code\n\n\n```\n\n", "  code"),
+        // 与前缀剥离组合：前缀之后的空行去掉，下一行的缩进保留
+        ("Here is the transcription:\n\n\n  abc  \n\n\n\ndef", "  abc\n\ndef"),
+        ("Transcription:   abc  \r\n\r\n\r\ndef", "abc\n\ndef"),
+        ("识别结果：\n\n第一段\u{3000}\n\n\n第二段", "第一段\n\n第二段"),
+        // 看着像无文字、其实有文字：整理照常
+        ("Transcription: <NO_TEXT> x  \n\n\ny", "<NO_TEXT> x\n\ny"),
+    ];
+    for mode in [OcrMode::Lines, OcrMode::Paragraphs] {
+        for (raw, want) in cases {
+            check(ocr(mode), "", raw, want, false);
+        }
+        // 无文字判定不受影响：空行与空白包着的哨兵仍判为无文字，什么都不放行
+        for raw in [
+            "\n\n<NO_TEXT>\n\n\n",
+            "```\n\n\n<NO_TEXT>\n\n```",
+            "Transcription:\n\n\n`null`  \r\n",
+            " \n\t\n",
+        ] {
+            check(ocr(mode), "", raw, "", true);
+        }
+    }
+    // 结构化与直接翻译不整理：Markdown 的硬换行（行尾两个空格）、代码块里的空行、译文的空行都原样保留（只去掉首尾空白）
+    let md = "# 标题\n\n第一行  \n第二行\n\n\n```\ncode\n\n\n```";
+    check(ocr(OcrMode::Markdown), "", md, md, false);
+    check(
+        ocr(OcrMode::Translate),
+        "",
+        "设置  \n\n\n\n关于\t",
+        "设置  \n\n\n\n关于",
+        false,
+    );
+}
+
+#[test]
+fn ocr_tidy_streams_without_rewriting() {
+    // 文字一到就放行，只有它之后的空白滞留到下一个非空白字符：行尾空白丢掉，空行压成一个，缩进随下一行放行
+    let mut p = PostProcessor::new(ocr(OcrMode::Lines), "");
+    assert_eq!(p.push("Hello  ").as_deref(), Some("Hello"));
+    assert_eq!(p.push("\n\n\n"), None);
+    assert_eq!(p.push("  \t"), None);
+    assert_eq!(p.push("world").as_deref(), Some("\n\n  \tworld"));
+    assert_eq!(p.push("\u{3000}\r\n"), None);
+    assert_eq!(p.finish(), wisp_prompts::PostFinish::default());
+}
+
+#[test]
 fn streaming_releases_text_early() {
     // 普通文本：第一个字符立即放行
     let mut p = PostProcessor::new(TR, "Hello");
@@ -602,25 +674,41 @@ fn tail_holdback_is_bounded() {
     assert_eq!(p.finish().tail, "");
 }
 
+/// 按约 6 字节一段切开（模拟逐 token 到达）
+fn token_chunks(text: &str) -> Vec<&str> {
+    let mut v = Vec::new();
+    let mut start = 0;
+    for (i, _) in text.char_indices().skip(1) {
+        if i - start >= 6 {
+            v.push(&text[start..i]);
+            start = i;
+        }
+    }
+    v.push(&text[start..]);
+    v
+}
+
 #[test]
 fn large_stream_matches_whole() {
     // 100 KB 逐 token 喂入：结果与整段一致（线性时间由 benches/assemble.rs 的门禁保证：100 KB ≤ 2 ms）
     let unit = "这是第 N 段译文，包含 `code`、<tag> 和 \"引号\"。\nThe quick brown fox jumps over the lazy dog.\n";
     let text = unit.repeat(100 * 1024 / unit.len() + 1);
-    let chunks: Vec<&str> = {
-        let mut v = Vec::new();
-        let mut start = 0;
-        for (i, _) in text.char_indices().skip(1) {
-            if i - start >= 6 {
-                v.push(&text[start..i]);
-                start = i;
-            }
-        }
-        v.push(&text[start..]);
-        v
-    };
+    let chunks = token_chunks(&text);
     let (out, _) = run(TR, "Hello", &chunks);
     assert_eq!(out, text.trim_end());
+}
+
+#[test]
+fn large_ocr_stream_matches_whole() {
+    // 100 KB 带行尾空白、空行与缩进的识别结果逐 token 喂入：与整段默认整理的结果一致
+    let unit = "  第 N 行 识别结果  \r\n\tcol1\tcol2\t\n\n\n\u{3000}\nThe quick brown fox.\u{A0}\n";
+    let text = unit.repeat(100 * 1024 / unit.len() + 1);
+    let chunks = token_chunks(&text);
+    for mode in [OcrMode::Lines, OcrMode::Paragraphs] {
+        let (out, no_text) = run(ocr(mode), "", &chunks);
+        assert!(!no_text);
+        assert_eq!(out, squeeze_blanks(&text), "{mode:?}");
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -728,6 +816,14 @@ fn split_invariance_fuzz() {
         "Here is the transcription:\n",
         "Transcription: ",
         "``",
+        // OCR 默认整理：行尾空白、空行、缩进、制表符分栏
+        "  \n",
+        "\n\n\n",
+        "\u{3000}",
+        "\u{A0}",
+        "\r",
+        "    indented",
+        "名称\t数量\t",
     ];
     let kinds = [
         (TR, "Hello"),
@@ -737,6 +833,7 @@ fn split_invariance_fuzz() {
         (ED, "Here's the plan: x"),
         (TR, "Translate: x"),
         (ocr(OcrMode::Lines), ""),
+        (ocr(OcrMode::Paragraphs), ""),
         (ocr(OcrMode::Markdown), ""),
         (ocr(OcrMode::Translate), ""),
     ];
@@ -772,6 +869,15 @@ fn split_invariance_fuzz() {
         }
         // 输出不会凭空多出字符：长度不超过输入
         assert!(whole.0.len() <= raw.len(), "{kind:?} {raw:?} → {:?}", whole.0);
+        // 逐行与段落模式的输出已经过默认整理：再整理一遍不变
+        if matches!(
+            kind,
+            PostKind::Ocr {
+                mode: OcrMode::Lines | OcrMode::Paragraphs
+            }
+        ) {
+            assert_eq!(squeeze_blanks(&whole.0), whole.0, "{kind:?} {raw:?}");
+        }
         // OCR：no_text 与 is_no_text 一致，判为无文字时不放行任何文本；其余种类不判无文字
         if matches!(kind, PostKind::Ocr { .. }) {
             assert_eq!(whole.1, is_no_text(&raw), "no_text {kind:?} {raw:?}");

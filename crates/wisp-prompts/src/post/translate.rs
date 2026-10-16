@@ -114,6 +114,8 @@ pub(super) fn rules(source: &str, edit: bool) -> Rules {
         trim_indent: !first_line.starts_with([' ', '\t', '\u{3000}']),
         no_text: false,
         edit_tail: edit,
+        // 译文与润色结果的空行、行尾两个空格的硬换行（Markdown）都可能有意义，不整理
+        squeeze: false,
     }
 }
 

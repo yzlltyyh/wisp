@@ -15,6 +15,7 @@ eval = ["dep:wisp-llm", "dep:tokio", "dep:regex", "dep:serde_json", "dep:image"]
 
 [dependencies]
 wisp-types = { workspace = true }
+wisp-text = { workspace = true }
 whatlang = { workspace = true }
 aho-corasick = { workspace = true }
 log = { workspace = true }

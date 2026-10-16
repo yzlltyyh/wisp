@@ -5,7 +5,9 @@
 //! - lines / paragraphs / translate：语言标注为空、text、markdown、md 的围栏包住全文时去掉；
 //!   markdown 模式只去掉 markdown / md 围栏（保留合法的代码块）；
 //! - 去掉开头的「Here is the transcription:」「Transcription:」「识别结果：」「译文：」（直接翻译还有「Translation:」等）；
-//! - 保留首行缩进（lines 模式的缩进有意义）。
+//! - 保留首行缩进（lines 模式的缩进有意义）；
+//! - lines / paragraphs：最后做默认整理（[`BlankSqueezer`](wisp_text::stream::BlankSqueezer)：统一换行符、去掉行尾空白、
+//!   连续空行压成一个、去掉首尾空行），识别结果默认就是干净的。两步直接翻译的第一步（paragraphs 转录）同样经过它。
 
 use wisp_types::OcrMode;
 
@@ -49,10 +51,11 @@ const MARKDOWN_FENCE_LANGS: &[&str] = &["markdown", "md"];
 const NO_TEXT_FORMS: [&str; 4] = ["<no_text>", "no_text", "null", "no text found"];
 
 pub(super) fn rules(mode: OcrMode) -> Rules {
-    let (prefixes, langs) = match mode {
-        OcrMode::Markdown => (OCR_PREFIXES, MARKDOWN_FENCE_LANGS),
-        OcrMode::Translate => (OCR_TRANSLATE_PREFIXES, PLAIN_FENCE_LANGS),
-        OcrMode::Lines | OcrMode::Paragraphs => (OCR_PREFIXES, PLAIN_FENCE_LANGS),
+    let (prefixes, langs, squeeze) = match mode {
+        // 结构化结果是 Markdown 源码：代码块里的空行、行尾两个空格的硬换行都有意义；直接翻译的输出是译文。都不整理
+        OcrMode::Markdown => (OCR_PREFIXES, MARKDOWN_FENCE_LANGS, false),
+        OcrMode::Translate => (OCR_TRANSLATE_PREFIXES, PLAIN_FENCE_LANGS, false),
+        OcrMode::Lines | OcrMode::Paragraphs => (OCR_PREFIXES, PLAIN_FENCE_LANGS, true),
     };
     Rules {
         prefixes,
@@ -64,6 +67,7 @@ pub(super) fn rules(mode: OcrMode) -> Rules {
         trim_indent: false,
         no_text: true,
         edit_tail: false,
+        squeeze,
     }
 }
 

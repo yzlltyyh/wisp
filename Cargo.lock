@@ -7809,6 +7809,7 @@ dependencies = [
  "tokio",
  "whatlang",
  "wisp-llm",
+ "wisp-text",
  "wisp-types",
 ]
 

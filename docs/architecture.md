@@ -67,7 +67,7 @@ wisp/
 │   └── panel.html / settings.html / pinned.html / clipfloat.html / overlay.html   五个页面入口
 ├── crates/
 │   ├── wisp-types/               共享数据类型（IPC、配置、持久化）
-│   ├── wisp-text/                确定性的纯文本规则：文字分类、片段与跨行拼接、列表项判定（不依赖任何 crate）
+│   ├── wisp-text/                确定性的纯文本规则：文字分类、片段与跨行拼接、列表项判定、空白整理（不依赖任何 crate）
 │   ├── wisp-llm/                 四种协议的流式客户端
 │   ├── wisp-prompts/             翻译与 OCR 的提示词、风格、语言检测、后处理
 │   ├── wisp-clipboard/           剪贴板历史存储（SQLite + FTS5）
@@ -89,7 +89,7 @@ Cargo workspace 的成员是 `crates/*` 与 `apps/desktop/src-tauri`；pnpm work
 wisp-types  ←── 除 wisp-text 外的 crate 都依赖它（纯数据，只依赖 serde）
 wisp-text   ←── 需要共用文本规则的 crate 依赖它（确定性的纯文本规则，不依赖任何 crate）
 wisp-llm       → wisp-types
-wisp-prompts   → wisp-types（eval feature 另依赖 wisp-llm）
+wisp-prompts   → wisp-types、wisp-text（eval feature 另依赖 wisp-llm）
 wisp-clipboard → wisp-types、wisp-text
 wisp-capture   → wisp-types
 wisp-platform  → wisp-types
@@ -103,9 +103,9 @@ crate 之间的横向依赖只允许指向 `wisp-types` 与 `wisp-text`（`wisp-
 | crate | 职责 | 不负责 |
 | --- | --- | --- |
 | `wisp-types` | 所有跨 crate、跨进程（IPC）与持久化用到的数据类型及其默认值；事件名常量；宽松的配置解析 | 业务逻辑 |
-| `wisp-text` | 只看文字本身、要在多处保持一致的确定性规则：字符按书写习惯分类（汉字、假名、全角形式不用空格分词，谚文与拉丁文一样用空格）；两段文字拼接时是否加空格、跨行续接（行尾断词还原、东亚标点直接相连、中英之间按全文惯例补空格）、列表项判定（OCR 的文本行拼装与剪贴板「合并为一行」共用） | 版面与几何（视觉行、分栏、缩进、段落边界由调用方判断）；I/O；任何依赖 |
+| `wisp-text` | 只看文字本身、要在多处保持一致的确定性规则：字符按书写习惯分类（汉字、假名、全角形式不用空格分词，谚文与拉丁文一样用空格）；两段文字拼接时是否加空格、跨行续接（行尾断词还原、东亚标点直接相连、中英之间按全文惯例补空格）、列表项判定（OCR 的文本行拼装与剪贴板「合并为一行」共用）；识别结果的默认整理（统一换行符、去掉行尾空白、连续空行压成一个、去掉首尾空行，整段与流式两个版本结果相同） | 版面与几何（视觉行、分栏、缩进、段落边界由调用方判断）；I/O；任何依赖 |
 | `wisp-llm` | OpenAI Chat Completions、OpenAI Responses、Anthropic Messages、Google Gemini 四种协议的请求构造与 SSE 流式解析；`<think>` 标签剥离；错误归一化；Base URL 规范化；模型列表与视觉能力判定；连接测试；参数降级与能力缓存；超时、重试、取消；16 ms 合并器；服务模板（含 PaddleOCR 的模板；`paddle_ocr` 协议只是服务商的标记，所有 LLM 路径对它直接返回「未配置」）；`chat_template_kwargs` 方式的关闭思考 | 提示词内容、Key 的存储；PaddleOCR 的请求（在 `wisp-local`） |
-| `wisp-prompts` | 内置风格与用户覆盖的合并；模板渲染；翻译、词典式、润色、校对、提升译文、OCR 的提示词装配；语言检测与翻译方向；术语匹配；token 估算；流式安全的后处理；缓存键；离线翻译（Index-Translate）的官方提示词格式（`PromptProfile::IndexTranslate`：单条 user 消息、中文语言名、术语与风格写成约束）；评测运行器（`eval` feature） | 发请求 |
+| `wisp-prompts` | 内置风格与用户覆盖的合并；模板渲染；翻译、词典式、润色、校对、提升译文、OCR 的提示词装配；语言检测与翻译方向；术语匹配；token 估算；流式安全的后处理（OCR 逐行与段落模式最后做默认整理）；缓存键；离线翻译（Index-Translate）的官方提示词格式（`PromptProfile::IndexTranslate`：单条 user 消息、中文语言名、术语与风格写成约束）；评测运行器（`eval` feature） | 发请求 |
 | `wisp-clipboard` | SQLite（WAL）的打开与迁移；记录管线（隐私规则 → 规范化 → 去重 → 验证码的到期时间 → 写入 → 缓存）；类型推断；疑似密钥检测与应用排除名单；FTS5 trigram 检索与高亮（含收藏的名称）；收藏与命名；保留策略与清理；图片与缩略图文件；最近条目的内存缓存；识别历史；`smart/` 下的智能识别：识别器注册表（`recognize.rs`，电话、邮箱、链接、验证码、单号、金额、证件号等，每种一个 `Recognizer` 实现并登记）、变换注册表（`transform.rs`，「粘贴为…」的各项，每种一个 `Transform`）与验证码检测（`otp.rs`，记录时据此定到期时间） | 读取系统剪贴板（属于平台层）；识别结果不落库，按需计算 |
 | `wisp-capture` | 并行捕获所有显示器（macOS 用 ScreenCaptureKit，Windows 用 xcap，X11 用 MIT-SHM / GetImage）；逻辑坐标到物理像素的换算与裁剪；按长边缩放；PNG / JPEG 编码与体积回退；窗口列表 | 覆盖层窗口（属于桌面应用） |
 | `wisp-platform` | 取词、粘贴、焦点、权限、应用信息、显示器与外观、剪贴板读写与监听、外部点击、快捷键环境、输入钩子与浮标的 trait 及三端实现；系统信息（内存、性能核、磁盘空间）、内存压力监听、受托管的子进程（守护进程、Job Object、孤儿清扫），见[平台层](#平台层) | 窗口的创建与绘制 |

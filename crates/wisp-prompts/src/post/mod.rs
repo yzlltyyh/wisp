@@ -13,9 +13,13 @@
 //! - **OCR**：不套用引号与标签规则；开头额外缓冲到不可能是「无文字」的形式（`<NO_TEXT>`、`` `null` ``、
 //!   `Transcription: <NO_TEXT>`……，语法见 [`is_no_text`]）为止，结束时判定 `no_text`，判为无文字时
 //!   不放行任何文本。缓冲条件与 `is_no_text` 共用同一套语法，覆盖每种无文字形式的每个前缀（有随机化的性质测试）。
+//! - **默认整理**（OCR 的 lines / paragraphs）：以上各步放行的文本最后再经过 [`BlankSqueezer`]（统一换行符、
+//!   去掉行尾空白、连续空行压成一个、去掉首尾空行），它额外滞留的只有上一个非空白字符之后的空白。放在最后：前面的
+//!   剥离与判定看到的仍是模型的原始输出，剥掉围栏或前缀之后露出来的开头空行也一并去掉。
 //!
 //! 每一步的判断都只依赖文本内容本身（开头的有界前缀、配对符号之后有界长度的文本、末尾「空白 + ≤ 16 个非空白字符」
-//! 的后缀），与已经收到多少无关，因此**任意切分方式喂入，拼接结果都相同**（测试逐一验证）。
+//! 的后缀），与已经收到多少无关，因此**任意切分方式喂入，拼接结果都相同**（测试逐一验证）。默认整理同样与切分
+//! 无关，接在后面不改变这一点。
 
 mod edit_split;
 mod ocr;
@@ -26,6 +30,7 @@ pub use edit_split::split_edit_output;
 pub use ocr::is_no_text;
 
 use pairing::{Line, Pairing, fence_line};
+use wisp_text::stream::BlankSqueezer;
 use wisp_types::OcrMode;
 
 /// 后处理种类
@@ -124,6 +129,8 @@ struct Rules {
     no_text: bool,
     /// 编辑动作：闭合符号之后紧跟 `\n---\n改动…` 也算包住正文
     edit_tail: bool,
+    /// 放行前做默认整理（[`BlankSqueezer`]），作为最后一级
+    squeeze: bool,
 }
 
 /// [`PostKind::Raw`]：全部剥离规则关闭，只剩开头空行 / 首行缩进与末尾空白的处理（等价于整段 trim，且切分无关）
@@ -136,6 +143,7 @@ const RAW_RULES: Rules = Rules {
     trim_indent: true,
     no_text: false,
     edit_tail: false,
+    squeeze: false,
 };
 
 /// 结束时的结果
@@ -193,6 +201,8 @@ pub struct PostProcessor {
     pairing: Pairing,
     /// 进入中段时确定的闭合标签集合（之后不再变化）
     closers: Closers,
+    /// 默认整理（只在规则打开时存在）：处理前面各步放行的文本
+    squeezer: Option<BlankSqueezer>,
 }
 
 impl PostProcessor {
@@ -212,6 +222,7 @@ impl PostProcessor {
             pending: String::new(),
             pairing: Pairing::default(),
             closers: Closers::default(),
+            squeezer: rules.squeeze.then(BlankSqueezer::new),
         }
     }
 
@@ -221,8 +232,39 @@ impl PostProcessor {
     /// 开头时最多再看其后 24 个字符（看到闭合符号时再看其后 ≤ 24 个字符）；以 `Here is the translation` 类前言开头时
     /// 缓冲到行尾冒号（短语之后 ≤ 48 字符）；OCR 另缓冲到不可能是「无文字」形式为止。末尾滞留可能被剥离的空白与
     /// 闭合标签（空白不限，非空白 ≤ 16 个字符）；剥掉了开头引号 / 围栏、正在判断配对的闭合符号时，另滞留 ≤ 40 个
-    /// 字符（直引号向后看到行尾，或一行 ≤ 40 字节的候选围栏）。
+    /// 字符（直引号向后看到行尾，或一行 ≤ 40 字节的候选围栏）。打开默认整理时，另滞留上一个非空白字符之后的空白。
     pub fn push(&mut self, delta: &str) -> Option<String> {
+        let out = self.push_stripped(delta);
+        self.squeeze(out)
+    }
+
+    /// 结束：冲刷滞留文本并判定 no_text
+    pub fn finish(&mut self) -> PostFinish {
+        let mut fin = self.finish_stripped();
+        if let Some(sq) = &mut self.squeezer {
+            let mut tail = String::with_capacity(fin.tail.len());
+            sq.push(&fin.tail, &mut tail);
+            // 默认整理滞留的只剩行尾空白与结尾空行，结束时按规则丢掉
+            sq.finish();
+            fin.tail = tail;
+        }
+        fin
+    }
+
+    /// 最后一级：默认整理（规则没有打开时原样返回）
+    fn squeeze(&mut self, text: Option<String>) -> Option<String> {
+        match (&mut self.squeezer, text) {
+            (Some(sq), Some(text)) => {
+                let mut out = String::with_capacity(text.len());
+                sq.push(&text, &mut out);
+                (!out.is_empty()).then_some(out)
+            }
+            (_, text) => text,
+        }
+    }
+
+    /// 剥离与判定（默认整理之前的各步）
+    fn push_stripped(&mut self, delta: &str) -> Option<String> {
         if delta.is_empty() {
             return None;
         }
@@ -246,8 +288,7 @@ impl PostProcessor {
         }
     }
 
-    /// 结束：冲刷滞留文本并判定 no_text
-    pub fn finish(&mut self) -> PostFinish {
+    fn finish_stripped(&mut self) -> PostFinish {
         let mut tail = String::new();
         match self.phase {
             Phase::Finished => return PostFinish::default(),
@@ -942,6 +983,77 @@ fn ends_with_ignore_ascii_case(s: &str, suffix: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 逐字符喂入给定规则的处理器，返回（拼接后的输出, no_text）
+    fn run_rules(rules: Rules, raw: &str) -> (String, bool) {
+        let mut p = PostProcessor::new(PostKind::Raw, "");
+        p.rules = rules;
+        p.squeezer = rules.squeeze.then(BlankSqueezer::new);
+        let mut out = String::new();
+        for (i, c) in raw.char_indices() {
+            out.extend(p.push(&raw[i..i + c.len_utf8()]));
+        }
+        let f = p.finish();
+        out.push_str(&f.tail);
+        (out, f.no_text)
+    }
+
+    /// 默认整理是最后一级：打开它的结果，等于先按同样的规则不整理、再对结果整段整理；前面的剥离与判定不受影响
+    #[test]
+    fn squeeze_is_the_last_stage() {
+        const PIECES: &[&str] = &[
+            "```",
+            "```text\n",
+            "\n```",
+            "\n```\n",
+            "Transcription:",
+            "Here is the transcription:\n",
+            "识别结果：",
+            "<NO_TEXT>",
+            "`",
+            "null",
+            "□",
+            "\n",
+            "\n\n\n",
+            "\r\n",
+            "\r",
+            "  ",
+            "\t",
+            "\u{3000}",
+            "\u{A0}",
+            "    ",
+            "第一行",
+            "abc",
+            "| a | b |",
+            "-",
+        ];
+        let mut state = 0x5DEE_CE66_D1CE_4E5Bu64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for mode in [OcrMode::Lines, OcrMode::Paragraphs] {
+            let on = ocr::rules(mode);
+            assert!(on.squeeze);
+            let off = Rules { squeeze: false, ..on };
+            for _ in 0..3000 {
+                let len = (next() % 10 + 1) as usize;
+                let raw: String = (0..len)
+                    .map(|_| PIECES[(next() % PIECES.len() as u64) as usize])
+                    .collect();
+                let (plain, no_text) = run_rules(off, &raw);
+                assert_eq!(
+                    run_rules(on, &raw),
+                    (wisp_text::lines::squeeze_blanks(&plain), no_text),
+                    "{mode:?} {raw:?}"
+                );
+            }
+        }
+        // 结构化与直接翻译不整理
+        assert!(!ocr::rules(OcrMode::Markdown).squeeze && !ocr::rules(OcrMode::Translate).squeeze);
+    }
 
     #[test]
     fn holdback_examples() {
