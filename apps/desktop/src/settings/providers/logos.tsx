@@ -69,6 +69,8 @@ export type BrandTemplateId =
 
 /** 「中转站」模板：用中性图标 */
 export const RELAY_TEMPLATE = 'relay'
+/** 不登记品牌图形、用两字母头像的模板（PaddleOCR：没有合适的单色标志） */
+export const MONOGRAM_TEMPLATES: readonly string[] = ['paddleocr']
 
 const OPENAI: BrandLogo = {
   evenOdd: true,

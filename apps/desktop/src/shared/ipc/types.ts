@@ -94,7 +94,12 @@ export type Lang = 'zh-CN' | 'en' | 'ja' | 'ko' | 'other'
 export type UiLanguage = 'system' | 'zh-CN' | 'en-US'
 
 // ===== LLM =====
-export type Protocol = 'openai_chat' | 'openai_responses' | 'anthropic_messages' | 'gemini'
+/**
+ * 服务协议：四种 LLM 协议，以及 PaddleOCR 云端文字识别（`paddle_ocr`，不是 LLM：只能用于 OCR，不能用于翻译；
+ * 不支持「获取模型列表」）
+ */
+export type Protocol =
+  'openai_chat' | 'openai_responses' | 'anthropic_messages' | 'gemini' | 'paddle_ocr'
 export type ThinkingOff =
   | 'none'
   | 'deepseek'
@@ -105,6 +110,8 @@ export type ThinkingOff =
   | 'openai_effort'
   | 'anthropic_effort'
   | 'gemini_level'
+  /** `chat_template_kwargs: {"enable_thinking": false}`（llama-server、vLLM 等） */
+  | 'chat_template_kwargs'
 export type MaxTokensField = 'max_completion_tokens' | 'max_tokens'
 export type ImageDetail = 'low' | 'high' | 'original' | 'auto'
 export interface Quirks {
@@ -194,6 +201,8 @@ export type ErrorCode =
   | 'not_configured'
   | 'keychain'
   | 'internal'
+  /** 离线模型的推理进程出错；具体原因在 `hint`（`errors.hint.local.*`） */
+  | 'local_runtime'
 export type ErrorSubcode =
   'region' | 'thinking_exhausted' | 'connection_lost' | 'html_body' | 'version_hint'
 export interface LlmError {
@@ -211,8 +220,13 @@ export interface LlmError {
   upstream_request_id: string | null
 }
 export type TruncateReason = 'max_tokens'
-export type NoticeKind = 'param_degraded' | 'retried' | 'cache_hit'
-export type StreamPhase = 'reviewing' | 'improving'
+/** partial：结果不完整（离线文档识别有区域没能识别，其余照常输出） */
+export type NoticeKind = 'param_degraded' | 'retried' | 'cache_hit' | 'partial'
+/**
+ * reviewing / improving：提升译文的两个阶段；loading_model：离线模型冷启动（启动推理进程、加载权重）；
+ * queued：云端识别任务排队或处理中
+ */
+export type StreamPhase = 'reviewing' | 'improving' | 'loading_model' | 'queued'
 /** 流事件：Start →（Meta | Phase | Notice | Delta）* → 恰好一个 Done 或 Error */
 export type StreamEvent =
   | {
@@ -242,7 +256,8 @@ export type StreamEvent =
       no_text: boolean
     }
   | ({ type: 'error' } & LlmError)
-export type TemplateGroup = 'openai' | 'anthropic' | 'gemini' | 'other' | 'local'
+/** ocr：文字识别服务（PaddleOCR 云端），只出现在 OCR 的模型选择里 */
+export type TemplateGroup = 'openai' | 'anthropic' | 'gemini' | 'other' | 'local' | 'ocr'
 export interface RegionVariant {
   label_key: string
   base_url: string
@@ -638,6 +653,12 @@ export type NotReady =
   | { reason: 'keychain_unavailable' }
   /** 取词路径不可用：reason_key 是平台层的 i18n key（errors.platform.*），以输入模式打开并显示 */
   | { reason: 'selection_unavailable'; reason_key: string }
+  /** 选用的离线模型还没下载（或需要重新下载）：卡片提供「下载」与「改用其他模型」 */
+  | { reason: 'offline_model_missing'; model: LocalModelId }
+  /** 选用的离线模型正在下载：卡片显示进度（`offline_models:changed`），完成后重试 */
+  | { reason: 'offline_model_downloading'; model: LocalModelId }
+  /** 离线翻译模型只负责翻译：润色 / 校对不支持（不会悄悄改用云端） */
+  | { reason: 'offline_task_unsupported'; task: TaskKind }
 export interface TranslatePayload {
   source_text: string
   /** null 表示尚未发请求（长文本确认 / 未就绪） */
@@ -953,6 +974,8 @@ export interface RuntimeInfo {
   autostart_issue?: string | null
   /** 多设备同步的状态（不含地址、账号与设备名）；未开启时 `phase = 'off'` */
   sync: SyncStatus
+  /** 离线模型摘要（已安装的模型）；读过模型库存之前为空 */
+  offline: OfflineSummary
 }
 /**
  * invalid_json：热加载时 JSON 非法，保留旧值；reset_to_default：启动时损坏，已备份并改用默认值；
@@ -1207,6 +1230,22 @@ export interface SyncSettings {
   auto: boolean
   content: SyncContent
 }
+/**
+ * 离线模型（整组只属于本机，不参与同步）。选中的离线模型优先于 `defaults` 与风格绑定；
+ * `defaults` 与风格里不能写离线模型
+ */
+export interface OfflineSettings {
+  /** 默认 null；只允许文字识别类 */
+  ocr_model: LocalModelId | null
+  /** 默认 null；只允许翻译类 */
+  translate_model: LocalModelId | null
+  /** 默认 5；只允许 1 / 5 / 15 / 30（分钟） */
+  idle_release_min: number
+  /** 默认 true */
+  use_gpu: boolean
+  /** 默认 'auto' */
+  download_source: DownloadSource
+}
 export interface Settings {
   schema_version: number
   general: General
@@ -1219,6 +1258,92 @@ export interface Settings {
   appearance: Appearance
   advanced: Advanced
   sync: SyncSettings
+  offline: OfflineSettings
+}
+
+// ===== 离线模型（wisp-types/local.rs）=====
+export type LocalModelId =
+  | 'pp_ocrv6_tiny'
+  | 'pp_ocrv6_small'
+  | 'paddleocr_vl_1_6'
+  | 'index_translate_2b'
+  | 'index_translate_9b'
+export type LocalModelKind = 'ocr' | 'translate'
+export type LocalRuntimeId = 'llama_cpp' | 'onnx_runtime'
+/** 模型文件的下载源（运行时总是从官方 GitHub Release 下载） */
+export type DownloadSource = 'auto' | 'model_scope' | 'hugging_face'
+export type DownloadErrorCode =
+  'network' | 'server' | 'checksum_mismatch' | 'disk_full' | 'io' | 'extract'
+/** 安装状态。done / total 含一并下载的运行时；bytes_per_sec 为 3 s 滑动平均 */
+export type LocalModelState =
+  | { state: 'not_installed' }
+  | { state: 'queued' }
+  | { state: 'downloading'; done: number; total: number; bytes_per_sec: number }
+  | { state: 'paused'; done: number; total: number }
+  | { state: 'verifying' }
+  | { state: 'installed' }
+  /** 文件缺失或大小不符：需要重新下载 */
+  | { state: 'broken' }
+  | { state: 'failed'; code: DownloadErrorCode }
+/** 是否占着内存 */
+export type LoadState = 'unloaded' | 'loading' | 'loaded'
+export type FitnessLevel = 'good' | 'slow' | 'insufficient' | 'unknown'
+export interface Fitness {
+  level: FitnessLevel
+  /** i18n key（`settings.offline.fitness.<reason>`） */
+  reason_key: string | null
+}
+export interface LocalModelInfo {
+  id: LocalModelId
+  kind: LocalModelKind
+  /** 模型文件的下载量（字节，不含运行时） */
+  download_bytes: number
+  /** 还需要一并下载的运行时（字节） */
+  pending_runtime_bytes: number
+  state: LocalModelState
+  load: LoadState
+  memory_estimate_mb: number
+  fitness: Fitness
+  /** 已安装的版本与目录不一致：提示重新下载 */
+  update_available: boolean
+}
+export interface LocalRuntimeInfo {
+  id: LocalRuntimeId
+  /** 例如 b11669、1.28.3 */
+  version: string
+  installed: boolean
+  /** 已安装时为占用空间，未安装时为下载量（字节） */
+  size: number
+  /** 有已安装的模型依赖它（不能单独删除） */
+  in_use: boolean
+}
+export interface GpuInfo {
+  name: string
+  vram_total_mb: number
+  /** 集成显卡：显存是共享的系统内存，界面不当作显存显示 */
+  integrated: boolean
+}
+export interface DeviceInfo {
+  /** 物理内存（字节）；取不到时为 null */
+  total_memory: number | null
+  apple_silicon: boolean
+  gpus: GpuInfo[]
+  /** Windows / Linux 要先下载 llama.cpp 运行时才能检测显卡；macOS 恒为 true */
+  gpu_probed: boolean
+}
+/** `offline_models_get` / `offline_devices_refresh` 的返回值与 `offline_models:changed` 的载荷 */
+export interface LocalModelsSnapshot {
+  models: LocalModelInfo[]
+  runtimes: LocalRuntimeInfo[]
+  device: DeviceInfo
+  /** 模型与运行时一共占用的磁盘空间（字节） */
+  disk_used: number
+  /** 模型目录所在磁盘的可用空间（字节） */
+  disk_free: number | null
+}
+/** `RuntimeInfo.offline`：只在安装 / 删除时变化 */
+export interface OfflineSummary {
+  installed: LocalModelId[]
 }
 
 // ===== 同步 =====
@@ -1377,5 +1502,7 @@ export interface EventMap {
   'glossary:changed': null
   /** 连续粘贴的进度与结束 → panel、悬浮剪贴板 */
   'clipboard:queue': QueueStatus
+  /** 离线模型的下载进度（节流）、安装 / 删除、加载 / 释放 → 全部 */
+  'offline_models:changed': LocalModelsSnapshot
 }
 export type EventName = keyof EventMap

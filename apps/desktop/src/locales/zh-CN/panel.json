@@ -85,7 +85,20 @@
       "title": "无法读取选中的文字",
       "detail": "可以先复制，再用输入模式翻译。"
     },
-    "retake": "重新截图"
+    "retake": "重新截图",
+    "offline_model_missing": {
+      "title": "{model} 尚未下载",
+      "detail": "这个离线模型还没有下载到这台设备。"
+    },
+    "offline_model_downloading": {
+      "title": "{model} 正在下载",
+      "detail": "下载完成后即可使用。"
+    },
+    "offline_task_unsupported": {
+      "title": "离线翻译模型只负责翻译",
+      "detail": "离线模型不支持「{task}」，也不会自动改用云端模型。",
+      "use_cloud": "用 {model} 处理这一次"
+    }
   },
   "input_hint": {
     "accessibility": "授予辅助功能权限后可直接读取选中文本",
@@ -107,5 +120,40 @@
     "dropped": "掉帧",
     "js": "每帧 JS",
     "p95": "p95"
+  },
+  "offline": {
+    "download": "下载 · {size}",
+    "download_plain": "下载",
+    "resume": "继续下载",
+    "retry": "重试",
+    "missing_detail": "这个离线模型还没有下载到这台设备；下载完成后会自动继续。",
+    "auto_continue": "下载完成后会自动继续。",
+    "failed": "下载没有完成，可以重试。",
+    "progress": "{n}% · {done} / {total}",
+    "paused": "已暂停 · {n}%",
+    "queued": "排队中…",
+    "verifying": "正在校验文件…",
+    "progress_label": "正在下载 {model}",
+    "ready_title": "{model} 已下载",
+    "ready_detail": "可以开始使用了。",
+    "ready_retake": "重新截图即可识别。",
+    "group": "离线模型",
+    "missing_plain": "这个离线模型还没有下载到这台设备。",
+    "downloading_retake": "下载完成后重新截图即可识别。",
+    "fit_confirm": "{reason}。仍要下载 {model}（{size}）？",
+    "fit_confirm_ok": "仍要下载",
+    "fit": {
+      "good": "适合本机",
+      "slow": "较慢",
+      "insufficient": "内存不足",
+      "unknown": "待检测"
+    },
+    "fitness": {
+      "gpu_unknown": "显卡尚未检测，没有独立显卡时会很慢",
+      "cpu_only": "没有可用的显卡，在 CPU 上运行较慢",
+      "integrated_gpu": "只有集成显卡，和在 CPU 上运行一样较慢",
+      "low_memory": "这台设备的内存偏少，可能较慢或无法加载",
+      "memory_unknown": "无法读取这台设备的内存"
+    }
   }
 }

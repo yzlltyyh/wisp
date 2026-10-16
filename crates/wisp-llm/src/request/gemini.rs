@@ -31,7 +31,11 @@ pub(super) fn body(p: &Parts<'_>, sent: &mut Vec<SentParam>) -> Map<String, Valu
     let thinking = match plan.thinking {
         Thinking::GeminiLevelLow => Some(json!({ "thinkingLevel": "LOW" })),
         Thinking::GeminiBudgetZero => Some(json!({ "thinkingBudget": 0 })),
-        Thinking::None | Thinking::Disabled | Thinking::EnableFalse | Thinking::KimiLow => None,
+        Thinking::None
+        | Thinking::Disabled
+        | Thinking::EnableFalse
+        | Thinking::KimiLow
+        | Thinking::TemplateKwargsOff => None,
     };
     if let Some(t) = thinking {
         insert(&mut config, "thinkingConfig", t);

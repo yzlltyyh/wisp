@@ -10,6 +10,7 @@ export const SETTINGS_SECTIONS = [
   'general',
   'hotkeys',
   'providers',
+  'offline',
   'translate',
   'ocr',
   'clipboard',

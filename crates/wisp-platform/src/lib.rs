@@ -13,10 +13,13 @@ use std::sync::Arc;
 
 use wisp_types::{MonitorId, Point};
 
+pub mod child;
 pub mod common;
 pub mod error;
+pub mod pressure;
 pub mod process;
 pub mod reason;
+pub mod system;
 pub mod traits;
 pub mod types;
 

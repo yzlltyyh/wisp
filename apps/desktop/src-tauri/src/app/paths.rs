@@ -1,8 +1,12 @@
 //! 配置、数据、日志目录：基于 `dirs` **显式拼出 `wisp`**，不使用带 bundle id 的 `app_*_dir`。
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::error::IpcError;
+
+/// 覆盖离线模型目录的环境变量（测试与真机验证用，见 [`Paths::models_dir`]）
+pub const MODELS_DIR_ENV: &str = "WISP_MODELS_DIR";
 
 /// 应用目录
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +83,22 @@ impl Paths {
     pub fn state_file(&self) -> PathBuf {
         self.config_dir.join("state.json")
     }
+
+    /// 离线模型与推理运行时：`data_dir/models/`（Windows 的 LOCALAPPDATA 不漫游，正适合放 GB 级文件）。
+    /// 环境变量 `WISP_MODELS_DIR` 可以改到别处，但只在 debug 构建或冒烟模式下生效——发布版不让一个环境变量把下载写到别处，
+    /// 测试也不会写进用户真实的目录
+    pub fn models_dir(&self) -> PathBuf {
+        let allow_override = cfg!(debug_assertions) || super::smoke::enabled();
+        models_dir_for(&self.data_dir, allow_override, std::env::var_os(MODELS_DIR_ENV))
+    }
+}
+
+/// [`Paths::models_dir`] 的实现（覆盖是否允许、覆盖值由调用方给出，便于测试）
+fn models_dir_for(data_dir: &std::path::Path, allow_override: bool, value: Option<OsString>) -> PathBuf {
+    match value.filter(|v| allow_override && !v.is_empty()) {
+        Some(dir) => PathBuf::from(dir),
+        None => data_dir.join("models"),
+    }
 }
 
 /// 日志目录：macOS `~/Library/Logs/wisp`；Windows `%LOCALAPPDATA%\wisp\logs`；Linux `$XDG_STATE_HOME/wisp/logs`；
@@ -141,6 +161,23 @@ mod tests {
             p.settings_file()
                 .ends_with(std::path::Path::new("wisp").join("settings.json"))
         );
+    }
+
+    /// 模型目录默认在 data_dir 下；覆盖只在允许时生效，空值不算
+    #[test]
+    fn models_dir_override_is_gated() {
+        let data = std::path::Path::new("/data/wisp");
+        assert_eq!(models_dir_for(data, false, None), data.join("models"));
+        assert_eq!(
+            models_dir_for(data, false, Some(OsString::from("/tmp/m"))),
+            data.join("models"),
+            "发布版不认环境变量"
+        );
+        assert_eq!(
+            models_dir_for(data, true, Some(OsString::from("/tmp/m"))),
+            PathBuf::from("/tmp/m")
+        );
+        assert_eq!(models_dir_for(data, true, Some(OsString::new())), data.join("models"));
     }
 
     #[test]

@@ -989,6 +989,15 @@ impl SettingsService {
         {
             return Err(IpcError::invalid_argument("style.model_ref is incomplete"));
         }
+        // 风格绑定随同步到其他设备：不能指向只属于本机的离线模型（保留的服务商 id）
+        if s.model_ref
+            .as_ref()
+            .is_some_and(|m| validate::is_reserved_provider_id(&m.provider_id))
+        {
+            return Err(IpcError::invalid_argument(
+                "style.model_ref must not use a reserved provider",
+            ));
+        }
         if styles_store::is_builtin(&s.id) {
             let base = wisp_prompts::builtin_styles()
                 .into_iter()
@@ -1772,6 +1781,8 @@ fn keep_local_settings(next: &mut Settings, current: &Settings) {
     next.clipboard.enabled = current.clipboard.enabled;
     next.clipboard.secret_detection = current.clipboard.secret_detection;
     next.ocr.history = current.ocr.history;
+    // 离线模型的选择只属于本机（隐私：同步不能把这台设备从离线改回云端）
+    next.offline = current.offline;
 }
 
 /// 「文件来自更新的版本」的提示（`SettingsIssueKind::NewerVersion`）
@@ -2108,7 +2119,7 @@ pub(crate) mod tests {
     fn first_run_writes_default_settings() {
         let (_dir, svc) = test_service();
         let on_disk = read_json(&svc.paths().settings_file());
-        assert_eq!(on_disk["schema_version"], 1);
+        assert_eq!(on_disk["schema_version"], wisp_types::SETTINGS_SCHEMA_VERSION);
         assert_eq!(on_disk["general"]["update_policy"], "notify");
         // f32 字段写盘为 0.6（直接从强类型序列化，不经 Value 中转）
         let text = std::fs::read_to_string(svc.paths().settings_file()).expect("read");
@@ -2266,7 +2277,10 @@ pub(crate) mod tests {
         let backup = issue.backup_path.expect("backup");
         assert_eq!(std::fs::read(&backup).expect("backup"), b"{ \"general\": ");
         // 默认值已写回，文件现在是合法 JSON
-        assert_eq!(read_json(&paths.settings_file())["schema_version"], 1);
+        assert_eq!(
+            read_json(&paths.settings_file())["schema_version"],
+            wisp_types::SETTINGS_SCHEMA_VERSION
+        );
     }
 
     #[test]
@@ -2309,8 +2323,12 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let paths = test_paths(dir.path());
         std::fs::create_dir_all(&paths.config_dir).expect("mkdir");
-        let text = r#"{"appearance": {"theme": "Dark", "font_size": 16}, "general": {"start_hidden": false}}"#;
-        std::fs::write(paths.settings_file(), text).expect("write");
+        // 当前版本的文件（旧版本的文件会在迁移后写回一次，那是另一回事）
+        let text = format!(
+            r#"{{"schema_version": {}, "appearance": {{"theme": "Dark", "font_size": 16}}, "general": {{"start_hidden": false}}}}"#,
+            wisp_types::SETTINGS_SCHEMA_VERSION
+        );
+        std::fs::write(paths.settings_file(), &text).expect("write");
         let svc = SettingsService::load_for_tests(&paths);
         let s = svc.get();
         assert_eq!(s.appearance.theme, ThemePref::System, "非法枚举只退回这一项");
@@ -3130,6 +3148,8 @@ pub(crate) mod tests {
                 doc["clipboard"]["enabled"] = json!(false);
                 doc["clipboard"]["secret_detection"] = json!(false);
                 doc["ocr"]["history"] = json!(true);
+                doc["offline"] =
+                    json!({"ocr_model": "pp_ocrv6_small", "translate_model": "index_translate_9b", "use_gpu": false});
                 // 全局设置照常应用
                 doc["translate"]["long_text_threshold"] = json!(5000);
                 Some(doc)
@@ -3146,6 +3166,7 @@ pub(crate) mod tests {
         assert_eq!(after.clipboard.enabled, before.clipboard.enabled);
         assert_eq!(after.clipboard.secret_detection, before.clipboard.secret_detection);
         assert_eq!(after.ocr.history, before.ocr.history);
+        assert_eq!(after.offline, before.offline, "离线模型的选择只属于本机");
         assert!(rx.has_changed().expect("open"), "副作用与 settings:changed 照常发生");
         assert_eq!(
             read_json(&svc.paths().settings_file())["translate"]["long_text_threshold"],

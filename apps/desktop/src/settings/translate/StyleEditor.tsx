@@ -15,6 +15,7 @@ import { AnimatePresence, m } from 'motion/react'
 import { useRef, useState } from 'react'
 import { usePlatform } from '../../shared/hooks/usePlatform'
 import { useT } from '../../shared/i18n/useT'
+import { isOcrService } from '../../shared/offline/catalog'
 import { api } from '../../shared/ipc'
 import type {
   HotkeyStatus,
@@ -121,15 +122,18 @@ export function StyleEditor({
   const ref = style.model_ref ? modelRefState(style.model_ref, providers) : null
   const modelOptions = [
     { value: '', label: t('settings.styles.model_default') },
-    ...providers.flatMap((p) =>
-      p.models
-        .filter((mm) => mm.enabled)
-        .map((mm) => ({
-          value: refKey({ provider_id: p.id, model_id: mm.id }) as string,
-          label: mm.label?.trim() || mm.id,
-          hint: providerName(p),
-        })),
-    ),
+    // 文字识别服务（PaddleOCR）不能翻译，不能绑定给风格
+    ...providers
+      .filter((p) => !isOcrService(p))
+      .flatMap((p) =>
+        p.models
+          .filter((mm) => mm.enabled)
+          .map((mm) => ({
+            value: refKey({ provider_id: p.id, model_id: mm.id }) as string,
+            label: mm.label?.trim() || mm.id,
+            hint: providerName(p),
+          })),
+      ),
   ]
   // 绑定的模型已失效：仍然把它显示出来（标红），而不是假装没绑定
   if (style.model_ref && ref !== 'ok') {

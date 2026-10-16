@@ -1,0 +1,17 @@
+{
+  "id": "paddleocr_vl_1_6",
+  "kind": "ocr",
+  "download_bytes": 31040000,
+  "pending_runtime_bytes": 0,
+  "state": {
+    "state": "failed",
+    "code": "disk_full"
+  },
+  "load": "unloaded",
+  "memory_estimate_mb": 300,
+  "fitness": {
+    "level": "unknown",
+    "reason_key": "settings.offline.fitness.gpu_unknown"
+  },
+  "update_available": false
+}

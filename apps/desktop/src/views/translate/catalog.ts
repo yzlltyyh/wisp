@@ -8,7 +8,9 @@
  * - 视图在快照到达之前按内置默认值工作（`FALLBACK_STYLE_ORDER` 等），快照到达后只触发一次重渲染。
  */
 import { useEffect, useSyncExternalStore } from 'react'
+import { t as tr } from '../../shared/i18n/i18n'
 import { api, on } from '../../shared/ipc'
+import { TRANSLATE_MODELS, isOcrService, offlineRef } from '../../shared/offline/catalog'
 import type {
   Lang,
   ModelRef,
@@ -178,18 +180,32 @@ export function translateSettings(
   }
 }
 
-/** 可选的模型（启用的模型，按服务分组）；模型 label 为空时显示 id */
+/**
+ * 可选的模型（启用的模型，按服务分组）；模型 label 为空时显示 id。这台设备上已下载的离线翻译模型排在最前（一次性指定，
+ * 不改设置）；文字识别服务（PaddleOCR）不能翻译，不列出
+ */
 export function modelChoices(s: SettingsSnapshot | null): ModelChoice[] {
   const providers: Provider[] = s?.settings.providers ?? []
-  return providers.flatMap((p) =>
-    p.models
-      .filter((m) => m.enabled)
-      .map((m) => ({
-        ref: { provider_id: p.id, model_id: m.id },
-        label: m.label || m.id,
-        providerName: p.name || p.id,
-      })),
-  )
+  const installed = s?.runtime.offline?.installed ?? []
+  const offline = TRANSLATE_MODELS.filter((id) => installed.includes(id)).map((id) => ({
+    ref: offlineRef(id),
+    label: tr(`common.offline_model.${id}`),
+    providerName: tr('panel.offline.group'),
+  }))
+  return [
+    ...offline,
+    ...providers
+      .filter((p) => !isOcrService(p))
+      .flatMap((p) =>
+        p.models
+          .filter((m) => m.enabled)
+          .map((m) => ({
+            ref: { provider_id: p.id, model_id: m.id },
+            label: m.label || m.id,
+            providerName: p.name || p.id,
+          })),
+      ),
+  ]
 }
 
 export function providerOf(s: SettingsSnapshot | null, id: string | null): Provider | null {

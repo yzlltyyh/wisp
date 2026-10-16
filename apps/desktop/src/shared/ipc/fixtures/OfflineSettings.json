@@ -1,0 +1,7 @@
+{
+  "ocr_model": "pp_ocrv6_small",
+  "translate_model": "index_translate_9b",
+  "idle_release_min": 15,
+  "use_gpu": false,
+  "download_source": "model_scope"
+}

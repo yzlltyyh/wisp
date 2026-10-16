@@ -12,8 +12,9 @@
 | [tao](#tao-0371) | 0.37.1 | `37b7e8bc90a050e93be988df636f322c3ef147b6` | macOS | 销毁窗口后视图与窗口委托对象不释放 |
 | [notify](#notify-820) | 8.2.0 | `a1d7c2d8f80786679d58ec6d5986a1d4278bc8cf`（`notify/` 子目录） | Windows | 文件监听线程每 100 ms 空转唤醒 |
 | [tray-icon](#tray-icon-0251) | 0.25.1 | `b09ceda9f7357b4a1f6bc361fd912a7dfca077cc` | Windows | 托盘「离开检测」定时器停不下来，UI 线程持续唤醒 |
+| [oar-ocr / oar-ocr-core](#oar-ocr--oar-ocr-core-0100) | 0.10.0 | `f755256f260d3760a062a6051d23826958972c33` | 全部 | 只用文字检测与识别，却经特性合并链进全部图片解码器（含 AV1 编码器）和带 C 代码的 `tokenizers`；检测框与识别输入和官方 PaddleOCR 产线有像素级差异 |
 
-四个副本都在 `src/lib.rs` 里加了 crate 级 `#![allow(warnings)]`：路径依赖不像 registry 依赖那样带
+所有副本都在 `src/lib.rs` 里加了 crate 级 `#![allow(warnings)]`：路径依赖不像 registry 依赖那样带
 `--cap-lints allow`，CI 的 `RUSTFLAGS=-D warnings` 会把上游的弃用 / 未知 cfg 等警告变成错误。
 
 每个补丁都有一条守护单测：`Cargo.lock` 里的这个 crate 不再来自 vendor（没有 `source`）、版本变了、或补丁代码丢了时失败，
@@ -163,3 +164,81 @@ tauri 2.12.2 的托盘实现。Windows 的托盘图标收不到 `WM_MOUSELEAVE`�
 升级 tauri / tray-icon 时：先看上游（tauri-apps/tray-icon，`src/platform_impl/windows/mod.rs` 的 `WM_TIMER` 处理）是否已修复；
 修复了就删掉 `[patch.crates-io]` 的 tray-icon 与本目录，否则把第 1 处移植到新版本。两种情况都在 Windows 上跑一次
 `scripts/perf/windows-tray-probe.ps1`（`-Mode Input` 与 `-Mode Post`），看悬停、停住、移开之后 UI 线程的唤醒。
+
+---
+
+## oar-ocr / oar-ocr-core 0.10.0
+
+本地 PP-OCRv6 的检测与识别用 oar-ocr 的 `OAROCRBuilder`（det + rec），只在 ORT 工作进程里执行。上游的依赖声明让三样
+用不到的东西进了安装包：
+
+- `oar-ocr`、`oar-ocr-core` 依赖 `image` 与 `imageproc` 时都用默认特性，`imageproc` 的默认特性又打开 `image/default`。
+  Cargo 的特性合并让整个工作区的 `image` 打开全部解码器（avif + rav1e 编码器、exr、tiff、webp、gif、qoi……），
+  `wisp-capture` 里按内容猜格式的 `image::load_from_memory` 于是把它们都链接进来；
+- `oar-ocr-core` 无条件依赖 `tokenizers`（`onig` 特性带 Oniguruma 的 C 代码），而它只被公式识别用到；
+- 随之而来的 92 个 crate 进了第三方许可清单（其中 rav1e、exr 等是 BSD 许可）。
+
+同一份 release profile 的最小程序实测（macOS arm64，只解 png + jpeg 的基线 567 584 B）：直接依赖上游并调用 det + rec
+为 1 959 872 B（+1.39 MB），换成本补丁后 1 066 304 B（**+0.50 MB**）。
+
+**1. 新增 `formula` 特性**（两个 crate 的 `Cargo.toml`；`oar-ocr-core/src/domain/adapters/mod.rs`、
+`oar-ocr-core/src/predictors/mod.rs`、`oar-ocr/src/oarocr/structure.rs`）
+
+`oar-ocr-core` 的 `tokenizers` 改为可选，`formula = ["dep:tokenizers"]`；公式识别的适配器与预测器模块按它编译。
+`oar-ocr` 新增 `formula = ["oar-ocr-core/formula"]`，结构化产线（`OARStructureBuilder`）里公式识别的字段、构造、
+`with_formula_recognition` 与识别步骤按它编译；关掉时 `recognize_formulas` 返回空、公式区域不在 OCR 前被涂白（与
+上游「没配公式模型」时的行为相同）。三处只在开了公式识别时才有意义的单测同样按它编译。
+
+**2. 新增 `image-formats` 特性**（两个 crate 的 `Cargo.toml`）
+
+`image`、`imageproc` 改为 `default-features = false`（OCR 只处理内存里的像素，`imageproc` 用到的轮廓、形态学、距离变换
+都不依赖它的可选特性），`image-formats = ["image/default"]`（`oar-ocr` 同时转发给 `oar-ocr-core`）。
+
+两个新特性都在 `default` 里，默认构建与上游行为一致；Wisp 以 `default-features = false` 依赖 `oar-ocr`，两者都不开。
+补丁按可以提交给上游的形态写（改动只是特性开关与 `#[cfg]`），已在开与不开两种组合下编译通过。
+
+**3. 其他**：`oar-ocr` 去掉 `[[example]]` 目标（副本不带 `examples/`、`docs/`）；`oar-ocr-core` 的发布包里没有许可证文件，
+副本放了同一仓库（`oar-ocr` 发布包里）的 Apache-2.0 `LICENSE`。两个发布包都没有 NOTICE 文件。
+
+**4. 预处理与后处理与官方 PaddleOCR 产线逐像素对齐**（`oar-ocr-core/src/processors/opencv/` 新增；
+`processors/resize_detection.rs`、`db_bitmap.rs`、`db_score.rs`、`db_postprocess.rs`、`sorting.rs`、`resize_recognition.rs`、
+`models/recognition/crnn.rs`、`utils/transform.rs`、`utils/mod.rs`；`oar-ocr/src/oarocr/processors.rs`）
+
+官方产线（PaddleX 3.7）的结果由 OpenCV 与 pyclipper 的定点运算、坐标约定与并列取舍决定，上游的近似实现让检测框差一两个像素、
+个别边界区域过不了 `box_thresh`，识别输入也不同（黄金样例 6 张图 × tiny / small 只有 317 / 397 行「文字一致且 IoU ≥ 0.9」）。
+补丁把这些步骤按 OpenCV 4.10 / Clipper 6.4.2 的通用代码路径逐步移植（`processors::opencv`，注明出处并保留许可声明），
+接到原来的位置上：
+
+- 检测输入尺寸：比例与截断用双精度，32 对齐用 Python `round()`（银行家舍入，`max(int(round(x / 32) * 32), 32)`）；
+  上游的 `(x + 16) / 32 * 32` 把恰为 16 奇数倍的边向上取，例如高 528 得 544（官方 512）；
+- 缩放：`cv2.resize` 的 `INTER_LINEAR`（半像素中心、11 位定点系数、纵向的移位舍入、恰好 2 倍缩小时走 `INTER_AREA`）。
+  上游用 image-rs 的 `Triangle`，缩小时会加宽核（抗锯齿），与 OpenCV 差几个灰度级；`DetResizeForTest` 默认用移植版
+  （`with_filter` 仍可换回 image-rs 的滤波器），识别输入同样换成移植版；
+- DB 后处理：`cv2.minAreaRect`（Sklansky 凸包 + 旋转卡壳，float 运算与并列取舍照搬）与 `cv2.boxPoints`；`box_score_fast` 用
+  `cv2.fillPoly` 的掩码（坐标先截断成整数，含 8 连通的边线像素）并以双精度求均值，`box_thresh` 按十进制值比较；`unclip` 用
+  pyclipper 的整数外扩（坐标截断、圆角 `ArcTolerance 0.25`、远离零舍入，输出的起点与 Clipper 相同），上游是 Clipper2
+  的浮点外扩；轮廓按 `cv2.findContours(RETR_LIST)` 的顺序（发现顺序的倒序）取前 `max_candidates` 个；缩放回原图用双精度
+  乘法与银行家舍入；
+- 文本行裁剪：按 PaddleX `CropByPolys.get_minarea_rect_crop` 先取检测框的最小外接矩形再裁；`get_rotate_crop_image` 的输出
+  尺寸是两组对边长度最大值的截断（上游四舍五入），在整张图上用 `cv2.warpPerspective(INTER_CUBIC, BORDER_REPLICATE)` 的
+  定点双三次（1/32 像素量化、`A = -0.75`、15 位系数）采样，上游是浮点 Catmull-Rom（`A = -0.5`）并先裁出外接矩形
+  （边缘像素被复制而不是取真实邻点）；整数的轴对齐框直接拷贝（与双三次在整数位置的结果相同）；
+- 识别输入宽度：`int(48 * max_wh_ratio)`、`ceil(48 * w / h)` 用双精度（上游 f32 偶尔差一列），超过 3200 时整批拉到 3200；
+- 阅读顺序：`sort_quad_boxes` 按第一个顶点（左上角）排序，与 PaddleX `SortQuadBoxes` 相同（上游用外接矩形的最小值）。
+
+移植代码的许可：OpenCV 4.5.0 起整体以 Apache-2.0 发布，这几个源文件头部仍保留原有的 3-clause BSD 声明（Intel / Willow Garage / OpenCV Foundation / Itseez），
+两者都要求二进制分发时随附许可与版权声明，所以在 `scripts/licenses-extra.json` 登记为 `opencv`（Apache-2.0 AND BSD-3-Clause）；Clipper 6.4.2 是 BSL-1.0
+（只要求源码保留声明，已在 `clipper.rs` 头部保留），同样登记一项。两份声明原文都在 `processors/opencv/` 的源码注释里。
+
+改动以「Wisp patch」注释标出，接口保持兼容（新增 `processors::opencv`、`utils::get_minarea_rect_crop`、
+`DBPostProcess::apply_map` / `box_score_fast_cv`、`OCRResize::paddle_widths`、`DetResizeForTest::opencv_linear`），
+上游自带的单测在补丁后仍全部通过（需要真实 ONNX Runtime 的一项除外）。对齐由 `crates/wisp-local/tests/ocr_opencv_parity.rs`
+守护：参考数据（`tests/fixtures/ppocr/parity/`）由官方产线所用的同一批 Python 函数生成，缩放、裁剪逐字节相同，
+最小外接矩形逐位相同，外扩顶点序列与 DB 框完全相同。补丁后同一份像素输入的黄金样例（`ocr_live`）在两档上文字与框完全一致。
+
+守护单测：`oar_ocr_is_patched_so_unused_image_codecs_and_c_code_stay_out`（`crates/wisp-local/tests/ocr_vendor_patch.rs`，补丁 1–3）；
+`crates/wisp-local/tests/ocr_opencv_parity.rs`（补丁 4，补丁代码丢失时编译失败，行为偏离时比对失败）。
+
+升级 oar-ocr 时：先看上游是否已有等价的特性开关（`imageproc` 不开默认特性、`tokenizers` 可选）与等价的对齐实现；有了就删掉
+`[patch.crates-io]` 的两行与本目录，改用上游的特性；没有就把上面几处移植到新版本，重新跑 `pnpm run licenses`，用
+`cargo tree -i rav1e`、`cargo tree -i onig_sys` 确认它们不在依赖图里，并跑 `ocr_opencv_parity` 与 `ocr_live` 的黄金样例。

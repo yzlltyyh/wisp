@@ -76,9 +76,9 @@ const PROPER = new Set(
   Messages OpenAI Anthropic Google Gemini Qwen Alibaba Cloud Model Studio Zhipu GLM Volcengine Ark Doubao Moonshot Kimi
   LM SiliconFlow DeepSeek Ollama OpenRouter English Chinese Japanese Korean Simplified Traditional Tauri Ctrl Alt Shift
   Win Super Cmd Command Option Control Fn Esc Enter Tab Space Return Delete Backspace Right Left QQ iTerm2 Terminal Meta
-  Secure Input Bundle Models Translation Natural Base About General Hotkeys Appearance`.split(
-    /\s+/,
-  ),
+  Secure Input Bundle Models Translation Natural Base About General Hotkeys Appearance Microsoft Visual PaddleOCR Tiny
+  Small PaddleOCR-VL PaddleX AI Studio Index-Translate ModelScope Hugging Face GitHub ONNX Runtime Apache Apple Metal
+  Vulkan Markdown`.split(/\s+/),
 )
 
 describe.each(LANGS)('文案一致性 · %s', (lang) => {

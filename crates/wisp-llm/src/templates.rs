@@ -1,5 +1,6 @@
-//! 16 个厂商模板及其 quirks / 超时预填（顺序即设置页里的显示顺序）。本地模板（Ollama / LM Studio）的
-//! `first_token_ms` 和 `idle_ms` 都是 120000；所有 Provider 的 Key 都是可选的。
+//! 17 个服务模板及其 quirks / 超时预填（顺序即设置页里的显示顺序）：16 个 LLM 服务，以及 PaddleOCR 云端文字识别
+//! （`paddle_ocr` 协议，预置模型、不支持获取模型列表）。本地模板（Ollama / LM Studio）的 `first_token_ms` 和 `idle_ms`
+//! 都是 120000；所有 Provider 的 Key 都是可选的。
 //!
 //! `key_required` 只是界面提示（云端服务通常需要 Key），保存与请求时 Key 一律可选：为空就不发鉴权头。
 //! `name_key` / `label_key` 是前端 settings.json 命名空间的 i18n key（文案在前端 locales 里），这里写成完整字面量，
@@ -8,7 +9,8 @@
 use std::collections::BTreeMap;
 
 use wisp_types::{
-    MaxTokensField, Protocol, Provider, ProviderTemplate, Quirks, RegionVariant, TemplateGroup, ThinkingOff, Timeouts,
+    MaxTokensField, ModelEntry, Protocol, Provider, ProviderTemplate, Quirks, RegionVariant, TemplateGroup,
+    ThinkingOff, Timeouts,
 };
 
 /// 本地模型冷启动可能超过 30 s
@@ -28,6 +30,8 @@ struct Spec {
     key_required: bool,
     local: bool,
     regions: &'static [(&'static str, &'static str)],
+    /// 预置的模型（没有模型列表端点的服务用）
+    models: &'static [&'static str],
 }
 
 /// 默认值：OpenAI 兼容、剥离 `<think>`、云端服务
@@ -45,9 +49,10 @@ const BASE: Spec = Spec {
     key_required: true,
     local: false,
     regions: &[],
+    models: &[],
 };
 
-const SPECS: [Spec; 16] = [
+const SPECS: [Spec; 17] = [
     // 推理模型不发 temperature、用 max_completion_tokens；官方端点不会内联 <think>
     Spec {
         id: "openai",
@@ -236,6 +241,19 @@ const SPECS: [Spec; 16] = [
         max_tokens_field: Some(MaxTokensField::MaxCompletionTokens),
         ..BASE
     },
+    // 文字识别服务（不是 LLM）：默认是 AI Studio 的异步任务接口；也可以填 AI Studio 部署的服务或自托管 PaddleX 的
+    // serving 地址（`…/ocr`、`…/layout-parsing`）。Token 是 AI Studio 的访问令牌
+    Spec {
+        id: "paddleocr",
+        name: "PaddleOCR",
+        name_key: "settings.providers.template.paddleocr",
+        group: TemplateGroup::Ocr,
+        protocol: Protocol::PaddleOcr,
+        base_url: "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
+        strip_think_tags: false,
+        models: &["PP-OCRv6", "PP-StructureV3", "PaddleOCR-VL-1.6"],
+        ..BASE
+    },
 ];
 
 impl Spec {
@@ -263,7 +281,7 @@ impl Spec {
                 dual_auth_header: None,
                 gemini_key_in_query: false,
             },
-            models: Vec::new(),
+            models: self.models.iter().map(|id| ModelEntry::new(*id)).collect(),
             timeouts,
             template_id: Some(self.id.to_owned()),
         }
@@ -288,7 +306,7 @@ impl Spec {
     }
 }
 
-/// 全部模板（16 个，顺序固定）
+/// 全部模板（17 个，顺序固定）
 pub fn templates() -> Vec<ProviderTemplate> {
     SPECS.iter().map(Spec::template).collect()
 }
@@ -313,7 +331,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sixteen_templates_in_order() {
+    fn templates_in_order() {
         let ids: Vec<String> = templates().into_iter().map(|t| t.id).collect();
         assert_eq!(
             ids,
@@ -334,8 +352,27 @@ mod tests {
                 "ollama",
                 "lmstudio",
                 "relay",
+                "paddleocr",
             ]
         );
+    }
+
+    /// PaddleOCR 是文字识别服务：单独的分组，预置模型，地址就是完整的接口地址
+    #[test]
+    fn paddleocr_template() {
+        let t = templates()
+            .into_iter()
+            .find(|t| t.id == "paddleocr")
+            .expect("paddleocr");
+        assert_eq!(t.group, TemplateGroup::Ocr);
+        assert_eq!(t.provider.protocol, Protocol::PaddleOcr);
+        assert!(t.key_required);
+        let models: Vec<&str> = t.provider.models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(models, ["PP-OCRv6", "PP-StructureV3", "PaddleOCR-VL-1.6"]);
+        // 只有 PaddleOCR 是非 LLM 协议，也只有它在 ocr 分组
+        for t in templates() {
+            assert_eq!(t.provider.protocol.is_llm(), t.group != TemplateGroup::Ocr, "{}", t.id);
+        }
     }
 
     #[test]

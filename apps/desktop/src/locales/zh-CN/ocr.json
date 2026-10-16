@@ -21,7 +21,8 @@
     "size_px": "{width} × {height} px",
     "size_physical": "截图原图 {width} × {height} 像素",
     "failed": "识别失败",
-    "edited": "已编辑"
+    "edited": "已编辑",
+    "partial": "部分区域未能识别"
   },
   "mode_hint": {
     "lines": "逐行，保留换行与缩进",
@@ -30,12 +31,15 @@
   },
   "menu": {
     "modes": "识别模式",
-    "models": "视觉模型",
+    "models": "识别模型",
     "unknown_vision": "未确认是否支持图片",
     "no_models": "没有可用的视觉模型",
     "ocr_settings": "OCR 设置…",
     "retake": "重新截图",
-    "history": "识别历史…"
+    "history": "识别历史…",
+    "offline": "离线模型",
+    "cloud": "视觉模型",
+    "mode_unsupported": "{model} 只识别文字，不支持结构化"
   },
   "action": {
     "recognize_again": "重新识别",
@@ -64,5 +68,15 @@
     "retrigger": "在系统设置里打开开关后，点「重新启动 Wisp」，之后按 {key} 截图。",
     "retrigger_plain": "在系统设置里打开开关后，点「重新启动 Wisp」，之后重新截图即可。",
     "capture_backend_short": "可能被其他截图工具占用，或显示器刚刚变化。"
+  },
+  "wait": {
+    "queued_slow": "PP-StructureV3 通常较慢，服务繁忙时要等几十秒"
+  },
+  "preview": {
+    "show_source": "显示 Markdown 源码",
+    "show_preview": "显示表格预览",
+    "formula": "公式",
+    "copy_formula": "复制公式",
+    "table": "表格"
   }
 }

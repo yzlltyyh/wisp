@@ -80,7 +80,8 @@ fn default_hint(code: ErrorCode) -> Option<&'static str> {
         ErrorCode::Timeout => HINT_ADJUST_TIMEOUT,
         ErrorCode::Protocol => HINT_CHECK_PROTOCOL,
         ErrorCode::NotConfigured => HINT_CHECK_SETTINGS,
-        ErrorCode::Cancelled | ErrorCode::Keychain | ErrorCode::Internal => return None,
+        // 离线模型的错误由推理进程的托管方按原因给出 `errors.hint.local.*`
+        ErrorCode::Cancelled | ErrorCode::Keychain | ErrorCode::Internal | ErrorCode::LocalRuntime => return None,
     })
 }
 
@@ -116,6 +117,11 @@ pub(crate) fn protocol(message: impl AsRef<str>, url: &str) -> LlmError {
 /// 本地配置缺失（base_url / 模型为空）
 pub(crate) fn not_configured(message: impl AsRef<str>) -> LlmError {
     make(ErrorCode::NotConfigured, message)
+}
+
+/// 服务商不是 LLM 服务（PaddleOCR 云端只能用于文字识别，由 wisp-local 的云端客户端访问）
+pub(crate) fn not_llm() -> LlmError {
+    not_configured("this provider is a text recognition service, not an LLM")
 }
 
 /// 内部错误（不该发生）
@@ -525,7 +531,8 @@ fn classify_429(protocol: Protocol, hay: &str, has_retry_after: bool) -> ErrorCo
                 ErrorCode::RateLimited
             }
         }
-        Protocol::OpenAiChat | Protocol::OpenAiResponses => {
+        // PaddleOCR 不走 wisp-llm 的请求（构造阶段已拒绝），只为穷尽匹配
+        Protocol::OpenAiChat | Protocol::OpenAiResponses | Protocol::PaddleOcr => {
             if any_word(
                 hay,
                 &[

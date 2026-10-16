@@ -19,14 +19,13 @@ import { m } from 'motion/react'
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react'
 import { useT } from '../../shared/i18n/useT'
 import { api } from '../../shared/ipc'
-import type { ModelRef, Provider, ProviderTemplate } from '../../shared/ipc/types'
+import type { Provider, ProviderTemplate } from '../../shared/ipc/types'
 import { adaptPreset, presets } from '../../shared/motion/presets'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
 import { Badge, Banner, Button, Icon, Section } from '../../shared/ui'
 import { useSettingsNav } from '../context'
 import { Page } from '../components/Page'
 import { ipcErrorText } from '../lib/errors'
-import { at } from '../lib/patch'
 import { useSubviewNav } from '../lib/subview'
 import { currentSettings, notify, patchSettings, useRuntime, useSettings } from '../store'
 import { DefaultModelFields } from '../providers/DefaultModels'
@@ -181,7 +180,6 @@ export default function ProvidersPage() {
     body = (
       <ProviderList
         providers={settings.providers}
-        defaults={settings.defaults}
         templates={templates}
         onOpen={(id, keyboard) => go({ kind: 'edit', id }, keyboard ? `provider:${id}` : null)}
         onAdd={(keyboard) => go({ kind: 'pick' }, keyboard ? 'provider-add' : null)}
@@ -208,7 +206,6 @@ export default function ProvidersPage() {
 
 function ProviderList({
   providers,
-  defaults,
   templates,
   onOpen,
   onAdd,
@@ -216,7 +213,6 @@ function ProviderList({
   creating,
 }: {
   providers: readonly Provider[]
-  defaults: { translate: ModelRef | null; ocr: ModelRef | null }
   templates: readonly ProviderTemplate[] | null
   onOpen: (id: string, keyboard: boolean) => void
   onAdd: (keyboard: boolean) => void
@@ -352,12 +348,7 @@ function ProviderList({
         title={t('settings.defaults.title')}
         description={t('settings.defaults.description')}
       >
-        <DefaultModelFields
-          providers={providers}
-          translate={defaults.translate}
-          ocr={defaults.ocr}
-          onChange={(which, ref) => void patchSettings(at(`defaults.${which}`, ref))}
-        />
+        <DefaultModelFields offline />
       </Section>
     </Page>
   )

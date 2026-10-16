@@ -147,7 +147,8 @@
     "macOS": {
       "signingIdentity": "-",
       "minimumSystemVersion": "14.0",
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "entitlements": "Entitlements.plist"
     },
     "windows": {
       "webviewInstallMode": {

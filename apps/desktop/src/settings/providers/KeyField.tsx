@@ -26,6 +26,7 @@ export function KeyField({
   draftHint,
   onSubmit,
   rejected = false,
+  copy,
 }: {
   entry: KeyEntry
   required: boolean
@@ -38,6 +39,8 @@ export function KeyField({
   onSubmit?: () => void
   /** 最近一次测试被服务拒绝（401 / 403）：在输入框下就地提示 */
   rejected?: boolean
+  /** 换掉「API Key」的叫法（PaddleOCR 叫访问令牌）：输入框的无障碍名称、占位、被拒绝 / 缺少时的提示 */
+  copy?: { label: string; placeholder: string; rejected: string; required: string }
 }) {
   const t = useT()
   const os = usePlatform()
@@ -61,7 +64,9 @@ export function KeyField({
     </p>
   ) : rejected ? (
     <p className="st-field-hint" data-tone="danger" data-testid="key-rejected">
-      {hasSome ? t('settings.providers.key_rejected') : t('settings.providers.key_required')}
+      {hasSome
+        ? (copy?.rejected ?? t('settings.providers.key_rejected'))
+        : (copy?.required ?? t('settings.providers.key_required'))}
     </p>
   ) : keychain !== 'available' ? (
     <p className="st-field-hint" data-tone="warning">
@@ -92,11 +97,12 @@ export function KeyField({
               else void entry.commit()
             }}
             placeholder={
-              required
+              copy?.placeholder ??
+              (required
                 ? t('settings.providers.key_placeholder')
-                : t('settings.providers.key_optional')
+                : t('settings.providers.key_optional'))
             }
-            aria-label={t('settings.providers.key')}
+            aria-label={copy?.label ?? t('settings.providers.key')}
             // oxlint-disable-next-line jsx-a11y/no-autofocus -- 刚选了模板新建服务：下一步就是填 Key
             autoFocus={focusOnMount}
             invalid={entry.error !== null || rejected}

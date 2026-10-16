@@ -21,6 +21,7 @@ wisp-clipboard = { path = "crates/wisp-clipboard" }
 wisp-capture = { path = "crates/wisp-capture" }
 wisp-platform = { path = "crates/wisp-platform", default-features = false }
 wisp-sync = { path = "crates/wisp-sync" }
+wisp-local = { path = "crates/wisp-local" }
 
 # ---- Tauri 族（精确版本，全部锁在 2.x，不跟进 3.0 alpha）----
 tauri = { version = "=2.12.2", features = ["tray-icon", "image-png"] }
@@ -94,6 +95,13 @@ uuid = { version = "1.28.0", features = ["v4"] }
 parking_lot = "0.12.5"
 zip = { version = "9.0.0", default-features = false, features = ["deflate"] }
 dirs = "7.0.0"
+# 离线模型：llama.cpp 与 ONNX Runtime 的 .tar.gz 发布包（版本与锁文件中已有的一致；不需要扩展属性）
+tar = { version = "=0.4.46", default-features = false }
+
+# ---- 离线模型的推理（只在 wisp-local 的 `ort` feature 里；ONNX Runtime 动态库按需下载、运行时加载，不链接进安装包）----
+# oar-ocr 钉住 ort 的这个预发布版本，两者必须同步升级
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["load-dynamic"] }
+oar-ocr = { version = "=0.10.0", default-features = false }
 
 # ---- 同步（加密、压缩、WebDAV 响应解析；版本与锁文件中已有的一致）----
 ring = "=0.17.14"
@@ -161,8 +169,11 @@ opt-level = 2
 # tao 0.37.1（macOS）：TaoView / TaoWindowDelegate 的 `dealloc` 补上 `[super dealloc]`，销毁的窗口不再留下视图与委托对象
 # notify 8.2.0（Windows）：ReadDirectoryChangesW 服务线程改为无限期的可警报等待，不再每 100 ms 空转唤醒
 # tray-icon 0.25.1（Windows）：托盘「离开检测」定时器在光标离开或停住约 0.5 s 后关掉，不再常驻唤醒 UI 线程
+# oar-ocr / oar-ocr-core 0.10.0（体积）：`image` 与 `imageproc` 不再强开全部图片解码器，`tokenizers`（带 C 代码）收进公式识别的 feature
 [patch.crates-io]
 wry = { path = "vendor/wry" }
 tao = { path = "vendor/tao" }
 notify = { path = "vendor/notify" }
 tray-icon = { path = "vendor/tray-icon" }
+oar-ocr = { path = "vendor/oar-ocr" }
+oar-ocr-core = { path = "vendor/oar-ocr-core" }

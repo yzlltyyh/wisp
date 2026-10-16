@@ -11,8 +11,11 @@
  * - Esc：焦点在输入框里时只退出输入；否则返回列表。草稿有改动时先在底栏原地确认「放弃这个服务？」；
  *   在编辑器里再点一次侧栏的「模型与服务」同样走这条返回逻辑（context.ts 的 useReselect）；
  * - 滚动后顶部的紧凑标题显示服务名（useSubviewTitle）。
+ * 文字识别服务（PaddleOCR，`paddle_ocr`）用同一个编辑器，但它不是 LLM：没有协议选择与「高级」；地址叫「服务地址」，
+ * 下方说明识别出的接口类型（任务接口 / 部署的服务 / 无法识别，paddle.tsx）；Key 叫「访问令牌」，并提示只在本机使用；
+ * 模型表只有启用与删除（预置的三个可以增删，PP-StructureV3 注明较慢）；没有「拉取模型列表」。
  */
-import { ArrowLeft, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Plus, RefreshCw, ShieldAlert, Trash2, X } from 'lucide-react'
 import { m } from 'motion/react'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '../../shared/i18n/useT'
@@ -27,9 +30,11 @@ import type {
 } from '../../shared/ipc/types'
 import { useKeyScope } from '../../shared/keys/useKeyScope'
 import { usePreset } from '../../shared/motion/presets'
+import { isOcrService, isSlowCloudModel } from '../../shared/offline/catalog'
 import {
   Button,
   Field,
+  Icon,
   IconButton,
   NumberField,
   Section,
@@ -49,6 +54,7 @@ import { KeyField } from './KeyField'
 import { useKeyEntry } from './keyEntry'
 import { ProviderLogo } from './logos'
 import { ModelTable } from './ModelTable'
+import { PaddleUrlNote } from './paddle'
 import { providerQueueKey } from './persist'
 import {
   hostOf,
@@ -87,6 +93,7 @@ const THINKING_OFF: readonly ThinkingOff[] = [
   'glm',
   'kimi',
   'minimax',
+  'chat_template_kwargs',
 ]
 
 const MS_PER_S = 1000
@@ -260,6 +267,8 @@ export function ProviderEditor({
   useSubviewTitle(display)
   const host = hostOf(baseUrl.value)
   const openAiLike = provider.protocol === 'openai_chat' || provider.protocol === 'openai_responses'
+  /** 文字识别服务（PaddleOCR）：不是 LLM，表单精简（见文件头） */
+  const service = isOcrService(provider)
   const rejected = !test.stale && isAuthFailure(test.run)
   const keyPresent = key.present || !keyRequired
 
@@ -295,22 +304,24 @@ export function ProviderEditor({
             data-testid="provider-name"
           />
         </Field>
-        <Field
-          label={t('settings.providers.protocol')}
-          description={t(`settings.providers.protocol_desc.${provider.protocol}`)}
-        >
-          <Select<Protocol>
+        {service ? null : (
+          <Field
             label={t('settings.providers.protocol')}
-            value={provider.protocol}
-            options={PROTOCOLS.map((p) => ({
-              value: p,
-              label: t(`settings.providers.protocols.${p}`),
-            }))}
-            onChange={(v) => onChange({ ...provider, protocol: v })}
-            className="st-select"
-            data-testid="provider-protocol"
-          />
-        </Field>
+            description={t(`settings.providers.protocol_desc.${provider.protocol}`)}
+          >
+            <Select<Protocol>
+              label={t('settings.providers.protocol')}
+              value={provider.protocol}
+              options={PROTOCOLS.map((p) => ({
+                value: p,
+                label: t(`settings.providers.protocols.${p}`),
+              }))}
+              onChange={(v) => onChange({ ...provider, protocol: v })}
+              className="st-select"
+              data-testid="provider-protocol"
+            />
+          </Field>
+        )}
         {regions.length > 0 ? (
           <Field label={t('settings.providers.region_label')}>
             <Select<string>
@@ -328,31 +339,47 @@ export function ProviderEditor({
           </Field>
         ) : null}
         {/* 「以 # 结尾…」只在需要时由 UrlPreview 的提示说一次（自动补了版本段 / 已按原样请求），不在说明里重复 */}
-        <Field label={t('settings.providers.base_url')} stacked>
+        <Field
+          label={service ? t('settings.providers.paddle.url') : t('settings.providers.base_url')}
+          description={service ? t('settings.providers.paddle.url_desc') : undefined}
+          stacked
+        >
           <TextField
             ref={baseInput}
             value={baseUrl.value}
             onChange={baseUrl.set}
             onBlur={baseUrl.flush}
             onEnter={baseUrl.flush}
-            placeholder={t('settings.providers.base_url_placeholder')}
-            aria-label={t('settings.providers.base_url')}
+            placeholder={
+              service
+                ? t('settings.providers.paddle.url_placeholder')
+                : t('settings.providers.base_url_placeholder')
+            }
+            aria-label={
+              service ? t('settings.providers.paddle.url') : t('settings.providers.base_url')
+            }
             className="st-mono"
             invalid={placeholderRange(baseUrl.value) !== null}
             data-testid="provider-base-url"
           />
-          <UrlPreview
-            protocol={provider.protocol}
-            baseUrl={baseUrl.value}
-            modelId={provider.models.find((x) => x.enabled)?.id ?? null}
-          />
+          {service ? (
+            <PaddleUrlNote url={baseUrl.value} />
+          ) : (
+            <UrlPreview
+              protocol={provider.protocol}
+              baseUrl={baseUrl.value}
+              modelId={provider.models.find((x) => x.enabled)?.id ?? null}
+            />
+          )}
         </Field>
         <Field
-          label={t('settings.providers.key')}
+          label={service ? t('settings.providers.paddle.token') : t('settings.providers.key')}
           description={
-            keyRequired
-              ? t('settings.providers.key_desc')
-              : t('settings.providers.key_desc_optional')
+            service
+              ? t('settings.providers.paddle.token_desc')
+              : keyRequired
+                ? t('settings.providers.key_desc')
+                : t('settings.providers.key_desc_optional')
           }
           stacked
         >
@@ -364,11 +391,29 @@ export function ProviderEditor({
             draftHint={t('settings.providers.key_draft_hint')}
             onSubmit={() => void runTest()}
             rejected={rejected}
+            copy={
+              service
+                ? {
+                    label: t('settings.providers.paddle.token'),
+                    placeholder: t('settings.providers.paddle.token_placeholder'),
+                    rejected: t('settings.providers.paddle.token_rejected'),
+                    required: t('settings.providers.paddle.token_required'),
+                  }
+                : undefined
+            }
           />
+          {service ? (
+            <p className="st-field-hint" data-testid="paddle-token-risk">
+              <Icon icon={ShieldAlert} size={12} />
+              <span>{t('settings.providers.paddle.token_risk')}</span>
+            </p>
+          ) : null}
         </Field>
         <Field
           label={t('settings.providers.test')}
-          description={t('settings.providers.test_desc')}
+          description={
+            service ? t('settings.providers.paddle.test_desc') : t('settings.providers.test_desc')
+          }
           stacked
         >
           <div className="st-test-bar">
@@ -401,19 +446,24 @@ export function ProviderEditor({
 
       <Section
         title={t('settings.models.title')}
-        description={t('settings.models.description')}
+        description={
+          service ? t('settings.providers.paddle.models_desc') : t('settings.models.description')
+        }
         action={
-          <Button
-            size="sm"
-            variant="ghost"
-            icon={RefreshCw}
-            loading={fetcher.loading}
-            disabled={!baseUrl.value.trim()}
-            onClick={() => void fetchModels()}
-            data-testid="provider-fetch-models"
-          >
-            {t('settings.models.fetch')}
-          </Button>
+          // 文字识别服务没有模型列表接口：只能在下方手动增删
+          service ? null : (
+            <Button
+              size="sm"
+              variant="ghost"
+              icon={RefreshCw}
+              loading={fetcher.loading}
+              disabled={!baseUrl.value.trim()}
+              onClick={() => void fetchModels()}
+              data-testid="provider-fetch-models"
+            >
+              {t('settings.models.fetch')}
+            </Button>
+          )
         }
       >
         {fetcher.error ? (
@@ -433,6 +483,12 @@ export function ProviderEditor({
         ) : null}
         <ModelTable
           models={provider.models}
+          service={service}
+          noteFor={
+            service
+              ? (entry) => (isSlowCloudModel(entry.id) ? t('settings.providers.paddle.slow') : null)
+              : undefined
+          }
           showEffort={provider.quirks.thinking_off === 'openai_effort'}
           referenced={referenced}
           onChange={(models: ModelEntry[]) => onChange({ ...provider, models })}
@@ -448,138 +504,146 @@ export function ProviderEditor({
         />
       </Section>
 
-      <Section>
-        <Disclosure title={t('settings.providers.advanced')} data-testid="provider-advanced">
-          <HeadersEditor provider={provider} onChange={onChange} />
-          <Field
-            label={t('settings.providers.thinking_off')}
-            description={t('settings.providers.thinking_off_desc')}
-          >
-            <Select<ThinkingOff>
-              label={t('settings.providers.thinking_off')}
-              value={provider.quirks.thinking_off}
-              options={THINKING_OFF.map((v) => ({
-                value: v,
-                label: t(`settings.providers.thinking.${v}`),
-              }))}
-              onChange={(v) =>
-                onChange({ ...provider, quirks: { ...provider.quirks, thinking_off: v } })
-              }
-              className="st-select"
-            />
-          </Field>
-          <Field
-            label={t('settings.providers.max_tokens_field')}
-            description={t('settings.providers.max_tokens_field_desc')}
-          >
-            <Select<'auto' | MaxTokensField>
-              label={t('settings.providers.max_tokens_field')}
-              value={provider.quirks.max_tokens_field ?? 'auto'}
-              options={[
-                { value: 'auto', label: t('settings.providers.auto') },
-                // i18n-ignore：请求参数名原样显示
-                { value: 'max_completion_tokens', label: 'max_completion_tokens' },
-                // i18n-ignore：请求参数名原样显示
-                { value: 'max_tokens', label: 'max_tokens' },
-              ]}
-              onChange={(v) =>
-                onChange({
-                  ...provider,
-                  quirks: { ...provider.quirks, max_tokens_field: v === 'auto' ? null : v },
-                })
-              }
-              className="st-select"
-            />
-          </Field>
-          <Field
-            label={t('settings.providers.merge_system')}
-            description={t('settings.providers.merge_system_desc')}
-          >
-            <Switch
-              checked={provider.quirks.merge_system_into_user}
-              aria-label={t('settings.providers.merge_system')}
-              onChange={(v) =>
-                onChange({ ...provider, quirks: { ...provider.quirks, merge_system_into_user: v } })
-              }
-            />
-          </Field>
-          {openAiLike ? (
+      {service ? null : (
+        <Section>
+          <Disclosure title={t('settings.providers.advanced')} data-testid="provider-advanced">
+            <HeadersEditor provider={provider} onChange={onChange} />
             <Field
-              label={t('settings.providers.strip_think')}
-              description={t('settings.providers.strip_think_desc')}
+              label={t('settings.providers.thinking_off')}
+              description={t('settings.providers.thinking_off_desc')}
             >
-              <Switch
-                checked={provider.quirks.strip_think_tags}
-                aria-label={t('settings.providers.strip_think')}
+              <Select<ThinkingOff>
+                label={t('settings.providers.thinking_off')}
+                value={provider.quirks.thinking_off}
+                options={THINKING_OFF.map((v) => ({
+                  value: v,
+                  label: t(`settings.providers.thinking.${v}`),
+                }))}
                 onChange={(v) =>
-                  onChange({ ...provider, quirks: { ...provider.quirks, strip_think_tags: v } })
+                  onChange({ ...provider, quirks: { ...provider.quirks, thinking_off: v } })
                 }
+                className="st-select"
               />
             </Field>
-          ) : null}
-          {provider.protocol === 'anthropic_messages' ? (
             <Field
-              label={t('settings.providers.dual_auth')}
-              description={t('settings.providers.dual_auth_desc')}
+              label={t('settings.providers.max_tokens_field')}
+              description={t('settings.providers.max_tokens_field_desc')}
             >
-              <Select<'auto' | 'on' | 'off'>
-                label={t('settings.providers.dual_auth')}
-                value={
-                  provider.quirks.dual_auth_header === null
-                    ? 'auto'
-                    : provider.quirks.dual_auth_header
-                      ? 'on'
-                      : 'off'
-                }
+              <Select<'auto' | MaxTokensField>
+                label={t('settings.providers.max_tokens_field')}
+                value={provider.quirks.max_tokens_field ?? 'auto'}
                 options={[
                   { value: 'auto', label: t('settings.providers.auto') },
-                  { value: 'on', label: t('common.state.on') },
-                  { value: 'off', label: t('common.state.off') },
+                  // i18n-ignore：请求参数名原样显示
+                  { value: 'max_completion_tokens', label: 'max_completion_tokens' },
+                  // i18n-ignore：请求参数名原样显示
+                  { value: 'max_tokens', label: 'max_tokens' },
                 ]}
                 onChange={(v) =>
                   onChange({
                     ...provider,
-                    quirks: {
-                      ...provider.quirks,
-                      dual_auth_header: v === 'auto' ? null : v === 'on',
-                    },
+                    quirks: { ...provider.quirks, max_tokens_field: v === 'auto' ? null : v },
                   })
                 }
                 className="st-select"
               />
             </Field>
-          ) : null}
-          {provider.protocol === 'gemini' ? (
             <Field
-              label={t('settings.providers.gemini_key_query')}
-              description={t('settings.providers.gemini_key_query_desc')}
+              label={t('settings.providers.merge_system')}
+              description={t('settings.providers.merge_system_desc')}
             >
               <Switch
-                checked={provider.quirks.gemini_key_in_query}
-                aria-label={t('settings.providers.gemini_key_query')}
+                checked={provider.quirks.merge_system_into_user}
+                aria-label={t('settings.providers.merge_system')}
                 onChange={(v) =>
-                  onChange({ ...provider, quirks: { ...provider.quirks, gemini_key_in_query: v } })
+                  onChange({
+                    ...provider,
+                    quirks: { ...provider.quirks, merge_system_into_user: v },
+                  })
                 }
               />
             </Field>
-          ) : null}
-          {(['connect_ms', 'first_token_ms', 'idle_ms'] as const).map((k) => (
-            <Field key={k} label={t(`settings.providers.timeout.${k}`)}>
-              <NumberField
-                value={Math.round(provider.timeouts[k] / MS_PER_S)}
-                min={TIMEOUT_S.min}
-                max={TIMEOUT_S.max}
-                unit={t('settings.unit.seconds')}
-                aria-label={t(`settings.providers.timeout.${k}`)}
-                className="st-number"
-                onChange={(v) =>
-                  onChange({ ...provider, timeouts: { ...provider.timeouts, [k]: v * MS_PER_S } })
-                }
-              />
-            </Field>
-          ))}
-        </Disclosure>
-      </Section>
+            {openAiLike ? (
+              <Field
+                label={t('settings.providers.strip_think')}
+                description={t('settings.providers.strip_think_desc')}
+              >
+                <Switch
+                  checked={provider.quirks.strip_think_tags}
+                  aria-label={t('settings.providers.strip_think')}
+                  onChange={(v) =>
+                    onChange({ ...provider, quirks: { ...provider.quirks, strip_think_tags: v } })
+                  }
+                />
+              </Field>
+            ) : null}
+            {provider.protocol === 'anthropic_messages' ? (
+              <Field
+                label={t('settings.providers.dual_auth')}
+                description={t('settings.providers.dual_auth_desc')}
+              >
+                <Select<'auto' | 'on' | 'off'>
+                  label={t('settings.providers.dual_auth')}
+                  value={
+                    provider.quirks.dual_auth_header === null
+                      ? 'auto'
+                      : provider.quirks.dual_auth_header
+                        ? 'on'
+                        : 'off'
+                  }
+                  options={[
+                    { value: 'auto', label: t('settings.providers.auto') },
+                    { value: 'on', label: t('common.state.on') },
+                    { value: 'off', label: t('common.state.off') },
+                  ]}
+                  onChange={(v) =>
+                    onChange({
+                      ...provider,
+                      quirks: {
+                        ...provider.quirks,
+                        dual_auth_header: v === 'auto' ? null : v === 'on',
+                      },
+                    })
+                  }
+                  className="st-select"
+                />
+              </Field>
+            ) : null}
+            {provider.protocol === 'gemini' ? (
+              <Field
+                label={t('settings.providers.gemini_key_query')}
+                description={t('settings.providers.gemini_key_query_desc')}
+              >
+                <Switch
+                  checked={provider.quirks.gemini_key_in_query}
+                  aria-label={t('settings.providers.gemini_key_query')}
+                  onChange={(v) =>
+                    onChange({
+                      ...provider,
+                      quirks: { ...provider.quirks, gemini_key_in_query: v },
+                    })
+                  }
+                />
+              </Field>
+            ) : null}
+            {(['connect_ms', 'first_token_ms', 'idle_ms'] as const).map((k) => (
+              <Field key={k} label={t(`settings.providers.timeout.${k}`)}>
+                <NumberField
+                  value={Math.round(provider.timeouts[k] / MS_PER_S)}
+                  min={TIMEOUT_S.min}
+                  max={TIMEOUT_S.max}
+                  unit={t('settings.unit.seconds')}
+                  aria-label={t(`settings.providers.timeout.${k}`)}
+                  className="st-number"
+                  onChange={(v) =>
+                    onChange({ ...provider, timeouts: { ...provider.timeouts, [k]: v * MS_PER_S } })
+                  }
+                />
+              </Field>
+            ))}
+          </Disclosure>
+        </Section>
+      )}
 
       {isNew ? (
         <div

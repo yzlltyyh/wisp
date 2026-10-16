@@ -1,0 +1,53 @@
+[package]
+name = "wisp-local"
+description = "Wisp 的离线模型：模型目录、下载与校验、本机存储、推理进程的托管，以及本地与 PaddleOCR 云端的文字识别"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = []
+# ONNX Runtime（动态加载，按需下载）与 PP-OCR / 版面检测的推理。只在 ORT 工作进程（`worker::run`）里执行；desktop 打开它。
+# 不开时本 crate 的其余部分（目录、下载、存储、拼装、云端客户端……）照常编译与测试
+ort = ["dep:ort", "dep:oar-ocr"]
+# 假引擎（固定输出、可配置的加载延迟与失败）：编排器测试与 `WISP_FAKE_LLM=1` 的开发运行
+fake = []
+
+[dependencies]
+wisp-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+futures-util = { workspace = true }
+bytes = { workspace = true }
+# 模型下载（独立的按需客户端）与 PaddleOCR 云端；建客户端前兜底安装 rustls 的 ring CryptoProvider（与 wisp-llm 相同）
+reqwest = { workspace = true }
+rustls = { workspace = true }
+# sha256 校验与 llama-server 的随机 api-key
+ring = { workspace = true }
+# 运行时发布包的解包
+flate2 = { workspace = true }
+tar = { workspace = true }
+zip = { workspace = true }
+# 图片：本地引擎的输入（RGBA）与发给视觉模型的区域裁剪（PNG）
+image = { workspace = true }
+base64 = { workspace = true }
+url = { workspace = true }
+parking_lot = { workspace = true }
+
+ort = { workspace = true, optional = true }
+oar-ocr = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wiremock = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

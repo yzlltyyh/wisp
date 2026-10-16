@@ -65,11 +65,11 @@ describe('文案', () => {
     })
   }
 
-  it('wisp-llm 下发的 16 个模板名与 3 个区域名都在', () => {
+  it('wisp-llm 下发的 17 个模板名与 3 个区域名都在', () => {
     const zh = flatten(SETTINGS_MESSAGES['zh-CN'])
     const templates = [...zh.keys()].filter((k) => k.startsWith('providers.template.'))
     const regions = [...zh.keys()].filter((k) => k.startsWith('providers.region.'))
-    expect(templates).toHaveLength(16)
+    expect(templates).toHaveLength(17)
     expect(regions).toEqual([
       'providers.region.cn',
       'providers.region.intl',

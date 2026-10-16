@@ -120,6 +120,12 @@
     "repository": "https://github.com/open-source-cooperative/apple-native-keyring-store"
   },
   {
+    "name": "approx",
+    "version": "0.5.1",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/brendanzab/approx"
+  },
+  {
     "name": "arrayvec",
     "version": "0.7.8",
     "license": "Apache-2.0 OR MIT",
@@ -390,6 +396,12 @@
     "repository": "https://github.com/rust-lang/cfg-if"
   },
   {
+    "name": "chacha20",
+    "version": "0.10.2",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/RustCrypto/stream-ciphers"
+  },
+  {
     "name": "chrono",
     "version": "0.4.45",
     "license": "Apache-2.0 OR MIT",
@@ -400,6 +412,18 @@
     "version": "0.5.2",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/RustCrypto/traits"
+  },
+  {
+    "name": "clipper",
+    "version": "6.4.2",
+    "license": "BSL-1.0",
+    "repository": "https://sourceforge.net/projects/polyclipping"
+  },
+  {
+    "name": "clipper2-rust",
+    "version": "1.2.0",
+    "license": "BSL-1.0",
+    "repository": "https://github.com/larsbrubaker/clipper2-rust"
   },
   {
     "name": "cmov",
@@ -494,6 +518,18 @@
   {
     "name": "crossbeam-channel",
     "version": "0.5.17",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/crossbeam-rs/crossbeam"
+  },
+  {
+    "name": "crossbeam-deque",
+    "version": "0.8.8",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/crossbeam-rs/crossbeam"
+  },
+  {
+    "name": "crossbeam-epoch",
+    "version": "0.9.21",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/crossbeam-rs/crossbeam"
   },
@@ -688,6 +724,12 @@
     "version": "1.0.20",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/dtolnay/dyn-clone"
+  },
+  {
+    "name": "either",
+    "version": "1.19.0",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/rayon-rs/either"
   },
   {
     "name": "embed_plist",
@@ -990,6 +1032,30 @@
     "repository": "https://github.com/gtk-rs/gtk-rs-core"
   },
   {
+    "name": "glam",
+    "version": "0.30.10",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/bitshifter/glam-rs"
+  },
+  {
+    "name": "glam",
+    "version": "0.31.1",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/bitshifter/glam-rs"
+  },
+  {
+    "name": "glam",
+    "version": "0.32.1",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/bitshifter/glam-rs"
+  },
+  {
+    "name": "glam",
+    "version": "0.33.12",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/bitshifter/glam-rs"
+  },
+  {
     "name": "glib",
     "version": "0.18.5",
     "license": "MIT",
@@ -1242,6 +1308,12 @@
     "repository": "https://github.com/image-rs/image"
   },
   {
+    "name": "imageproc",
+    "version": "0.27.0",
+    "license": "MIT",
+    "repository": "https://github.com/image-rs/imageproc"
+  },
+  {
     "name": "indexmap",
     "version": "1.9.3",
     "license": "Apache-2.0 OR MIT",
@@ -1294,6 +1366,18 @@
     "version": "0.4.0",
     "license": "MIT",
     "repository": "https://github.com/TheLarkInn/is-wsl"
+  },
+  {
+    "name": "itertools",
+    "version": "0.14.0",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/rust-itertools/itertools"
+  },
+  {
+    "name": "itertools",
+    "version": "0.15.0",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/rust-itertools/itertools"
   },
   {
     "name": "itoa",
@@ -1404,6 +1488,18 @@
     "repository": "https://github.com/nagisa/rust_libloading/"
   },
   {
+    "name": "libloading",
+    "version": "0.9.0",
+    "license": "ISC",
+    "repository": "https://github.com/nagisa/rust_libloading/"
+  },
+  {
+    "name": "libm",
+    "version": "0.2.16",
+    "license": "MIT",
+    "repository": "https://github.com/rust-lang/compiler-builtins"
+  },
+  {
     "name": "libsqlite3-sys",
     "version": "0.38.2",
     "license": "MIT",
@@ -1456,6 +1552,12 @@
     "version": "0.39.0",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/servo/html5ever"
+  },
+  {
+    "name": "matrixmultiply",
+    "version": "0.3.11",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/bluss/matrixmultiply/"
   },
   {
     "name": "memchr",
@@ -1534,6 +1636,24 @@
     "version": "1.0.0",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/hsivonen/multiversion_no_op"
+  },
+  {
+    "name": "nalgebra",
+    "version": "0.35.0",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/dimforge/nalgebra"
+  },
+  {
+    "name": "nalgebra-macros",
+    "version": "0.3.0",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/dimforge/nalgebra"
+  },
+  {
+    "name": "ndarray",
+    "version": "0.17.2",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/rust-ndarray/ndarray"
   },
   {
     "name": "new_debug_unreachable",
@@ -1618,6 +1738,24 @@
     "version": "0.1.7",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/jhpratt/num_threads"
+  },
+  {
+    "name": "oar-ocr",
+    "version": "0.10.0",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/greatv/oar-ocr"
+  },
+  {
+    "name": "oar-ocr-core",
+    "version": "0.10.0",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/greatv/oar-ocr"
+  },
+  {
+    "name": "oar-ocr-derive",
+    "version": "0.10.0",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/greatv/oar-ocr"
   },
   {
     "name": "objc2",
@@ -1812,6 +1950,12 @@
     "repository": "https://github.com/Byron/open-rs"
   },
   {
+    "name": "opencv",
+    "version": "4.10.0",
+    "license": "Apache-2.0 AND BSD-3-Clause",
+    "repository": "https://github.com/opencv/opencv"
+  },
+  {
     "name": "openssl-probe",
     "version": "0.2.1",
     "license": "Apache-2.0 OR MIT",
@@ -1828,6 +1972,18 @@
     "version": "0.2.0",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/danieldg/ordered-stream"
+  },
+  {
+    "name": "ort",
+    "version": "2.0.0-rc.13",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/pykeio/ort"
+  },
+  {
+    "name": "ort-sys",
+    "version": "2.0.0-rc.13",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/pykeio/ort"
   },
   {
     "name": "os_info",
@@ -2023,6 +2179,12 @@
   },
   {
     "name": "rand",
+    "version": "0.10.3",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/rust-random/rand"
+  },
+  {
+    "name": "rand",
     "version": "0.9.5",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/rust-random/rand"
@@ -2046,10 +2208,34 @@
     "repository": "https://github.com/rust-random/rand"
   },
   {
+    "name": "rand_distr",
+    "version": "0.6.0",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/rust-random/rand_distr"
+  },
+  {
     "name": "raw-window-handle",
     "version": "0.6.2",
     "license": "Apache-2.0 OR MIT OR Zlib",
     "repository": "https://github.com/rust-windowing/raw-window-handle"
+  },
+  {
+    "name": "rawpointer",
+    "version": "0.2.1",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/bluss/rawpointer/"
+  },
+  {
+    "name": "rayon",
+    "version": "1.12.0",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/rayon-rs/rayon"
+  },
+  {
+    "name": "rayon-core",
+    "version": "1.13.0",
+    "license": "Apache-2.0 OR MIT",
+    "repository": "https://github.com/rayon-rs/rayon"
   },
   {
     "name": "react",
@@ -2164,6 +2350,12 @@
     "version": "0.103.15",
     "license": "ISC",
     "repository": "https://github.com/rustls/webpki"
+  },
+  {
+    "name": "safe_arch",
+    "version": "1.2.0",
+    "license": "Apache-2.0 OR MIT OR Zlib",
+    "repository": "https://github.com/Lokathor/safe_arch"
   },
   {
     "name": "same-file",
@@ -2338,6 +2530,12 @@
     "version": "1.4.8",
     "license": "Apache-2.0 OR MIT",
     "repository": "https://github.com/vorner/signal-hook"
+  },
+  {
+    "name": "simba",
+    "version": "0.10.2",
+    "license": "Apache-2.0",
+    "repository": "https://github.com/dimforge/simba"
   },
   {
     "name": "simd-adler32",
@@ -2920,6 +3118,12 @@
     "version": "0.18.0",
     "license": "MIT",
     "repository": "https://github.com/greyblake/whatlang-rs"
+  },
+  {
+    "name": "wide",
+    "version": "1.7.1",
+    "license": "Apache-2.0 OR MIT OR Zlib",
+    "repository": "https://github.com/Lokathor/wide"
   },
   {
     "name": "widestring",

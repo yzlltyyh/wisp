@@ -22,7 +22,8 @@
     "clipboard": "剪贴板",
     "appearance": "外观",
     "sync": "同步",
-    "about": "关于"
+    "about": "关于",
+    "offline": "离线模型"
   },
   "unit": {
     "ms": "毫秒",
@@ -186,7 +187,8 @@
       "groq": "Groq",
       "ollama": "Ollama（本机）",
       "lmstudio": "LM Studio（本机）",
-      "relay": "中转站 / 自定义兼容端点"
+      "relay": "中转站 / 自定义兼容端点",
+      "paddleocr": "PaddleOCR"
     },
     "region": {
       "cn": "中国大陆",
@@ -218,7 +220,8 @@
     "group": {
       "official": "官方服务",
       "other": "其他兼容服务",
-      "local": "本机模型"
+      "local": "本机模型",
+      "ocr": "文字识别服务"
     },
     "template_custom_host": "填写你的端点地址",
     "template_sub": {
@@ -232,13 +235,15 @@
       "openai_chat": "OpenAI Chat Completions",
       "openai_responses": "OpenAI Responses",
       "anthropic_messages": "Anthropic Messages",
-      "gemini": "Google Gemini"
+      "gemini": "Google Gemini",
+      "paddle_ocr": "PaddleOCR"
     },
     "protocol_desc": {
       "openai_chat": "最通用的兼容协议，绝大多数服务与中转站都支持",
       "openai_responses": "OpenAI 主推的新协议",
       "anthropic_messages": "Claude 的原生协议",
-      "gemini": "Gemini 的原生协议"
+      "gemini": "Gemini 的原生协议",
+      "paddle_ocr": "PaddleOCR 的文字识别服务，只用于 OCR"
     },
     "region_label": "区域",
     "region_custom": "自定义",
@@ -302,7 +307,8 @@
       "qwen": "通义 / 硅基流动（enable_thinking）",
       "glm": "智谱 / 火山方舟（thinking.type）",
       "kimi": "Kimi（reasoning_effort）",
-      "minimax": "MiniMax"
+      "minimax": "MiniMax",
+      "chat_template_kwargs": "llama.cpp / vLLM（chat_template_kwargs）"
     },
     "max_tokens_field": "输出长度参数",
     "max_tokens_field_desc": "被服务拒绝时会自动换用另一个",
@@ -335,7 +341,27 @@
       "gemini": "Gemini 系列，全部模型都能识图"
     },
     "card_others": "其他服务",
-    "card_others_detail": "DeepSeek、通义、Kimi、OpenRouter、本机 Ollama 等"
+    "card_others_detail": "DeepSeek、通义、Kimi、OpenRouter、本机 Ollama 等",
+    "paddle": {
+      "url": "服务地址",
+      "url_desc": "默认是 AI Studio 的任务接口；也可以填在 AI Studio 上部署的服务，或自托管的 PaddleX 服务（以 /ocr 或 /layout-parsing 结尾）",
+      "url_placeholder": "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
+      "kind": {
+        "jobs": "任务接口：提交后排队处理，完成后取回结果",
+        "serving": "部署的服务：直接返回识别结果",
+        "unknown": "无法识别的服务地址：应以 /api/v2/ocr/jobs、/ocr 或 /layout-parsing 结尾",
+        "insecure": "公网地址需要 https；http 只能用于本机或局域网内的服务"
+      },
+      "token": "访问令牌",
+      "token_desc": "在 AI Studio 的「访问令牌」页面获取；只写入系统凭据存储，界面不回显。自托管的服务不需要时可以留空",
+      "token_placeholder": "粘贴访问令牌",
+      "token_rejected": "服务拒绝了这个访问令牌，请检查是否填错、已过期或没有权限",
+      "token_required": "服务要求访问令牌：填写后再测试",
+      "token_risk": "访问令牌的权限较大，不要分享给他人；开启同步时会经端到端加密同步到你的其他设备",
+      "test_desc": "检查服务地址与访问令牌是否可用",
+      "models_desc": "PP-OCRv6 只识别文字；PP-StructureV3 与 PaddleOCR-VL 还能识别表格与版面。可以手动添加其他模型",
+      "slow": "较慢：每张几秒到几十秒，视服务负载"
+    }
   },
   "models": {
     "title": "模型",
@@ -512,7 +538,7 @@
     },
     "model": "OCR 模型",
     "no_model": "没有可用的视觉模型",
-    "no_model_desc": "在「模型与服务」中启用一个支持图片的模型",
+    "no_model_desc": "可以下载离线模型，或在「模型与服务」中启用支持图片的模型",
     "go_providers": "前往设置",
     "max_edge": "图片长边上限",
     "max_edge_desc": "超过时等比缩小后再发送，越小越快、越省额度",
@@ -574,7 +600,9 @@
     "history_off_question_other": "已停止记录。已保存的 {n} 条记录要一并清空吗？",
     "history_off_keep": "保留",
     "history_off_clear_one": "清空 {n} 条",
-    "history_off_clear_other": "清空 {n} 条"
+    "history_off_clear_other": "清空 {n} 条",
+    "markdown_unsupported": "当前的 OCR 模型只识别文字行，不支持结构化",
+    "markdown_fallback": "当前的 OCR 模型不支持结构化，识别时按段落输出"
   },
   "clipboard": {
     "description": "记录复制过的内容，随时找回并粘贴。",
@@ -980,5 +1008,148 @@
     "packages_other": "{n} 个",
     "open_repo": "打开 {name} 的代码仓库",
     "thanks": "感谢所有开源项目与它们的维护者。"
+  },
+  "offline": {
+    "fitness": {
+      "gpu_unknown": "显卡尚未检测，没有独立显卡时会很慢",
+      "cpu_only": "没有可用的显卡，在 CPU 上运行较慢",
+      "integrated_gpu": "只有集成显卡，和在 CPU 上运行一样较慢",
+      "low_memory": "这台设备的内存偏少，可能较慢或无法加载",
+      "memory_unknown": "无法读取这台设备的内存"
+    },
+    "description": "模型在这台设备上运行，识别与翻译的内容不会离开这台设备。只有点击下载，模型才会保存到本机。",
+    "this_device": "本机",
+    "memory": "内存 {size}",
+    "memory_unknown": "无法读取内存大小",
+    "apple": "Apple 芯片 · 统一内存",
+    "gpu": "{name} · 显存 {vram}",
+    "gpu_integrated": "{name} · 集成显卡（共用系统内存）",
+    "gpu_none": "没有可用的显卡，在 CPU 上运行",
+    "gpu_pending": "显卡在下载推理组件后检测",
+    "gpu_refresh": "重新检测显卡",
+    "gpu_refreshed": "已重新检测显卡",
+    "storage": "占用空间",
+    "storage_used": "已占用 {used}",
+    "storage_empty": "还没有下载模型",
+    "storage_free": "磁盘可用 {free}",
+    "open_folder": "打开文件夹",
+    "group_ocr": "文字识别",
+    "group_translate": "翻译",
+    "summary": {
+      "pp_ocrv6_tiny": "最快，CPU 即可流畅运行；不识别日文",
+      "pp_ocrv6_small": "速度与准确度均衡，支持 50 种语言",
+      "paddleocr_vl_1_6": "识别表格、公式与复杂版面；建议独立显卡或 Apple 芯片",
+      "index_translate_2b": "轻快，支持 150 种语言",
+      "index_translate_9b": "译文质量更高；建议独立显卡或 16 GB 以上内存的 Apple 芯片"
+    },
+    "fit": {
+      "good": "适合本机",
+      "slow": "较慢",
+      "insufficient": "内存不足",
+      "unknown": "待检测"
+    },
+    "download": "下载 · {size}",
+    "runtime_extra": "另需推理组件 {size}",
+    "pause": "暂停下载",
+    "resume": "继续下载",
+    "cancel": "取消下载",
+    "queued": "排队中…",
+    "progress": "{done} / {total}",
+    "speed": "{speed}/s",
+    "eta": "剩余 {time}",
+    "eta_seconds": "{n} 秒",
+    "eta_minutes": "{n} 分钟",
+    "eta_hours": "{h} 小时 {m} 分",
+    "paused": "已暂停 · {done} / {total}",
+    "verifying": "正在校验文件…",
+    "percent": "{n}%",
+    "downloading_label": "正在下载 {model}",
+    "installed": "已下载 · {size}",
+    "loaded": "已加载 · 约占用 {mem} 内存",
+    "loading": "正在加载到内存…",
+    "update": "有新版本：可以在「更多操作」中重新下载",
+    "broken": "模型文件缺失或已损坏，需要重新下载",
+    "redownload": "重新下载",
+    "retry": "重试",
+    "use": {
+      "ocr": "用于识别",
+      "translate": "用于翻译"
+    },
+    "in_use": {
+      "ocr": "正在用于截图识别；再点一次改回默认 OCR 模型",
+      "translate": "正在用于翻译；再点一次改回默认翻译模型"
+    },
+    "more": "更多操作",
+    "reveal": {
+      "macos": "在 Finder 中显示",
+      "windows": "在资源管理器中显示",
+      "linux": "在文件管理器中显示"
+    },
+    "delete": "删除…",
+    "delete_confirm": "删除 {model}？{size} 的模型文件会从这台设备移除",
+    "delete_ok": "删除",
+    "deleted": "已删除 {model}",
+    "fit_confirm": "{reason}。仍要下载 {model}（{size}）？",
+    "fit_confirm_ok": "仍要下载",
+    "dot": {
+      "loaded": "已加载到内存",
+      "loading": "正在加载到内存",
+      "preparing": "正在准备：第一次运行要编译显卡着色器，需要十几秒"
+    },
+    "run": "运行",
+    "idle_release": "闲置后释放内存",
+    "idle_release_desc": "一段时间没有使用就释放模型占用的内存，下次使用时重新加载；模型文件保留",
+    "use_gpu": "使用 GPU 加速",
+    "use_gpu_desc": "出现异常或识别结果为空时可以关闭，改在 CPU 上运行",
+    "use_gpu_desc_apple": "使用 Metal 加速；出现异常时可以关闭，改在 CPU 上运行",
+    "release": "立即释放内存",
+    "release_action": "释放",
+    "release_idle": "当前没有加载到内存的模型",
+    "release_busy": "{models} · 约 {mem}",
+    "released": "已释放内存",
+    "source": "下载源",
+    "source_desc": {
+      "auto": "自动选择更快的来源，失败时换源继续下载",
+      "model_scope": "只从 ModelScope 下载，国内访问通常更快",
+      "hugging_face": "只从 Hugging Face 下载"
+    },
+    "sources": {
+      "auto": "自动",
+      "model_scope": "ModelScope",
+      "hugging_face": "Hugging Face"
+    },
+    "source_note": "推理组件总是从官方 GitHub 发布页下载",
+    "runtimes": "推理组件",
+    "runtimes_desc": "下载模型时会一并下载它需要的组件",
+    "runtime": {
+      "llama_cpp": "llama.cpp",
+      "onnx_runtime": "ONNX Runtime"
+    },
+    "runtime_meta": "版本 {version} · {size}",
+    "runtime_missing": "版本 {version} · 未下载（{size}）",
+    "runtime_in_use": "已下载的模型正在使用它，不能单独删除",
+    "runtime_delete": "删除",
+    "runtime_deleted": "已删除 {name}",
+    "licenses": "PP-OCRv6、PaddleOCR-VL 与 Index-Translate 以 Apache 2.0 许可发布；llama.cpp 与 ONNX Runtime 以 MIT 许可发布。",
+    "license_link": "打开 {name} 的官方页面",
+    "load_failed": "读取离线模型失败",
+    "load_failed_detail": "可以重试；如果反复出现，可以在「关于」中导出诊断信息",
+    "minutes": "{n} 分钟",
+    "download_title": "下载",
+    "runtime_downloading": "正在下载的模型需要它"
+  },
+  "engine": {
+    "group_offline": "离线模型",
+    "hint_downloading": "下载中 {n}%",
+    "hint_paused": "已暂停 {n}%",
+    "hint_downloading_short": "下载中",
+    "confirm": "下载 {model}（{size}）？下载完成后自动切换",
+    "confirm_unfit": "{reason}。仍要下载 {model}（{size}）？下载完成后自动切换",
+    "download_and_use": "下载并使用",
+    "switch_later": "{model} 下载完成后会自动切换",
+    "local_only": "离线模型，仅在这台设备上生效",
+    "local_not_ready": "离线模型，仅在这台设备上生效；下载完成前使用时会显示下载进度",
+    "none_translate": "可以选择离线模型，或先在上方添加服务",
+    "ocr_desc": "列出离线模型、文字识别服务与支持图片的模型"
   }
 }

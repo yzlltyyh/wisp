@@ -172,6 +172,14 @@ pub const SYNC_PASSPHRASE_MIN_CHARS: usize = 12;
 /// 参与同步的剪贴板图片与识别截图的单张上限（字节）；更大的只留在本机
 pub const SYNC_MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
 
+/// 离线模型闲置后释放内存的可选分钟数（`offline.idle_release_min`，其他值吸附到最近的一个）
+pub const OFFLINE_IDLE_RELEASE_MIN: [u32; 4] = [1, 5, 15, 30];
+/// `offline.idle_release_min` 的默认值
+pub const OFFLINE_IDLE_RELEASE_DEFAULT_MIN: u32 = 5;
+/// 离线模型在推理请求里使用的保留服务商 id（编排器内部的合成服务商）。真实服务商的 id 不能以 `@` 开头，
+/// `defaults` 与风格绑定也不能指向它（离线模型的选择只在本机的 `offline` 分组里）
+pub const OFFLINE_PROVIDER_ID: &str = "@offline";
+
 /// 「空闲卸载面板」开关打开时的分钟数（设置页开关的初值；可按冷唤出的实测耗时调整，前端
 /// `GeneralPage.tsx` 的 `UNLOAD_RANGE.initial` 与之一致）
 pub const UNLOAD_PANEL_SUGGESTED_MIN: u32 = 10;

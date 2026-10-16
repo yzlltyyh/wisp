@@ -12,7 +12,7 @@
 use std::collections::HashSet;
 
 use wisp_types::defaults::{self, ranges};
-use wisp_types::{Binding, OcrMode, SETTINGS_SCHEMA_VERSION, Settings};
+use wisp_types::{Binding, LocalModelKind, ModelRef, OcrMode, Protocol, SETTINGS_SCHEMA_VERSION, Settings};
 
 /// 修正的种类
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -83,6 +83,8 @@ pub fn check(s: &mut Settings) -> Vec<Fix> {
     check_clipboard(s, &mut fixes);
     check_appearance(s, &mut fixes);
     check_sync(s, &mut fixes);
+    check_offline(s, &mut fixes);
+    check_defaults(s, &mut fixes);
     if let Some(v) = s.advanced.unload_panel_after_idle_min.as_mut() {
         clamp_u32(
             v,
@@ -134,7 +136,10 @@ fn check_providers(s: &mut Settings, fixes: &mut Vec<Fix>) {
     s.providers.retain(|p| {
         let i = idx;
         idx += 1;
-        let ok = !p.id.trim().is_empty() && p.id.trim() == p.id && !p.id.chars().any(char::is_control);
+        let ok = !p.id.trim().is_empty()
+            && p.id.trim() == p.id
+            && !p.id.chars().any(char::is_control)
+            && !is_reserved_provider_id(&p.id);
         if !ok || !seen.insert(p.id.clone()) {
             fixes.push(Fix::new(format!("providers[{i}]"), FixKind::Dropped));
             return false;
@@ -326,6 +331,51 @@ fn check_sync(s: &mut Settings, fixes: &mut Vec<Fix>) {
     }
 }
 
+/// 离线模型：选中的模型必须是对应的种类（拿翻译模型做识别、拿识别模型做翻译都没有意义），否则置 null；
+/// 闲置释放时长吸附到允许的取值
+fn check_offline(s: &mut Settings, fixes: &mut Vec<Fix>) {
+    let o = &mut s.offline;
+    if o.ocr_model.is_some_and(|m| m.kind() != LocalModelKind::Ocr) {
+        o.ocr_model = None;
+        fixes.push(Fix::new("offline.ocr_model", FixKind::Reset));
+    }
+    if o.translate_model.is_some_and(|m| m.kind() != LocalModelKind::Translate) {
+        o.translate_model = None;
+        fixes.push(Fix::new("offline.translate_model", FixKind::Reset));
+    }
+    if !defaults::OFFLINE_IDLE_RELEASE_MIN.contains(&o.idle_release_min) {
+        o.idle_release_min = nearest(o.idle_release_min, &defaults::OFFLINE_IDLE_RELEASE_MIN);
+        fixes.push(Fix::new("offline.idle_release_min", FixKind::Clamped));
+    }
+}
+
+/// 默认模型（同步字段）：不能指向离线模型的保留服务商——离线模型的选择只在本机的 `offline` 分组里，同步不能把别的设备
+/// 改成离线；翻译不能指向 PaddleOCR 这类文字识别服务（它不是 LLM）。不存在的服务商照旧保留（调用时报 `not_configured`）
+fn check_defaults(s: &mut Settings, fixes: &mut Vec<Fix>) {
+    let translate_invalid = s.defaults.translate.as_ref().is_some_and(|m| {
+        is_reserved_provider_id(&m.provider_id)
+            || s.provider(&m.provider_id)
+                .is_some_and(|p| p.protocol == Protocol::PaddleOcr)
+    });
+    if translate_invalid {
+        s.defaults.translate = None;
+        fixes.push(Fix::new("defaults.translate", FixKind::Reset));
+    }
+    if s.defaults
+        .ocr
+        .as_ref()
+        .is_some_and(|m: &ModelRef| is_reserved_provider_id(&m.provider_id))
+    {
+        s.defaults.ocr = None;
+        fixes.push(Fix::new("defaults.ocr", FixKind::Reset));
+    }
+}
+
+/// 保留的服务商 id：以 `@` 开头（离线模型的合成服务商 `@offline` 等）。真实服务商不能用，`defaults` 与风格绑定不能指向它
+pub fn is_reserved_provider_id(id: &str) -> bool {
+    id.starts_with('@')
+}
+
 fn sync_text_is_valid(v: &str, max_bytes: usize) -> bool {
     v.len() <= max_bytes && !v.chars().any(char::is_control)
 }
@@ -394,6 +444,68 @@ mod tests {
         s.sync.username = "someone@example.com".to_owned();
         assert!(check(&mut s).is_empty());
         assert_eq!(s.sync.server_url, "https://dav.example.com/dav");
+    }
+
+    /// 离线模型：种类不符的选择置 null，闲置时长吸附到允许值
+    #[test]
+    fn offline_models_must_match_their_kind() {
+        use wisp_types::LocalModelId;
+        let mut s = Settings::default();
+        s.offline.ocr_model = Some(LocalModelId::IndexTranslate2b);
+        s.offline.translate_model = Some(LocalModelId::PaddleOcrVl16);
+        s.offline.idle_release_min = 7;
+        let fixes = check(&mut s);
+        assert_eq!(s.offline.ocr_model, None);
+        assert_eq!(s.offline.translate_model, None);
+        assert_eq!(s.offline.idle_release_min, 5);
+        let kinds: Vec<(&str, FixKind)> = fixes.iter().map(|f| (f.path.as_str(), f.kind)).collect();
+        assert_eq!(
+            kinds,
+            [
+                ("offline.ocr_model", FixKind::Reset),
+                ("offline.translate_model", FixKind::Reset),
+                ("offline.idle_release_min", FixKind::Clamped),
+            ]
+        );
+
+        let mut s = Settings::default();
+        s.offline.ocr_model = Some(LocalModelId::PpOcrV6Small);
+        s.offline.translate_model = Some(LocalModelId::IndexTranslate9b);
+        s.offline.idle_release_min = 30;
+        assert!(check(&mut s).is_empty());
+    }
+
+    /// 保留的服务商 id 不能被真实服务商占用，默认模型也不能指向它；翻译不能用 PaddleOCR，OCR 可以
+    #[test]
+    fn reserved_provider_ids_and_ocr_only_services() {
+        let mut paddle = provider("paddleocr");
+        paddle.protocol = Protocol::PaddleOcr;
+        let mut s = Settings {
+            providers: vec![provider("@offline"), provider("openai"), paddle],
+            ..Settings::default()
+        };
+        let mref = |p: &str| ModelRef {
+            provider_id: p.to_owned(),
+            model_id: "m".to_owned(),
+        };
+        s.defaults.translate = Some(mref("paddleocr"));
+        s.defaults.ocr = Some(mref(defaults::OFFLINE_PROVIDER_ID));
+        let fixes = check(&mut s);
+        let ids: Vec<&str> = s.providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["openai", "paddleocr"]);
+        assert_eq!(s.defaults.translate, None);
+        assert_eq!(s.defaults.ocr, None);
+        assert!(fixes.iter().all(Fix::is_lossy));
+        let paths: Vec<&str> = fixes.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["providers[0]", "defaults.translate", "defaults.ocr"]);
+
+        // PaddleOCR 作为 OCR 的默认模型合法；离线保留 id 作为翻译默认模型不合法
+        s.defaults.ocr = Some(mref("paddleocr"));
+        s.defaults.translate = Some(mref(defaults::OFFLINE_PROVIDER_ID));
+        let fixes = check(&mut s);
+        assert_eq!(s.defaults.ocr, Some(mref("paddleocr")));
+        assert_eq!(s.defaults.translate, None);
+        assert_eq!(fixes.len(), 1);
     }
 
     #[test]

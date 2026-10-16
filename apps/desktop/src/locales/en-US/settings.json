@@ -22,7 +22,8 @@
     "clipboard": "Clipboard",
     "appearance": "Appearance",
     "sync": "Sync",
-    "about": "About"
+    "about": "About",
+    "offline": "Offline models"
   },
   "unit": {
     "ms": "ms",
@@ -186,7 +187,8 @@
       "groq": "Groq",
       "ollama": "Ollama (local)",
       "lmstudio": "LM Studio (local)",
-      "relay": "Relay / custom compatible endpoint"
+      "relay": "Relay / custom compatible endpoint",
+      "paddleocr": "PaddleOCR"
     },
     "region": {
       "cn": "Mainland China",
@@ -218,7 +220,8 @@
     "group": {
       "official": "Official services",
       "other": "Other compatible services",
-      "local": "Local models"
+      "local": "Local models",
+      "ocr": "Text recognition services"
     },
     "template_custom_host": "Enter your endpoint",
     "template_sub": {
@@ -232,13 +235,15 @@
       "openai_chat": "OpenAI Chat Completions",
       "openai_responses": "OpenAI Responses",
       "anthropic_messages": "Anthropic Messages",
-      "gemini": "Google Gemini"
+      "gemini": "Google Gemini",
+      "paddle_ocr": "PaddleOCR"
     },
     "protocol_desc": {
       "openai_chat": "The most widely supported protocol; works with most services and relays",
       "openai_responses": "OpenAI’s newer, recommended protocol",
       "anthropic_messages": "Claude’s native protocol",
-      "gemini": "Gemini’s native protocol"
+      "gemini": "Gemini’s native protocol",
+      "paddle_ocr": "PaddleOCR text recognition, for OCR only"
     },
     "region_label": "Region",
     "region_custom": "Custom",
@@ -302,7 +307,8 @@
       "qwen": "Qwen / SiliconFlow (enable_thinking)",
       "glm": "Zhipu / Volcengine (thinking.type)",
       "kimi": "Kimi (reasoning_effort)",
-      "minimax": "MiniMax"
+      "minimax": "MiniMax",
+      "chat_template_kwargs": "llama.cpp / vLLM (chat_template_kwargs)"
     },
     "max_tokens_field": "Output length parameter",
     "max_tokens_field_desc": "Switches to the other one automatically if the service rejects it",
@@ -335,7 +341,27 @@
       "gemini": "Gemini models — every model reads images"
     },
     "card_others": "Other services",
-    "card_others_detail": "DeepSeek, Qwen, Kimi, OpenRouter, local Ollama and more"
+    "card_others_detail": "DeepSeek, Qwen, Kimi, OpenRouter, local Ollama and more",
+    "paddle": {
+      "url": "Service address",
+      "url_desc": "The AI Studio job API by default. You can also use a service deployed on AI Studio or a self-hosted PaddleX service (ending in /ocr or /layout-parsing)",
+      "url_placeholder": "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
+      "kind": {
+        "jobs": "Job API: requests are queued and the result is fetched when done",
+        "serving": "Deployed service: returns the result directly",
+        "unknown": "Unrecognized address: it should end in /api/v2/ocr/jobs, /ocr or /layout-parsing",
+        "insecure": "Public addresses need https; http only works for services on this device or your local network"
+      },
+      "token": "Access token",
+      "token_desc": "Get one from the access token page on AI Studio. It’s only written to the system credential store and never shown again. Leave it empty if your self-hosted service doesn’t need one",
+      "token_placeholder": "Paste the access token",
+      "token_rejected": "The service rejected this access token. Check that it’s correct, not expired and has permission",
+      "token_required": "The service requires an access token: enter it, then test",
+      "token_risk": "Access tokens have broad permissions, so don’t share them. With sync on, the token reaches your other devices end-to-end encrypted",
+      "test_desc": "Checks that the address and access token work",
+      "models_desc": "PP-OCRv6 recognizes text only; PP-StructureV3 and PaddleOCR-VL also recognize tables and layout. You can add other models by hand",
+      "slow": "Slower: a few seconds to tens of seconds per image, depending on load"
+    }
   },
   "models": {
     "title": "Models",
@@ -512,7 +538,7 @@
     },
     "model": "OCR model",
     "no_model": "No vision model available",
-    "no_model_desc": "Enable a model that accepts images in Models & services",
+    "no_model_desc": "Download an offline model, or enable a model that accepts images in Models & services",
     "go_providers": "Open settings",
     "max_edge": "Maximum image size",
     "max_edge_desc": "Larger images are scaled down before sending; smaller is faster and cheaper",
@@ -574,7 +600,9 @@
     "history_off_question_other": "Recording stopped. Also clear the {n} saved items?",
     "history_off_keep": "Keep",
     "history_off_clear_one": "Clear {n} item",
-    "history_off_clear_other": "Clear {n} items"
+    "history_off_clear_other": "Clear {n} items",
+    "markdown_unsupported": "The current OCR model only recognizes lines of text and doesn’t support structured mode",
+    "markdown_fallback": "The current OCR model doesn’t support structured mode, so results come out as paragraphs"
   },
   "clipboard": {
     "description": "Remember what you copy, then find and paste it any time.",
@@ -980,5 +1008,148 @@
     "packages_other": "{n} packages",
     "open_repo": "Open the repository of {name}",
     "thanks": "Thanks to every open-source project and its maintainers."
+  },
+  "offline": {
+    "fitness": {
+      "gpu_unknown": "The graphics card isn’t checked yet; without a dedicated one it runs slowly",
+      "cpu_only": "No usable GPU, so it runs slowly on the CPU",
+      "integrated_gpu": "Integrated graphics only, so it runs as slowly as on the CPU",
+      "low_memory": "This device is short on memory; the model may be slow or fail to load",
+      "memory_unknown": "Could not read how much memory this device has"
+    },
+    "description": "Models run on this device, so the text you recognize and translate never leaves it. Nothing is saved until you choose to download.",
+    "this_device": "This device",
+    "memory": "{size} memory",
+    "memory_unknown": "Couldn’t read the memory size",
+    "apple": "Apple silicon · unified memory",
+    "gpu": "{name} · {vram} video memory",
+    "gpu_integrated": "{name} · integrated graphics (shares system memory)",
+    "gpu_none": "No usable graphics card, runs on the CPU",
+    "gpu_pending": "Graphics card is detected after the runtime is downloaded",
+    "gpu_refresh": "Detect graphics card again",
+    "gpu_refreshed": "Graphics card detected again",
+    "storage": "Storage",
+    "storage_used": "{used} used",
+    "storage_empty": "No models downloaded yet",
+    "storage_free": "{free} free on disk",
+    "open_folder": "Open folder",
+    "group_ocr": "Text recognition",
+    "group_translate": "Translation",
+    "summary": {
+      "pp_ocrv6_tiny": "Fastest, runs smoothly on the CPU; doesn’t recognize Japanese",
+      "pp_ocrv6_small": "Balanced speed and accuracy, 50 languages",
+      "paddleocr_vl_1_6": "Tables, formulas and complex layouts; a dedicated graphics card or Apple silicon is recommended",
+      "index_translate_2b": "Light and quick, 150 languages",
+      "index_translate_9b": "Higher-quality translations; a dedicated graphics card or Apple silicon with 16 GB or more is recommended"
+    },
+    "fit": {
+      "good": "Suits this device",
+      "slow": "Slow",
+      "insufficient": "Not enough memory",
+      "unknown": "To be checked"
+    },
+    "download": "Download · {size}",
+    "runtime_extra": "Plus {size} runtime",
+    "pause": "Pause download",
+    "resume": "Resume download",
+    "cancel": "Cancel download",
+    "queued": "Waiting…",
+    "progress": "{done} of {total}",
+    "speed": "{speed}/s",
+    "eta": "{time} left",
+    "eta_seconds": "{n} s",
+    "eta_minutes": "{n} min",
+    "eta_hours": "{h} h {m} min",
+    "paused": "Paused · {done} of {total}",
+    "verifying": "Verifying files…",
+    "percent": "{n}%",
+    "downloading_label": "Downloading {model}",
+    "installed": "Downloaded · {size}",
+    "loaded": "Loaded · about {mem} of memory",
+    "loading": "Loading into memory…",
+    "update": "A newer version is available; download it again from the menu on the right",
+    "broken": "Model files are missing or damaged and need to be downloaded again",
+    "redownload": "Download again",
+    "retry": "Retry",
+    "use": {
+      "ocr": "Use for OCR",
+      "translate": "Use for translation"
+    },
+    "in_use": {
+      "ocr": "In use for screenshot OCR; click again to go back to the default OCR model",
+      "translate": "In use for translation; click again to go back to the default translation model"
+    },
+    "more": "More actions",
+    "reveal": {
+      "macos": "Show in Finder",
+      "windows": "Show in File Explorer",
+      "linux": "Show in file manager"
+    },
+    "delete": "Delete…",
+    "delete_confirm": "Delete {model}? Its {size} of files will be removed from this device",
+    "delete_ok": "Delete",
+    "deleted": "{model} deleted",
+    "fit_confirm": "{reason}. Download {model} ({size}) anyway?",
+    "fit_confirm_ok": "Download anyway",
+    "dot": {
+      "loaded": "Loaded into memory",
+      "loading": "Loading into memory",
+      "preparing": "Getting ready. The first run compiles GPU shaders, which takes 10–20 seconds"
+    },
+    "run": "Running",
+    "idle_release": "Free memory when idle",
+    "idle_release_desc": "Frees the memory a model uses after a while without use and reloads it next time; the model files stay",
+    "use_gpu": "Use GPU acceleration",
+    "use_gpu_desc": "Turn off if you see errors or empty results to run on the CPU instead",
+    "use_gpu_desc_apple": "Uses Metal; turn off if you see errors to run on the CPU instead",
+    "release": "Free memory now",
+    "release_action": "Free",
+    "release_idle": "No model is loaded into memory",
+    "release_busy": "{models} · about {mem}",
+    "released": "Memory freed",
+    "source": "Download source",
+    "source_desc": {
+      "auto": "Picks the faster source and switches if one fails",
+      "model_scope": "ModelScope only, usually faster in mainland China",
+      "hugging_face": "Hugging Face only"
+    },
+    "sources": {
+      "auto": "Automatic",
+      "model_scope": "ModelScope",
+      "hugging_face": "Hugging Face"
+    },
+    "source_note": "Runtimes always come from the official GitHub releases",
+    "runtimes": "Runtimes",
+    "runtimes_desc": "Downloaded together with the models that need them",
+    "runtime": {
+      "llama_cpp": "llama.cpp",
+      "onnx_runtime": "ONNX Runtime"
+    },
+    "runtime_meta": "Version {version} · {size}",
+    "runtime_missing": "Version {version} · not downloaded ({size})",
+    "runtime_in_use": "A downloaded model uses it, so it can’t be deleted on its own",
+    "runtime_delete": "Delete",
+    "runtime_deleted": "{name} deleted",
+    "licenses": "PP-OCRv6, PaddleOCR-VL and Index-Translate are released under the Apache 2.0 license; llama.cpp and ONNX Runtime under the MIT License.",
+    "license_link": "Open the official page of {name}",
+    "load_failed": "Couldn’t read offline models",
+    "load_failed_detail": "Try again. If it keeps happening, export diagnostics from About",
+    "minutes": "{n} min",
+    "download_title": "Downloads",
+    "runtime_downloading": "A model being downloaded needs it"
+  },
+  "engine": {
+    "group_offline": "Offline models",
+    "hint_downloading": "Downloading {n}%",
+    "hint_paused": "Paused {n}%",
+    "hint_downloading_short": "Downloading",
+    "confirm": "Download {model} ({size})? Wisp switches to it once the download finishes",
+    "confirm_unfit": "{reason}. Download {model} ({size}) anyway? Wisp switches to it once the download finishes",
+    "download_and_use": "Download and use",
+    "switch_later": "Wisp switches to {model} once it’s downloaded",
+    "local_only": "Offline model, applies to this device only",
+    "local_not_ready": "Offline model, applies to this device only; until it finishes downloading, you’ll see the progress instead",
+    "none_translate": "Choose an offline model, or add a service above first",
+    "ocr_desc": "Offline models, text recognition services and models that accept images"
   }
 }

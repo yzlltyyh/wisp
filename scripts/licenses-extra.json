@@ -5,5 +5,19 @@
     "license": "MIT",
     "repository": "https://github.com/lobehub/lobe-icons",
     "used_in": "apps/desktop/src/settings/providers/logos.tsx（服务商标志的路径数据，Copyright (c) 2023 LobeHub）"
+  },
+  {
+    "name": "clipper",
+    "version": "6.4.2",
+    "license": "BSL-1.0",
+    "repository": "https://sourceforge.net/projects/polyclipping",
+    "used_in": "vendor/oar-ocr-core/src/processors/opencv/clipper.rs（ClipperOffset 的移植，与官方 pyclipper 的文字框外扩逐点一致）"
+  },
+  {
+    "name": "opencv",
+    "version": "4.10.0",
+    "license": "Apache-2.0 AND BSD-3-Clause",
+    "repository": "https://github.com/opencv/opencv",
+    "used_in": "vendor/oar-ocr-core/src/processors/opencv/（cv2.resize / warpPerspective / minAreaRect / fillPoly 的移植；OpenCV 4.5.0 起整体为 Apache-2.0，被移植的源文件头部保留了原有的 3-clause BSD 声明，两份都随附）"
   }
 ]

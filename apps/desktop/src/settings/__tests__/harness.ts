@@ -4,7 +4,12 @@
  */
 import { vi } from 'vitest'
 import { setTransport, WispIpcError, type Transport } from '../../shared/ipc'
-import { RuntimeInfo as GoldenRuntime, Settings as GoldenSettings } from '../../shared/ipc/fixtures'
+import {
+  LocalModelsSnapshot as GoldenOffline,
+  RuntimeInfo as GoldenRuntime,
+  Settings as GoldenSettings,
+} from '../../shared/ipc/fixtures'
+import { resetOfflineModels } from '../../shared/offline/store'
 import type {
   AppKeymap,
   EventMap,
@@ -239,6 +244,9 @@ export function installHarness(initial: SettingsSnapshot = snapshot()): Harness 
     })),
   )
   handlers.set('ocr_history_list', () => [])
+  // 离线模型：默认取黄金样例（下载中 / 已安装各有一项）；快照在模块级缓存，每次安装替身时清空
+  resetOfflineModels()
+  handlers.set('offline_models_get', () => structuredClone(GoldenOffline))
   const transport: Transport = {
     kind: 'mock',
     invoke: async <T>(cmd: string, args?: Record<string, unknown>) => {

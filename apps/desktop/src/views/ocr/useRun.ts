@@ -8,7 +8,9 @@
  *   挂载前到达的 Delta 不会丢；
  * - 每次 `begin` 递增 key，旧请求的迟到事件按 key 丢弃；旧请求还在进行时顺带 `cancel`（换模式 / 模型 / 风格时
  *   不再为被放弃的结果付费）；
- * - 卸载时**不**取消：面板隐藏由 Rust 收尾，固定时所有权已经转移给固定窗口。
+ * - 卸载时**不**取消：面板隐藏由 Rust 收尾，固定时所有权已经转移给固定窗口；
+ * - 等待阶段的提示（`stage`）：离线模型冷启动（`loading_model`）、云端识别排队（`queued`）在第一个非空白 Delta 或终止时
+ *   清掉，只在骨架下方与头部显示。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
@@ -21,6 +23,7 @@ import {
   type PinStatus,
   type StartAck,
   type StreamEvent,
+  type StreamPhase,
 } from '../../shared/ipc'
 import type { StreamHandle } from '../../shared/stream/StreamView'
 
@@ -43,6 +46,8 @@ export interface RunState {
   hasText: boolean
   /** phase = confirm：长文本确认卡片要显示的估算（请求没有发出） */
   longText: LongTextInfo | null
+  /** 等第一段文字时 Rust 告知的阶段（正在加载离线模型 / 云端排队）；有文字或结束后为 null */
+  stage: StreamPhase | null
 }
 
 /**
@@ -89,6 +94,7 @@ const IDLE: RunState = {
   notices: [],
   hasText: false,
   longText: null,
+  stage: null,
 }
 
 const live = (p: RunPhase): boolean => p === 'waiting' || p === 'streaming'
@@ -166,24 +172,28 @@ export function useRun(): Run {
           update(k, (s) => ({ ...s, notices: [...s.notices, e.kind] }))
           break
         case 'phase':
+          // 已经有文字之后的阶段（不会出现在识别里）不再显示
+          if (!hasText.current) update(k, (s) => ({ ...s, stage: e.phase }))
           break
         case 'delta':
           text.current += e.text
           handle.current?.append(e.text)
           if (!hasText.current && e.text.trim() !== '') {
             hasText.current = true
-            update(k, (s) => ({ ...s, phase: 'streaming', hasText: true }))
+            update(k, (s) => ({ ...s, phase: 'streaming', hasText: true, stage: null }))
           }
           break
         case 'done':
           handle.current?.end()
-          update(k, (s) => ({ ...s, phase: 'done', done: e }))
+          update(k, (s) => ({ ...s, phase: 'done', done: e, stage: null }))
           break
         case 'error': {
           handle.current?.end()
           const { type: _type, ...error } = e
           update(k, (s) =>
-            e.code === 'cancelled' ? { ...s, phase: 'cancelled' } : { ...s, phase: 'error', error },
+            e.code === 'cancelled'
+              ? { ...s, phase: 'cancelled', stage: null }
+              : { ...s, phase: 'error', error, stage: null },
           )
           break
         }

@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use wisp_types::{GlossaryEntry, Lang, OcrMode, OutputFormat, Style};
 
 use crate::glossary::render_glossary_block;
+use crate::index::PromptProfile;
 use crate::lang::{Detection, source_lang_attr, source_lang_name, target_lang_name};
 use crate::post::PostKind;
 use crate::render::{RenderVars, render_with};
@@ -93,6 +94,15 @@ const OCR_TRANSLATE_TEMPERATURE: f32 = 0.2;
 /// 装配提示词（p99 ≤ 1 ms）
 pub fn build(task: &PromptTask<'_>, ctx: &PromptCtx<'_>) -> BuiltPrompt {
     build_variant(task, ctx, TemplateVariant::En)
+}
+
+/// 按档位装配：`IndexTranslate` 档位只改变翻译（含词典式，按普通翻译装配）的提示词，其余任务按标准档位装配
+/// （离线翻译模型不承担这些任务，编排器不会这样调用；这里只是不让它们得到一个错误的格式）
+pub fn build_profile(task: &PromptTask<'_>, ctx: &PromptCtx<'_>, profile: PromptProfile) -> BuiltPrompt {
+    match (profile, task) {
+        (PromptProfile::IndexTranslate, PromptTask::Translate { style, .. }) => crate::index::translate(style, ctx),
+        _ => build(task, ctx),
+    }
 }
 
 /// 按模板语言变体装配；[`build`] 等价于 `TemplateVariant::En`。中文变体缺失的模板回退到英文

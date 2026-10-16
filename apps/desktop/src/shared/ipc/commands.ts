@@ -187,6 +187,16 @@ export interface CommandMap extends OverlayCommandMap {
     ret: void
   }
   sync_generate_passphrase: { args: NoArgs; ret: string }
+  // ----- 离线模型
+  offline_models_get: { args: NoArgs; ret: T.LocalModelsSnapshot }
+  offline_model_download: { args: { model: T.LocalModelId; select: boolean }; ret: void }
+  offline_model_pause: { args: { model: T.LocalModelId }; ret: void }
+  offline_model_cancel: { args: { model: T.LocalModelId }; ret: void }
+  offline_model_delete: { args: { model: T.LocalModelId }; ret: void }
+  offline_runtime_delete: { args: { runtime: T.LocalRuntimeId }; ret: void }
+  offline_release: { args: NoArgs; ret: void }
+  offline_reveal: { args: NoArgs; ret: void }
+  offline_devices_refresh: { args: NoArgs; ret: T.LocalModelsSnapshot }
 }
 
 export type CommandName = keyof CommandMap
@@ -318,6 +328,15 @@ export const COMMAND_NAMES = [
   'sync_disconnect',
   'sync_reset_remote',
   'sync_generate_passphrase',
+  'offline_models_get',
+  'offline_model_download',
+  'offline_model_pause',
+  'offline_model_cancel',
+  'offline_model_delete',
+  'offline_runtime_delete',
+  'offline_release',
+  'offline_reveal',
+  'offline_devices_refresh',
 ] as const satisfies readonly CommandName[]
 
 // 编译期保证 COMMAND_NAMES 覆盖 CommandMap 的全部键（缺一个就报错，纯类型、无运行时代码）
@@ -818,4 +837,47 @@ export function syncResetRemote(
 }
 export function syncGeneratePassphrase() {
   return call('sync_generate_passphrase', none)
+}
+
+// ===== 离线模型 =====
+
+/** 离线模型页的完整快照（第一次调用时 Rust 才读模型库存）；之后的变化经 `offline_models:changed` 推送 */
+export function offlineModelsGet() {
+  return call('offline_models_get', none)
+}
+/**
+ * 开始或继续下载（需要时一并下载推理组件）；已在下载时无操作。进度经 `offline_models:changed` 推送。
+ * `select`（「下载并使用」）：安装成功后由 Rust 按模型类别写 `offline.ocr_model` / `offline.translate_model`
+ * （下载期间原来的模型照常可用；已经装好时立即选用；对正在下载的模型补记这个标记）
+ */
+export function offlineModelDownload(model: T.LocalModelId, select: boolean) {
+  return call('offline_model_download', { model, select })
+}
+/** 暂停下载（保留已下载的部分） */
+export function offlineModelPause(model: T.LocalModelId) {
+  return call('offline_model_pause', { model })
+}
+/** 取消下载（删除已下载的部分） */
+export function offlineModelCancel(model: T.LocalModelId) {
+  return call('offline_model_cancel', { model })
+}
+/** 删除已下载的模型（正被选用时 Rust 同时把 `offline.*_model` 置 null） */
+export function offlineModelDelete(model: T.LocalModelId) {
+  return call('offline_model_delete', { model })
+}
+/** 删除推理组件；仍有已下载的模型依赖它时抛 `invalid_argument` */
+export function offlineRuntimeDelete(runtime: T.LocalRuntimeId) {
+  return call('offline_runtime_delete', { runtime })
+}
+/** 立即释放空闲模型占用的内存 */
+export function offlineRelease() {
+  return call('offline_release', none)
+}
+/** 在访达 / 资源管理器 / 文件管理器中打开模型目录 */
+export function offlineReveal() {
+  return call('offline_reveal', none)
+}
+/** 重新检测显卡，返回新的快照 */
+export function offlineDevicesRefresh() {
+  return call('offline_devices_refresh', none)
 }

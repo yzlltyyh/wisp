@@ -57,7 +57,8 @@ impl Adapter {
         let mut base = Base::new(protocol, url);
         base.has_image = has_image;
         match protocol {
-            Protocol::OpenAiChat => Self::Chat(openai_chat::ChatAdapter::new(base)),
+            // PaddleOCR 不是 LLM 服务：请求在构造阶段（`request::prepare`）就被拒绝，不会有流需要适配
+            Protocol::OpenAiChat | Protocol::PaddleOcr => Self::Chat(openai_chat::ChatAdapter::new(base)),
             Protocol::OpenAiResponses => Self::Responses(openai_responses::ResponsesAdapter::new(base)),
             Protocol::AnthropicMessages => Self::Anthropic(anthropic::AnthropicAdapter::new(base)),
             Protocol::Gemini => Self::Gemini(gemini::GeminiAdapter::new(base)),
@@ -327,6 +328,7 @@ pub(crate) fn protocol_name(p: Protocol) -> &'static str {
         Protocol::OpenAiResponses => "OpenAI Responses",
         Protocol::AnthropicMessages => "Anthropic Messages",
         Protocol::Gemini => "Gemini",
+        Protocol::PaddleOcr => "PaddleOCR",
     }
 }
 

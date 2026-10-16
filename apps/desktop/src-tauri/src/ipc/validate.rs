@@ -189,9 +189,12 @@ fn validate_model_entry(m: &ModelEntry) -> Result<(), IpcError> {
     Ok(())
 }
 
-/// `provider_test` / `provider_models` 的 Provider（草稿）
+/// `provider_test` / `provider_models` 的 Provider（草稿）。id 不能以 `@` 开头（保留给离线模型等内部服务商）
 pub fn validate_provider(p: &Provider) -> Result<(), IpcError> {
     check_id("provider.id", &p.id)?;
+    if crate::settings::validate::is_reserved_provider_id(&p.id) {
+        return Err(IpcError::invalid_argument("provider.id must not start with @"));
+    }
     check_len("provider.name", &p.name, MAX_LABEL_BYTES)?;
     check_len("provider.base_url", &p.base_url, MAX_QUERY_BYTES)?;
     check_list_len("provider.headers", p.headers.len(), MAX_HEADERS)?;

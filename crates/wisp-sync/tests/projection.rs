@@ -10,9 +10,10 @@ use wisp_sync::projection::{
     unproject_detailed,
 };
 use wisp_types::{
-    AppKeymap, Binding, DoubleTapSettings, ExcludedApp, GlossaryEntry, GlossaryFile, HotkeyAction, Lang, LogLevel,
-    MaterialPref, ModelCaps, ModelEntry, ModelRef, ModifierKey, OsKind, Protocol, Provider, ReasoningEffort, Settings,
-    Style, StyleOverride, StylesFile, Timeouts, UiLanguage, Vision, VisionSource, parse_lenient,
+    AppKeymap, Binding, DoubleTapSettings, DownloadSource, ExcludedApp, GlossaryEntry, GlossaryFile, HotkeyAction,
+    Lang, LocalModelId, LogLevel, MaterialPref, ModelCaps, ModelEntry, ModelRef, ModifierKey, OsKind, Protocol,
+    Provider, ReasoningEffort, Settings, Style, StyleOverride, StylesFile, Timeouts, UiLanguage, Vision, VisionSource,
+    parse_lenient,
 };
 
 const ALL_OS: [OsKind; 3] = [OsKind::Macos, OsKind::Windows, OsKind::Linux];
@@ -193,6 +194,11 @@ fn rich_settings(os: OsKind) -> Settings {
     s.sync.server_url = "https://dav.example.invalid/dav".to_owned();
     s.sync.username = "sample-user".to_owned();
     s.sync.content.images = false;
+    s.offline.ocr_model = Some(LocalModelId::PaddleOcrVl16);
+    s.offline.translate_model = Some(LocalModelId::IndexTranslate2b);
+    s.offline.idle_release_min = 15;
+    s.offline.use_gpu = false;
+    s.offline.download_source = DownloadSource::ModelScope;
     s
 }
 
@@ -549,6 +555,7 @@ fn local_fields_are_never_projected_and_always_preserved() {
             "/general/developer_mode",
             "/advanced/",
             "/sync/",
+            "/offline/",
             "/clipboard/enabled",
             "/clipboard/secret_detection",
             "/ocr/history",
@@ -575,6 +582,8 @@ fn local_fields_are_never_projected_and_always_preserved() {
         set("/advanced/log_level", json!("error")),
         set("/sync/enabled", json!(false)),
         set("/sync/server_url", json!("")),
+        set("/offline/translate_model", json!("index_translate_9b")),
+        set("/offline/use_gpu", json!(true)),
         set("/clipboard/enabled", json!(true)),
         del("/clipboard/secret_detection"),
         set("/ocr/history", json!(false)),
@@ -587,6 +596,7 @@ fn local_fields_are_never_projected_and_always_preserved() {
     assert!(back.general.developer_mode);
     assert_eq!(back.advanced, rich.advanced);
     assert_eq!(back.sync, rich.sync);
+    assert_eq!(back.offline, rich.offline, "离线模型的选择只属于本机");
     assert!(!back.clipboard.enabled);
     assert!(!back.clipboard.secret_detection);
     assert!(back.ocr.history);
@@ -1401,6 +1411,8 @@ prop_compose! {
         s.ocr.history = local.2;
         s.advanced.log_level = local.3;
         s.sync.auto = !local.0;
+        s.offline.use_gpu = local.1;
+        s.offline.translate_model = local.2.then_some(LocalModelId::IndexTranslate2b);
         s
     }
 }
@@ -1505,6 +1517,7 @@ proptest! {
         prop_assert_eq!(back.ocr.history, x.ocr.history);
         prop_assert_eq!(&back.advanced, &x.advanced);
         prop_assert_eq!(&back.sync, &x.sync);
+        prop_assert_eq!(&back.offline, &x.offline);
         // 内容来自 y，学习缓存按 (provider id, model id) 来自 x
         prop_assert_eq!(
             back.providers.iter().map(|p| &p.id).collect::<Vec<_>>(),

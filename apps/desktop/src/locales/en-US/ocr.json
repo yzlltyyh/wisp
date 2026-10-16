@@ -21,7 +21,8 @@
     "size_px": "{width} × {height} px",
     "size_physical": "Captured at {width} × {height} pixels",
     "failed": "Recognition failed",
-    "edited": "Edited"
+    "edited": "Edited",
+    "partial": "Some regions couldn’t be recognized"
   },
   "mode_hint": {
     "lines": "Keeps line breaks",
@@ -30,12 +31,15 @@
   },
   "menu": {
     "modes": "Recognition mode",
-    "models": "Vision model",
+    "models": "Recognition model",
     "unknown_vision": "Image support not confirmed",
     "no_models": "No vision models available",
     "ocr_settings": "OCR settings…",
     "retake": "Capture again",
-    "history": "Recognition history…"
+    "history": "Recognition history…",
+    "offline": "Offline models",
+    "cloud": "Vision models",
+    "mode_unsupported": "{model} recognizes plain text only"
   },
   "action": {
     "recognize_again": "Recognize again",
@@ -64,5 +68,15 @@
     "retrigger": "After switching it on in System Settings, relaunch Wisp, then press {key} to capture.",
     "retrigger_plain": "After switching it on in System Settings, relaunch Wisp and capture again.",
     "capture_backend_short": "Another screenshot tool may be busy, or the displays just changed."
+  },
+  "wait": {
+    "queued_slow": "PP-StructureV3 is usually slower and can take tens of seconds when the service is busy"
+  },
+  "preview": {
+    "show_source": "Show Markdown source",
+    "show_preview": "Show table preview",
+    "formula": "Formula",
+    "copy_formula": "Copy formula",
+    "table": "Table"
   }
 }

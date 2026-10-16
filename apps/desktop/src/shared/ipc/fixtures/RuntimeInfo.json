@@ -90,5 +90,11 @@
     "error_detail": null,
     "progress": null,
     "device_count": 0
+  },
+  "offline": {
+    "installed": [
+      "pp_ocrv6_small",
+      "index_translate_2b"
+    ]
   }
 }

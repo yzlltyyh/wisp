@@ -78,6 +78,8 @@ import { useKeyScope } from '../../shared/keys/useKeyScope'
 import { presets, usePreset } from '../../shared/motion/presets'
 import { ease, ms, timing } from '../../shared/motion/tokens'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
+import { offlineRef } from '../../shared/offline/catalog'
+import { isOfflineNotReady, OfflineCard } from '../../shared/offline/OfflineCard'
 import { StreamView, type StreamFormat, type StreamHandle } from '../../shared/stream/StreamView'
 import { stripUrlBreaks } from '../../shared/stream/urlBreaks'
 import {
@@ -388,7 +390,9 @@ export function TranslateView(props: ViewProps<'translate'>) {
   const snap = useSyncExternalStore(run.subscribe, run.getSnapshot, run.getSnapshot)
   const params = snap.params
 
-  const notReady = isPinned ? null : payload.not_ready
+  /** 离线模型在未就绪卡片上下载完成、已经重新发起这次翻译：不再显示卡片 */
+  const [readyNow, setReadyNow] = useState(false)
+  const notReady = isPinned || readyNow ? null : payload.not_ready
   // 长文本确认中：风格 / 任务 / 模型 / 方向只改待发请求的参数，确认后才按新参数发起
   const [longTextPending, setLongTextPending] = useState(
     () =>
@@ -922,7 +926,11 @@ export function TranslateView(props: ViewProps<'translate'>) {
 
   const provider = providerOf(catalog, snap.model?.providerId ?? null)
   const choices = useMemo(() => modelChoices(catalog), [catalog])
-  const defaultRef = catalog?.settings.defaults.translate ?? null
+  // 本机选用的离线翻译模型优先于同步的默认模型（与 Rust 的选择顺序一致）
+  const offlineTranslate = catalog?.settings.offline?.translate_model ?? null
+  const defaultRef = offlineTranslate
+    ? offlineRef(offlineTranslate)
+    : (catalog?.settings.defaults.translate ?? null)
   const defaultModel =
     (defaultRef
       ? choices.find(
@@ -930,6 +938,16 @@ export function TranslateView(props: ViewProps<'translate'>) {
             c.ref.provider_id === defaultRef.provider_id && c.ref.model_id === defaultRef.model_id,
         )?.label
       : choices[0]?.label) ?? null
+  // 离线翻译模型不支持润色 / 校对：有默认的云端翻译模型时给一个显式的「用 <模型> 处理这一次」（用户自己点的，不是悄悄
+  // 改用云端），这一次的请求带上它的模型引用；默认模型已经不在列表里（服务被删）时只留「打开设置」
+  const cloudDefault = catalog?.settings.defaults.translate ?? null
+  const cloudChoice = cloudDefault
+    ? choices.find(
+        (c) =>
+          c.ref.provider_id === cloudDefault.provider_id &&
+          c.ref.model_id === cloudDefault.model_id,
+      )
+    : undefined
   const refineHint = longEnough ? null : t('translate.more.refine_hint')
   const detecting = busy && snap.detected === null && !editTask && forcedSource === null
   const showSkeleton =
@@ -976,17 +994,19 @@ export function TranslateView(props: ViewProps<'translate'>) {
     if (snap.status === 'cancelled') return { state: 'cancelled' }
     if (footerBusy) {
       const note =
-        snap.phase === 'reviewing'
-          ? t('translate.status.reviewing')
-          : snap.phase === 'improving'
-            ? t('translate.status.improving')
-            : snap.status !== 'streaming'
-              ? t('translate.status.waiting')
-              : params.task === 'polish'
-                ? t('translate.status.polishing')
-                : params.task === 'proofread'
-                  ? t('translate.status.proofreading')
-                  : t('translate.status.translating')
+        snap.phase === 'loading_model'
+          ? t('common.state.loading_model')
+          : snap.phase === 'reviewing'
+            ? t('translate.status.reviewing')
+            : snap.phase === 'improving'
+              ? t('translate.status.improving')
+              : snap.status !== 'streaming'
+                ? t('translate.status.waiting')
+                : params.task === 'polish'
+                  ? t('translate.status.polishing')
+                  : params.task === 'proofread'
+                    ? t('translate.status.proofreading')
+                    : t('translate.status.translating')
       return { model: snap.model?.label ?? null, note: { text: note } }
     }
     let note: StatusLineProps['note'] = null
@@ -1113,13 +1133,55 @@ export function TranslateView(props: ViewProps<'translate'>) {
 
   const leadCard: ReactNode =
     leadKey === 'notready' && notReady ? (
-      <NotReadyCard
-        notReady={notReady}
-        // 系统凭据存储不可用时同样「去设置」（Key 只能在设置里重新填写，组件库提供）
-        onOpenSettings={() => openSettings('providers')}
-        onOpenSystemSettings={openPermission}
-        data-testid="tv-not-ready"
-      />
+      isOfflineNotReady(notReady) ? (
+        // 离线翻译模型还没下载：就地下载，完成后直接翻译这段文字；「切换模型」打开默认模型的设置
+        <OfflineCard
+          notReady={notReady}
+          onReady={() => {
+            setReadyNow(true)
+            run.start()
+          }}
+          onSwitchModel={() => openSettings('providers')}
+          data-testid="tv-not-ready"
+        />
+      ) : (
+        <NotReadyCard
+          notReady={notReady}
+          // 系统凭据存储不可用时同样「去设置」（Key 只能在设置里重新填写，组件库提供）；离线模型不支持的任务打开离线模型分组
+          onOpenSettings={() =>
+            openSettings(notReady.reason === 'offline_task_unsupported' ? 'offline' : 'providers')
+          }
+          onOpenSystemSettings={openPermission}
+          actions={
+            notReady.reason === 'offline_task_unsupported' && cloudChoice ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => {
+                    setReadyNow(true)
+                    run.start({ model: cloudChoice.ref })
+                  }}
+                  data-testid="tv-not-ready-use-cloud"
+                >
+                  {t('panel.not_ready.offline_task_unsupported.use_cloud', {
+                    model: cloudChoice.label,
+                  })}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => openSettings('offline')}
+                  data-testid="tv-not-ready-settings"
+                >
+                  {t('common.action.go_settings')}
+                </Button>
+              </>
+            ) : undefined
+          }
+          data-testid="tv-not-ready"
+        />
+      )
     ) : leadKey === 'longtext' && payload.long_text ? (
       <LongTextPrompt
         info={payload.long_text}
@@ -1176,7 +1238,16 @@ export function TranslateView(props: ViewProps<'translate'>) {
         }
       />
     ) : leadKey === 'skeleton' ? (
-      <Skeleton lines={skeletonCount} />
+      <>
+        <Skeleton lines={skeletonCount} />
+        {/* 离线模型冷启动：状态行已写着「正在加载离线模型…」，几秒后再淡入一句为什么要等（CSS 的 animation-delay，
+            快的时候不会一闪而过；见 components.css 的 .ui-late） */}
+        {snap.phase === 'loading_model' ? (
+          <p className="tv-wait-note ui-late" data-testid="tv-loading-note">
+            {t('common.state.loading_slow')}
+          </p>
+        ) : null}
+      </>
     ) : null
 
   return (
@@ -1353,8 +1424,15 @@ export function TranslateView(props: ViewProps<'translate'>) {
                 providerName={provider?.name ?? null}
                 preferServerMessage={isCompatibleEndpoint(provider)}
                 onRetry={retry}
-                onOpenSettings={() => openSettings('providers')}
+                onOpenSettings={() =>
+                  openSettings(snap.error?.code === 'local_runtime' ? 'offline' : 'providers')
+                }
                 onSwitchModel={openModelMenu}
+                onOpenUrl={(url) =>
+                  void api
+                    .openUrl(url)
+                    .catch((e: unknown) => console.warn('[translate] open_url', e))
+                }
                 data-testid="tv-error"
               />
             </m.div>

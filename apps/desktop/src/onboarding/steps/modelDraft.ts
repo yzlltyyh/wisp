@@ -8,10 +8,12 @@
  */
 import { useCallback, useState } from 'react'
 import type { ModelRef, Provider, ProviderTemplate } from '../../shared/ipc/types'
+import type { OfflinePack } from '../../shared/offline/catalog'
 import { useKeyEntry, type KeyEntry } from '../../settings/providers/keyEntry'
 import { useRuntime } from '../../settings/store'
 
-export type ModelPhase = 'summary' | 'choose' | 'others' | 'form'
+/** offline：「不想填 API Key？使用离线模型」——轻量 / 高质量两档 */
+export type ModelPhase = 'summary' | 'choose' | 'offline' | 'others' | 'form'
 
 export interface ModelDefaults {
   translate: ModelRef | null
@@ -25,6 +27,8 @@ export interface ModelDraftState {
   defaults: ModelDefaults
   /** 最近一次成功拉取模型列表时的连接（协议 + base_url）：没变就不再拉取，免得覆盖用户的选择 */
   fetchedFor: string | null
+  /** 离线模型选了哪一档；null = 按本机适配推荐 */
+  pack: OfflinePack | null
 }
 
 export interface ModelDraftStore {
@@ -40,6 +44,7 @@ const INITIAL: ModelDraftState = {
   draft: null,
   defaults: { translate: null, ocr: null },
   fetchedFor: null,
+  pack: null,
 }
 
 /** 拉取模型列表的连接指纹（协议 + base_url） */

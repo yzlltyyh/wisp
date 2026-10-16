@@ -1,6 +1,7 @@
 /**
  * Select：触发器按钮 + 下拉菜单（勾选当前值，打开时高亮当前值）。
  * 键盘：触发器上 ↑↓ / Enter / Space 打开；菜单内同 Menu。
+ * 选项可以分组（`group`：相邻的同组选项上方显示一次分组标题，组与组之间有分隔线），也可以带第二行说明（`description`）。
  */
 import { ChevronsUpDown } from 'lucide-react'
 import { useRef, useState } from 'react'
@@ -12,7 +13,38 @@ export interface SelectOption<V extends string> {
   value: V
   label: string
   hint?: string
+  /** 标签下方的第二行说明（可以折行） */
+  description?: string
   disabled?: boolean
+  /** 分组标题：与上一个选项不同时插入分隔线与标题 */
+  group?: string
+}
+
+/** 选项 → 菜单项：分组变化处插入分隔线与分组标题 */
+export function selectEntries<V extends string>(
+  options: readonly SelectOption<V>[],
+  value: V | null,
+  onChange: (value: V) => void,
+): MenuEntry[] {
+  const items: MenuEntry[] = []
+  let group: string | undefined
+  options.forEach((o, i) => {
+    if (o.group !== undefined && o.group !== group) {
+      if (i > 0) items.push({ type: 'separator', id: `sep-${i}` })
+      items.push({ type: 'label', id: `group-${i}`, label: o.group })
+    }
+    group = o.group
+    items.push({
+      id: o.value,
+      label: o.label,
+      hint: o.hint,
+      description: o.description,
+      disabled: o.disabled,
+      checked: o.value === value,
+      onSelect: () => onChange(o.value),
+    })
+  })
+  return items
 }
 
 export interface SelectProps<V extends string> {
@@ -47,14 +79,7 @@ export function Select<V extends string>({
   const [open, setOpen] = useState(false)
   const [width, setWidth] = useState<number | undefined>(undefined)
   const current = options.find((o) => o.value === value)
-  const items: MenuEntry[] = options.map((o) => ({
-    id: o.value,
-    label: o.label,
-    hint: o.hint,
-    disabled: o.disabled,
-    checked: o.value === value,
-    onSelect: () => onChange(o.value),
-  }))
+  const items = selectEntries(options, value, onChange)
   const openMenu = () => {
     setWidth(trigger.current?.offsetWidth)
     setOpen(true)

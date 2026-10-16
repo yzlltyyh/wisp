@@ -23,6 +23,8 @@ import type {
 import type { MockHandle } from '../index'
 import type { MockContext, Scenario } from '../types'
 import { mockError } from '../types'
+import { offlineSummary } from '../localModels'
+import { offlineScenarios } from '../offlineScenarios'
 import { syncScenarios } from '../sync'
 
 // ---------------------------------------------------------------------------
@@ -69,6 +71,8 @@ interface Spec {
   keyRequired?: boolean
   local?: boolean
   regions?: ReadonlyArray<[string, string]>
+  /** 模板预置的模型（PaddleOCR） */
+  models?: readonly string[]
 }
 
 /** 与 crates/wisp-llm/src/templates.rs 一致（顺序相同） */
@@ -215,6 +219,15 @@ const SPECS: readonly Spec[] = [
     local: true,
   },
   { id: 'relay', name: '中转站', group: 'other', base: '', maxField: 'max_completion_tokens' },
+  {
+    id: 'paddleocr',
+    name: 'PaddleOCR',
+    group: 'ocr',
+    protocol: 'paddle_ocr',
+    base: 'https://paddleocr.aistudio-app.com/api/v2/ocr/jobs',
+    strip: false,
+    models: ['PP-OCRv6', 'PP-StructureV3', 'PaddleOCR-VL-1.6'],
+  },
 ]
 
 /** 本地模型冷启动可能超过 30 s */
@@ -235,7 +248,7 @@ function providerFrom(spec: Spec, id: string): Provider {
       dual_auth_header: null,
       gemini_key_in_query: false,
     },
-    models: [],
+    models: (spec.models ?? []).map((m) => model(m, 'unknown', { vision_source: null })),
     timeouts: {
       connect_ms: 10_000,
       first_token_ms: spec.local ? LOCAL_TIMEOUT_MS : 30_000,
@@ -461,6 +474,7 @@ export function live(ctx: MockContext, options: LiveOptions = {}): MockHandle {
     update: state.update,
     glossary_count: state.glossary.length,
     sync: state.sync.status,
+    offline: offlineSummary(state.offline),
     ...options.runtime,
   })
   const snapshot = (): SettingsSnapshot => ({
@@ -1166,4 +1180,6 @@ export const scenarios: readonly Scenario[] = [
   ),
   // 同步分组的场景（未连接 / 测试中 / 服务器无数据 / 已有数据 / 可恢复 / 已连接 / 同步中 / 各类错误）：见 ../sync.ts
   ...syncScenarios(page, clickWhenReady),
+  // 离线模型分组与 PaddleOCR 服务的场景（未下载 / 下载中 / 已安装 / 运行中 / 内存不足 / 待检测……）：见 ../offlineScenarios.ts
+  ...offlineScenarios(page, clickWhenReady, templateProvider),
 ]

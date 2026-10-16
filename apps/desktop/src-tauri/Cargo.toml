@@ -26,7 +26,7 @@ wayland = ["wisp-platform/wayland", "wisp-capture/wayland"]
 wgc = ["wisp-capture/wgc"]
 # 假模型（WISP_FAKE_LLM=1 时由编排器切换，见 orchestrator/mod.rs）：冒烟测试（WISP_SMOKE）、演示与性能门禁用。
 # 默认关闭，发布版不编入；`pnpm dev` / `pnpm build:debug` 与 CI 的冒烟 / 性能构建显式加 `--features fake-llm`
-fake-llm = ["wisp-llm/fake"]
+fake-llm = ["wisp-llm/fake", "wisp-local/fake"]
 
 [dependencies]
 wisp-types = { workspace = true }
@@ -38,6 +38,9 @@ wisp-capture = { workspace = true }
 wisp-platform = { workspace = true }          # 不在依赖处写死 features（由上面的 [features] 透传）
 # 多设备同步（WebDAV、端到端加密、改动日志）；同步关闭时不创建任何资源
 wisp-sync = { workspace = true }
+# 离线模型（目录、下载、推理进程托管、本地与云端 OCR）；没用到离线模型时不创建任何资源。`ort`：ORT 工作进程
+# （`--wisp-worker ort`）里的 PP-OCR / 版面检测推理，ONNX Runtime 动态库按需下载、运行时加载
+wisp-local = { workspace = true, features = ["ort"] }
 
 tauri = { workspace = true }
 tauri-plugin-global-shortcut = { workspace = true }
@@ -105,7 +108,12 @@ blocking = "=1.6.2"
 tauri = { workspace = true, features = ["test"] }
 # 编排器状态机测试用 wisp_llm::fake（resolver 3：dev-dependencies 的 feature 只在构建测试目标时生效，不进入发布构建）
 wisp-llm = { workspace = true, features = ["fake"] }
+wisp-local = { workspace = true, features = ["ort", "fake"] }
 tempfile = { workspace = true }
+# 模型服务的下载队列测试：本机的模拟下载源
+wiremock = { workspace = true }
+# 模型服务的生命周期测试：暂停的时钟（闲置释放的分钟数瞬间走完）
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

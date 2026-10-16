@@ -11,6 +11,7 @@ use crate::assets::AssetRegistry;
 use crate::bus::Bus;
 use crate::clipboard_svc::ClipboardService;
 use crate::hotkeys::HotkeyService;
+use crate::models_svc::ModelsService;
 use crate::orchestrator::Orchestrator;
 use crate::settings::SettingsService;
 use crate::sync_svc::SyncService;
@@ -37,6 +38,8 @@ pub struct AppState {
     pub hotkeys: Arc<HotkeyService>,
     /// 多设备同步（关闭时不持有任何资源）
     pub sync: Arc<SyncService>,
+    /// 离线模型（没用到时不持有任何资源）
+    pub models: Arc<ModelsService>,
     pub perf: Arc<PerfMarks>,
     pub assets: Arc<AssetRegistry>,
     pub bus: Bus,

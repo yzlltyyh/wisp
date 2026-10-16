@@ -11,7 +11,9 @@
  *   错误码属于 auth / not_found / quota / rate_limited / upstream / content_filter / too_long 等服务端错误）；
  *   network / timeout / internal / keychain 照常显示本地化建议，原文放进详情；
  * - 建议文案优先级：带参数的错误码文案（provider / url / status / 倒计时）> Rust 的 hint（`errors.hint.*`）> 错误码默认建议；
- *   有 subcode 时在下面补一行（地区限制、返回了网页、/v1 提示……）。
+ *   有 subcode 时在下面补一行（地区限制、返回了网页、/v1 提示……）；
+ * - 有官方下载页的 hint（缺 Microsoft Visual C++ 运行库）多一个打开该页面的按钮（`onOpenUrl`），排在最前：用户要先装好它，
+ *   重试才有意义。
  * 出现动效 presets.cardIn；详情展开 presets.sectionExpand。
  */
 import type { LucideIcon } from 'lucide-react'
@@ -19,6 +21,7 @@ import {
   ChevronDown,
   CircleAlert,
   Clock,
+  ExternalLink,
   KeyRound,
   ShieldAlert,
   Unplug,
@@ -56,6 +59,7 @@ export const ERROR_ACTIONS: Record<ErrorCode, readonly ErrorAction[]> = {
   not_configured: ['open_settings'],
   keychain: ['retry', 'open_settings'],
   internal: ['retry'],
+  local_runtime: ['retry', 'open_settings'],
 }
 
 const ICONS: Partial<Record<ErrorCode, LucideIcon>> = {
@@ -117,6 +121,8 @@ export interface ErrorCardProps {
   onOpenSettings?: () => void
   onChooseModel?: () => void
   onSwitchModel?: () => void
+  /** 打开外部网页（官方下载页这类按钮）；不给时不显示这类按钮 */
+  onOpenUrl?: (url: string) => void
   /** 初始展开详情（展示页用） */
   defaultExpanded?: boolean
   className?: string
@@ -144,6 +150,14 @@ function useCountdown(seconds: number | null): number {
 
 const SECOND_MS = 1000
 
+/** Microsoft 官方的 Visual C++ 运行库下载页（列出各架构的最新安装包） */
+export const VC_REDIST_URL = 'https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist'
+
+/** 有官方下载页的 hint：按钮文案（`errors.action.*`）与地址 */
+const HINT_LINKS: Readonly<Record<string, { label: 'vc_runtime'; url: string }>> = {
+  'errors.hint.local.vc_runtime_missing': { label: 'vc_runtime', url: VC_REDIST_URL },
+}
+
 export function ErrorCard({
   error,
   providerName,
@@ -152,6 +166,7 @@ export function ErrorCard({
   onOpenSettings,
   onChooseModel,
   onSwitchModel,
+  onOpenUrl,
   defaultExpanded = false,
   className,
   'data-testid': testId = 'error-card',
@@ -204,6 +219,7 @@ export function ErrorCard({
   }
   const actions = ERROR_ACTIONS[code].filter((a) => handlers[a])
   const waiting = code === 'rate_limited' && countdown > 0
+  const link = error.hint && onOpenUrl ? HINT_LINKS[error.hint] : undefined
 
   const rows: Array<[string, string]> = [
     [t('errors.details.code'), error.subcode ? `${code} · ${error.subcode}` : code],
@@ -235,9 +251,23 @@ export function ErrorCard({
         </div>
       </div>
       {/* 没有操作按钮时「详情」紧贴正文、与文字左对齐，不在卡片右下角留一整行空白 */}
-      <div className="ui-errorcard-actions" data-bare={actions.length === 0 || undefined}>
+      <div
+        className="ui-errorcard-actions"
+        data-bare={(actions.length === 0 && !link) || undefined}
+      >
+        {link ? (
+          <Button
+            size="sm"
+            variant="primary"
+            icon={ExternalLink}
+            onClick={() => onOpenUrl?.(link.url)}
+            data-testid={`${testId}-link`}
+          >
+            {t(`errors.action.${link.label}`)}
+          </Button>
+        ) : null}
         {actions.map((a, i) => {
-          const variant = i === 0 ? 'primary' : 'secondary'
+          const variant = i === 0 && !link ? 'primary' : 'secondary'
           const labelText =
             a === 'retry'
               ? waiting

@@ -21,7 +21,9 @@ import { DangerRow } from '../components/Confirm'
 import { Page, SegmentRow, SelectRow, SwitchRow } from '../components/Page'
 import { at } from '../lib/patch'
 import { notify, patchSettings, useSettings } from '../store'
-import { ocrOptions, parseRefKey, refKey, defaultIsValid } from '../providers/model'
+import { engineSupports, ocrEngineOf } from '../../shared/offline/catalog'
+import { EngineField } from '../providers/EngineField'
+import { ocrOptions } from '../providers/model'
 import { OcrHistoryList, TurnOffPrompt, useOcrHistory } from './OcrHistory'
 
 const EDGES = ['1024', '1536', '2048', '3072', '4096'] as const
@@ -79,7 +81,15 @@ export default function OcrPage() {
   if (!settings) return null
   const o = settings.ocr
   const options = ocrOptions(settings.providers)
-  const valid = defaultIsValid(settings.defaults.ocr, options)
+  // 当前识别引擎不支持「结构化」（PP-OCRv6 与云端的 PP-OCRv6 只识别文本行）：这一项置灰并说明，识别时按段落输出
+  const engine = ocrEngineOf(
+    null,
+    settings.offline.ocr_model,
+    settings.defaults.ocr,
+    settings.providers,
+  )
+  const markdownOk = engineSupports(engine, 'markdown')
+  const shownMode = o.default_mode === 'translate' ? 'lines' : o.default_mode
   const edge = String(o.max_edge_px)
   const edgeOptions = (EDGES as readonly string[]).includes(edge) ? EDGES : [...EDGES, edge]
 
@@ -99,43 +109,29 @@ export default function OcrPage() {
       <Section title={t('settings.ocr.recognition')}>
         <SegmentRow<Exclude<OcrMode, 'translate'>>
           label={t('settings.ocr.mode')}
-          description={t(
-            `settings.ocr.mode_desc.${o.default_mode === 'translate' ? 'lines' : o.default_mode}`,
-          )}
-          value={o.default_mode === 'translate' ? 'lines' : o.default_mode}
+          description={t(`settings.ocr.mode_desc.${shownMode}`)}
+          message={
+            markdownOk
+              ? null
+              : shownMode === 'markdown'
+                ? t('settings.ocr.markdown_fallback')
+                : t('settings.ocr.markdown_unsupported')
+          }
+          messageTone={shownMode === 'markdown' ? 'warning' : 'default'}
+          value={shownMode}
           options={(['lines', 'paragraphs', 'markdown'] as const).map((v) => ({
             value: v,
             label: t(`common.ocr_mode.${v}`),
+            disabled: v === 'markdown' && !markdownOk && shownMode !== 'markdown',
+            title:
+              v === 'markdown' && !markdownOk ? t('settings.ocr.markdown_unsupported') : undefined,
           }))}
           onChange={(v) => void patchSettings(at('ocr.default_mode', v))}
           ariaLabel={t('settings.ocr.mode')}
           data-testid="ocr-mode"
         />
-        <SelectRow<string>
-          label={t('settings.ocr.model')}
-          description={
-            options.length === 0
-              ? t('settings.defaults.none_vision')
-              : t('settings.defaults.ocr_desc')
-          }
-          value={valid ? refKey(settings.defaults.ocr) : null}
-          placeholder={t('settings.defaults.choose')}
-          options={options.map((x) => ({
-            value: x.value,
-            label: x.label,
-            hint:
-              x.vision === 'unknown'
-                ? `${x.hint} · ${t('settings.models.vision_unconfirmed')}`
-                : x.hint,
-          }))}
-          disabled={options.length === 0}
-          invalid={!valid}
-          message={!valid ? t('settings.defaults.invalid_ocr') : null}
-          onChange={(v) => void patchSettings(at('defaults.ocr', parseRefKey(v)))}
-          ariaLabel={t('settings.ocr.model')}
-          data-testid="ocr-model"
-        />
-        {options.length === 0 ? (
+        <EngineField task="ocr" offline label={t('settings.ocr.model')} data-testid="ocr-model" />
+        {options.length === 0 && settings.offline.ocr_model === null ? (
           <Field label={t('settings.ocr.no_model')} description={t('settings.ocr.no_model_desc')}>
             <Button size="sm" onClick={() => nav.go('providers')}>
               {t('settings.ocr.go_providers')}

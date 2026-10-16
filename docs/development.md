@@ -39,14 +39,14 @@ corepack enable
 pnpm install --frozen-lockfile
 ```
 
-Rust 依赖在第一次 `cargo` 或 `pnpm dev` 时下载。`vendor/` 下是通过 `[patch.crates-io]` 替换的几个上游 crate（wry、tao、tray-icon、notify），已经在仓库里，不需要额外操作；各补丁的内容与原因见 [vendor/README.md](../vendor/README.md)。
+Rust 依赖在第一次 `cargo` 或 `pnpm dev` 时下载。`vendor/` 下是通过 `[patch.crates-io]` 替换的几个上游 crate（wry、tao、tray-icon、notify、oar-ocr / oar-ocr-core），已经在仓库里，不需要额外操作；各补丁的内容与原因见 [vendor/README.md](../vendor/README.md)。
 
 ## 运行与构建
 
 | 命令 | 作用 |
 | --- | --- |
 | `pnpm dev` | 开发运行（`tauri dev`，带 `fake-llm` feature）。前端热更新，Rust 改动自动重新编译 |
-| `WISP_FAKE_LLM=1 pnpm dev` | 同上，并改用内置的假模型：不需要 Key，固定文本、可配置延迟，适合调界面与流程 |
+| `WISP_FAKE_LLM=1 pnpm dev` | 同上，并改用内置的假模型：不需要 Key，固定文本、可配置延迟，适合调界面与流程。离线翻译、离线识别与 PaddleOCR 识别也改用假引擎，编排器把离线模型当作已下载，不下载、不启动推理进程 |
 | `pnpm -C apps/desktop dev:mock` | 只启动前端与浏览器 mock，在普通浏览器里开发界面，不需要编译 Rust（见下文） |
 | `pnpm build:debug` | 打一个 debug 安装包（带 `fake-llm`，关闭更新器产物，不需要更新器私钥） |
 | `pnpm tauri build --config src-tauri/tauri.no-updater.conf.json` | 本机打 release 安装包，不生成更新器签名 |
@@ -81,6 +81,7 @@ scripts/dev-sign-macos.sh --check                      # 查看证书与产物�
 
 - `--dev` 只对这一次运行生效。不要把 `CARGO_TARGET_*_RUNNER` 写进 shell 配置，那会影响本机所有 Rust 项目。
 - 从终端用 `pnpm dev` 启动的进程，授权会记在终端应用名下。要验证 Wisp 自己的授权流程，用 `pnpm build:debug` 打出 `.app`、重签后从访达或 `open` 启动。
+- 这个脚本重签时不开 hardened runtime，也不带 entitlements，所以开发构建不受动态库校验的影响。发布构建由 tauri 的打包器签名，带 hardened runtime 与 `src-tauri/Entitlements.plist`（离线模型的 ORT 工作进程要加载下载的 ONNX Runtime 动态库，见[架构 · 离线模型与推理进程](architecture.md#离线模型与推理进程)）；可以用 `codesign -d --entitlements - <Wisp.app>` 确认。
 
 ## 测试与检查
 
@@ -112,11 +113,85 @@ node scripts/bump.mjs --check   # 各处版本号一致
 | 发布脚本、`cliff.toml`、`CHANGELOG.md` | `node scripts/release/self-test.mjs` |
 | GitHub 工作流或 shell 脚本 | `actionlint`、`shellcheck` |
 | 假模型、提示词评测 | `cargo test -p wisp-llm --features fake --locked`、`cargo test -p wisp-prompts --features eval --locked` |
+| 离线模型（`crates/wisp-local`、`models_svc/`、`wisp-platform` 的 `system` / `pressure` / `child`） | `cargo test -p wisp-local --features ort,fake --locked` 与 `cargo test -p wisp-platform --locked`（含 `child_guard`）；改了 Windows / Linux 的平台代码时加 `pnpm check:cross`。对真实运行时、模型与 PaddleOCR 服务的测试见下文[离线模型与 PaddleOCR 的真机测试](#离线模型与-paddleocr-的真机测试) |
 | 多设备同步（`crates/wisp-sync`） | `cargo test -p wisp-sync --locked`：加解密与篡改检测、投影往返、合并性质（proptest）、多设备收敛模拟（内存远端）与 WebDAV 客户端（wiremock），都不需要真实账号。对真实服务器的测试默认忽略，用环境变量提供账号：`WISP_SYNC_TEST_URL=https://… WISP_SYNC_TEST_USER=… WISP_SYNC_TEST_PASS=… cargo test -p wisp-sync --locked --test live_webdav --test live_engine -- --ignored`。`live_webdav` 是传输层冒烟，只在地址下 `wisp/` 里的随机子目录中读写；`live_engine` 让两台模拟设备经真实服务器走完连接、加入、同步、删除与清空、清除服务器数据，在地址下单独的 `e2e-<随机 id>/` 目录里进行，不碰真实的同步数据。两者结束时（包括失败时）都会删除自己建的目录。不要把真实的地址与账号写进仓库 |
 | 界面交互（焦点、键盘、逐帧布局） | 浏览器级用例：`pnpm -C apps/desktop exec playwright install webkit chromium`（第一次），然后 `pnpm -C apps/desktop exec playwright test`（配置在 `apps/desktop/playwright.config.ts`，运行 `src/**/__e2e__/*.e2e.ts`） |
 | Linux 平台层 | `xvfb-run -a cargo test -p wisp-platform --test smoke_linux -- --ignored --test-threads=1`（需要 `bash scripts/ci/linux-deps.sh smoke` 安装的依赖） |
 
 测试的放置约定：Rust 单元测试写在模块内的 `#[cfg(test)]`，集成测试放在 crate 的 `tests/`；需要系统权限或真实 GUI 的测试标 `#[ignore = "原因"]`。前端测试放在被测代码旁的 `__tests__/`，浏览器级用例放在 `__e2e__/`。
+
+### 离线模型与 PaddleOCR 的真机测试
+
+`crates/wisp-local` 的默认测试不需要网络、真实模型与令牌：下载器（wiremock 与脚本化服务器：续传、换源、校验失败、区间提取等）、解包的安全检查、存储布局、设备适配、llama-server 的参数与输出解析、帧协议与工作进程、文本拼装、OTSL 表格、版面后处理、PaddleOCR 两种接口（wiremock）；`wisp-platform` 的 `child_guard`（`harness = false`，测试二进制自己充当守护进程）覆盖守护进程、Job Object 与孤儿清扫。对真实运行时、模型与服务的测试都标了 `#[ignore]`，需要手动运行；**模型与运行时不提交进仓库**。
+
+**准备素材**：在一个被 `.gitignore` 忽略的目录里（建议 `artifacts/local-models/`）按下面的布局放好官方原件。下载地址与 SHA-256 以 `crates/wisp-local/src/catalog.rs` 为准，下载后逐个核对哈希（`shasum -a 256 <文件>`）。
+
+```text
+artifacts/local-models/
+  raw/
+    runtime/llama-b11669-bin-macos-arm64.tar.gz       运行时的发布包（解包测试用）
+    runtime/onnxruntime-osx-arm64-1.28.3.tgz
+    PP-OCRv6_tiny_det_onnx/inference.onnx             以模型仓库名为目录，放仓库里的原文件
+    PP-OCRv6_tiny_rec_onnx/inference.onnx、inference.yml
+    PP-OCRv6_small_det_onnx/…、PP-OCRv6_small_rec_onnx/…（同上）
+    PP-DocLayoutV3_onnx/inference.onnx
+    PaddleOCR-VL-1.6-GGUF/PaddleOCR-VL-1.6-GGUF.gguf、PaddleOCR-VL-1.6-GGUF-mmproj.gguf
+    Index-Translate-2B-GGUF/Index-Translate-2B.Q4_K_M.gguf
+    Index-Translate-9B-GGUF/Index-Translate-9B.Q4_K_M.gguf
+  rt/
+    llama-b11669/   把 llama.cpp 的发布包解在这里，得到 rt/llama-b11669/llama-b11669/llama-server
+    ort-1.28.3/     把 ONNX Runtime 的发布包解在这里，得到 rt/ort-1.28.3/onnxruntime-osx-arm64-1.28.3/lib/…
+```
+
+这些真机测试按 macOS（Apple Silicon）的发布包编写；Linux 用对应的发布包，解包后的布局相同。测试在素材目录下用硬链接临时搭出 Wisp 的 `models/` 布局（不占额外空间），结束时删除；只打印耗时、内存与计数，不打印识别与翻译的内容。
+
+| 变量 | 作用 |
+| --- | --- |
+| `WISP_LOCAL_TEST_DIR` | 素材目录的绝对路径；真机测试都从这里读，临时目录也建在这里 |
+| `WISP_LAYOUT_TEST_IMAGE` | 版面检测与 VL 流水线用的图片（可选，默认 `docs/images/ocr-light.png`） |
+| `WISP_VL_TEST_URL`、`WISP_VL_TEST_KEY` | VL 流水线连接的 llama-server 地址（例如 `http://127.0.0.1:8111`）与它的 API Key（可选）；`WISP_VL_TEST_PRINT=1` 时打印识别结果 |
+| `WISP_TEST_DESKTOP_EXE` | 桌面端集成测试用的 Wisp 可执行文件（可选，默认取同一 target 目录下的 `wisp-desktop`） |
+| `WISP_PADDLE_TEST_TOKEN`、`WISP_PADDLE_TEST_URL` | PaddleOCR 云端测试的访问令牌与服务地址（地址可选，默认 AI Studio 的任务接口）。令牌只从环境变量读，不要写进任何文件 |
+| `WISP_MODELS_DIR` | 让开发构建的 Wisp 把离线模型放到别处，不写进真实的数据目录；只在 debug 构建或 `WISP_SMOKE=1` 时生效，发布版忽略 |
+
+```bash
+export WISP_LOCAL_TEST_DIR=$PWD/artifacts/local-models
+
+# 守护进程、强制结束父进程与孤儿清扫，对真实的 llama-server（Index-Translate 2B）
+cargo test -p wisp-platform --test child_guard -- --ignored
+# llama-server：2B / 9B / VL 的冷热启动、一次翻译、常驻内存、API Key 生效、加载中取消、停止后无进程、--list-devices 的输出
+cargo test -p wisp-local --test llama_live -- --ignored --nocapture --test-threads=1
+# 官方发布包的解包
+cargo test -p wisp-local --test runtime_extract -- --ignored --nocapture
+# 真实网络的下载：PP-OCRv6 Tiny 连同运行时的完整安装、大文件续传、Hugging Face 源、Windows ONNX Runtime 的区间提取
+cargo test -p wisp-local --test download_live -- --ignored --nocapture --test-threads=1
+
+# PP-OCRv6 与官方产线输出的对比、延迟与内存；版面检测。先编译测试用的工作进程
+cargo build -p wisp-local --features ort --example ort_worker
+cargo test -p wisp-local --features ort --test ocr_live -- --ignored --nocapture ppocr_matches
+cargo test -p wisp-local --features ort --test ocr_live -- --ignored --nocapture layout_detection
+
+# VL 文档流水线：先在另一个终端启动加载 PaddleOCR-VL 的 llama-server，测完结束它
+LLAMA_API_KEY=<随机字符串> $WISP_LOCAL_TEST_DIR/rt/llama-b11669/llama-b11669/llama-server \
+  -m $WISP_LOCAL_TEST_DIR/raw/PaddleOCR-VL-1.6-GGUF/PaddleOCR-VL-1.6-GGUF.gguf \
+  --mmproj $WISP_LOCAL_TEST_DIR/raw/PaddleOCR-VL-1.6-GGUF/PaddleOCR-VL-1.6-GGUF-mmproj.gguf \
+  --host 127.0.0.1 --port 8111 -c 8192 -np 1 --no-webui --jinja --offline
+WISP_VL_TEST_URL=http://127.0.0.1:8111 WISP_VL_TEST_KEY=<同一个字符串> \
+  cargo test -p wisp-local --features ort --test ocr_live -- --ignored --nocapture vl_pipeline
+
+# 桌面端：经模型服务跑翻译与 PP-OCRv6 的冷热路径、闲置释放与退出（不启动 GUI，测得的数字写到素材目录的 live-metrics.json）
+cargo build -p wisp-desktop --bin wisp-desktop
+cargo test -p wisp-desktop --lib -- --ignored live_translation_and_ppocr
+
+# PaddleOCR 云端：三个预置模型各识别一张截图、连接测试（真实网络与令牌）
+WISP_PADDLE_TEST_TOKEN=<令牌> cargo test -p wisp-local --test cloud_live -- --ignored --nocapture
+
+# 结束后确认没有残留的推理进程
+pgrep -fl 'llama-server|wisp-worker|wisp-guard'
+```
+
+在开发构建里手动验证下载与设置页时，用 `WISP_MODELS_DIR=<临时目录>` 把模型放到别处，验证完删除这个目录。
+
 
 ## 调试
 
@@ -143,6 +218,7 @@ node scripts/bump.mjs --check   # 各处版本号一致
 | `WISP_WEBVIEW_DEVKEYS=1` | Windows：不屏蔽 WebView2 的浏览器快捷键（F12 开发者工具、F5 重新加载等）；默认屏蔽，避免重新加载打断面板会话 |
 | `WISP_X11_HOTKEYS=plugin` | Linux X11：全局快捷键改由 tauri-plugin-global-shortcut 注册（默认用平台层的 `XGrabKey`）。**发布版同样生效**，是某个桌面环境上快捷键失灵时不用换版本的退路 |
 | `WISP_WINDOW_LAB=1`、`WISP_FRAME_LAB=<模式>` | 窗口层实验台与面板帧模式实验台（见下文） |
+| `WISP_MODELS_DIR=<目录>` | 离线模型与推理组件改放到这个目录（默认是数据目录下的 `models/`）；只在 debug 构建或冒烟模式下生效 |
 | `WISP_E2E_PORT=<端口>` | 浏览器级用例 preview 的端口，默认 1479 |
 | `WISP_EVAL_KEY_<ID>` | 提示词评测运行器使用的 API Key（见下文） |
 
@@ -162,6 +238,7 @@ node scripts/bump.mjs --check   # 各处版本号一致
 | 跨 crate、跨 IPC 或要持久化的类型 | `crates/wisp-types`，同时更新 `apps/desktop/src/shared/ipc/types.ts` 与黄金样例 |
 | 新的 Tauri 命令 | `apps/desktop/src-tauri/src/ipc/cmd_*.rs` 与 `ipc/mod.rs` 的 `commands!`，前端封装在 `apps/desktop/src/shared/ipc/commands.ts`；参数在命令体第一步校验 |
 | 提示词 | `crates/wisp-prompts/templates/` |
+| 离线模型的目录（文件、大小、SHA-256、下载地址、运行时版本） | `crates/wisp-local/src/catalog.rs`；换文件或换版本时把 `CATALOG_REVISION` 加一，并更新设置页与文档里的大小 |
 | 界面文案 | `apps/desktop/src/locales/zh-CN/` 与 `en-US/` 同时添加；托盘与系统通知的文案在 `apps/desktop/src-tauri/src/app/i18n.rs` |
 | 动效时长与曲线 | `apps/desktop/src/shared/motion/` 的令牌，不写字面数值 |
 | 颜色与其他视觉常量 | `apps/desktop/src/shared/styles/` 的设计令牌 |
@@ -343,3 +420,9 @@ pnpm tauri signer generate -w <仓库之外的路径>/wisp.key   # 交互式设�
 自签证书：在钥匙串助理里创建「代码签名」类型的自签证书（或参考 `scripts/dev-sign-macos.sh --init` 的做法），用 `openssl pkcs12 -export -legacy` 导出 p12，`base64` 编码后存为 secret。证书一旦用于发布同样不能更换，否则所有用户都要重新授权。
 
 工作流里不要写 `APPLE_CERTIFICATE*` / `APPLE_SIGNING_IDENTITY: ${{ secrets.… }}` 这样的映射：未配置的 secret 会展开成空字符串，tauri-cli 会用空串覆盖配置里的 ad-hoc 签名。将来接入 Apple Developer ID 签名与公证、Windows 代码签名时，接入点见 `release.yml` 里「构建」一步的注释。
+
+**改用 Apple 开发者证书签名时**，离线模型依赖主程序的 `com.apple.security.cs.disable-library-validation`（hardened runtime 下加载下载来的、ad-hoc 签名的 ONNX Runtime 动态库，原因见[架构 · 离线模型与推理进程](architecture.md#离线模型与推理进程)），换签名方式之后逐项核对：
+
+1. `codesign -d --entitlements - <Wisp.app>` 的输出里仍有这一项；如果改由工作流自己调用 `codesign`，要带上 `--options runtime` 与 `--entitlements apps/desktop/src-tauri/Entitlements.plist`；
+2. 公证通过（`xcrun notarytool submit … --wait` 的结果为 Accepted），`spctl --assess --type execute -v <Wisp.app>` 通过；
+3. 在一台新机器上（没有开发证书、没有下载过模型）实测一次：下载 PP-OCRv6 并完成一次离线识别（确认 ORT 工作进程能加载下载的动态库），再下载 Index-Translate 2B 完成一次离线翻译（确认 llama-server 能启动），结束后没有残留的推理进程。

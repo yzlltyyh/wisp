@@ -5,7 +5,14 @@
  */
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { brandLogo, PROVIDER_LOGOS, ProviderLogo, RELAY_TEMPLATE, type BrandLogo } from '../logos'
+import {
+  brandLogo,
+  MONOGRAM_TEMPLATES,
+  PROVIDER_LOGOS,
+  ProviderLogo,
+  RELAY_TEMPLATE,
+  type BrandLogo,
+} from '../logos'
 
 /** crates/wisp-llm/src/templates.rs 里的模板 id（模板表的唯一来源） */
 function rustTemplateIds(): string[] {
@@ -24,11 +31,12 @@ function rustTemplateIds(): string[] {
 }
 
 describe('标志登记表', () => {
-  it('除中转站外的每个模板都有标志，登记表里也没有模板表之外的 id', () => {
+  it('除中转站与用两字母头像的模板外，每个模板都有标志，登记表里也没有模板表之外的 id', () => {
     const ids = rustTemplateIds()
     expect(ids.length).toBeGreaterThanOrEqual(16)
     expect(ids).toContain(RELAY_TEMPLATE)
-    const branded = ids.filter((id) => id !== RELAY_TEMPLATE)
+    for (const id of MONOGRAM_TEMPLATES) expect(ids).toContain(id)
+    const branded = ids.filter((id) => id !== RELAY_TEMPLATE && !MONOGRAM_TEMPLATES.includes(id))
     expect(Object.keys(PROVIDER_LOGOS).toSorted()).toEqual(branded.toSorted())
     for (const id of branded) expect(brandLogo(id), id).not.toBeNull()
     expect(brandLogo(RELAY_TEMPLATE)).toBeNull()

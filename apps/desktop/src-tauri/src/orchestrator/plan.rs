@@ -1,19 +1,28 @@
-//! 请求的规划（纯函数，便于单测）：风格与模型的解析、语言检测与方向、词典式判定、
+//! 请求的规划（纯函数，便于单测）：风格与模型的解析（含离线模型与 PaddleOCR 云端）、语言检测与方向、词典式判定、
 //! 长文本判定、提示词装配、缓存键。
+//!
+//! **离线模型**：选择只在本机的 `offline` 分组里（`offline.ocr_model` / `offline.translate_model`），优先级是
+//! 请求显式指定 > `offline.*` > 风格绑定 > `defaults`。离线翻译模型以合成服务商 [`OFFLINE_PROVIDER_ID`] 出现在请求里
+//! （[`offline_translate`]，真正的地址与 key 在模型服务加载好推理进程之后才填）；离线 OCR 模型与 PaddleOCR 云端不是一次
+//! LLM 调用，解析为 [`OcrTarget::Engine`]。`@offline` 只能出现在请求的显式指定里：同步来的风格绑定、`defaults` 指向它时
+//! 按「引用失效」跳过（校验也会把它们置空）。
 
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use wisp_llm::{ChatRequest, Purpose, Secret, UserContent};
 use wisp_prompts::{
-    BuiltPrompt, CacheKeyInput, Detection, GlossaryMatcher, PromptCtx, PromptTask, build, cache_key, detect_lang,
-    estimate_tokens, target_for, use_dictionary,
+    BuiltPrompt, CacheKeyInput, Detection, GlossaryMatcher, PromptCtx, PromptProfile, PromptTask, build_profile,
+    cache_key, detect_lang, estimate_tokens, target_for, use_dictionary,
 };
+use wisp_types::defaults::OFFLINE_PROVIDER_ID;
 use wisp_types::{
-    DictMode, Lang, LongTextInfo, ModelEntry, ModelRef, NotReady, OcrMode, Provider, RequestId, Settings, StreamEvent,
-    Style, TaskKind,
+    DictMode, Lang, LocalModelId, LocalModelKind, LongTextInfo, MaxTokensField, ModelCaps, ModelEntry, ModelRef,
+    NotReady, OcrMode, Protocol, Provider, Quirks, RequestId, Settings, StreamEvent, Style, TaskKind, ThinkingOff,
+    Timeouts, Vision, VisionSource,
 };
 
+use super::captures::ModelKey;
 use super::registry::ModelInfo;
 
 /// 解析好的模型
@@ -37,9 +46,108 @@ impl Resolved {
                 .unwrap_or_else(|| self.model.id.clone()),
         }
     }
+
+    /// 离线翻译模型（合成服务商）时为它的 id
+    pub fn offline_model(&self) -> Option<LocalModelId> {
+        is_offline(&self.provider)
+            .then(|| LocalModelId::parse(&self.model.id))
+            .flatten()
+    }
+
+    /// 提示词档位：离线翻译模型用 Index-Translate 的官方格式
+    pub fn prompt_profile(&self) -> PromptProfile {
+        if self.offline_model().is_some() {
+            PromptProfile::IndexTranslate
+        } else {
+            PromptProfile::Standard
+        }
+    }
 }
 
-/// 在设置里找模型引用：Provider 必须存在；模型不在列表里时按 id 构造（中转站的别名可以手填）
+/// 离线模型的显示名（`Start` 的模型标签、识别历史里的模型名）。都是产品名，不翻译
+pub const fn offline_label(id: LocalModelId) -> &'static str {
+    match id {
+        LocalModelId::PpOcrV6Tiny => "PP-OCRv6 Tiny",
+        LocalModelId::PpOcrV6Small => "PP-OCRv6 Small",
+        LocalModelId::PaddleOcrVl16 => "PaddleOCR-VL-1.6",
+        LocalModelId::IndexTranslate2b => "Index-Translate 2B",
+        LocalModelId::IndexTranslate9b => "Index-Translate 9B",
+    }
+}
+
+/// 本机推理的首字时限：小模型在慢机器上处理长原文、9B 在 CPU 上都可能远超云端的 30 s（加载时间不计入：
+/// 请求在推理进程就绪之后才发出）
+const OFFLINE_FIRST_TOKEN_MS: u32 = 120_000;
+
+/// 是否为离线模型的合成服务商
+pub fn is_offline(provider: &Provider) -> bool {
+    provider.id == OFFLINE_PROVIDER_ID
+}
+
+/// 离线模型的合成服务商：OpenAI 兼容接口，地址在推理进程就绪后由模型服务填入（这里的回环地址只是占位，让
+/// 「不需要 Key」的判定与真实请求一致：编排器不碰钥匙串）
+pub fn offline_provider(thinking_off: ThinkingOff) -> Provider {
+    Provider {
+        id: OFFLINE_PROVIDER_ID.to_owned(),
+        name: String::new(),
+        protocol: Protocol::OpenAiChat,
+        base_url: "http://127.0.0.1".to_owned(),
+        headers: Default::default(),
+        quirks: Quirks {
+            thinking_off,
+            // llama-server 接受 `max_tokens`；预置好，不必每次启动都被拒一轮再降级
+            max_tokens_field: Some(MaxTokensField::MaxTokens),
+            ..Quirks::default()
+        },
+        models: Vec::new(),
+        timeouts: Timeouts {
+            first_token_ms: OFFLINE_FIRST_TOKEN_MS,
+            ..Timeouts::default()
+        },
+        template_id: None,
+    }
+}
+
+/// 离线模型的合成模型条目（能力预置：本地服务接受的参数已知，不必在运行时试探）
+pub fn offline_model_entry(id: LocalModelId) -> ModelEntry {
+    let mut m = ModelEntry::new(id.as_str());
+    m.label = Some(offline_label(id).to_owned());
+    m.caps = ModelCaps {
+        temperature: Some(true),
+        max_tokens_field: Some(MaxTokensField::MaxTokens),
+        stream_options: Some(true),
+        ..ModelCaps::default()
+    };
+    if id.kind() == LocalModelKind::Ocr {
+        m.vision = Vision::Yes;
+        m.vision_source = Some(VisionSource::User);
+    }
+    m
+}
+
+/// 离线翻译模型的 `Resolved`（关思考：Index-Translate 基于会思考的模型，模板默认开思考）
+pub fn offline_translate(id: LocalModelId) -> Resolved {
+    Resolved {
+        provider: offline_provider(ThinkingOff::ChatTemplateKwargs),
+        model: offline_model_entry(id),
+    }
+}
+
+/// 请求显式指定的离线模型（`@offline` + 模型 id，且用途相符）
+fn explicit_offline(r: &ModelRef, kind: LocalModelKind) -> Option<LocalModelId> {
+    (r.provider_id == OFFLINE_PROVIDER_ID)
+        .then(|| LocalModelId::parse(&r.model_id))
+        .flatten()
+        .filter(|m| m.kind() == kind)
+}
+
+/// 设置里选用的离线模型（用途不符的值视为没选；校验本来就会把它置空）
+fn selected_offline(choice: Option<LocalModelId>, kind: LocalModelKind) -> Option<LocalModelId> {
+    choice.filter(|m| m.kind() == kind)
+}
+
+/// 在设置里找模型引用：Provider 必须存在；模型不在列表里时按 id 构造（中转站的别名可以手填）。
+/// 保留 id（`@` 开头，离线模型）不在设置里，这里自然找不到
 pub fn lookup(settings: &Settings, r: &ModelRef) -> Option<Resolved> {
     let provider = settings.provider(&r.provider_id)?;
     let model = provider
@@ -54,15 +162,31 @@ pub fn lookup(settings: &Settings, r: &ModelRef) -> Option<Resolved> {
     })
 }
 
-/// 文本任务的模型：请求指定 > 风格绑定 > 默认翻译模型（引用失效的跳过）
+/// 能翻译的引用（PaddleOCR 云端这类文字识别服务不能）
+fn lookup_llm(settings: &Settings, r: &ModelRef) -> Option<Resolved> {
+    lookup(settings, r).filter(|r| r.provider.protocol.is_llm())
+}
+
+/// 文本任务的模型：请求指定 > 离线翻译模型 > 风格绑定 > 默认翻译模型（引用失效的跳过）
 pub fn resolve_text_model(
     settings: &Settings,
     explicit: Option<&ModelRef>,
     style: &Style,
     task: TaskKind,
 ) -> Result<Resolved, NotReady> {
-    let candidates = [explicit, style.model_ref.as_ref(), settings.defaults.translate.as_ref()];
-    if let Some(r) = candidates.into_iter().flatten().find_map(|r| lookup(settings, r)) {
+    if let Some(r) = explicit {
+        if let Some(m) = explicit_offline(r, LocalModelKind::Translate) {
+            return Ok(offline_translate(m));
+        }
+        if let Some(found) = lookup_llm(settings, r) {
+            return Ok(found);
+        }
+    }
+    if let Some(m) = selected_offline(settings.offline.translate_model, LocalModelKind::Translate) {
+        return Ok(offline_translate(m));
+    }
+    let candidates = [style.model_ref.as_ref(), settings.defaults.translate.as_ref()];
+    if let Some(r) = candidates.into_iter().flatten().find_map(|r| lookup_llm(settings, r)) {
         return Ok(r);
     }
     Err(if settings.providers.is_empty() {
@@ -72,17 +196,133 @@ pub fn resolve_text_model(
     })
 }
 
-/// OCR 的模型：请求指定 > 默认 OCR 模型。默认模型已被判定为不支持视觉（运行时反馈写成 No）时报 `NoVisionModel`，
-/// 让用户换模型；用户在「重新识别 ▾」里明确选的模型照用
-pub fn resolve_ocr_model(settings: &Settings, explicit: Option<&ModelRef>) -> Result<Resolved, NotReady> {
+/// 不是一次 LLM 调用的识别引擎
+#[derive(Debug, Clone, PartialEq)]
+pub enum EngineRef {
+    /// 离线 OCR 模型（PP-OCRv6 Tiny / Small、PaddleOCR-VL）
+    Local(LocalModelId),
+    /// PaddleOCR 云端（`paddle_ocr` 协议的服务商与其中的模型名）
+    Cloud { provider: Provider, model: String },
+}
+
+/// OCR 的识别目标：视觉 LLM，或识别引擎
+#[derive(Debug, Clone, PartialEq)]
+pub enum OcrTarget {
+    Llm(Resolved),
+    Engine(EngineRef),
+}
+
+impl OcrTarget {
+    /// `Start` 事件里的模型信息
+    pub fn info(&self) -> ModelInfo {
+        match self {
+            Self::Llm(r) => r.info(),
+            Self::Engine(EngineRef::Local(m)) => ModelInfo {
+                provider_id: OFFLINE_PROVIDER_ID.to_owned(),
+                model_id: m.as_str().to_owned(),
+                model_label: offline_label(*m).to_owned(),
+            },
+            Self::Engine(EngineRef::Cloud { provider, model }) => {
+                let label = provider
+                    .models
+                    .iter()
+                    .find(|e| e.id == *model)
+                    .and_then(|e| e.label.clone())
+                    .filter(|l| !l.trim().is_empty())
+                    .unwrap_or_else(|| model.clone());
+                ModelInfo {
+                    provider_id: provider.id.clone(),
+                    model_id: model.clone(),
+                    model_label: label,
+                }
+            }
+        }
+    }
+
+    /// 能不能一次调用直接出译文（视觉 LLM 能；识别引擎只识别，直接翻译要走「识别 → 翻译」两步）
+    pub fn can_translate(&self) -> bool {
+        matches!(self, Self::Llm(_))
+    }
+
+    /// 是否支持某种模式
+    pub fn supports(&self, mode: OcrMode) -> bool {
+        match self {
+            Self::Llm(_) => true,
+            Self::Engine(EngineRef::Local(m)) => wisp_local::ocr::local_supports(*m, mode),
+            Self::Engine(EngineRef::Cloud { model, .. }) => match mode {
+                OcrMode::Lines | OcrMode::Paragraphs => true,
+                OcrMode::Markdown => wisp_local::ocr::cloud::is_document_model(model),
+                OcrMode::Translate => false,
+            },
+        }
+    }
+
+    /// 实际使用的模式：不支持的转录模式（PP-OCR 的 markdown）退回 paragraphs。界面已经禁用这些模式，这里是兜底
+    pub fn effective_mode(&self, mode: OcrMode) -> OcrMode {
+        if mode == OcrMode::Translate || self.supports(mode) {
+            mode
+        } else {
+            OcrMode::Paragraphs
+        }
+    }
+
+    /// 发请求需要哪个服务商的 Key（离线引擎不需要）
+    pub fn key_provider(&self) -> Option<&Provider> {
+        match self {
+            Self::Llm(r) => Some(&r.provider),
+            Self::Engine(EngineRef::Cloud { provider, .. }) => Some(provider),
+            Self::Engine(EngineRef::Local(_)) => None,
+        }
+    }
+
+    /// 转录缓存用的模型键
+    pub fn model_key(&self) -> ModelKey {
+        let info = self.info();
+        (info.provider_id, info.model_id)
+    }
+
+    /// 离线 OCR 模型
+    pub fn local(&self) -> Option<LocalModelId> {
+        match self {
+            Self::Engine(EngineRef::Local(m)) => Some(*m),
+            _ => None,
+        }
+    }
+}
+
+/// 设置里的引用 → OCR 目标：`paddle_ocr` 服务商是识别引擎（不看 vision 字段：模板里的值是 unknown，且非用户指定的
+/// vision 不随同步）；其余是视觉 LLM
+fn ocr_target_of(r: Resolved) -> OcrTarget {
+    if r.provider.protocol == Protocol::PaddleOcr {
+        OcrTarget::Engine(EngineRef::Cloud {
+            provider: r.provider,
+            model: r.model.id,
+        })
+    } else {
+        OcrTarget::Llm(r)
+    }
+}
+
+/// OCR 的目标：请求指定 > 离线 OCR 模型 > 默认 OCR 模型。默认模型已被判定为不支持视觉（运行时反馈写成 No）时报
+/// `NoVisionModel`，让用户换模型；用户在「重新识别 ▾」里明确选的模型照用
+pub fn resolve_ocr_target(settings: &Settings, explicit: Option<&ModelRef>) -> Result<OcrTarget, NotReady> {
+    if let Some(r) = explicit {
+        if let Some(m) = explicit_offline(r, LocalModelKind::Ocr) {
+            return Ok(OcrTarget::Engine(EngineRef::Local(m)));
+        }
+        if let Some(found) = lookup(settings, r) {
+            return Ok(ocr_target_of(found));
+        }
+    }
+    if let Some(m) = selected_offline(settings.offline.ocr_model, LocalModelKind::Ocr) {
+        return Ok(OcrTarget::Engine(EngineRef::Local(m)));
+    }
     if settings.providers.is_empty() {
         return Err(NotReady::NoProvider);
     }
-    if let Some(r) = explicit.and_then(|r| lookup(settings, r)) {
-        return Ok(r);
-    }
     match settings.defaults.ocr.as_ref().and_then(|r| lookup(settings, r)) {
-        Some(r) if r.model.vision != wisp_types::Vision::No => Ok(r),
+        Some(r) if r.provider.protocol == Protocol::PaddleOcr => Ok(ocr_target_of(r)),
+        Some(r) if r.model.vision != Vision::No => Ok(OcrTarget::Llm(r)),
         _ => Err(NotReady::NoVisionModel),
     }
 }
@@ -167,8 +407,25 @@ pub fn plan_text(settings: &Settings, styles: &[Style], input: &TextInput<'_>) -
     }
 }
 
-/// 装配文本任务的提示词（refine 两步另行装配）
-pub fn build_text_prompt(plan: &TextPlan, text: &str, glossary: &GlossaryMatcher, reasoning: bool) -> BuiltPrompt {
+/// 离线翻译模型只负责翻译：词典式退化为普通翻译，提升译文退化为一次普通翻译（小模型不适合反思改写）。
+/// 润色 / 校对在解析阶段就报 `OfflineTaskUnsupported`，不会走到这里
+pub fn adapt_for(plan: &mut TextPlan, resolved: &Resolved) {
+    if resolved.offline_model().is_some() {
+        plan.dict = false;
+        if plan.task == TaskKind::Refine {
+            plan.task = TaskKind::Translate;
+        }
+    }
+}
+
+/// 装配文本任务的提示词（refine 两步另行装配）。`profile`：离线翻译模型用 Index-Translate 的官方格式
+pub fn build_text_prompt(
+    plan: &TextPlan,
+    text: &str,
+    glossary: &GlossaryMatcher,
+    reasoning: bool,
+    profile: PromptProfile,
+) -> BuiltPrompt {
     let hits = glossary.hits(text);
     let ctx = PromptCtx {
         text,
@@ -185,7 +442,7 @@ pub fn build_text_prompt(plan: &TextPlan, text: &str, glossary: &GlossaryMatcher
             dict: plan.dict,
         },
     };
-    build(&task, &ctx)
+    build_profile(&task, &ctx, profile)
 }
 
 /// refine 第一步（反思）的提示词
@@ -197,7 +454,7 @@ pub fn build_reflect_prompt(plan: &TextPlan, text: &str, draft: &str, reasoning:
         glossary: &[],
         reasoning_model: reasoning,
     };
-    build(&PromptTask::RefineReflect { draft }, &ctx)
+    wisp_prompts::build(&PromptTask::RefineReflect { draft }, &ctx)
 }
 
 /// refine 第二步（改进）的提示词
@@ -217,7 +474,7 @@ pub fn build_improve_prompt(
         glossary: &hits,
         reasoning_model: reasoning,
     };
-    build(
+    wisp_prompts::build(
         &PromptTask::RefineImprove {
             style: &plan.style,
             draft,
@@ -254,7 +511,7 @@ pub fn build_ocr_prompt(mode: OcrMode, target: Lang, reasoning: bool) -> BuiltPr
         glossary: &[],
         reasoning_model: reasoning,
     };
-    build(&PromptTask::Ocr { mode }, &ctx)
+    wisp_prompts::build(&PromptTask::Ocr { mode }, &ctx)
 }
 
 /// 设置里的默认 OCR 模式（只允许 lines / paragraphs / markdown；手改成 translate 时按 lines）
@@ -379,7 +636,6 @@ fn is_loopback(base_url: &str) -> bool {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use wisp_types::{Protocol, Quirks, Timeouts, Vision};
 
     use super::*;
 
@@ -491,19 +747,165 @@ pub(crate) mod tests {
         );
     }
 
+    fn llm(t: Result<OcrTarget, NotReady>) -> Result<String, NotReady> {
+        t.map(|t| match t {
+            OcrTarget::Llm(r) => r.model.id,
+            other => panic!("expected an LLM target, got {other:?}"),
+        })
+    }
+
     #[test]
     fn ocr_model_requires_vision() {
         let mut s = configured();
-        assert_eq!(resolve_ocr_model(&s, None).map(|r| r.model.id), Ok("vision".to_owned()));
+        assert_eq!(llm(resolve_ocr_target(&s, None)), Ok("vision".to_owned()));
         s.providers[0].models[1].vision = Vision::No;
-        assert_eq!(resolve_ocr_model(&s, None), Err(NotReady::NoVisionModel));
+        assert_eq!(resolve_ocr_target(&s, None), Err(NotReady::NoVisionModel));
         // 用户在下拉里明确选的照用
         let pick = model_ref("p", "vision");
-        assert!(resolve_ocr_model(&s, Some(&pick)).is_ok());
+        assert!(resolve_ocr_target(&s, Some(&pick)).is_ok());
         s.defaults.ocr = None;
-        assert_eq!(resolve_ocr_model(&s, None), Err(NotReady::NoVisionModel));
+        assert_eq!(resolve_ocr_target(&s, None), Err(NotReady::NoVisionModel));
         s.providers.clear();
-        assert_eq!(resolve_ocr_model(&s, None), Err(NotReady::NoProvider));
+        assert_eq!(resolve_ocr_target(&s, None), Err(NotReady::NoProvider));
+    }
+
+    fn paddle() -> Provider {
+        let mut p = provider("paddle", &["PP-OCRv6", "PP-StructureV3"]);
+        p.protocol = Protocol::PaddleOcr;
+        p.base_url = "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs".to_owned();
+        p
+    }
+
+    #[test]
+    fn offline_choices_come_before_bindings_and_defaults() {
+        let mut s = configured();
+        let styles = wisp_prompts::builtin_styles();
+        let mut bound = resolve_style(&styles, "natural", "natural");
+        bound.model_ref = Some(model_ref("p", "vision"));
+        s.offline.translate_model = Some(LocalModelId::IndexTranslate2b);
+        let r = resolve_text_model(&s, None, &bound, TaskKind::Translate).expect("offline");
+        assert_eq!(r.offline_model(), Some(LocalModelId::IndexTranslate2b));
+        assert_eq!(r.provider.id, OFFLINE_PROVIDER_ID);
+        assert_eq!(r.prompt_profile(), PromptProfile::IndexTranslate);
+        assert_eq!(r.provider.quirks.thinking_off, ThinkingOff::ChatTemplateKwargs);
+        assert!(!provider_needs_key(&r.provider), "合成服务商不碰钥匙串");
+        assert_eq!(r.info().model_label, "Index-Translate 2B");
+        // 请求显式指定优先于离线选择
+        let explicit = model_ref("p", "m");
+        assert_eq!(
+            resolve_text_model(&s, Some(&explicit), &bound, TaskKind::Translate).map(|r| r.model.id),
+            Ok("m".to_owned())
+        );
+        // 显式指定离线模型（面板菜单）：没有任何服务商时也可以
+        let mut bare = Settings::default();
+        let pick = model_ref(OFFLINE_PROVIDER_ID, "index_translate_9b");
+        assert_eq!(
+            resolve_text_model(&bare, Some(&pick), &bound, TaskKind::Translate).map(|r| r.offline_model()),
+            Ok(Some(LocalModelId::IndexTranslate9b))
+        );
+        // 用途不符的显式指定无效
+        let wrong = model_ref(OFFLINE_PROVIDER_ID, "pp_ocrv6_small");
+        assert_eq!(
+            resolve_text_model(&bare, Some(&wrong), &bound, TaskKind::Translate),
+            Err(NotReady::NoProvider)
+        );
+        bare.offline.translate_model = Some(LocalModelId::IndexTranslate9b);
+        assert!(resolve_text_model(&bare, None, &bound, TaskKind::Translate).is_ok());
+        // 同步来的风格绑定 / defaults 指向 @offline：按引用失效跳过
+        s.offline.translate_model = None;
+        bound.model_ref = Some(model_ref(OFFLINE_PROVIDER_ID, "index_translate_2b"));
+        s.defaults.translate = Some(model_ref(OFFLINE_PROVIDER_ID, "index_translate_2b"));
+        assert_eq!(
+            resolve_text_model(&s, None, &bound, TaskKind::Translate),
+            Err(NotReady::NoDefaultModel {
+                task: TaskKind::Translate
+            })
+        );
+    }
+
+    #[test]
+    fn paddle_ocr_providers_recognise_but_never_translate() {
+        let mut s = configured();
+        s.providers.push(paddle());
+        s.defaults.ocr = Some(model_ref("paddle", "PP-StructureV3"));
+        let target = resolve_ocr_target(&s, None).expect("cloud");
+        assert!(matches!(&target, OcrTarget::Engine(EngineRef::Cloud { model, .. }) if model == "PP-StructureV3"));
+        assert!(!target.can_translate());
+        assert!(target.supports(OcrMode::Markdown), "文档解析模型支持 markdown");
+        assert_eq!(target.key_provider().map(|p| p.id.as_str()), Some("paddle"));
+        assert_eq!(target.info().provider_id, "paddle");
+        let ocr_only = OcrTarget::Engine(EngineRef::Cloud {
+            provider: paddle(),
+            model: "PP-OCRv6".to_owned(),
+        });
+        assert_eq!(ocr_only.effective_mode(OcrMode::Markdown), OcrMode::Paragraphs);
+        // 不能当翻译模型用：引用失效
+        let styles = wisp_prompts::builtin_styles();
+        let style = resolve_style(&styles, "natural", "natural");
+        s.defaults.translate = Some(model_ref("paddle", "PP-OCRv6"));
+        assert_eq!(
+            resolve_text_model(&s, None, &style, TaskKind::Translate),
+            Err(NotReady::NoDefaultModel {
+                task: TaskKind::Translate
+            })
+        );
+        let explicit = model_ref("paddle", "PP-OCRv6");
+        assert!(resolve_text_model(&s, Some(&explicit), &style, TaskKind::Translate).is_err());
+    }
+
+    #[test]
+    fn offline_ocr_targets() {
+        let mut s = configured();
+        s.offline.ocr_model = Some(LocalModelId::PpOcrV6Small);
+        let t = resolve_ocr_target(&s, None).expect("offline");
+        assert_eq!(t.local(), Some(LocalModelId::PpOcrV6Small));
+        assert_eq!(t.key_provider(), None);
+        assert!(!t.can_translate());
+        assert_eq!(t.effective_mode(OcrMode::Markdown), OcrMode::Paragraphs);
+        assert_eq!(t.effective_mode(OcrMode::Lines), OcrMode::Lines);
+        assert_eq!(t.info().model_label, "PP-OCRv6 Small");
+        assert_eq!(
+            t.model_key(),
+            (OFFLINE_PROVIDER_ID.to_owned(), "pp_ocrv6_small".to_owned())
+        );
+        // 显式指定的视觉模型优先；显式指定的 VL
+        let pick = model_ref("p", "vision");
+        assert!(matches!(resolve_ocr_target(&s, Some(&pick)), Ok(OcrTarget::Llm(_))));
+        let vl = model_ref(OFFLINE_PROVIDER_ID, "paddleocr_vl_1_6");
+        let t = resolve_ocr_target(&s, Some(&vl)).expect("vl");
+        assert!(t.supports(OcrMode::Markdown));
+        // 翻译模型不能当 OCR 用（设置里手改出的错值同样无效）
+        s.offline.ocr_model = Some(LocalModelId::IndexTranslate2b);
+        assert!(matches!(resolve_ocr_target(&s, None), Ok(OcrTarget::Llm(_))));
+        // 没有任何服务商、只选了离线 OCR 模型
+        let mut bare = Settings::default();
+        bare.offline.ocr_model = Some(LocalModelId::PpOcrV6Tiny);
+        assert_eq!(
+            resolve_ocr_target(&bare, None).map(|t| t.local()),
+            Ok(Some(LocalModelId::PpOcrV6Tiny))
+        );
+    }
+
+    #[test]
+    fn offline_plans_drop_dictionary_and_refine() {
+        let s = configured();
+        let styles = wisp_prompts::builtin_styles();
+        let mut plan = plan_text(&s, &styles, &input("serendipity"));
+        assert!(plan.dict);
+        let cloud = resolve_text_model(&s, None, &plan.style, TaskKind::Translate).expect("cloud");
+        adapt_for(&mut plan, &cloud);
+        assert!(plan.dict, "云端模型不变");
+        adapt_for(&mut plan, &offline_translate(LocalModelId::IndexTranslate2b));
+        assert!(!plan.dict);
+        plan.task = TaskKind::Refine;
+        adapt_for(&mut plan, &offline_translate(LocalModelId::IndexTranslate2b));
+        assert_eq!(plan.task, TaskKind::Translate);
+        // 离线模型用官方格式的提示词：一条 user 消息、temperature 0
+        let g = GlossaryMatcher::default();
+        let built = build_text_prompt(&plan, "serendipity", &g, false, PromptProfile::IndexTranslate);
+        assert!(built.system.is_empty());
+        assert_eq!(built.temperature, Some(0.0));
+        assert!(built.user_text.starts_with("请将以下"));
     }
 
     #[test]

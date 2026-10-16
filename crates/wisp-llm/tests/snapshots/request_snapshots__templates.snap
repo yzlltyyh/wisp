@@ -497,5 +497,101 @@ expression: "wisp_llm::templates()"
     },
     "key_required": true,
     "region_variants": []
+  },
+  {
+    "id": "paddleocr",
+    "name_key": "settings.providers.template.paddleocr",
+    "group": "ocr",
+    "provider": {
+      "id": "paddleocr",
+      "name": "PaddleOCR",
+      "protocol": "paddle_ocr",
+      "base_url": "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
+      "headers": {},
+      "quirks": {
+        "thinking_off": "none",
+        "merge_system_into_user": false,
+        "strip_think_tags": false,
+        "max_tokens_field": null,
+        "dual_auth_header": null,
+        "gemini_key_in_query": false
+      },
+      "models": [
+        {
+          "id": "PP-OCRv6",
+          "label": null,
+          "vision": "unknown",
+          "vision_source": null,
+          "reasoning": false,
+          "enabled": true,
+          "missing_upstream": false,
+          "deprecated": false,
+          "context_tokens": null,
+          "caps": {
+            "temperature": null,
+            "max_tokens_field": null,
+            "thinking_param": null,
+            "effort_param": null,
+            "stream_options": null,
+            "include_obfuscation": null,
+            "anthropic_thinking_disabled": null,
+            "anthropic_efforts": null
+          },
+          "reasoning_effort": null
+        },
+        {
+          "id": "PP-StructureV3",
+          "label": null,
+          "vision": "unknown",
+          "vision_source": null,
+          "reasoning": false,
+          "enabled": true,
+          "missing_upstream": false,
+          "deprecated": false,
+          "context_tokens": null,
+          "caps": {
+            "temperature": null,
+            "max_tokens_field": null,
+            "thinking_param": null,
+            "effort_param": null,
+            "stream_options": null,
+            "include_obfuscation": null,
+            "anthropic_thinking_disabled": null,
+            "anthropic_efforts": null
+          },
+          "reasoning_effort": null
+        },
+        {
+          "id": "PaddleOCR-VL-1.6",
+          "label": null,
+          "vision": "unknown",
+          "vision_source": null,
+          "reasoning": false,
+          "enabled": true,
+          "missing_upstream": false,
+          "deprecated": false,
+          "context_tokens": null,
+          "caps": {
+            "temperature": null,
+            "max_tokens_field": null,
+            "thinking_param": null,
+            "effort_param": null,
+            "stream_options": null,
+            "include_obfuscation": null,
+            "anthropic_thinking_disabled": null,
+            "anthropic_efforts": null
+          },
+          "reasoning_effort": null
+        }
+      ],
+      "timeouts": {
+        "connect_ms": 10000,
+        "first_token_ms": 30000,
+        "idle_ms": 60000
+      },
+      "template_id": "paddleocr"
+    },
+    "key_required": true,
+    "region_variants": []
   }
 ]

@@ -11,6 +11,7 @@ pub mod clipboard_svc;
 pub mod error;
 pub mod hotkeys;
 pub mod ipc;
+pub mod models_svc;
 pub mod orchestrator;
 pub mod settings;
 pub mod state;
@@ -21,6 +22,11 @@ pub mod windows;
 
 /// 应用入口
 pub fn run() {
+    // 第零步：离线模型的子进程模式。ORT 工作进程（`--wisp-worker ort`）与守护进程（`--wisp-guard -- <程序> …`）是同一个
+    // 二进制的另外两种用法，必须在任何 Tauri / 日志 / 单实例初始化之前分流——否则参数会被单实例插件转发给正在运行的 Wisp
+    if let Some(code) = subprocess_mode(&std::env::args().collect::<Vec<_>>()) {
+        std::process::exit(code);
+    }
     // 第一步、进程仍是单线程时：Linux 检测到 Nvidia 时设置 WEBKIT_DISABLE_DMABUF_RENDERER=1（set_var 只有单线程时才安全），
     // Wayland / 关闭合成时关闭窗口透明（结论见 runtime::transparent_windows）。必须早于 build_runtime 拉起 tokio worker
     app::runtime::preflight_env();
@@ -71,4 +77,29 @@ pub fn run() {
         .expect("构建 Tauri 应用失败")
         // ExitRequested 时调用 prevent_exit，保持常驻
         .run(app::bootstrap::on_run_event);
+}
+
+/// 子进程模式的分流：`argv[1]` 是 `--wisp-worker` 或 `--wisp-guard` 时执行对应的入口并返回退出码，否则为 None
+fn subprocess_mode(argv: &[String]) -> Option<i32> {
+    match argv.get(1).map(String::as_str) {
+        Some(wisp_local::worker::WORKER_ARG) => Some(wisp_local::worker::run(&argv[2..])),
+        Some(wisp_platform::child::GUARD_ARG) => Some(wisp_platform::child::guard_main()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn subprocess_modes_are_recognised_only_as_the_first_argument() {
+        let args = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        assert_eq!(subprocess_mode(&args(&["wisp"])), None);
+        assert_eq!(subprocess_mode(&args(&["wisp", "--autostart"])), None);
+        assert_eq!(subprocess_mode(&args(&["wisp", "--trigger", "--wisp-worker"])), None);
+        // 不认识的工作进程种类：退出码 2，不启动 GUI
+        assert_eq!(subprocess_mode(&args(&["wisp", "--wisp-worker", "nope"])), Some(2));
+        assert_eq!(subprocess_mode(&args(&["wisp", "--wisp-worker"])), Some(2));
+    }
 }

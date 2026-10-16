@@ -18,7 +18,7 @@ macOS（Apple Silicon）· Windows（x64）· Linux（x64）　|　v0.1.1　|　
 
 Wisp 把三件最常用的小事收进一个随叫随到的面板：选中文字立刻翻译，框选屏幕立刻识别文字，复制过的东西随时找回。它平时安静地待在菜单栏 / 托盘里，几乎不占资源；按下快捷键，面板就出现在你正在看的地方，用完即走，不抢焦点。
 
-所有 AI 能力都由你自己接入的模型完成——OpenAI、Anthropic、Gemini、DeepSeek、通义、Kimi，或者本机的 Ollama。没有 Wisp 账号、没有遥测、没有中转，API Key 保存在系统的凭据存储里，不写进配置文件。在多台电脑上使用时，可以经你自己的 WebDAV 存储同步，数据在本机加密后才上传。
+所有 AI 能力都由你自己选择的模型完成：接入 OpenAI、Anthropic、Gemini、DeepSeek、通义、Kimi 或本机的 Ollama，或者下载离线模型，完全在这台电脑上识别与翻译。没有 Wisp 账号、没有遥测、没有中转，API Key 保存在系统的凭据存储里，不写进配置文件。在多台电脑上使用时，可以经你自己的 WebDAV 存储同步，数据在本机加密后才上传。
 
 ## 功能
 
@@ -40,6 +40,7 @@ Wisp 把三件最常用的小事收进一个随叫随到的面板：选中文字
 - 放大镜与尺寸标签帮你对齐像素；鼠标停在窗口上会高亮整个窗口，单击即选中；拖动中按住空格可以平移选区；<kbd>⌘ A</kbd> 选中整个屏幕。
 - 三种识别模式：**纯文本**（逐行转录，保留换行与缩进）、**段落**（合并段内断行，适合文章）、**结构化**（标题、列表、表格转成 Markdown）。
 - 识别结果可以直接修改，默认自动复制；点「翻译」在同一个面板里得到译文。<kbd>⌥ ⇧ S</kbd> 截图后直接给出译文。
+- 识别可以交给支持图片的大模型、PaddleOCR 云端服务（PP-OCRv6、PP-StructureV3、PaddleOCR-VL），或者下载到本机的[离线模型](#离线模型)；结构化结果里的表格直接显示成表格。
 
 <p align="center"><img src="docs/images/overlay.png" width="720" alt="框选屏幕区域：选区四角的控制点、尺寸标签与像素放大镜"></p>
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/ocr-dark.png"><img src="docs/images/ocr-light.png" width="640" alt="OCR 面板：截图缩略图、识别出的中文文字，下半部分是英文译文"></picture></p>
@@ -68,6 +69,25 @@ Wisp 把三件最常用的小事收进一个随叫随到的面板：选中文字
 - **该分开的分开**：快捷键只在同一系统的设备之间同步；开机启动、剪贴板记录开关等只属于本机。
 
 详见使用说明的[多设备同步](docs/user-guide.md#多设备同步)与[同步与隐私](docs/user-guide.md#同步与隐私)。
+
+### 离线模型
+
+不想填 API Key，或者内容不想离开这台电脑时，在「设置 → 离线模型」下载模型，识别与翻译都在本机完成，使用时不联网。离线模型默认不下载，安装包里也不带；没有在用时不占内存、不启动任何进程。
+
+| 模型 | 用途 | 下载大小 | 适合的设备 |
+| --- | --- | --- | --- |
+| PP-OCRv6 Tiny | 文字识别：最快，49 种语言，不识别日文 | 6.0 MB | 任何设备，CPU 即可 |
+| PP-OCRv6 Small | 文字识别：速度与准确度均衡，50 种语言 | 30 MB | 任何设备，CPU 即可 |
+| PaddleOCR-VL-1.6 | 文字识别：表格、公式与复杂版面 | 1.8 GB | 8 GB 以上内存的 Apple 芯片，或 3 GB 以上显存的显卡 |
+| Index-Translate 2B | 翻译：轻快，150 种语言 | 1.2 GB | 8 GB 以上内存，CPU 也流畅 |
+| Index-Translate 9B | 翻译：译文质量更高，150 种语言 | 5.4 GB | 16 GB 以上内存的 Apple 芯片，或 7 GB 以上显存的显卡 |
+
+- 设置页按这台设备的内存、芯片与显卡标出每个模型是否适合本机。需要的推理组件（llama.cpp、ONNX Runtime）在下载模型时一并从官方发布页下载；下载可以暂停、断点续传，每个文件都按 Wisp 里记录的 SHA-256 校验。
+- 第一次使用时加载，闲置一段时间（默认 5 分钟）或系统内存紧张时自动释放内存，模型文件保留。可以使用 GPU 加速（macOS 用 Metal，Windows / Linux 用 Vulkan），也可以关掉改在 CPU 上运行。
+- 离线模型的选择只属于这台设备，不随同步；离线模型出错时不会改用云端。离线翻译模型只负责翻译，润色与校对仍需要模型服务。
+- 模型以 Apache-2.0 许可发布；llama.cpp 与 ONNX Runtime 以 MIT 许可发布。
+
+详见使用说明的[离线模型](docs/user-guide.md#离线模型)。
 
 ### 也很在意的细节
 
@@ -162,15 +182,15 @@ chmod +x Wisp_0.1.1_amd64.AppImage && ./Wisp_0.1.1_amd64.AppImage
 
 ## 接入模型服务
 
-Wisp 不内置任何模型和 Key，翻译和 OCR 都通过你自己的服务完成。首次启动的引导里就可以接入，之后在「设置 → 模型与服务」管理。
+Wisp 不内置模型和 Key：翻译和 OCR 通过你自己接入的服务完成，也可以改用下载到本机的[离线模型](#离线模型)。首次启动的引导里就可以接入，之后在「设置 → 模型与服务」管理。
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-providers-dark.png"><img src="docs/images/settings-providers-light.png" width="640" alt="设置窗口的「模型与服务」页：OpenAI、DeepSeek、Ollama 三个服务与翻译、OCR 的默认模型"></picture></p>
 
-1. **添加服务**：从模板里选一个——OpenAI、OpenAI（Responses API）、Anthropic、Google Gemini、DeepSeek、OpenRouter、通义千问（阿里云百炼）、智谱 GLM、火山方舟（豆包）、月之暗面 Kimi、硅基流动、MiniMax、Groq、Ollama（本机）、LM Studio（本机），或「中转站 / 自定义兼容端点」。模板会预填协议、地址和推荐参数，都可以改。
+1. **添加服务**：从模板里选一个——OpenAI、OpenAI（Responses API）、Anthropic、Google Gemini、DeepSeek、OpenRouter、通义千问（阿里云百炼）、智谱 GLM、火山方舟（豆包）、月之暗面 Kimi、硅基流动、MiniMax、Groq、Ollama（本机）、LM Studio（本机）、「中转站 / 自定义兼容端点」，以及只用于 OCR 的文字识别服务 PaddleOCR。模板会预填协议、地址和推荐参数，都可以改。
 2. **填写 Base URL 与 API Key**，点「测试连接」：Wisp 会拉取模型列表，并发一条极短的流式请求验证整条链路。本机的 Ollama / LM Studio 通常不需要 Key。
-3. **选择默认模型**：翻译和 OCR 分别选。OCR 只列出支持图片的模型；风格也可以单独绑定模型。
+3. **选择默认模型**：翻译和 OCR 分别选。OCR 列出离线模型、文字识别服务与支持图片的模型；风格也可以单独绑定模型。
 
-各服务的注意事项、识图能力的判定、「关闭思考」等高级选项与错误说明见[模型服务](docs/providers.md)。
+各服务的注意事项、识图能力的判定、「关闭思考」等高级选项、PaddleOCR 的地址与访问令牌，以及错误说明见[模型服务](docs/providers.md)。
 
 ### 四种协议
 
@@ -180,6 +200,8 @@ Wisp 不内置任何模型和 Key，翻译和 OCR 都通过你自己的服务完
 | OpenAI Responses | OpenAI 官方的新接口（Wisp 一律带 `store: false`，不在服务端留存） | `POST {base}/responses` |
 | Anthropic Messages | Claude 系列 | `POST {base}/messages` |
 | Google Gemini | Gemini 系列，对话模型都能识图 | `POST {base}/models/{模型}:streamGenerateContent?alt=sse` |
+
+PaddleOCR 不是对话模型，单独作为文字识别服务接入，只用于 OCR：填的是完整的服务地址（不按下面的规则补全）与 AI Studio 的访问令牌，见[模型服务 · PaddleOCR](docs/providers.md#paddleocr文字识别服务)。
 
 ### Base URL 怎么填
 
@@ -201,7 +223,7 @@ Wisp 不内置任何模型和 Key，翻译和 OCR 都通过你自己的服务完
 
 ### API Key 存在哪里
 
-Key 只写入系统凭据存储：macOS 钥匙串与 Linux Secret Service 里服务名为 `wisp`、账户为服务 ID；Windows 凭据管理器里是「Windows 凭据 → 普通凭据」下的 `<服务 ID>.wisp`。保存后界面只显示「已保存在钥匙串」之类的状态，不会回显，也不会出现在配置文件、日志和诊断包里；界面进程拿不到 Key，请求由后台进程直接发出。删除服务时会一并删除它的 Key。
+Key 只写入系统凭据存储：macOS 钥匙串与 Linux Secret Service 里服务名为 `wisp`、账户为服务 ID；Windows 凭据管理器里是「Windows 凭据 → 普通凭据」下的 `<服务 ID>.wisp`。保存后界面只显示「已保存在钥匙串」之类的状态，不会回显，也不会出现在配置文件、日志和诊断包里；界面进程拿不到 Key，请求由后台进程直接发出。删除服务时会一并删除它的 Key。PaddleOCR 的访问令牌同样按这种方式保存。
 
 开启[多设备同步](#多设备同步)并勾选「API Key」时，Key 在本机加密后随模型服务同步到你的其他设备，到达后同样只写入那台设备的系统凭据存储；在一台设备上删除服务，其他设备上的这个服务与它的 Key 也会删除。
 
@@ -230,9 +252,9 @@ Key 只写入系统凭据存储：macOS 钥匙串与 Linux Secret Service 里服
 ## 隐私
 
 - **不收集任何数据**：没有遥测、没有 Wisp 账号、没有内置 Key，也不经过任何中转服务器。
-- **只有三类网络请求**：发给你自己配置的模型服务的请求（你选中的文字或框选的截图）；检查更新时访问 GitHub（可以在「设置 → 通用 → 检查更新」里关闭）；以及你自己配置并开启的同步服务器（WebDAV，默认关闭）。关闭检查更新、也没有开启同步时，Wisp 不会自己发出任何请求。剪贴板内容不会为了预览而联网。
-- **数据默认留在本机**：剪贴板历史保存在本机的 SQLite 数据库（数据目录下的 `clipboard.db` 与 `blobs/`，未加密，依赖系统账户与磁盘加密保护）；截图只在内存里处理，开启「识别历史」后才会保存到本机。开启同步后，你选择同步的内容在本机加密后才上传到你自己的 WebDAV 存储；服务器看不到内容，只能看到文件的数量、大小与修改时间（见[同步与隐私](docs/user-guide.md#同步与隐私)）。
-- **日志不含正文**：日志只记录耗时、状态码等元数据，不记录原文、译文、剪贴板内容、截图与 Key，也不记录同步服务器的地址、账号与密码；「设置 → 关于 → 诊断信息 → 导出诊断包」导出的日志与设置同样经过脱敏。
+- **只有这几类网络请求**：发给你自己配置的模型服务的请求（你选中的文字或框选的截图；PaddleOCR 也是其中一种，截图会上传到你填写的服务地址）；检查更新时访问 GitHub（可以在「设置 → 通用 → 检查更新」里关闭）；你自己配置并开启的同步服务器（WebDAV，默认关闭）；以及你点击下载离线模型时，从 ModelScope 或 Hugging Face 下载模型、从 GitHub 下载推理组件。用离线模型识别与翻译时不联网。关闭检查更新、也没有开启同步时，除了你点击的下载，Wisp 不会自己发出任何请求。剪贴板内容不会为了预览而联网。
+- **数据默认留在本机**：剪贴板历史保存在本机的 SQLite 数据库（数据目录下的 `clipboard.db` 与 `blobs/`，未加密，依赖系统账户与磁盘加密保护）；截图只在内存里处理，开启「识别历史」后才会保存到本机；离线模型保存在数据目录下的 `models/`。开启同步后，你选择同步的内容在本机加密后才上传到你自己的 WebDAV 存储；服务器看不到内容，只能看到文件的数量、大小与修改时间（见[同步与隐私](docs/user-guide.md#同步与隐私)）。
+- **日志不含正文**：日志只记录耗时、状态码等元数据，不记录原文、译文、剪贴板内容、截图、Key 与 PaddleOCR 的访问令牌，也不记录同步服务器的地址、账号与密码，以及离线推理进程的输出；「设置 → 关于 → 诊断信息 → 导出诊断包」导出的日志与设置同样经过脱敏。
 
 ## 已知限制
 
@@ -242,6 +264,7 @@ Key 只写入系统凭据存储：macOS 钥匙串与 Linux Secret Service 里服
 - **Gemini 接口的退役风险**：Gemini 协议使用 `generateContent` / `streamGenerateContent`。Google 正在推广新的 Interactions API，如果旧接口将来下线，Gemini 协议会失效；届时可以改用 Gemini 的 OpenAI 兼容端点（协议选 OpenAI Chat Completions，Base URL 填 `https://generativelanguage.googleapis.com/v1beta/openai`）。
 - **快捷键**：把 <kbd>⌥</kbd> + 字母设为快捷键后，这个组合原本输入的特殊字符（如 ∂、ß、√）在所有应用里都无法再输入；在终端开启了「Option 作为 Meta」的用户会失去 `M-d` 等组合，可以改用备选键。密码框等安全输入状态下快捷键可能不触发。
 - **取词**：少数应用不通过无障碍接口提供选中的文字，Wisp 会改为模拟一次复制（并还原剪贴板）；Windows 上以管理员身份运行的窗口无法读取，也无法自动粘贴进去。
+- **离线模型**：macOS（Apple Silicon）上测试最充分，Windows 与 Linux 上的测试还很有限。用集成显卡的电脑上，「适合本机」的判断可能偏乐观；出现异常或识别结果为空时，可以关闭「设置 → 离线模型 → 使用 GPU 加速」。第一次加载模型可能要十秒以上。
 - **同步**：只支持 WebDAV（HTTP Basic 认证；除局域网地址外必须用 https）。Wisp 不在后台定时同步，另一台设备上的改动要等你使用 Wisp 时才会取回。剪贴板里的文件条目与超过 10 MB 的图片不同步。同步密码不能直接修改，忘记后也无法找回，只能清除服务器上的数据后重新连接（各设备本机的数据不受影响）。
 - **剪贴板**：连续粘贴与悬浮剪贴板依赖全局按键与窗口焦点，在 Linux 的 Wayland 会话下不可用（悬浮剪贴板只能复制，不能直接粘贴）；拖出暂时只支持文字、链接与富文本，图片与文件还不能拖进其他应用。验证码识别偏保守，没有「验证码」等明确字样、也没有有效期或「请勿泄露」之类提示的短信不会被当作验证码。
 - **内存**：面板刚用过的几十秒里系统 WebView 会多占一些内存（macOS 上约 84 MiB、峰值约 90 MiB，直到面板隐藏约 45 秒后回收），回收后约 53–54 MiB（从没打开过面板时约 49 MiB）；主进程从没打开过面板时约 13 MiB，用过之后约 15 MiB。Windows 的 WebView2 通常比 macOS 占用更多。
@@ -254,8 +277,8 @@ Wisp 只做截图 OCR、划词翻译和剪贴板这三件事，把它们做轻�
 - 插件系统与脚本扩展；
 - 通用的 AI 聊天窗口（多轮对话）；
 - Wisp 账号与中转服务器——同步只经过你自己的 WebDAV 存储，数据在本机加密后才上传；
-- 内置模型、内置 Key 或中转服务——始终用你自己接入的模型服务；
-- 以本地 OCR 引擎（Tesseract、PaddleOCR 等）为主路径——识别交给视觉模型，本机 OCR 最多作为离线时的备用（见路线图）；
+- 内置 Key 或中转服务——始终用你自己接入的模型服务，或你自己选择下载的离线模型；
+- 安装包里内置模型，或自动下载模型——离线模型只在你点击下载后才保存到本机；
 - 语音输入与朗读（TTS）；
 - 移动端。
 
@@ -264,7 +287,7 @@ Wisp 只做截图 OCR、划词翻译和剪贴板这三件事，把它们做轻�
 计划中的方向（尚未实现，界面里也没有入口）：
 
 - 完善 Windows 版的兼容性；
-- 更多服务模板；本机 OCR 引擎作为离线时的备用方案（不是主路径）；
+- 更多服务模板；在 Windows 与 Linux 真机上完善离线模型的显卡检测与兼容性；
 - 更完整的 Linux 测试，以及 Wayland 的全局快捷键与截图门户（GlobalShortcuts / Screenshot portal）；
 - macOS Developer ID 签名与公证、Windows 代码签名；Homebrew Cask、winget、AUR 等分发渠道；
 - 剪贴板数据库加密、按图片中的文字检索剪贴板图片、把剪贴板里的图片与文件直接拖进其他应用。

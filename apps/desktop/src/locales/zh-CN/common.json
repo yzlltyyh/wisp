@@ -58,7 +58,10 @@
     "no_results": "没有找到结果",
     "on": "开",
     "off": "关",
-    "selected": "已选择"
+    "selected": "已选择",
+    "loading_model": "正在加载离线模型…",
+    "loading_slow": "第一次加载需要十几秒，之后会快很多",
+    "queued": "云端处理中…"
   },
   "lang": {
     "auto": "自动检测",
@@ -133,5 +136,20 @@
     "paragraphs": "段落",
     "markdown": "结构化",
     "translate": "直接翻译"
+  },
+  "offline_model": {
+    "pp_ocrv6_tiny": "PP-OCRv6 Tiny",
+    "pp_ocrv6_small": "PP-OCRv6 Small",
+    "paddleocr_vl_1_6": "PaddleOCR-VL-1.6",
+    "index_translate_2b": "Index-Translate 2B",
+    "index_translate_9b": "Index-Translate 9B"
+  },
+  "download_error": {
+    "network": "网络中断；已下载的部分会保留，重试时接着下载",
+    "server": "下载源暂时不可用，请稍后重试",
+    "checksum_mismatch": "文件校验没有通过，已丢弃下载的部分，请重试",
+    "disk_full": "磁盘空间不足，清理后重试",
+    "io": "无法写入模型文件夹",
+    "extract": "解压推理组件失败，请重试"
   }
 }

@@ -744,6 +744,8 @@ export class TranslateRun {
         let patch: Partial<RunSnapshot> | null = null
         if (s.textGen !== gen) patch = { ...this.beginText(gen), status: 'streaming' }
         else if (s.status === 'waiting') patch = { status: 'streaming' }
+        // 离线模型加载完、开始出字：「正在加载离线模型…」到此为止（提升译文的两个阶段照常保留）
+        if (s.phase === 'loading_model' || s.phase === 'queued') patch = { ...patch, phase: null }
         const hasText = patch?.hasText ?? s.hasText
         if (!hasText && NON_SPACE.test(e.text)) patch = { ...patch, hasText: true }
         // 先换正文代次（新 StreamView 挂载前的文字进缓冲），再写

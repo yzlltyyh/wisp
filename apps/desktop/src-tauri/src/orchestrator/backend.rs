@@ -1,6 +1,7 @@
 //! LLM 后端：真实的 `LlmClient`，或冒烟 / 演示用的假模型（`WISP_FAKE_LLM=1`）。
 //!
-//! 假模型只在编入 `fake-llm` feature（以及单元测试）时存在；发布版里设置该变量只记一条 warn 并忽略。
+//! 假模型只在编入 `fake-llm` feature（以及单元测试）时存在；发布版里设置该变量只记一条 warn 并忽略。假模型时离线引擎
+//! 与离线翻译模型同样走假实现（`wisp_local::fake`），开发运行不必下载任何东西就能走通全部界面。
 //! `AppState.llm` 始终是真实客户端（Provider 测试、模型列表不走假模型）。
 
 use tokio::sync::mpsc;
@@ -37,6 +38,41 @@ impl Backend {
             #[cfg(any(test, feature = "fake-llm"))]
             Self::Fake => fake::stream(req, cancel),
         }
+    }
+
+    /// 是否为假模型（`WISP_FAKE_LLM=1`）：离线引擎与离线翻译模型也走假实现，不下载、不起进程
+    pub fn is_fake(&self) -> bool {
+        match self {
+            Self::Real => false,
+            #[cfg(any(test, feature = "fake-llm"))]
+            Self::Fake => true,
+        }
+    }
+
+    /// 假的识别引擎（只在 [`Self::is_fake`] 时调用；真实后端不经这里）
+    pub fn engine_stream(
+        &self,
+        req: &super::env::EngineRequest,
+        cancel: CancellationToken,
+    ) -> mpsc::Receiver<StreamEvent> {
+        match self {
+            #[cfg(any(test, feature = "fake-llm"))]
+            Self::Fake => fake::engine_stream(req, cancel),
+            Self::Real => {
+                let _ = (req, cancel);
+                Self::engine_unavailable()
+            }
+        }
+    }
+
+    /// 识别引擎无法开始（应用状态还没就绪）：Error{internal}（Start 由编排器发）
+    pub fn engine_unavailable() -> mpsc::Receiver<StreamEvent> {
+        let (tx, rx) = mpsc::channel(1);
+        let _ = tx.try_send(StreamEvent::Error(LlmError::new(
+            ErrorCode::Internal,
+            "the recognition engine is not ready",
+        )));
+        rx
     }
 
     /// 应用状态还没就绪时（只可能出现在启动的极早期）：Start → Error{internal}
@@ -88,6 +124,30 @@ pub mod fake {
             chunk_delay: CHUNK,
         })
         .stream(req, cancel)
+    }
+
+    /// 假的识别引擎：离线引擎先发「加载中」、云端先发「排队中」，再输出固定的转录
+    pub fn engine_stream(
+        req: &crate::orchestrator::env::EngineRequest,
+        cancel: CancellationToken,
+    ) -> mpsc::Receiver<StreamEvent> {
+        use wisp_types::StreamPhase;
+
+        use crate::orchestrator::plan::EngineRef;
+
+        let phase = match req.engine {
+            EngineRef::Local(_) => StreamPhase::LoadingModel,
+            EngineRef::Cloud { .. } => StreamPhase::Queued,
+        };
+        wisp_local::fake::FakeEngine::new(wisp_local::fake::FakeEngineConfig {
+            text: OCR.to_owned(),
+            chunk_chars: 2,
+            phase: Some(phase),
+            first_delay: FIRST_TOKEN,
+            chunk_delay: CHUNK,
+            fail: None,
+        })
+        .stream(cancel)
     }
 
     /// 按用途与原文挑一段输出：反思一律 OK；OCR 给固定转录；翻译按原文是否含中日韩文字决定译成英文还是中文

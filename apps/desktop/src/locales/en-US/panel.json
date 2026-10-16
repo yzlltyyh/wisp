@@ -85,7 +85,20 @@
       "title": "Can't read the selected text",
       "detail": "Copy it first, then translate it in input mode."
     },
-    "retake": "Capture again"
+    "retake": "Capture again",
+    "offline_model_missing": {
+      "title": "{model} isn’t downloaded yet",
+      "detail": "This offline model isn’t on this device yet."
+    },
+    "offline_model_downloading": {
+      "title": "{model} is downloading",
+      "detail": "It’s ready to use once the download finishes."
+    },
+    "offline_task_unsupported": {
+      "title": "The offline model only translates",
+      "detail": "Offline models can’t do “{task}”, and Wisp won’t switch to a cloud model for it on its own.",
+      "use_cloud": "Use {model} this time"
+    }
   },
   "input_hint": {
     "accessibility": "Grant Accessibility access to read selected text directly",
@@ -107,5 +120,40 @@
     "dropped": "Dropped",
     "js": "JS / frame",
     "p95": "p95"
+  },
+  "offline": {
+    "download": "Download · {size}",
+    "download_plain": "Download",
+    "resume": "Resume download",
+    "retry": "Retry",
+    "missing_detail": "This offline model isn’t on this device yet. Once it’s downloaded, this picks up automatically.",
+    "auto_continue": "Once it’s downloaded, this picks up automatically.",
+    "failed": "The download didn’t finish. You can retry.",
+    "progress": "{n}% · {done} of {total}",
+    "paused": "Paused · {n}%",
+    "queued": "Waiting…",
+    "verifying": "Verifying files…",
+    "progress_label": "Downloading {model}",
+    "ready_title": "{model} is downloaded",
+    "ready_detail": "It’s ready to use.",
+    "ready_retake": "Capture again to recognize the text.",
+    "group": "Offline models",
+    "missing_plain": "This offline model isn’t on this device yet.",
+    "downloading_retake": "Once it’s downloaded, capture again to recognize the text.",
+    "fit_confirm": "{reason}. Download {model} ({size}) anyway?",
+    "fit_confirm_ok": "Download anyway",
+    "fit": {
+      "good": "Suits this device",
+      "slow": "Slow",
+      "insufficient": "Not enough memory",
+      "unknown": "To be checked"
+    },
+    "fitness": {
+      "gpu_unknown": "The graphics card isn’t checked yet; without a dedicated one it runs slowly",
+      "cpu_only": "No usable GPU, so it runs slowly on the CPU",
+      "integrated_gpu": "Integrated graphics only, so it runs as slowly as on the CPU",
+      "low_memory": "This device is short on memory; the model may be slow or fail to load",
+      "memory_unknown": "Could not read how much memory this device has"
+    }
   }
 }

@@ -75,6 +75,9 @@ pub(crate) struct Built {
 /// 计算请求上下文；base_url 或模型为空时返回 not_configured
 pub(crate) fn prepare(req: &ChatRequest) -> Result<Job, LlmError> {
     let p = &req.provider;
+    if !p.protocol.is_llm() {
+        return Err(errors::not_llm());
+    }
     if req.model.id.trim().is_empty() {
         return Err(errors::not_configured("no model is selected"));
     }
@@ -169,6 +172,7 @@ fn serialize(protocol: Protocol, parts: &Parts<'_>, sent: &mut Vec<SentParam>) -
         Protocol::OpenAiResponses => openai_responses::body(parts, sent),
         Protocol::AnthropicMessages => anthropic::body(parts, sent),
         Protocol::Gemini => gemini::body(parts, sent),
+        Protocol::PaddleOcr => return Err(errors::not_llm()),
     };
     serde_json::to_vec(&Value::Object(body)).map_err(|e| errors::internal(format!("serialize: {e}")))
 }
@@ -298,6 +302,7 @@ fn auth(h: &mut HeaderMap, protocol: Protocol, quirks: &Quirks, host: &str, key:
                 h.insert("x-goog-api-key", key.header_value("").ok_or_else(invalid)?);
             }
         }
+        Protocol::PaddleOcr => return Err(errors::not_llm()),
     }
     Ok(())
 }

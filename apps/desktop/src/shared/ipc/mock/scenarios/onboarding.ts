@@ -172,6 +172,57 @@ export const scenarios: readonly Scenario[] = [
     )
   }),
   scenario('model-configured', '引导 · 接入模型（已接入）', 2, undefined, {}, true),
+  scenario('model-offline', '引导 · 接入模型 · 使用离线模型（两档，推荐高质量）', 2, (ctx) =>
+    whenPresent(ctx, '[data-testid="onboarding-offline-link"]', () =>
+      document.querySelector<HTMLElement>('[data-testid="onboarding-offline-link"]')?.click(),
+    ),
+  ),
+  scenario(
+    'model-offline-low',
+    '引导 · 接入模型 · 使用离线模型（8 GB：推荐轻量，高质量内存不足）',
+    2,
+    (ctx, mock) => {
+      const snap = mock.state.offline.snapshot
+      mock.state.offline.snapshot = {
+        ...snap,
+        device: { total_memory: 8 * 1024 ** 3, apple_silicon: false, gpus: [], gpu_probed: true },
+        models: snap.models.map((m) =>
+          m.id === 'index_translate_9b'
+            ? {
+                ...m,
+                fitness: {
+                  level: 'insufficient' as const,
+                  reason_key: 'settings.offline.fitness.low_memory',
+                },
+              }
+            : m.id === 'paddleocr_vl_1_6'
+              ? {
+                  ...m,
+                  fitness: {
+                    level: 'slow' as const,
+                    reason_key: 'settings.offline.fitness.cpu_only',
+                  },
+                }
+              : m,
+        ),
+      }
+      whenPresent(ctx, '[data-testid="onboarding-offline-link"]', () =>
+        document.querySelector<HTMLElement>('[data-testid="onboarding-offline-link"]')?.click(),
+      )
+    },
+  ),
+  scenario(
+    'model-offline-configured',
+    '引导 · 接入模型（已选用离线模型，没有服务）',
+    2,
+    (_ctx, mock) => {
+      mock.state.settings.offline = {
+        ...mock.state.settings.offline,
+        ocr_model: 'pp_ocrv6_small',
+        translate_model: 'index_translate_2b',
+      }
+    },
+  ),
   scenario(
     'try',
     '引导 · 试一试',

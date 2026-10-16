@@ -850,6 +850,10 @@ fn install_staged(app: &tauri::AppHandle, update: Update, staged: &Staged, resta
 fn cleanup_before_installer(app: &tauri::AppHandle) -> impl Fn() + Send + Sync + 'static {
     let app = app.clone();
     move || {
+        // 离线模型的推理进程先停掉：安装器替换文件时它们不能还开着，Wisp 退出后也不能留下孤儿
+        if let Some(state) = app.try_state::<crate::state::AppState>() {
+            state.models.shutdown();
+        }
         if crate::app::runtime::on_main_thread() {
             app.cleanup_before_exit();
             return;

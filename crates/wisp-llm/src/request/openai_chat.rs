@@ -123,6 +123,13 @@ pub(super) fn compat_thinking(
                 names: &["reasoning_effort"],
             });
         }
+        Thinking::TemplateKwargsOff => {
+            insert(m, "chat_template_kwargs", json!({ "enable_thinking": false }));
+            sent.push(SentParam {
+                param: Param::Thinking,
+                names: &["chat_template_kwargs", "enable_thinking"],
+            });
+        }
         Thinking::None | Thinking::GeminiLevelLow | Thinking::GeminiBudgetZero => {}
     }
 }

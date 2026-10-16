@@ -50,7 +50,23 @@
     "save": "保存并继续",
     "configured": "已接入：{names}",
     "add_another": "再添加一个服务",
-    "sync_link": "已在其他设备上使用 Wisp？连接同步"
+    "sync_link": "已在其他设备上使用 Wisp？连接同步",
+    "offline": {
+      "link": "不想填 API Key？使用离线模型",
+      "title": "使用离线模型",
+      "description": "模型下载到这台设备上运行，识别与翻译的内容不会离开这台设备。",
+      "light": "轻量",
+      "quality": "高质量",
+      "light_desc": "大多数设备都能流畅运行",
+      "quality_desc": "表格与复杂版面、更好的译文",
+      "models": "{ocr} + {translate}",
+      "size": "约 {size}",
+      "recommended": "推荐",
+      "note": "下载在后台进行，可以先继续；进度在设置 › 离线模型里查看。以后也可以随时改用其他模型。",
+      "start": "下载并继续",
+      "configured": "已选用离线模型（只在这台设备上生效）",
+      "start_anyway": "仍要下载并继续"
+    }
   },
   "try": {
     "title": "试一试",

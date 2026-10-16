@@ -24,6 +24,7 @@ import { usePlatform } from '../../shared/hooks/usePlatform'
 import { Banner, Button, Icon, Kbd } from '../../shared/ui'
 import { AdviceBanners } from '../../settings/components/AdviceBanners'
 import { HotkeyIssue, HotkeyRow } from '../../settings/components/HotkeyRow'
+import { translateReady } from '../../settings/providers/engine'
 import { setHotkeys, useRuntime, useSettings } from '../../settings/store'
 import { onOnboardingAction, runOnboardingAction, setOnboardingSample } from '../actions'
 import { StepFooter, StepLayout, type StepProps } from '../shared'
@@ -41,7 +42,8 @@ export function Try({ onBack, onFinish, onGoTo, canBack }: StepProps) {
   const runtime = useRuntime()
   const settings = useSettings()
   const rowInsert = usePreset('rowInsert')
-  const noModel = (settings?.providers.length ?? 0) === 0 || settings?.defaults.translate === null
+  // 离线翻译模型同样算已接入（还在下载时翻译面板会显示进度）
+  const noModel = !translateReady(settings)
   const perm = runtime?.permissions.accessibility
   const noAccessibility = os === 'macos' && perm !== 'granted' && perm !== 'not_applicable'
   const [done, setDone] = useState<ReadonlySet<Task>>(() => new Set())

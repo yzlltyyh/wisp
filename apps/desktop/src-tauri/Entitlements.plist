@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 离线模型：ORT 工作进程（与主程序是同一个二进制）要加载按需下载的 ONNX Runtime 动态库。hardened runtime 默认只允许
+	     加载同一 Team ID 签名的库，ad-hoc 签名的应用因此拒绝一切非系统库；这一项放开库校验（库本身仍需签名，未签名的仍被拒）。
+	     下载的库按钉死的 sha256 校验后才会被加载 -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

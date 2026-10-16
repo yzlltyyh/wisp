@@ -189,6 +189,13 @@
 .tv-body > .ui-stream + .tv-error {
   padding-top: 12px;
 }
+/* 骨架下方的等待说明（离线模型冷启动；淡入见 components.css 的 .ui-late） */
+.tv-wait-note {
+  margin: 8px 0 0;
+  font-size: var(--text-meta);
+  line-height: var(--lh-meta);
+  color: var(--fg-2);
+}
 /* 思考耗尽了输出额度（原因在状态行）：正文区的轻量空状态给出下一步；居中的说明各行均衡 */
 .tv-card > .tv-exhausted {
   padding-block: 8px 4px;

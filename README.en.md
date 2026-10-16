@@ -20,7 +20,7 @@ macOS (Apple Silicon) · Windows (x64) · Linux (x64)　|　v0.1.1　|　MIT
 
 Wisp brings three small things you do all day into one panel that is always a keystroke away: translate the text you've selected, recognize the text in any region of the screen, and get back anything you've copied. It sits quietly in the menu bar or system tray and uses almost no resources. Press a shortcut and the panel appears right where you are looking — without taking focus from the app you're in — and gets out of the way when you're done.
 
-Every AI feature runs on a model you connect yourself: OpenAI, Anthropic, Gemini, DeepSeek, Qwen, Kimi, or a local Ollama. There is no Wisp account, no telemetry, and no relay server, and your API keys are kept in the system credential store, never in configuration files. If you use Wisp on more than one computer, you can sync it through WebDAV storage you own; everything is encrypted on your device before it's uploaded.
+Every AI feature runs on a model you choose: connect OpenAI, Anthropic, Gemini, DeepSeek, Qwen, Kimi, or a local Ollama, or download offline models and keep recognition and translation entirely on your computer. There is no Wisp account, no telemetry, and no relay server, and your API keys are kept in the system credential store, never in configuration files. If you use Wisp on more than one computer, you can sync it through WebDAV storage you own; everything is encrypted on your device before it's uploaded.
 
 ## Features
 
@@ -42,6 +42,7 @@ Press <kbd>⌥ S</kbd> (Windows / Linux: <kbd>Ctrl + Alt + S</kbd>). The screen 
 - A magnifier and a size label help you line up pixels. Hover over a window to highlight it and click to select the whole window; hold Space while dragging to move the selection; press <kbd>⌘ A</kbd> to select the entire screen.
 - Three recognition modes: **Plain text** (line by line, keeping line breaks and indentation), **Paragraphs** (joins wrapped lines — good for articles), and **Structured** (headings, lists, and tables as Markdown).
 - You can edit the result in place, and it is copied automatically by default. Click **Translate** to get a translation in the same panel, or press <kbd>⌥ ⇧ S</kbd> to capture and go straight to the translation.
+- Recognition can be done by a model that accepts images, by the PaddleOCR cloud service (PP-OCRv6, PP-StructureV3, PaddleOCR-VL), or by [offline models](#offline-models) downloaded to your computer; tables in structured results are shown as real tables.
 
 <p align="center"><img src="docs/images/overlay.png" width="720" alt="Selecting a screen region: corner handles, a size label, and a pixel magnifier"></p>
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/ocr-dark.png"><img src="docs/images/ocr-light.png" width="640" alt="OCR panel: a screenshot thumbnail and the recognized Chinese text, with the English translation below"></picture></p>
@@ -70,6 +71,25 @@ Connect WebDAV storage you own (Nutstore, 123pan, Nextcloud, a Synology NAS, and
 - **Separate where it matters**: shortcuts sync only between devices on the same operating system, and options such as launch at login and clipboard recording stay on each device.
 
 See [Multi-device sync](docs/user-guide.md#多设备同步) and [Sync and privacy](docs/user-guide.md#同步与隐私) in the user guide (Chinese).
+
+### Offline models
+
+If you'd rather not enter an API key, or don't want your content to leave your computer, download models in **Settings → Offline models**: recognition and translation then run on your device without going online. Nothing is downloaded by default and the installer contains no models; while they aren't in use, they take no memory and no process runs.
+
+| Model | For | Download | Suits |
+| --- | --- | --- | --- |
+| PP-OCRv6 Tiny | Text recognition: fastest, 49 languages, no Japanese | 6.0 MB | Any device; the CPU is enough |
+| PP-OCRv6 Small | Text recognition: balanced speed and accuracy, 50 languages | 30 MB | Any device; the CPU is enough |
+| PaddleOCR-VL-1.6 | Text recognition: tables, formulas, and complex layouts | 1.8 GB | Apple silicon with 8 GB of memory or more, or a graphics card with 3 GB of video memory or more |
+| Index-Translate 2B | Translation: light and quick, 150 languages | 1.2 GB | 8 GB of memory or more; smooth on the CPU too |
+| Index-Translate 9B | Translation: higher quality, 150 languages | 5.4 GB | Apple silicon with 16 GB of memory or more, or a graphics card with 7 GB of video memory or more |
+
+- Settings marks how well each model suits your device based on its memory, chip, and graphics card. The runtimes a model needs (llama.cpp, ONNX Runtime) are downloaded from their official releases along with it; downloads can be paused and resumed, and every file is checked against the SHA-256 recorded in Wisp.
+- A model is loaded the first time you use it and its memory is freed after a while without use (5 minutes by default) or when the system runs low on memory; the model files stay. GPU acceleration (Metal on macOS, Vulkan on Windows and Linux) can be turned off to run on the CPU instead.
+- Which offline models you use is a per-device choice and is never synced, and Wisp never falls back to a cloud service when an offline model fails. Offline translation models only translate; Polish and Proofread still need a model service.
+- The models are released under Apache-2.0; llama.cpp and ONNX Runtime under the MIT License.
+
+See [Offline models](docs/user-guide.md#离线模型) in the user guide (Chinese).
 
 ### Details that matter
 
@@ -164,15 +184,15 @@ Actions accepted by `--trigger`: `translate_selection`, `translate_input`, `ocr`
 
 ## Connect a model provider
 
-Wisp ships without any model or API key; translation and OCR go through services you connect yourself. You can add one during onboarding and manage them later in **Settings → Models & services**.
+Wisp ships without models or API keys: translation and OCR go through services you connect yourself, or through [offline models](#offline-models) you download. You can add a service during onboarding and manage them later in **Settings → Models & services**.
 
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-providers-dark.png"><img src="docs/images/settings-providers-light.png" width="640" alt="The Models & services page in Settings: OpenAI, DeepSeek, and Ollama services, and default models for translation and OCR"></picture></p>
 
-1. **Add a service** from a template: OpenAI, OpenAI (Responses API), Anthropic, Google Gemini, DeepSeek, OpenRouter, Qwen (Alibaba Cloud Model Studio), Zhipu GLM, Volcengine Ark (Doubao), Moonshot Kimi, SiliconFlow, MiniMax, Groq, Ollama (local), LM Studio (local), or **Relay / custom compatible endpoint**. Templates fill in the protocol, address, and recommended parameters, and you can change all of them.
+1. **Add a service** from a template: OpenAI, OpenAI (Responses API), Anthropic, Google Gemini, DeepSeek, OpenRouter, Qwen (Alibaba Cloud Model Studio), Zhipu GLM, Volcengine Ark (Doubao), Moonshot Kimi, SiliconFlow, MiniMax, Groq, Ollama (local), LM Studio (local), **Relay / custom compatible endpoint**, or PaddleOCR, a text recognition service used only for OCR. Templates fill in the protocol, address, and recommended parameters, and you can change all of them.
 2. **Enter the Base URL and API key**, then click **Test connection**. Wisp fetches the model list and sends one tiny streaming request to check the whole path. A local Ollama or LM Studio usually needs no key.
-3. **Choose default models** for Translation and OCR separately. OCR lists only models that accept images, and individual styles can use their own model.
+3. **Choose default models** for Translation and OCR separately. OCR lists offline models, text recognition services, and models that accept images, and individual styles can use their own model.
 
-Notes on individual services, how image support is detected, advanced options such as turning off "thinking", and error explanations are in [Model providers](docs/providers.md) (Chinese).
+Notes on individual services, how image support is detected, advanced options such as turning off "thinking", the PaddleOCR address and access token, and error explanations are in [Model providers](docs/providers.md) (Chinese).
 
 ### Four protocols
 
@@ -182,6 +202,8 @@ Notes on individual services, how image support is detected, advanced options su
 | OpenAI Responses | OpenAI's newer official API (Wisp always sends `store: false`, so nothing is stored on the server) | `POST {base}/responses` |
 | Anthropic Messages | Claude models | `POST {base}/messages` |
 | Google Gemini | Gemini models; all chat models accept images | `POST {base}/models/{model}:streamGenerateContent?alt=sse` |
+
+PaddleOCR is not a chat model: it is added as a text recognition service and used only for OCR. You enter the full service address (the rules below don't apply) and an AI Studio access token; see [Model providers · PaddleOCR](docs/providers.md#paddleocr文字识别服务) (Chinese).
 
 ### Base URL rules
 
@@ -203,7 +225,7 @@ Enter the address up to the version segment, without endpoint paths such as `/ch
 
 ### Where API keys are stored
 
-Keys are written only to the system credential store. In the macOS Keychain and in Linux Secret Service they are stored under the service name `wisp`, with the service ID as the account; in Windows Credential Manager they appear under **Windows Credentials → Generic Credentials** as `<service ID>.wisp`. Once a key is saved, the UI only says it is saved (for example, "Saved in Keychain") and never shows it again, and keys never appear in configuration files, logs, or diagnostics. The UI process never sees your keys: requests are sent directly by the background process. Deleting a service also deletes its key.
+Keys are written only to the system credential store. In the macOS Keychain and in Linux Secret Service they are stored under the service name `wisp`, with the service ID as the account; in Windows Credential Manager they appear under **Windows Credentials → Generic Credentials** as `<service ID>.wisp`. Once a key is saved, the UI only says it is saved (for example, "Saved in Keychain") and never shows it again, and keys never appear in configuration files, logs, or diagnostics. The UI process never sees your keys: requests are sent directly by the background process. Deleting a service also deletes its key. PaddleOCR access tokens are stored the same way.
 
 With [multi-device sync](#multi-device-sync) on and **API keys** selected, keys are encrypted on your device and synced to your other devices along with your model services; on arrival they are likewise written only to that device's system credential store. Deleting a service on one device also deletes that service and its key on your other devices.
 
@@ -232,9 +254,9 @@ Common keys inside the panel: <kbd>Esc</kbd> closes it, <kbd>⌘ C</kbd> copies,
 ## Privacy
 
 - **No data collection**: no telemetry, no Wisp account, no built-in keys, and no relay server in between.
-- **Only three kinds of network requests**: requests to the model services you configured (carrying the text you selected or the region you captured); update checks against GitHub, which you can turn off in **Settings → General → Check for updates**; and the sync server you set up and turned on yourself (WebDAV, off by default). With update checks off and sync not turned on, Wisp sends no requests on its own. Clipboard contents are never sent anywhere to build previews.
-- **Your data stays on your computer by default**: clipboard history is kept in a local SQLite database (`clipboard.db` and `blobs/` in the data folder). It is not encrypted and relies on your user account and disk encryption for protection. Screenshots are processed in memory and saved locally only if you turn on **Recognition history**. With sync on, whatever you choose to sync is encrypted on your device before it's uploaded to your own WebDAV storage; the server can't see the contents, only the number, sizes, and modification times of the files (see [Sync and privacy](docs/user-guide.md#同步与隐私), in Chinese).
-- **Logs contain no content**: logs record only metadata such as timings and status codes — never source text, translations, clipboard contents, screenshots, or keys, and never the sync server's address, account, or passwords. The logs and settings exported with **Settings → About → Diagnostics → Export diagnostics** are redacted in the same way.
+- **Only a few kinds of network requests**: requests to the model services you configured (carrying the text you selected or the region you captured; PaddleOCR is one of them, and screenshots are uploaded to the service address you entered); update checks against GitHub, which you can turn off in **Settings → General → Check for updates**; the sync server you set up and turned on yourself (WebDAV, off by default); and, when you click to download an offline model, the model files from ModelScope or Hugging Face and the runtimes from GitHub. Recognition and translation with offline models never go online. With update checks off and sync not turned on, Wisp sends no requests on its own apart from downloads you start. Clipboard contents are never sent anywhere to build previews.
+- **Your data stays on your computer by default**: clipboard history is kept in a local SQLite database (`clipboard.db` and `blobs/` in the data folder). It is not encrypted and relies on your user account and disk encryption for protection. Screenshots are processed in memory and saved locally only if you turn on **Recognition history**. Offline models are kept in `models/` in the data folder. With sync on, whatever you choose to sync is encrypted on your device before it's uploaded to your own WebDAV storage; the server can't see the contents, only the number, sizes, and modification times of the files (see [Sync and privacy](docs/user-guide.md#同步与隐私), in Chinese).
+- **Logs contain no content**: logs record only metadata such as timings and status codes — never source text, translations, clipboard contents, screenshots, keys, or PaddleOCR access tokens, never the sync server's address, account, or passwords, and never the output of the offline inference processes. The logs and settings exported with **Settings → About → Diagnostics → Export diagnostics** are redacted in the same way.
 
 ## Known limitations
 
@@ -244,6 +266,7 @@ Common keys inside the panel: <kbd>Esc</kbd> closes it, <kbd>⌘ C</kbd> copies,
 - **Gemini API retirement risk**: the Gemini protocol uses `generateContent` / `streamGenerateContent`. Google is promoting its newer Interactions API; if the older endpoints are retired, the Gemini protocol will stop working. In that case, switch to Gemini's OpenAI-compatible endpoint: choose the OpenAI Chat Completions protocol with the Base URL `https://generativelanguage.googleapis.com/v1beta/openai`.
 - **Shortcuts**: once <kbd>⌥</kbd> + a letter is a shortcut, the special character it used to type (such as ∂, ß, or √) can no longer be typed in any app. If Terminal or iTerm2 uses Option as Meta, you lose combinations such as `M-d`; consider the alternative shortcuts. Shortcuts may not fire while Secure Input is active, for example in password fields.
 - **Reading the selection**: a few apps don't expose the selected text through the accessibility APIs. Wisp then simulates a copy and restores your clipboard afterwards. On Windows, windows running as administrator can't be read or pasted into automatically.
+- **Offline models**: they are tested most thoroughly on macOS (Apple silicon); testing on Windows and Linux is still limited. On computers with integrated graphics, the "suits this device" rating may be optimistic; if you see errors or empty results, turn off **Settings → Offline models → Use GPU acceleration**. The first load of a model can take ten seconds or more.
 - **Sync**: only WebDAV is supported (HTTP Basic authentication; https is required except for local network addresses). Wisp doesn't sync on a timer in the background, so changes made on another device are picked up only when you use Wisp. File items on the clipboard and images larger than 10 MB are not synced. The sync password can't be changed directly and can't be recovered if forgotten: the only way out is to clear the data on the server and connect again (the data on each device is not affected).
 - **Clipboard**: paste in sequence and the floating clipboard rely on global keys and window focus, so they don't work in Linux Wayland sessions (there the floating clipboard can only copy, not paste). Dragging out currently supports text, links, and rich text; images and files can't be dragged into other apps yet. Verification-code detection is deliberately cautious: a message without an explicit word such as "verification code" and without an expiry or "don't share" hint isn't treated as a code.
 - **Memory**: for a few dozen seconds after the panel is used, the system WebView holds extra memory (on macOS about 84 MiB, peaking around 90 MiB, until the panel is recycled about 45 seconds after it hides). After recycling it uses about 53–54 MiB (about 49 MiB if the panel was never opened). The main process uses about 13 MiB if the panel was never opened and about 15 MiB afterwards. WebView2 on Windows usually uses more memory than WebKit on macOS.
@@ -256,8 +279,8 @@ Wisp does three things — screenshot OCR, selection translation, and clipboard 
 - a plugin system or scripting;
 - a general-purpose AI chat window (multi-turn conversations);
 - Wisp accounts or relay servers — sync goes only through WebDAV storage you own, and your data is encrypted on your device before it's uploaded;
-- built-in models, built-in keys, or a relay service — you always use the model services you connect yourself;
-- a local OCR engine (Tesseract, PaddleOCR, etc.) as the main path — recognition is done by vision models, and local OCR would at most be an offline fallback (see the roadmap);
+- built-in keys or a relay service — you always use the model services you connect yourself, or offline models you choose to download;
+- models bundled in the installer or downloaded automatically — offline models are saved to your computer only after you click to download them;
 - voice input and text-to-speech;
 - mobile apps.
 
@@ -266,7 +289,7 @@ Wisp does three things — screenshot OCR, selection translation, and clipboard 
 Planned directions (not implemented yet, with no entry points in the UI):
 
 - better compatibility on Windows;
-- more service templates; a local OCR engine as an offline fallback (not the main path);
+- more service templates; better graphics card detection and compatibility for offline models on real Windows and Linux machines;
 - more thorough Linux testing, plus global shortcuts and screenshots on Wayland through the GlobalShortcuts and Screenshot portals;
 - macOS Developer ID signing and notarization, Windows code signing; distribution through Homebrew Cask, winget, and the AUR;
 - clipboard database encryption, searching clipboard images by the text they contain, and dragging clipboard images and files straight into other apps.

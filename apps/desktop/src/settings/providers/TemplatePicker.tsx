@@ -1,5 +1,5 @@
 /**
- * 选择服务模板（16 个模板按 Rust 给出的顺序）。设置里按「官方 / 其他兼容服务 / 本机」分组展示全部模板；
+ * 选择服务模板（17 个模板按 Rust 给出的顺序）。设置里按「官方 / 其他兼容服务 / 本机 / 文字识别服务」分组展示全部模板；
  * 有区域变体的模板在编辑器里选区域。引导页另用 4 张大卡片，见 onboarding。
  */
 import { ArrowLeft, ChevronRight } from 'lucide-react'
@@ -12,12 +12,13 @@ import { ProviderLogo } from './logos'
 import { hostOf, OPENAI_TEMPLATES, templateName } from './model'
 
 const GROUPS: ReadonlyArray<{
-  id: 'official' | 'other' | 'local'
+  id: 'official' | 'other' | 'local' | 'ocr'
   groups: readonly TemplateGroup[]
 }> = [
   { id: 'official', groups: ['openai', 'anthropic', 'gemini'] },
   { id: 'other', groups: ['other'] },
   { id: 'local', groups: ['local'] },
+  { id: 'ocr', groups: ['ocr'] },
 ]
 
 /** host 只在「.」之后可以换行（最多两行，不在单词中间断开） */

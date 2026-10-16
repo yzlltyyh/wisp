@@ -1,0 +1,12 @@
+{
+  "total_memory": 17179869184,
+  "apple_silicon": false,
+  "gpus": [
+    {
+      "name": "NVIDIA GeForce RTX 3060",
+      "vram_total_mb": 12288,
+      "integrated": false
+    }
+  ],
+  "gpu_probed": true
+}

@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex, RwLock};
 use tokio_util::bytes::Bytes;
-use wisp_capture::Frame;
+use wisp_capture::{Frame, RgbaImage};
 use wisp_types::{MonitorId, OcrMode, PhysSize};
 
 use super::registry::Owner;
@@ -83,6 +83,21 @@ pub struct Crop {
     history: Mutex<HistorySlots>,
     /// OCR 历史用的缩略图（长边 256 px），编码截图之后从裁剪帧生成（只在 `ocr.history` 开启时）
     thumb: Mutex<Option<Arc<Vec<u8>>>>,
+    /// 离线引擎用的像素（缩放后的 RGBA，不经 PNG 编码 / 解码）：只在识别目标是离线引擎时留着，请求结束即释放
+    /// （之后的重新识别从编码字节解码）
+    pixels: Mutex<Pixels>,
+    pixels_ready: Condvar,
+}
+
+/// 裁剪图的像素
+#[derive(Debug, Clone, Default)]
+enum Pixels {
+    /// 不保留（视觉 LLM 与云端只用编码字节）
+    #[default]
+    None,
+    /// 缩放中
+    Pending,
+    Ready(Arc<RgbaImage>),
 }
 
 /// 一张截图在 OCR 历史里的条目：每个模式最近写入的那一条
@@ -99,13 +114,53 @@ impl Crop {
         self.ready.notify_all();
     }
 
-    /// 编码失败
+    /// 编码失败（或裁剪图被释放）
     pub fn set_failed(&self) {
         let mut g = self.image.lock();
         if *g == CropImage::Pending {
             *g = CropImage::Failed;
         }
         self.ready.notify_all();
+        drop(g);
+        self.drop_pixels();
+    }
+
+    /// 这次识别要用像素（离线引擎）：缩放完成时由 [`Self::set_pixels`] 交来
+    pub fn expect_pixels(&self) {
+        *self.pixels.lock() = Pixels::Pending;
+    }
+
+    /// 缩放好的像素
+    pub fn set_pixels(&self, img: Arc<RgbaImage>) {
+        let mut g = self.pixels.lock();
+        if matches!(*g, Pixels::Pending) {
+            *g = Pixels::Ready(img);
+        }
+        self.pixels_ready.notify_all();
+    }
+
+    /// 等像素（**阻塞**，最多 `timeout`）；没有保留像素（或已释放、超时）时为 None，调用方改从编码字节解码
+    pub fn wait_pixels(&self, timeout: Duration) -> Option<Arc<RgbaImage>> {
+        let until = Instant::now() + timeout;
+        let mut g = self.pixels.lock();
+        loop {
+            match &*g {
+                Pixels::Ready(img) => return Some(Arc::clone(img)),
+                Pixels::None => return None,
+                Pixels::Pending => {
+                    if self.pixels_ready.wait_until(&mut g, until).timed_out() {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// 释放像素（识别结束；之后的重新识别从编码字节解码）
+    pub fn drop_pixels(&self) {
+        let mut g = self.pixels.lock();
+        *g = Pixels::None;
+        self.pixels_ready.notify_all();
     }
 
     /// 等编码完成（**阻塞**，最多 `timeout`；超时返回 Pending）
@@ -180,10 +235,10 @@ impl Crop {
     /// 在阻塞线程上从裁剪帧（RGBA8，宽 × 高）生成 OCR 历史用的缩略图（长边 256 px，逐行面积平均：4K 帧约 16 ms，不复制整帧）。编码完成
     /// 之后调用（只在 `ocr.history` 开启时），与已经发出的识别请求并行，不占关键路径。请求在缩略图生成之前就结束时
     /// （实际不会：识别至少要一次网络往返），写入历史时由存储层从原图生成
-    pub fn spawn_history_thumb(self: &Arc<Self>, width: u32, height: u32, rgba: Vec<u8>) {
+    pub fn spawn_history_thumb(self: &Arc<Self>, img: Arc<RgbaImage>) {
         let crop = Arc::clone(self);
         tauri::async_runtime::spawn_blocking(move || {
-            if let Some(t) = wisp_clipboard::ocr_thumbnail(width, height, &rgba) {
+            if let Some(t) = wisp_clipboard::ocr_thumbnail(img.width(), img.height(), img.as_raw()) {
                 *crop.thumb.lock() = Some(Arc::new(t));
             }
         });
@@ -259,6 +314,8 @@ impl CaptureStore {
             history_tickets: AtomicU64::new(0),
             history: Mutex::new(HistorySlots::default()),
             thumb: Mutex::new(None),
+            pixels: Mutex::new(Pixels::None),
+            pixels_ready: Condvar::new(),
         });
         self.crops.lock().insert(id, Arc::clone(&crop));
         crop

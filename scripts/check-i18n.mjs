@@ -59,6 +59,8 @@ export const RUST_KEY_PREFIXES = [
   'clipboard.history_',
   // 同步命令的错误消息（IpcError.message 下发文案 key，前端经 ipcErrorText 翻译）
   'errors.sync.',
+  // 离线模型的设备适配说明（wisp-local 的 fitness 下发 Fitness.reason_key）
+  'settings.offline.fitness.',
 ]
 /**
  * 已知缺失、暂时允许的 key（每次运行都会告警，不会被遗忘）。目前为空：新增条目时写明缺失的原因与补齐的条件。

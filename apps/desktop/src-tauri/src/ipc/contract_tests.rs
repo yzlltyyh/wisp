@@ -19,6 +19,7 @@ const RUST_SOURCES: &[(&str, &str)] = &[
     ("cmd_app.rs", include_str!("cmd_app.rs")),
     ("cmd_clipboard.rs", include_str!("cmd_clipboard.rs")),
     ("cmd_hotkeys.rs", include_str!("cmd_hotkeys.rs")),
+    ("cmd_models.rs", include_str!("cmd_models.rs")),
     ("cmd_overlay.rs", include_str!("cmd_overlay.rs")),
     ("cmd_provider.rs", include_str!("cmd_provider.rs")),
     ("cmd_settings.rs", include_str!("cmd_settings.rs")),
@@ -67,6 +68,8 @@ const BOUNDED: &[&str] = &[
     "Protocol",
     "ResizeSpring",
     "OsKind",
+    "LocalModelId",
+    "LocalRuntimeId",
     // 全是 bool 字段的结构
     "SyncContent",
 ];

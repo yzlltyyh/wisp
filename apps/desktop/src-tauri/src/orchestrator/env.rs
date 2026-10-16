@@ -22,12 +22,15 @@ use wisp_llm::{CancellationToken, ChatRequest, Secret};
 use wisp_platform::{Selection, SelectionError, SelectionOpts};
 use wisp_prompts::GlossaryMatcher;
 use wisp_types::{
-    AppRef, ClipboardPayload, HideReason, HotkeyAction, KeychainState, MonitorId, MonitorInfo, OnboardingHotkey,
-    OsKind, OverlayEndReason, OverlaySessionEnd, OverlaySessionStart, PanelPayload, PanelView, PasteOn, PermissionKind,
-    PermissionState, ReduceMotionPref, SessionKind, Settings, StreamEvent, Style, Usage, WindowTarget, event,
+    AppRef, ClipboardPayload, HideReason, HotkeyAction, KeychainState, LocalModelId, MonitorId, MonitorInfo, OcrMode,
+    OnboardingHotkey, OsKind, OverlayEndReason, OverlaySessionEnd, OverlaySessionStart, PanelPayload, PanelView,
+    PasteOn, PermissionKind, PermissionState, ReduceMotionPref, RequestId, SessionKind, Settings, StreamEvent, Style,
+    Usage, WindowTarget, event,
 };
 
 use super::backend::Backend;
+use super::not_ready::OfflineStatus;
+use super::plan::{EngineRef, is_offline};
 use crate::app::perf::PerfMarks;
 use crate::clipboard_svc::ocr_history::OcrRecord;
 use crate::error::IpcError;
@@ -54,9 +57,16 @@ pub trait Env: Send + Sync + 'static {
     /// 用量统计（内存合并、稍后落盘，不阻塞）
     fn record_usage(&self, provider_id: &str, model_id: &str, usage: &Usage);
 
-    // ---- LLM ----
-    /// 发起流式请求（必须在 tokio 运行时里调用）
+    // ---- LLM 与识别引擎 ----
+    /// 发起流式请求（必须在 tokio 运行时里调用）。离线翻译模型（合成服务商 `@offline`）也走这里：真实实现先让模型服务
+    /// 加载推理进程（冷启动时先发 `Phase{loading_model}`），再把地址与随机 key 填进请求转发给 wisp-llm
     fn llm_stream(&self, req: ChatRequest, cancel: CancellationToken) -> mpsc::Receiver<StreamEvent>;
+    /// 识别引擎（离线 PP-OCR / PaddleOCR-VL、PaddleOCR 云端）：与 [`Env::llm_stream`] 同语义的事件流（Start 由编排器在
+    /// 登记时发；引擎发 `Phase` / `Delta`，最后恰好一个 `Done` / `Error`）。必须在 tokio 运行时里调用。离线引擎失败时
+    /// 以错误结束，绝不改用云端
+    fn ocr_engine_stream(&self, req: EngineRequest, cancel: CancellationToken) -> mpsc::Receiver<StreamEvent>;
+    /// 离线模型能不能马上用（**阻塞**：第一次调用时读模型库存，之后读缓存）
+    fn offline_status(&self, model: LocalModelId) -> OfflineStatus;
 
     // ---- 平台 ----
     /// 当前前台应用（**阻塞**）
@@ -165,6 +175,29 @@ pub trait Env: Send + Sync + 'static {
     }
 }
 
+/// 交给识别引擎的图片
+#[derive(Debug, Clone)]
+pub enum EngineImage {
+    /// 缩放后的像素（离线引擎：不经 PNG 编码、解码）
+    Rgba(Arc<wisp_capture::RgbaImage>),
+    /// 编码好的图片（云端：PNG，过大时 JPEG）
+    Encoded { bytes: Arc<Vec<u8>>, mime: &'static str },
+}
+
+/// 一次引擎识别
+#[derive(Debug)]
+pub struct EngineRequest {
+    pub request_id: RequestId,
+    pub engine: EngineRef,
+    /// 转录模式（lines / paragraphs / markdown；直接翻译的第一步是 paragraphs，引擎不支持的模式已经换成 paragraphs）
+    pub mode: OcrMode,
+    pub image: EngineImage,
+    /// 云端服务的 Token（离线引擎为 None）
+    pub key: Option<Secret>,
+    /// 检测输入的长边上限（`ocr.max_edge_px`）
+    pub max_side: u32,
+}
+
 /// 真实实现：转给 `AppState` 里的服务
 pub struct TauriEnv {
     app: tauri::AppHandle,
@@ -230,9 +263,43 @@ impl Env for TauriEnv {
 
     fn llm_stream(&self, req: ChatRequest, cancel: CancellationToken) -> mpsc::Receiver<StreamEvent> {
         match self.state() {
+            // 离线翻译模型：唯一的路由点。假模型（`WISP_FAKE_LLM=1`）照常走假实现，不加载任何东西
+            Some(state) if is_offline(&req.provider) && !self.backend.is_fake() => {
+                state.models.stream_translate(req, state.llm.clone(), cancel)
+            }
             Some(state) => self.backend.stream(&state.llm, req, cancel),
             None => self.backend.unavailable(req),
         }
+    }
+
+    fn ocr_engine_stream(&self, req: EngineRequest, cancel: CancellationToken) -> mpsc::Receiver<StreamEvent> {
+        if self.backend.is_fake() {
+            return self.backend.engine_stream(&req, cancel);
+        }
+        let Some(state) = self.state() else {
+            return Backend::engine_unavailable();
+        };
+        match (req.engine, req.image) {
+            (EngineRef::Local(model), EngineImage::Rgba(image)) => {
+                state
+                    .models
+                    .ocr_local(model, req.mode, image, req.max_side, state.llm.clone(), cancel)
+            }
+            (EngineRef::Cloud { provider, model }, EngineImage::Encoded { bytes, mime }) => {
+                crate::models_svc::engines::ocr_cloud(&provider, model, bytes, mime, req.key, req.mode, cancel)
+            }
+            // 编排器按引擎准备图片，不会出现；兜底以内部错误结束
+            _ => Backend::engine_unavailable(),
+        }
+    }
+
+    fn offline_status(&self, model: LocalModelId) -> OfflineStatus {
+        // 假模型（开发运行）：离线引擎与离线翻译都是假实现，不需要下载就能走通识别与翻译的界面
+        if self.backend.is_fake() {
+            return OfflineStatus::Ready;
+        }
+        self.state()
+            .map_or(OfflineStatus::Missing, |s| s.models.offline_status(model))
     }
 
     fn frontmost(&self) -> Option<AppRef> {

@@ -625,6 +625,7 @@ fn piece(protocol: Protocol, text: &str) -> String {
         Protocol::Gemini => format!(
             "data: {{\"candidates\":[{{\"content\":{{\"parts\":[{{\"text\":\"{text}\"}}]}}}}],\"responseId\":\"g\"}}\n\n"
         ),
+        Protocol::PaddleOcr => unreachable!("PaddleOCR 不是 LLM 协议"),
     }
 }
 
@@ -639,6 +640,7 @@ fn opening(protocol: Protocol, text: &str) -> String {
             "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n\
              event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
         }
+        Protocol::PaddleOcr => unreachable!("PaddleOCR 不是 LLM 协议"),
     };
     format!("{head}{}", piece(protocol, text))
 }
@@ -659,6 +661,7 @@ fn closing(protocol: Protocol, text: &str) -> String {
         Protocol::Gemini => {
             "data: {\"candidates\":[{\"content\":{\"parts\":[]},\"finishReason\":\"STOP\"}],\"responseId\":\"g\"}\n\n"
         }
+        Protocol::PaddleOcr => unreachable!("PaddleOCR 不是 LLM 协议"),
     };
     format!("{}{tail}", piece(protocol, text))
 }
@@ -1649,4 +1652,35 @@ async fn logs_carry_the_upstream_id_from_the_body() {
         lines.iter().all(|l| !l.contains("sk-test") && !l.contains("hi\"")),
         "{lines:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 非 LLM 服务
+
+/// PaddleOCR 云端是文字识别服务：所有 LLM 路径都在发请求之前明确拒绝（not_configured），不 panic、不发出任何请求
+#[tokio::test]
+async fn paddle_ocr_providers_are_rejected_without_requests() {
+    let server = ScriptServer::start(vec![Reply::body(200, "application/json", "{}")]).await;
+    let p = provider(Protocol::PaddleOcr, &format!("{}/api/v2/ocr/jobs", server.base));
+    let (client, _) = common::client();
+
+    let events = common::run(&client, request(p.clone(), "PP-OCRv6", "hi")).await;
+    common::assert_failed_before_stream(&events);
+    assert_eq!(common::error_of(&events).code, ErrorCode::NotConfigured);
+
+    let err = client.list_models(&p, None).await.expect_err("不是 LLM 服务");
+    assert_eq!(err.code, ErrorCode::NotConfigured);
+
+    let report = client.test_connection(&p, None).await;
+    assert_eq!(report.overall, TestVerdict::Failed);
+    assert_eq!(server.request_count(), 0, "一个请求都不发");
+
+    // 地址原样使用，不补版本段
+    let preview = wisp_llm::url_preview(
+        Protocol::PaddleOcr,
+        "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs",
+        None,
+    );
+    assert_eq!(preview.url, "https://paddleocr.aistudio-app.com/api/v2/ocr/jobs");
+    assert!(!preview.version_appended);
 }

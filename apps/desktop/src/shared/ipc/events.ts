@@ -58,6 +58,7 @@ export const EVENT_NAMES = [
   'sync:status',
   'glossary:changed',
   'clipboard:queue',
+  'offline_models:changed',
 ] as const satisfies readonly EventName[]
 
 type AssertNever<Never extends never> = Never

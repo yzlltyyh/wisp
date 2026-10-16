@@ -1061,6 +1061,43 @@
     background: currentColor;
   }
 
+  /* 细进度条（ProgressBar）：只动 transform；不确定进度时一段 30% 宽的短条来回滑动（减少动效时停在中间） */
+  .ui-progress {
+    position: relative;
+    height: 4px;
+    overflow: hidden;
+    border-radius: 2px;
+    background: var(--fill-control);
+  }
+  .ui-progress-bar {
+    display: block;
+    height: 100%;
+    transform: scaleX(0);
+    transform-origin: left center;
+    background: var(--accent);
+    transition:
+      transform var(--dur-base) var(--ease-standard),
+      background-color var(--dur-fast) var(--ease-standard);
+  }
+  .ui-progress[data-paused] .ui-progress-bar {
+    background: var(--fg-3);
+  }
+  .ui-progress[data-indeterminate] .ui-progress-bar {
+    width: 30%;
+    transform: translateX(115%);
+    transition: none;
+    animation: wisp-indeterminate calc(var(--pulse-period) * 1.4) var(--ease-pulse) infinite
+      alternate;
+  }
+  @keyframes wisp-indeterminate {
+    from {
+      transform: translateX(-10%);
+    }
+    to {
+      transform: translateX(243%);
+    }
+  }
+
   .ui-banner {
     display: flex;
     align-items: center;
@@ -1424,6 +1461,33 @@
     justify-content: center;
     gap: 8px;
     margin-top: 12px;
+  }
+  /* 未就绪卡片里的离线模型下载进度（shared/offline/OfflineCard）：说明下方一条细进度条 + 百分比 */
+  .ui-offline-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: min(240px, 100%);
+    margin-top: 12px;
+  }
+  /* 下载前的适配确认（较慢 / 内存不足 / 显卡待检测）：比说明稍宽，确认条里的文字左对齐 */
+  .ui-offline-confirm {
+    width: min(360px, 100%);
+    text-align: start;
+  }
+  .ui-offline-progress-text {
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+    font-variant-numeric: tabular-nums;
+  }
+  /*
+   * 等久了才需要的补充说明（离线模型冷启动时的「第一次加载需要十几秒」）：挂载时先透明占位（布局不跳），约 3 秒后淡入；
+   * 加载一两秒就完成时根本看不到它。延迟取脉冲周期的倍数（--pulse-period 在减少动效时不变）；减少动效时动画时长归零，
+   * 到点直接出现。只动 opacity
+   */
+  .ui-late {
+    animation: wisp-chunk-in var(--dur-slow) var(--ease-standard) calc(var(--pulse-period) * 3) both;
   }
 
   /* ======================================================================

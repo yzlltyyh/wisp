@@ -40,6 +40,7 @@ import { prefetchAdvice } from '../settings/components/AdviceBanners'
 import { NoticeToast } from '../settings/components/NoticeToast'
 import { ipcErrorText } from '../settings/lib/errors'
 import { closeWindowSafely, prepareToLeave } from '../settings/lib/writes'
+import { translateReady } from '../settings/providers/engine'
 import {
   loadSettings,
   notify,
@@ -261,7 +262,8 @@ function OnboardingWindow() {
   const done: Record<StepId, boolean> = {
     welcome: true,
     permissions: permissionReady(perms?.accessibility) && permissionReady(perms?.screen_recording),
-    model: (settings?.providers.length ?? 0) > 0 && (settings?.defaults.translate ?? null) !== null,
+    // 接入了服务并选了默认翻译模型，或者在本机选用了离线翻译模型（settings/providers/engine.ts）
+    model: translateReady(settings),
     try: false,
   }
 

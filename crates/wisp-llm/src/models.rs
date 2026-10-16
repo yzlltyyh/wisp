@@ -56,6 +56,9 @@ async fn list_inner(
     key: Option<&Secret>,
     status: &mut Option<u16>,
 ) -> Result<Vec<RemoteModel>, LlmError> {
+    if !provider.protocol.is_llm() {
+        return Err(errors::not_llm());
+    }
     let n = url::normalize(&provider.base_url, provider.protocol);
     if n.prefix.is_empty() {
         return Err(errors::not_configured("the provider has no base URL"));
@@ -119,6 +122,8 @@ async fn list_inner(
             Protocol::OpenAiChat | Protocol::OpenAiResponses => (parse_openai(&v), None),
             Protocol::AnthropicMessages => parse_anthropic(&v),
             Protocol::Gemini => parse_gemini(&v),
+            // 不是 LLM 服务：上面已经拒绝，不会走到这里
+            Protocol::PaddleOcr => (None, None),
         };
         let page = page.ok_or_else(|| errors::protocol("unexpected /models response shape", &page_url))?;
         models.extend(page);

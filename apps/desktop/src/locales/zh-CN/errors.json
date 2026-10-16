@@ -73,6 +73,10 @@
     "internal": {
       "title": "出了点问题",
       "detail": "请重试；如果反复出现，可以在「关于」中导出诊断信息"
+    },
+    "local_runtime": {
+      "title": "离线模型运行出错",
+      "detail": "请重试；如果反复出现，可以在设置 › 离线模型中释放内存或重新下载模型"
     }
   },
   "subcode": {
@@ -99,7 +103,17 @@
     "check_protocol": "检查协议类型与 base_url 是否匹配",
     "check_settings": "检查服务设置",
     "param_adjusted": "已自动调整不兼容的参数，点「重试」即可",
-    "param_rejected": "模型不接受请求中的某个参数，可以切换模型或检查服务模板"
+    "param_rejected": "模型不接受请求中的某个参数，可以切换模型或检查服务模板",
+    "local": {
+      "out_of_memory": "可用内存不足：关闭一些程序或改用更小的模型后重试",
+      "vc_runtime_missing": "缺少 Microsoft Visual C++ 运行库，安装后重试",
+      "system_library_missing": "系统缺少推理组件需要的库：更新系统或安装缺少的库后重试",
+      "gpu_failed": "显卡加速出错：可以在设置中关闭「使用 GPU 加速」后重试",
+      "start_failed": "推理组件没能启动，可能被安全软件拦截；可以在设置中删除后重新下载",
+      "crashed": "离线模型意外退出，请重试",
+      "model_corrupt": "模型文件缺失或已损坏，请在设置中重新下载",
+      "load_timeout": "加载模型超时，请重试；硬盘较慢时第一次加载可能更久"
+    }
   },
   "details": {
     "title": "详情",
@@ -116,7 +130,8 @@
     "retry_in": "{n} 秒后重试",
     "open_settings": "打开设置",
     "choose_model": "选择模型",
-    "switch_model": "切换模型"
+    "switch_model": "切换模型",
+    "vc_runtime": "下载运行库"
   },
   "ipc": {
     "invalid_argument": "参数无效",

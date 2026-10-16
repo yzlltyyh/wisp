@@ -1,6 +1,6 @@
 # 模型服务
 
-Wisp 不内置任何模型或 Key，翻译与 OCR 都通过你自己接入的服务完成。本文说明 Wisp 支持哪些协议、Base URL 怎么填、模型与识图能力如何判定，以及各家服务需要注意的地方。日常操作见 [README · 接入模型服务](../README.md#接入模型服务) 与[使用说明](user-guide.md#模型与服务)；实现位于 `crates/wisp-llm`（见[架构](architecture.md#rust-crate)）。
+Wisp 不内置模型或 Key：翻译与 OCR 通过你自己接入的服务完成，也可以使用下载到本机运行的离线模型（见[使用说明 · 离线模型](user-guide.md#离线模型)）。本文说明 Wisp 支持哪些协议、Base URL 怎么填、模型与识图能力如何判定、PaddleOCR 文字识别服务怎么接入，以及各家服务需要注意的地方。日常操作见 [README · 接入模型服务](../README.md#接入模型服务) 与[使用说明](user-guide.md#模型与服务)；实现位于 `crates/wisp-llm`，PaddleOCR 的客户端在 `crates/wisp-local`（见[架构](architecture.md#rust-crate)）。
 
 ## 目录
 
@@ -13,6 +13,8 @@ Wisp 不内置任何模型或 Key，翻译与 OCR 都通过你自己接入的服
 - [错误提示](#错误提示)
 - [各服务的注意事项](#各服务的注意事项)
 - [服务编辑器的高级选项](#服务编辑器的高级选项)
+- [PaddleOCR（文字识别服务）](#paddleocr文字识别服务)
+- [多设备同步](#多设备同步)
 - [贡献者：代码在哪里](#贡献者代码在哪里)
 
 ## 四种协议
@@ -25,6 +27,8 @@ Wisp 不内置任何模型或 Key，翻译与 OCR 都通过你自己接入的服
 | Google Gemini | `POST {base}/models/{模型}:streamGenerateContent?alt=sse` | `x-goog-api-key` | Gemini 系列，对话模型都能识图 |
 
 四种协议都使用流式输出（SSE）。Wisp 把它们统一为同一种事件流：开始、增量文本、结束（含用量）或错误。推理模型输出的「思考」内容（`reasoning_content`、thinking block、`thought: true` 的 part 等）一律不显示。
+
+服务编辑器的协议列表里另有一项「PaddleOCR」：它不是对话模型的协议，而是只用于 OCR 的文字识别服务，地址、鉴权与结果格式都不同，见[下文](#paddleocr文字识别服务)。本节和下一节的规则对它不适用。
 
 ## Base URL
 
@@ -84,8 +88,9 @@ Wisp 不内置任何模型或 Key，翻译与 OCR 都通过你自己接入的服
 | Ollama（本机） | OpenAI Chat | `http://localhost:11434` | — |
 | LM Studio（本机） | OpenAI Chat | `http://localhost:1234` | — |
 | 中转站 / 自定义兼容端点 | 任选 | 自行填写 | — |
+| PaddleOCR（文字识别，单独一组） | PaddleOCR | `https://paddleocr.aistudio-app.com/api/v2/ocr/jobs` | 也可以填部署的服务或自托管的 PaddleX，见[下文](#paddleocr文字识别服务) |
 
-本机模板（Ollama、LM Studio）不要求 Key，首字超时与空闲超时放宽到 120 秒，以容纳模型的加载时间。
+本机模板（Ollama、LM Studio）不要求 Key，首字超时与空闲超时放宽到 120 秒，以容纳模型的加载时间。它们连接的是你自己运行的模型服务；Wisp 自己下载并在本机运行的是「离线模型」，不需要添加服务，在「设置 → 离线模型」里管理。
 
 服务列表与模板里显示的服务商标志是各自所有者的商标，只用来标明对应的服务。
 
@@ -100,7 +105,7 @@ Wisp 不内置任何模型或 Key，翻译与 OCR 都通过你自己接入的服
 3. **能力字段**：Anthropic 模型列表的 `capabilities.image_input`、OpenRouter 的 `architecture.input_modalities`、Gemini 的对话模型（全部支持）；
 4. **模型名关键词**：常见的视觉模型系列（如 `gpt-4o`、`gpt-4.1`、`gpt-5`、`claude-*`、`gemini-*`、`qwen*-vl`、`glm-4v`、`llava`、`pixtral` 等）判为支持；语音、嵌入、图像生成、代码专用等模型判为不支持；其余为未确认。
 
-OCR 的模型选择器只列「支持」与「未确认」的模型。中转站返回的模型 ID 常常是别名，关键词判定只能作为初值，请按实际情况手动改。「重置能力缓存」让 Wisp 下一次请求时重新探测。
+OCR 的模型选择器只列「支持」与「未确认」的模型，另外列出离线模型与 PaddleOCR 服务的模型。PaddleOCR 服务的模型按协议判定：可以用于 OCR、不能用于翻译，不看「图片」列。中转站返回的模型 ID 常常是别名，关键词判定只能作为初值，请按实际情况手动改。「重置能力缓存」让 Wisp 下一次请求时重新探测。
 
 **推理模型**：模型表的「推理」列标出推理模型（能力字段、手动设置，或 ID 匹配 `o1`–`o9`、`gpt-5`、`gpt-6` 开头）。推理模型不发送 `temperature`，最大输出至少为 1024，并可以在模型的高级设置里选择推理档位。
 
@@ -193,6 +198,67 @@ OCR 的模型选择器只列「支持」与「未确认」的模型。中转站�
 | Key 放在 URL 参数中 | Gemini 协议以 `?key=` 传 Key，而不是请求头 |
 | 超时 | 连接、首字、流中空闲三项 |
 
+## PaddleOCR（文字识别服务）
+
+PaddleOCR 的文字识别服务作为一种模型服务添加：在「添加服务」的模板里选「PaddleOCR」。它只用于 OCR：出现在 OCR 模型的下拉与「重新识别 ▾」里，不出现在翻译的下拉里；截图直接翻译时先由它识别，再交给翻译模型。操作步骤见[使用说明 · PaddleOCR 云端识别](user-guide.md#paddleocr-云端识别)。
+
+### 服务地址
+
+填完整的接口地址，Wisp 原样使用（不补版本段，丢弃查询串与 `#` 片段），按路径的结尾判断接口形态，编辑器在地址下方显示判断结果：
+
+| 地址 | 接口 | 鉴权头 | 请求方式 |
+| --- | --- | --- | --- |
+| `https://paddleocr.aistudio-app.com/api/v2/ocr/jobs`（默认） | AI Studio 的任务接口 | `Authorization: bearer <令牌>` | 提交 `multipart/form-data`（`file`、`model`、`optionalPayload`），轮询任务状态，完成后下载结果 |
+| AI Studio 上部署的服务，以 `/ocr` 或 `/layout-parsing` 结尾 | 部署的服务 | `Authorization: token <令牌>` | `POST` JSON（`file` 为 base64，`fileType: 1`），直接返回结果 |
+| 自托管 PaddleX 服务的 `/ocr`（文字识别）或 `/layout-parsing`（文档解析） | 部署的服务 | 同上；令牌留空时不发 | 同上 |
+
+- 其他结尾的地址提示「无法识别的服务地址」，不发请求。
+- `http://` 只允许本机与局域网地址（回环、私有网段、运营商级 NAT 的 `100.64.0.0/10`——Tailscale 等组网工具分配的就是这一段、链路本地、`localhost`、`.local`）；公网地址必须用 `https://`，否则令牌与截图会明文经过网络。这些地址直接连接，不经过系统代理。
+- 截图以 PNG 上传（过大时改用 JPEG），上限 50 MB。Wisp 在可选参数里关闭文档方向分类、文档矫正与可视化结果；文字识别模型另关文本行方向分类，文档解析模型另关图表与印章识别。
+
+### 访问令牌
+
+- AI Studio 的访问令牌在 `https://aistudio.baidu.com/account/accessToken` 获取，填在编辑器的「访问令牌」一栏。它与 API Key 走同一套机制：只写入系统凭据存储，只进不出，界面不回显，日志、错误信息与诊断包里都没有。
+- AI Studio 的访问令牌默认拥有账号的全部权限，不只用于 OCR，泄露的影响较大：只在自己的设备上使用，不要分享。
+- 开启同步并勾选「API Key」时，令牌像 Key 一样加密后同步到你的其他设备，并同样绑定设置它时服务地址的协议、主机与端口（见[多设备同步](#多设备同步)）。
+
+### 模型与识别模式
+
+预置 `PP-OCRv6`、`PP-StructureV3`、`PaddleOCR-VL-1.6`，可以在模型表里手动添加服务支持的其他模型名（例如 `PP-OCRv5`、`PaddleOCR-VL-1.5`）；这个服务没有「获取模型列表」。名称以 `PP-Structure` 或 `PaddleOCR-VL` 开头的按文档解析模型处理，其余按文字识别模型处理。
+
+| 模型 | 识别模式 | 结果 |
+| --- | --- | --- |
+| 文字识别模型（PP-OCRv6 等） | 纯文本、段落；不支持结构化（界面置灰，默认模式是结构化时按段落识别） | 服务返回的文本行与四点框，用与离线 PP-OCRv6 相同的规则拼成行与段落 |
+| 文档解析模型（PP-StructureV3、PaddleOCR-VL 系列） | 三种都支持 | 结构化：服务返回的 Markdown，去掉区块图片的引用，HTML 表格转成 Markdown 表格；纯文本与段落：按阅读顺序拼接文字块，页眉页脚、图片、图表、印章等不计入 |
+
+PP-StructureV3 明显较慢，服务端处理一张截图从几秒到几十秒不等（随服务负载变化），编辑器与面板里都会提示。
+
+### 任务接口的流程
+
+提交成功后面板显示「云端处理中…」；提交后约 300 ms 第一次查询任务状态，之后间隔逐次拉长，最长 2 秒一次，一个任务最多等 2 分钟。完成后下载服务给出的结果链接（JSONL）：这一步**不带令牌**，最多跟随 3 次重定向且不降级到 http，结果上限 32 MB。取消时停止查询（服务没有撤销任务的接口）。
+
+### 连接测试
+
+- 任务接口：`GET <地址>/wisp-connection-test`。返回 401 / 403 说明令牌无效；400 / 404 等说明令牌已通过鉴权，测试通过。不提交任何图片。
+- 部署的服务：提交一张 32 × 32 的白图，`errorCode` 为 0 或「没有文字」即通过。
+
+### 错误
+
+先看响应体里的错误码（`code` / `errorCode`，可能是字符串），再看 HTTP 状态：
+
+| 类别 | 常见原因 |
+| --- | --- |
+| 令牌无效或无权限 | 401 / 403 |
+| 额度用尽 | 日额度用完（错误码 12001，或带额度字样的 429） |
+| 触发限流 | 其他 429、限流类错误码 |
+| 图片过大 | 413 或对应的错误码 |
+| 地址或模型不存在 | 404、模型名不被接受 |
+| 超时 | 408 / 504，或任务在 2 分钟内没有完成 |
+| 服务端错误 | 任务失败、5xx |
+| 网络错误 | 连不上服务 |
+
+错误信息只用固定的说明，不回显服务返回的原文。日志只记录服务的主机、接口类别（任务接口或部署的服务）、状态码与耗时，不记录任务 id、结果链接与令牌。免费额度、计费与使用条款以 PaddleOCR 与 AI Studio 的官方说明为准。
+
 ## 多设备同步
 
 开启[多设备同步](user-guide.md#多设备同步)后，服务列表、每个服务的设置（包括自定义请求头与高级选项）、启用的模型与默认模型都会同步到你的其他设备；勾选「API Key」时，Key 也会在本机加密后同步，到达后写入那台设备的系统凭据存储。
@@ -213,6 +279,7 @@ OCR 的模型选择器只列「支持」与「未确认」的模型。中转站�
 | 错误归一化 | `crates/wisp-llm/src/errors.rs` |
 | 识图能力判定 | `crates/wisp-llm/src/vision.rs` |
 | 参数降级 | `crates/wisp-llm/src/degrade.rs` |
-| 提示词 | `crates/wisp-prompts/templates/` |
+| 提示词 | `crates/wisp-prompts/templates/`；离线翻译（Index-Translate）的提示词格式在 `crates/wisp-prompts/src/index.rs` |
+| PaddleOCR 客户端（地址判别、两种接口、结果解析、错误分类、连接测试） | `crates/wisp-local/src/ocr/cloud.rs` 与 `src/ocr/cloud/` |
 
-协议适配与错误归一化都有基于 SSE 样本的回放测试（`cargo test -p wisp-llm`），不需要真实的 Key。新增模板时：在 `templates.rs` 里加一项，给 zh-CN 与 en-US 两份 locales 补上模板名，运行 `pnpm i18n:check` 与 `cargo test -p wisp-llm`。
+协议适配与错误归一化都有基于 SSE 样本的回放测试（`cargo test -p wisp-llm`），不需要真实的 Key；PaddleOCR 客户端的测试用 wiremock 模拟两种接口（`cargo test -p wisp-local --test cloud_wiremock`），对真实服务的测试默认忽略（见[开发指南](development.md#离线模型与-paddleocr-的真机测试)）。新增模板时：在 `templates.rs` 里加一项，给 zh-CN 与 en-US 两份 locales 补上模板名，运行 `pnpm i18n:check` 与 `cargo test -p wisp-llm`。

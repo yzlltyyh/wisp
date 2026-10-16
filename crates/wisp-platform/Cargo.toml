@@ -59,6 +59,9 @@ windows = { workspace = true, features = [
   "Win32_Security",
   "Win32_UI_HiDpi",
   "Win32_System_Registry",
+  # 离线模型：内存概况、子进程的 Job Object
+  "Win32_System_SystemInformation",
+  "Win32_System_JobObjects",
 ] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -66,6 +69,11 @@ png = { workspace = true }
 x11rb = { workspace = true }
 wl-clipboard-rs = { workspace = true, optional = true }
 ashpd = { workspace = true, optional = true }
+
+# 受托管子进程的进程级测试：测试二进制自己要充当 `--wisp-guard` 守护进程，所以不用 libtest
+[[test]]
+name = "child_guard"
+harness = false
 
 [lints]
 workspace = true

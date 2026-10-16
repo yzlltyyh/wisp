@@ -18,6 +18,7 @@ use crate::assets::AssetRegistry;
 use crate::bus::{Bus, Command};
 use crate::clipboard_svc::ClipboardService;
 use crate::hotkeys::HotkeyService;
+use crate::models_svc::ModelsService;
 use crate::orchestrator::Orchestrator;
 use crate::settings::SettingsService;
 use crate::settings::watcher::SettingsWatcher;
@@ -152,6 +153,8 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let hotkeys = HotkeyService::new(&deps);
     // 多设备同步：构造不做任何 I/O（同步关闭时也不打开任何资源）
     let sync = SyncService::new(&deps);
+    // 离线模型：构造不做任何 I/O（不读模型目录、不起进程；第一次打开设置页或用到离线引擎时才读库存）
+    let models = ModelsService::new(&deps);
     let llm = wisp_llm::LlmClient::new(wisp_llm::ClientConfig {
         user_agent: format!("Wisp/{}", handle.package_info().version),
         caps: settings.caps_store(),
@@ -165,6 +168,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         clipboard: Arc::clone(&clipboard),
         hotkeys: Arc::clone(&hotkeys),
         sync: Arc::clone(&sync),
+        models: Arc::clone(&models),
         perf: Arc::clone(&perf),
         assets: deps.assets,
         bus: bus.clone(),
@@ -212,6 +216,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         let windows = Arc::clone(&windows);
         let clipboard = Arc::clone(&clipboard);
         let orchestrator = Arc::clone(&orchestrator);
+        let models = Arc::clone(&models);
         let perf = Arc::clone(&perf);
         tauri::async_runtime::spawn(async move {
             let w = Arc::clone(&windows);
@@ -253,14 +258,20 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     if let Err(e) = tauri::async_runtime::spawn_blocking(move || orchestrator.idle_prewarm()).await {
                         log::warn!("orchestrator idle prewarm failed: {e}");
                     }
+                    // 离线模型：模型目录存在时才清扫上次崩溃留下的推理进程（只在有 pid 文件时）、删掉没删完的目录、
+                    // 读一次库存（面板的模型菜单据此知道装了哪些）；没用过离线模型时什么也不做
+                    tokio::time::sleep(IDLE_GAP).await;
+                    models.spawn_startup();
                 }
                 Ok(Err(e)) => {
                     perf.record_startup("panel_prewarm_failed", runtime::since_process_start());
                     log::info!("panel prewarm skipped: {}", e.message);
+                    models.spawn_startup();
                 }
                 Err(e) => {
                     perf.record_startup("panel_prewarm_failed", runtime::since_process_start());
                     log::warn!("panel prewarm failed: {e}");
+                    models.spawn_startup();
                 }
             }
         });
@@ -348,7 +359,7 @@ fn forward_sync_status(app: &tauri::AppHandle, sync: &Arc<SyncService>) {
 /// 运行事件：
 /// - 最后一个窗口关闭（ExitRequested 且没有 exit code）时 prevent_exit，保持常驻；`request_restart` 发起的退出
 ///   （code = `RESTART_EXIT_CODE`）告诉更新器，以便退出时安装暂存的更新后重新打开；
-/// - 退出时写掉待写的设置（能力缓存、state.json），Windows 上安装暂存的更新；
+/// - 退出时写掉待写的设置（能力缓存、state.json），停止离线模型的推理进程，Windows 上安装暂存的更新；
 /// - macOS 再次打开应用（Finder / 启动台 / Spotlight / Dock，`RunEvent::Reopen`）：与二次启动相同，打开或聚焦设置；
 /// - 设置 / 引导窗口获焦：刷新权限、惰性检查更新、发起一轮同步（有节流），state.json 被重置过时核对钥匙串索引；
 ///   引导窗口关闭：停止权限轮询；
@@ -372,6 +383,8 @@ pub fn on_run_event(app: &tauri::AppHandle, ev: tauri::RunEvent) {
                 state.sync.shutdown_flush();
                 // Linux：仍持有剪贴板时交给剪贴板管理器保存（其他平台为空操作）
                 state.platform.shutdown();
+                // 离线模型：下载变为暂停，推理进程关 stdin 后最多等 1 s 再强制结束（不留进程）
+                state.models.shutdown();
             }
             log::info!("exit");
             crate::updater::on_exit(app);

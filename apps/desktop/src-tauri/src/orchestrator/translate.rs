@@ -94,7 +94,8 @@ impl Core {
         } else {
             PanelTransition::Enter
         };
-        let readiness = not_ready::check_text(&settings, &style, None, TaskKind::Translate, &self.keys());
+        let offline = self.offline_index(&settings, None).await;
+        let readiness = not_ready::check_text(&settings, &style, None, TaskKind::Translate, &self.keys(), &offline);
         // 划词且能发请求时预读 Key：与取词（10–110 ms）并行，钥匙串访问不落在「面板可见 → 首 token」之间。只在读取
         // 不会弹系统对话框时预读：可能弹框时推迟到缓存未命中之后，对话框不在按下快捷键的瞬间出现，长文本 / 空选区 /
         // 缓存命中也不会白弹一次。送来的文本（剪贴板条目、引导页、冒烟）没有取词可重叠（只差一次前台应用查询），
@@ -236,11 +237,14 @@ impl Core {
             })
             .await
         };
-        let Some((plan, long)) = planned else {
+        let Some((mut plan, long)) = planned else {
             self.advance(run, Event::Failed);
             self.drop_run(run);
             return;
         };
+        if let Ok(r) = &readiness {
+            plan::adapt_for(&mut plan, r);
+        }
         let resolved = match readiness {
             Ok(r) => r,
             Err(nr) => {
@@ -406,7 +410,7 @@ impl Core {
                 PumpEnd::Cancelled
             };
         }
-        let secret = match self.read_key(&job.id, &job.resolved, key, &job.token).await {
+        let secret = match self.read_key(&job.id, &job.resolved.provider, key, &job.token).await {
             Ok(s) => s,
             Err(end) => return end,
         };
@@ -417,9 +421,11 @@ impl Core {
             return self.refine(job, secret, &glossary).await;
         }
         let reasoning = job.resolved.model.reasoning;
+        // 离线翻译模型用 Index-Translate 的官方格式（单条 user 消息、中文指令、temperature 0）
+        let profile = job.resolved.prompt_profile();
         let built = if heavy {
             let (plan, text, glossary) = (job.plan.clone(), Arc::clone(&job.text), Arc::clone(&glossary));
-            match blocking(move || build_text_prompt(&plan, &text, &glossary, reasoning)).await {
+            match blocking(move || build_text_prompt(&plan, &text, &glossary, reasoning, profile)).await {
                 Some(b) => b,
                 None => {
                     let err = LlmError::new(ErrorCode::Internal, "building the prompt failed");
@@ -428,12 +434,12 @@ impl Core {
                 }
             }
         } else {
-            build_text_prompt(&job.plan, &job.text, &glossary, reasoning)
+            build_text_prompt(&job.plan, &job.text, &glossary, reasoning, profile)
         };
         let post = built.post;
         let req = chat_request(&job.id, &job.resolved, secret, built, Purpose::Translate);
         let rx = self.env.llm_stream(req, job.token.clone());
-        log_dispatched(&job.id, job.trace, job.started, &job.resolved);
+        log_dispatched(&job.id, job.trace, job.started, &job.resolved.info());
         let (end, timing) = pump(&self.registry, &job.id, rx, post, &job.text).await;
         if let PumpEnd::Done { usage, truncated, .. } = &end {
             if let Some(u) = usage {
@@ -479,7 +485,7 @@ impl Core {
         let copy = secret.as_ref().map(|s| Secret::new(s.expose().to_owned()));
         let req = chat_request(&job.id, &job.resolved, copy, reflect, Purpose::Reflect);
         let mut rx = self.env.llm_stream(req, job.token.clone());
-        log_dispatched(&job.id, job.trace, job.started, &job.resolved);
+        log_dispatched(&job.id, job.trace, job.started, &job.resolved.info());
         let mut review = String::new();
         let outcome = loop {
             match rx.recv().await {
@@ -589,7 +595,7 @@ impl Core {
         } = req;
         let text = Arc::new(text);
         // 规划（超长原文在阻塞线程池里做语言检测与词典式判定）
-        let plan = {
+        let mut plan = {
             let (s, st, t, sid) = (Arc::clone(&settings), Arc::clone(&styles), Arc::clone(&text), style_id);
             cpu(t.len() > HEAVY_TEXT_BYTES, move || {
                 plan_text(
@@ -607,7 +613,12 @@ impl Core {
             .await
             .ok_or_else(|| IpcError::internal("planning the request failed"))?
         };
-        let readiness = not_ready::check_text(&settings, &plan.style, model_ref.as_ref(), task, &self.keys());
+        let offline = self.offline_index(&settings, model_ref.as_ref()).await;
+        let readiness = not_ready::check_text(&settings, &plan.style, model_ref.as_ref(), task, &self.keys(), &offline);
+        // 离线翻译模型：词典式退化为普通翻译、提升译文退化为一次翻译（登记时的 Meta 与之后的请求都按调整后的规划）
+        if let Ok(r) = &readiness {
+            plan::adapt_for(&mut plan, r);
+        }
         // 长文本：输入视图的提交、OCR 面板里的翻译、润色 / 校对
         // 也要先确认。没确认过（confirm_long = false）且超过阈值时不登记请求，只把估算交回去；未就绪时照常走下面的
         // Error（先告诉用户配置问题，确认长文本没有意义）。refine（提升译文）针对已经确认过的译文，不判

@@ -1,6 +1,6 @@
 //! 请求快照（insta）：抓取脚本化服务器实际收到的请求（方法、路径、请求头、请求体）。
 //! - 四协议 × 文本 / 图片 × 推理 / 非推理（16 组）；
-//! - quirks.thinking_off 的 9 种变体各一组；
+//! - quirks.thinking_off 的 9 种模板变体各一组，外加按 chat template 关思考（llama-server）；
 //! - merge_system_into_user、Anthropic 的 thinking 条件与 OCR effort、鉴权头的各种情况、自定义请求头。
 //!
 //! 服务器一律回 401（不重试、不降级），确保每组只发出一次请求。
@@ -104,6 +104,29 @@ async fn nine_thinking_off_variants() {
         let snap = capture(req, suffix(protocol)).await;
         insta::assert_json_snapshot!(format!("thinking_off__{variant:?}"), snap["body"]);
     }
+}
+
+/// llama-server 等按 chat template 关思考的服务：`chat_template_kwargs.enable_thinking = false`（OpenAI 两种协议都发）
+#[tokio::test]
+async fn chat_template_kwargs_turns_thinking_off() {
+    let mut req = from_template("lmstudio", "index-translate-2b", false);
+    req.provider.quirks.thinking_off = ThinkingOff::ChatTemplateKwargs;
+    let snap = capture(req, "/v1").await;
+    assert_eq!(snap["body"]["chat_template_kwargs"], json!({"enable_thinking": false}));
+    assert!(snap["body"].get("enable_thinking").is_none(), "不与通义的顶层字段混用");
+    insta::assert_json_snapshot!("thinking_off__ChatTemplateKwargs", snap["body"]);
+
+    let mut req = from_template("relay", "index-translate-2b", false);
+    req.provider.protocol = Protocol::OpenAiResponses;
+    req.provider.quirks.thinking_off = ThinkingOff::ChatTemplateKwargs;
+    let snap = capture(req, "/v1").await;
+    assert_eq!(snap["body"]["chat_template_kwargs"], json!({"enable_thinking": false}));
+
+    // 关思考的字段只对 OpenAI 两种协议有意义：Anthropic / Gemini 上不发
+    let mut req = from_template("gemini", "gemini-2.0-flash", false);
+    req.provider.quirks.thinking_off = ThinkingOff::ChatTemplateKwargs;
+    let snap = capture(req, "/v1beta").await;
+    assert!(snap["body"].get("chat_template_kwargs").is_none());
 }
 
 #[tokio::test]
@@ -267,6 +290,6 @@ async fn gemini_body_is_camel_case_without_safety_settings() {
 
 #[test]
 fn template_prefills() {
-    // 16 个模板的预填值（name / protocol / base_url / quirks / timeouts / 区域变体）
+    // 17 个模板的预填值（name / protocol / base_url / quirks / timeouts / 区域变体 / 预置模型）
     insta::assert_json_snapshot!("templates", wisp_llm::templates());
 }

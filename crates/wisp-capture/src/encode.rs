@@ -73,6 +73,12 @@ impl ImageLimits {
                 max_long_edge: u32::MAX,
                 max_patches_32: None,
             },
+            // PaddleOCR 云端：本地上传的文件 ≤ 50 MB（serving 接口是 JSON 里的 base64，按编码后计更保守）；服务端自己缩放
+            Protocol::PaddleOcr => ImageLimits {
+                max_b64_bytes: 50 * MB,
+                max_long_edge: u32::MAX,
+                max_patches_32: None,
+            },
         }
     }
 

@@ -1318,4 +1318,126 @@ export const scenarios: readonly Scenario[] = [
       })
     },
   }),
+  // ---- 离线翻译模型（Index-Translate）
+  panel({
+    id: 'translate.offline-missing',
+    label: '未就绪：离线翻译模型还没下载（就地下载，完成后自动翻译）',
+    setup(ctx) {
+      install(ctx)
+      ctx.preparePanel(
+        translatePayload(EN, {
+          not_ready: { reason: 'offline_model_missing', model: 'index_translate_2b' },
+        }),
+        { width: 420 },
+      )
+    },
+  }),
+  panel({
+    id: 'translate.offline-downloading',
+    label: '未就绪：离线翻译模型正在下载（进度）',
+    setup(ctx) {
+      install(ctx)
+      const mock = window.__WISP_MOCK__
+      if (mock) {
+        const snap = mock.state.offline.snapshot
+        mock.state.offline.snapshot = {
+          ...snap,
+          models: snap.models.map((m) =>
+            m.id === 'index_translate_2b'
+              ? {
+                  ...m,
+                  state: {
+                    state: 'downloading',
+                    done: 0.42 * 1324e6,
+                    total: 1324e6,
+                    bytes_per_sec: 11.2e6,
+                  },
+                }
+              : m,
+          ),
+        }
+      }
+      ctx.preparePanel(
+        translatePayload(EN, {
+          not_ready: { reason: 'offline_model_downloading', model: 'index_translate_2b' },
+        }),
+        { width: 420 },
+      )
+    },
+  }),
+  panel({
+    id: 'translate.offline-failed',
+    label: '未就绪：离线翻译模型下载失败（磁盘空间不足）',
+    setup(ctx) {
+      install(ctx)
+      const mock = window.__WISP_MOCK__
+      if (mock) {
+        const snap = mock.state.offline.snapshot
+        mock.state.offline.snapshot = {
+          ...snap,
+          models: snap.models.map((m) =>
+            m.id === 'index_translate_2b'
+              ? { ...m, state: { state: 'failed', code: 'disk_full' } }
+              : m,
+          ),
+        }
+      }
+      ctx.preparePanel(
+        translatePayload(EN, {
+          not_ready: { reason: 'offline_model_missing', model: 'index_translate_2b' },
+        }),
+        { width: 420 },
+      )
+    },
+  }),
+  panel({
+    id: 'translate.offline-runtime-missing',
+    label: '错误卡片：离线模型缺 Microsoft Visual C++ 运行库（官方下载页按钮）',
+    setup(ctx) {
+      install(ctx)
+      openTranslate(ctx, EN, {
+        script: errorScript(
+          llmError('local_runtime', { hint: 'errors.hint.local.vc_runtime_missing' }),
+        ),
+      })
+    },
+  }),
+  panel({
+    id: 'translate.offline-unsupported',
+    label: '未就绪：离线翻译模型不支持润色（可以用默认的云端模型处理这一次）',
+    setup(ctx) {
+      install(ctx)
+      ctx.preparePanel(
+        translatePayload(EN, {
+          task: 'polish',
+          not_ready: { reason: 'offline_task_unsupported', task: 'polish' },
+        }),
+        { width: 420 },
+      )
+    },
+  }),
+  panel({
+    id: 'translate.offline-loading',
+    label: '翻译 · 正在加载离线模型（冷启动）',
+    manualSettle: true,
+    setup(ctx) {
+      install(ctx)
+      openTranslate(ctx, EN, {
+        script: [
+          {
+            type: 'start',
+            request_id: 'r-offline',
+            provider_id: '@offline',
+            model_id: 'index_translate_2b',
+            model_label: 'Index-Translate 2B',
+            upstream_id: null,
+          },
+          { type: 'phase', phase: 'loading_model' },
+          { wait: 60_000 },
+        ],
+      })
+      // 「第一次加载需要十几秒」在约 3 秒后才淡入：等它出现再截图
+      ctx.after(3_800, () => ctx.settled())
+    },
+  }),
 ]

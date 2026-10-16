@@ -1,0 +1,26 @@
+---
+source: crates/wisp-llm/tests/request_snapshots.rs
+expression: "snap[\"body\"]"
+---
+{
+  "chat_template_kwargs": {
+    "enable_thinking": false
+  },
+  "max_tokens": 556,
+  "messages": [
+    {
+      "content": "You are a translator.",
+      "role": "system"
+    },
+    {
+      "content": "Hello, world.",
+      "role": "user"
+    }
+  ],
+  "model": "index-translate-2b",
+  "stream": true,
+  "stream_options": {
+    "include_usage": true
+  },
+  "temperature": 0.3
+}

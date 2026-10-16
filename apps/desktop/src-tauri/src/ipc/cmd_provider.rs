@@ -3,7 +3,10 @@
 use std::sync::Arc;
 
 use tauri::{AppHandle, State};
-use wisp_types::{ModelEntry, Protocol, Provider, ProviderTemplate, ProviderTestReport, SettingsSnapshot, UrlPreview};
+use wisp_types::{
+    ModelEntry, ProbeResult, Protocol, Provider, ProviderTemplate, ProviderTestReport, SettingsSnapshot, TestVerdict,
+    UrlPreview,
+};
 
 use crate::error::IpcError;
 use crate::ipc::validate::validate_provider;
@@ -93,12 +96,51 @@ pub async fn provider_test(
     validate_provider(&provider)?;
     check_opt_key(key.as_deref())?;
     let (key, unreadable) = probe_key(Arc::clone(&app_state.settings), &provider, key).await?;
-    let provider = app_state.settings.provider_for_probe(provider);
-    let mut report = app_state.llm.test_connection(&provider, key.as_ref()).await;
+    let mut report = if provider.protocol == Protocol::PaddleOcr {
+        // 文字识别服务不是 LLM：只验证地址与 Token（不消耗识别额度）
+        paddle_ocr_test(&provider, key).await
+    } else {
+        let provider = app_state.settings.provider_for_probe(provider);
+        app_state.llm.test_connection(&provider, key.as_ref()).await
+    };
     if unreadable {
         report.notice = Some(TEST_NOTICE_KEYCHAIN_UNREADABLE.to_owned());
     }
     Ok(report)
+}
+
+/// PaddleOCR 云端的连接测试，按测试报告的形状给出：没有模型列表这一项（`models` 与 `stream` 是同一次探测的结果）
+async fn paddle_ocr_test(provider: &Provider, key: Option<wisp_llm::Secret>) -> ProviderTestReport {
+    let started = std::time::Instant::now();
+    let token = key.and_then(|k| wisp_local::ocr::cloud::Token::new(k.expose().to_owned()));
+    let result = match wisp_local::ocr::cloud::CloudClient::new() {
+        Ok(client) => client.test(&provider.base_url, token).await,
+        Err(e) => Err(e.to_llm_error()),
+    };
+    let probe = ProbeResult {
+        ok: result.is_ok(),
+        status: None,
+        elapsed_ms: u32::try_from(started.elapsed().as_millis()).unwrap_or(u32::MAX),
+        // 只给 host（与 `LlmError.url` 同一口径：不回显完整地址）
+        url: url_host(&provider.base_url),
+        error: result.err(),
+    };
+    ProviderTestReport {
+        overall: if probe.ok { TestVerdict::Ok } else { TestVerdict::Failed },
+        models: probe.clone(),
+        stream: probe,
+        model_used: None,
+        fetched_models: Vec::new(),
+        notice: None,
+    }
+}
+
+/// 地址的 scheme + host（无法解析时为空）
+fn url_host(base_url: &str) -> String {
+    url::Url::parse(base_url.trim())
+        .ok()
+        .and_then(|u| u.host_str().map(|h| format!("{}://{h}", u.scheme())))
+        .unwrap_or_default()
 }
 
 /// 拉取模型列表并与 provider.models 合并；`key` 的含义同 `provider_test`
@@ -110,6 +152,12 @@ pub async fn provider_models(
 ) -> Result<Vec<ModelEntry>, IpcError> {
     validate_provider(&provider)?;
     check_opt_key(key.as_deref())?;
+    if provider.protocol == Protocol::PaddleOcr {
+        // 文字识别服务没有模型列表接口；前端隐藏了这个按钮，模型表是预置的、可手动增删
+        return Err(IpcError::invalid_argument(
+            "this provider is a text recognition service and has no model list",
+        ));
+    }
     provider_models_merged(Arc::clone(&app_state.settings), &app_state.llm, provider, key).await
 }
 
@@ -161,4 +209,19 @@ pub async fn model_caps_reset(
     check_id("model_id", &model_id)?;
     let settings = Arc::clone(&app_state.settings);
     run_blocking(move || settings.caps_reset(&provider_id, &model_id)).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_urls_keep_only_the_host() {
+        assert_eq!(
+            url_host("https://paddleocr.aistudio-app.com/api/v2/ocr/jobs?x=1"),
+            "https://paddleocr.aistudio-app.com"
+        );
+        assert_eq!(url_host("http://192.168.1.5:8080/ocr"), "http://192.168.1.5");
+        assert_eq!(url_host("not a url"), "");
+    }
 }

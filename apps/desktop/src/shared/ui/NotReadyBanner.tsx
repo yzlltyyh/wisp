@@ -77,6 +77,19 @@ export function NotReadyBanner({
     case 'keychain_unavailable':
       text = t('panel.not_ready.keychain_unavailable.title')
       break
+    case 'offline_model_missing':
+      text = t('panel.not_ready.offline_model_missing.title', {
+        model: t(`common.offline_model.${notReady.model}`),
+      })
+      break
+    case 'offline_model_downloading':
+      text = t('panel.not_ready.offline_model_downloading.title', {
+        model: t(`common.offline_model.${notReady.model}`),
+      })
+      break
+    case 'offline_task_unsupported':
+      text = t('panel.not_ready.offline_task_unsupported.title')
+      break
   }
   return (
     <Banner

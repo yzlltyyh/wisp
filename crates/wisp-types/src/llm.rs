@@ -9,7 +9,7 @@ use crate::lang::Lang;
 /// 请求 id：`"r-<自增>"`，全进程唯一
 pub type RequestId = String;
 
-/// 四种协议
+/// 服务协议：四种 LLM 协议，以及 PaddleOCR 云端文字识别（不是 LLM，只能用于 OCR）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Protocol {
     #[serde(rename = "openai_chat")]
@@ -20,6 +20,17 @@ pub enum Protocol {
     AnthropicMessages,
     #[serde(rename = "gemini")]
     Gemini,
+    /// PaddleOCR 云端（AI Studio 的异步任务接口，或部署 / 自托管的 serving 接口）。wisp-llm 的一切 LLM 请求都拒绝它；
+    /// 识别由 `wisp-local` 的云端客户端完成，Key（Token）与其他服务商同样只进不出
+    #[serde(rename = "paddle_ocr")]
+    PaddleOcr,
+}
+
+impl Protocol {
+    /// 是否为 LLM 协议（可以用于翻译与视觉 OCR）
+    pub const fn is_llm(self) -> bool {
+        !matches!(self, Self::PaddleOcr)
+    }
 }
 
 /// 关闭思考的方式（各厂商私有参数）。DeepSeek / Glm / MiniMax 生成的 JSON 相同
@@ -44,6 +55,9 @@ pub enum ThinkingOff {
     AnthropicEffort,
     #[serde(rename = "gemini_level")]
     GeminiLevel,
+    /// `chat_template_kwargs: {"enable_thinking": false}`（llama.cpp 的 llama-server、vLLM 等按 chat template 关思考的服务）
+    #[serde(rename = "chat_template_kwargs")]
+    ChatTemplateKwargs,
 }
 
 /// 最大输出 token 的字段名
@@ -308,6 +322,9 @@ pub enum ErrorCode {
     NotConfigured,
     Keychain,
     Internal,
+    /// 离线模型的推理进程出错（内存不足、缺少系统运行库、显卡后端失败、模型文件损坏、加载超时、崩溃……），
+    /// 具体原因在 `LlmError.hint`（`errors.hint.local.*`）
+    LocalRuntime,
 }
 
 /// 错误子码
@@ -379,14 +396,20 @@ pub enum NoticeKind {
     ParamDegraded,
     Retried,
     CacheHit,
+    /// 结果不完整：文档里有区域没能识别（其余区域照常输出）
+    Partial,
 }
 
-/// refine 两步法的阶段
+/// 流的阶段提示：refine 两步法的两个阶段，以及离线 / 云端引擎在首个 Delta 之前的等待
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamPhase {
     Reviewing,
     Improving,
+    /// 离线模型冷启动：正在启动推理进程、加载权重（之后可能还有 Delta 前的正常等待）
+    LoadingModel,
+    /// 云端任务已提交，排队或处理中
+    Queued,
 }
 
 /// 流式事件。合法序列：Start →（Meta | Phase | Notice | Delta）* → 恰好一个 Done 或 Error；
@@ -444,6 +467,8 @@ pub enum TemplateGroup {
     Gemini,
     Other,
     Local,
+    /// 文字识别服务（PaddleOCR 云端）：不是 LLM，只出现在 OCR 的模型选择里
+    Ocr,
 }
 
 /// 区域变体（例如国内 / 国际站）

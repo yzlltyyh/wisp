@@ -12,20 +12,23 @@ use tokio::sync::{mpsc, watch};
 use wisp_capture::{CaptureError, CaptureSet, Frame};
 use wisp_llm::fake::{FakeConfig, FakeLlm};
 use wisp_llm::{CancellationToken, ChatRequest, Purpose, Secret};
+use wisp_local::fake::{FakeEngine, FakeEngineConfig};
 use wisp_platform::{CaptureMethod, Selection, SelectionError, SelectionOpts, reason};
 use wisp_prompts::GlossaryMatcher;
 use wisp_types::{
     AppRef, ClipFilter, ClipPage, ClipboardPayload, DictMode, ErrorCode, HideReason, HotkeyAction, KeychainState,
-    MonitorId, MonitorInfo, NotReady, NoticeKind, OcrMode, OcrReq, OverlayCommit, OverlayEndReason,
-    OverlaySelectionKind, PanelPayload, PanelTransition, PanelView, PermissionKind, PermissionState, PhysPoint,
-    PhysSize, Rect, Settings, StreamEvent, StreamPhase, Style, TaskKind, TranslateReq, Usage, WindowTarget,
+    LlmError, LocalModelId, MonitorId, MonitorInfo, NotReady, NoticeKind, OcrMode, OcrReq, OverlayCommit,
+    OverlayEndReason, OverlaySelectionKind, PanelPayload, PanelTransition, PanelView, PermissionKind, PermissionState,
+    PhysPoint, PhysSize, Rect, Settings, StreamEvent, StreamPhase, Style, TaskKind, TranslateReq, Usage, WindowTarget,
 };
 
 use super::backend::fake::output_for;
 use super::captures::{CropSource, FrameSource};
 use super::engine::{Core, KEY_WAIT};
-use super::env::Env;
+use super::env::{EngineImage, EngineRequest, Env};
 use super::fsm::{Flow, Stage};
+use super::not_ready::OfflineStatus;
+use super::plan::EngineRef;
 use super::plan::tests::{configured, model_ref};
 use super::registry::Outcome;
 use super::registry::tests::Collector;
@@ -150,6 +153,14 @@ struct FakeEnv {
     ocr_history_delay: Mutex<std::collections::VecDeque<Duration>>,
     /// `overlay_committed` 依次给过的会话（commit 之后窗口层停止跟随指针）
     committed: Mutex<Vec<u64>>,
+    /// 每次 `llm_stream` 的服务商 id（离线翻译模型是 `@offline`）
+    llm_providers: Mutex<Vec<String>>,
+    /// 离线模型的就绪情况（没写的按「没下载」）
+    offline: Mutex<HashMap<LocalModelId, OfflineStatus>>,
+    /// 识别引擎的脚本化输出（阶段、延迟、失败）
+    engine: Mutex<FakeEngineConfig>,
+    /// 每次 `ocr_engine_stream`：（引擎, 模式, 交来的是不是像素）
+    engine_calls: Mutex<Vec<(EngineRef, OcrMode, bool)>>,
 }
 
 impl FakeEnv {
@@ -205,7 +216,27 @@ impl FakeEnv {
             ocr_history: Mutex::new(Vec::new()),
             ocr_history_delay: Mutex::new(std::collections::VecDeque::new()),
             committed: Mutex::new(Vec::new()),
+            llm_providers: Mutex::new(Vec::new()),
+            offline: Mutex::new(HashMap::new()),
+            engine: Mutex::new(FakeEngineConfig {
+                text: "Settings\nOpen the file to continue.".to_owned(),
+                chunk_chars: 4,
+                phase: Some(StreamPhase::LoadingModel),
+                first_delay: Duration::from_millis(5),
+                chunk_delay: Duration::from_millis(1),
+                fail: None,
+            }),
+            engine_calls: Mutex::new(Vec::new()),
         })
+    }
+
+    /// 某个离线模型已经可以用
+    fn offline_ready(&self, model: LocalModelId) {
+        self.offline.lock().insert(model, OfflineStatus::Ready);
+    }
+
+    fn engine_count(&self) -> usize {
+        self.engine_calls.lock().len()
     }
 
     fn count(&self, name: &str) -> usize {
@@ -285,6 +316,7 @@ impl Env for FakeEnv {
     }
     fn llm_stream(&self, req: ChatRequest, cancel: CancellationToken) -> mpsc::Receiver<StreamEvent> {
         self.call("llm_stream");
+        self.llm_providers.lock().push(req.provider.id.clone());
         self.llm_calls
             .lock()
             .push((req.request_id.clone(), req.purpose, Instant::now()));
@@ -308,6 +340,19 @@ impl Env for FakeEnv {
             chunk_delay: chunk,
         })
         .stream(req, cancel)
+    }
+    fn ocr_engine_stream(&self, req: EngineRequest, cancel: CancellationToken) -> mpsc::Receiver<StreamEvent> {
+        self.call("ocr_engine_stream");
+        let pixels = matches!(req.image, EngineImage::Rgba(_));
+        self.engine_calls.lock().push((req.engine.clone(), req.mode, pixels));
+        FakeEngine::new(self.engine.lock().clone()).stream(cancel)
+    }
+    fn offline_status(&self, model: LocalModelId) -> OfflineStatus {
+        self.offline
+            .lock()
+            .get(&model)
+            .copied()
+            .unwrap_or(OfflineStatus::Missing)
     }
     fn frontmost(&self) -> Option<AppRef> {
         Some(AppRef {
@@ -2764,4 +2809,478 @@ async fn committing_stops_the_key_from_following_the_pointer() {
     );
     core.overlay_done(overlay);
     until("done", WAIT, || !core.overlay_active()).await;
+}
+
+// ---- 离线模型与识别引擎 ----
+
+/// 截图 → commit → 接上请求的流，等它结束
+async fn capture_and_wait(
+    env: &Arc<FakeEnv>,
+    core: &Arc<Core>,
+    action: HotkeyAction,
+) -> (wisp_types::OcrPayload, u64, Arc<Collector>) {
+    let overlay = overlay_up(env, core, action).await;
+    core.overlay_commit(commit_on(overlay, MONITOR)).await.expect("commit");
+    core.overlay_done(overlay);
+    let (req, session) = env.last_prepare().expect("prepare");
+    let payload = ocr_payload(&req);
+    let sink = Collector::new();
+    if let Some(id) = payload.request_id.as_deref() {
+        core.stream_attach(&RequestCaller::Panel, id, sink.clone())
+            .expect("attach");
+        until("request ended", WAIT, || sink.terminal().is_some()).await;
+    }
+    // 下一次截图之前 Overlay 已经拆完（拆除期间的截图快捷键会被忽略），截图记录也清掉
+    until("overlay torn down", WAIT, || !core.overlay_active()).await;
+    env.calls.lock().retain(|c| c != "create_overlays");
+    (payload, session, sink)
+}
+
+fn offline_ocr(model: LocalModelId) -> Settings {
+    let mut s = configured();
+    s.offline.ocr_model = Some(model);
+    s
+}
+
+/// 离线 OCR：识别经引擎（交给它的是缩放后的像素，不经 PNG），不发 LLM 请求、不碰钥匙串；冷启动的「加载中」照常转发；
+/// 不支持的默认模式（PP-OCR 的 markdown）退回 paragraphs；识别历史记下引擎的名字
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn offline_ocr_runs_on_the_engine_and_history_records_its_name() {
+    let mut settings = offline_ocr(LocalModelId::PpOcrV6Small);
+    settings.ocr.history = true;
+    settings.ocr.default_mode = OcrMode::Markdown;
+    let (env, core) = setup(settings);
+    env.offline_ready(LocalModelId::PpOcrV6Small);
+    *env.keychain.lock() = (KeychainState::Unavailable, false);
+    let (payload, _, sink) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    assert_eq!(
+        payload.mode,
+        OcrMode::Paragraphs,
+        "PP-OCR 不识别版面：按 paragraphs 显示"
+    );
+    assert!(matches!(
+        sink.terminal(),
+        Some(StreamEvent::Done { no_text: false, .. })
+    ));
+    assert_eq!(sink.text(), "Settings\nOpen the file to continue.");
+    assert_eq!(phases(&sink), vec![StreamPhase::LoadingModel]);
+    {
+        let calls = env.engine_calls.lock();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, EngineRef::Local(LocalModelId::PpOcrV6Small));
+        assert_eq!(calls[0].1, OcrMode::Paragraphs);
+        assert!(calls[0].2, "离线引擎直接拿像素");
+    }
+    assert_eq!(env.llm_count(), 0);
+    assert_eq!(env.count("key_get"), 0, "{:?}", env.calls());
+    match sink.take().first() {
+        Some(StreamEvent::Start {
+            provider_id,
+            model_label,
+            ..
+        }) => {
+            assert_eq!(provider_id, wisp_types::defaults::OFFLINE_PROVIDER_ID);
+            assert_eq!(model_label, "PP-OCRv6 Small");
+        }
+        other => panic!("expected Start first, got {other:?}"),
+    }
+    until("recorded", WAIT, || env.ocr_history.lock().len() == 1).await;
+    let h = env.ocr_history.lock();
+    assert_eq!(h[0].model, "PP-OCRv6 Small");
+    assert_eq!(h[0].mode, OcrMode::Paragraphs);
+    assert!(h[0].image.as_ref().is_some_and(|b| !b.is_empty()), "原图照常编码保存");
+}
+
+/// 加载中被取消：请求以取消结束，之后不再有任何事件
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelling_while_the_offline_model_loads_ends_the_request() {
+    let (env, core) = setup(offline_ocr(LocalModelId::PpOcrV6Tiny));
+    env.offline_ready(LocalModelId::PpOcrV6Tiny);
+    env.engine.lock().first_delay = Duration::from_secs(30);
+    let overlay = overlay_up(&env, &core, HotkeyAction::Ocr).await;
+    core.overlay_commit(commit_on(overlay, MONITOR)).await.expect("commit");
+    let (req, _) = env.last_prepare().expect("prepare");
+    let id = ocr_payload(&req).request_id.clone().expect("request");
+    let sink = Collector::new();
+    core.stream_attach(&RequestCaller::Panel, &id, sink.clone())
+        .expect("attach");
+    until("loading", WAIT, || phases(&sink) == vec![StreamPhase::LoadingModel]).await;
+    core.cancel(&RequestCaller::Panel, &id);
+    until("cancelled", WAIT, || sink.terminal().is_some()).await;
+    assert!(is_cancelled(&sink.terminal()));
+    let n = sink.take().len();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(sink.take().len(), n, "取消之后没有任何事件");
+    assert_eq!(sink.deltas(), 0);
+    assert_eq!(env.llm_count(), 0);
+}
+
+/// 截图直接翻译、离线 OCR + 离线翻译：识别引擎不能一次出译文，强制两步；第二步也在本机（合成服务商），全程没有
+/// 任何云端请求、不碰钥匙串
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn direct_translation_with_offline_models_stays_on_this_device() {
+    let mut settings = offline_ocr(LocalModelId::PpOcrV6Small);
+    settings.offline.translate_model = Some(LocalModelId::IndexTranslate2b);
+    assert!(
+        !settings.ocr.direct_translate_transcribe,
+        "没开「同时转录原文」也走两步"
+    );
+    let (env, core) = setup(settings);
+    env.offline_ready(LocalModelId::PpOcrV6Small);
+    env.offline_ready(LocalModelId::IndexTranslate2b);
+    let (payload, session, sink) = capture_and_wait(&env, &core, HotkeyAction::OcrTranslate).await;
+    assert_eq!(payload.mode, OcrMode::Translate);
+    assert!(
+        matches!(sink.terminal(), Some(StreamEvent::Done { .. })),
+        "{:?}",
+        sink.terminal()
+    );
+    {
+        let calls = env.engine_calls.lock();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1, OcrMode::Paragraphs, "第一步是 paragraphs 转录");
+    }
+    assert_eq!(
+        *env.llm_providers.lock(),
+        vec![wisp_types::defaults::OFFLINE_PROVIDER_ID.to_owned()],
+        "第二步也在本机"
+    );
+    assert_eq!(env.count("key_get"), 0, "{:?}", env.calls());
+    assert!(!sink.text().contains("Open the file"), "转录不转发给前端");
+    assert_eq!(
+        phases(&sink),
+        vec![StreamPhase::LoadingModel],
+        "第一步的加载提示照常转发"
+    );
+    // 「查看原文」：转录已缓存
+    let original = Collector::new();
+    core.ocr_start(
+        OcrReq {
+            session_id: session,
+            capture_id: payload.capture_id.clone(),
+            mode: OcrMode::Paragraphs,
+            model_ref: None,
+            target_lang: None,
+        },
+        RequestHost::Panel { session_id: session },
+        original.clone(),
+    )
+    .await
+    .expect("view original");
+    assert_eq!(original.text(), "Settings\nOpen the file to continue.");
+    assert_eq!(env.engine_count(), 1);
+    // 面板里从菜单要 translate 模式的重新识别：同样两步
+    let again = Collector::new();
+    core.ocr_start(
+        OcrReq {
+            session_id: session,
+            capture_id: payload.capture_id.clone(),
+            mode: OcrMode::Translate,
+            model_ref: None,
+            target_lang: None,
+        },
+        RequestHost::Panel { session_id: session },
+        again.clone(),
+    )
+    .await
+    .expect("translate again");
+    until("translated again", WAIT, || again.terminal().is_some()).await;
+    assert!(matches!(again.terminal(), Some(StreamEvent::Done { .. })));
+    assert_eq!(env.engine_count(), 2, "重新识别了一次");
+    // 同一段转录、同一个离线模型：译文命中翻译缓存（缓存键里有 @offline 与模型 id）
+    assert!(
+        again.take().iter().any(|e| matches!(
+            e,
+            StreamEvent::Notice {
+                kind: NoticeKind::CacheHit
+            }
+        )),
+        "{:?}",
+        again.take()
+    );
+    assert!(env.llm_providers.lock().iter().all(|p| p == "@offline"));
+}
+
+/// 选用的离线模型还没下载 / 正在下载：不截图，直接显示对应的卡片；前端发起的请求以 ErrorCard 结束
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn missing_or_downloading_offline_models_show_cards_without_requests() {
+    let (env, core) = setup(offline_ocr(LocalModelId::PaddleOcrVl16));
+    hotkey(&core, HotkeyAction::Ocr);
+    until("card", WAIT, || env.prepare_count() == 1).await;
+    let (req, _) = env.last_prepare().expect("prepare");
+    assert_eq!(
+        ocr_payload(&req).not_ready,
+        Some(NotReady::OfflineModelMissing {
+            model: LocalModelId::PaddleOcrVl16
+        })
+    );
+    assert!(!env.called("capture_all"), "没就绪时不截图");
+    env.offline
+        .lock()
+        .insert(LocalModelId::PaddleOcrVl16, OfflineStatus::Downloading);
+    hotkey(&core, HotkeyAction::Ocr);
+    until("second card", WAIT, || env.prepare_count() == 2).await;
+    let (req, session) = env.last_prepare().expect("prepare");
+    assert_eq!(
+        ocr_payload(&req).not_ready,
+        Some(NotReady::OfflineModelDownloading {
+            model: LocalModelId::PaddleOcrVl16
+        })
+    );
+    // 离线翻译模型没下载：划词翻译显示卡片；面板里的请求以错误结束
+    let mut settings = configured();
+    settings.offline.translate_model = Some(LocalModelId::IndexTranslate9b);
+    *env.settings.lock() = Arc::new(settings);
+    env.selections.lock().push_back(SelScript {
+        delay: Duration::ZERO,
+        result: selection("hello there"),
+    });
+    hotkey(&core, HotkeyAction::TranslateSelection);
+    until("translate card", WAIT, || env.prepare_count() == 3).await;
+    let (req, session2) = env.last_prepare().expect("prepare");
+    assert_eq!(
+        translate_payload(&req).not_ready,
+        Some(NotReady::OfflineModelMissing {
+            model: LocalModelId::IndexTranslate9b
+        })
+    );
+    let _ = session;
+    let sink = Collector::new();
+    core.translate_start(
+        text_req(session2, "hello there", "natural"),
+        RequestHost::Panel { session_id: session2 },
+        sink.clone(),
+    )
+    .await
+    .expect("start");
+    until("error", WAIT, || sink.terminal().is_some()).await;
+    assert!(matches!(
+        sink.terminal(),
+        Some(StreamEvent::Error(e)) if e.code == ErrorCode::NotConfigured
+    ));
+    assert_eq!(env.llm_count(), 0);
+    assert_eq!(env.engine_count(), 0);
+}
+
+/// 离线引擎失败：以错误结束，绝不改用云端的视觉模型重试
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn offline_engine_failures_never_fall_back_to_the_cloud() {
+    let (env, core) = setup(offline_ocr(LocalModelId::PpOcrV6Tiny));
+    env.offline_ready(LocalModelId::PpOcrV6Tiny);
+    let mut crashed = LlmError::new(ErrorCode::LocalRuntime, "the inference process exited unexpectedly");
+    crashed.hint = Some("errors.hint.local.crashed".to_owned());
+    env.engine.lock().fail = Some(crashed.clone());
+    let (_, _, sink) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    assert_eq!(sink.terminal(), Some(StreamEvent::Error(crashed)));
+    assert_eq!(env.engine_count(), 1);
+    assert_eq!(env.llm_count(), 0, "云端的视觉模型（configured() 里有）一次都没被请求");
+    assert_eq!(env.count("key_get"), 0);
+    // 离线翻译同理：直接翻译的第二步不会因为本机失败改用云端（这里第一步就失败，第二步根本不发）
+    let mut settings = offline_ocr(LocalModelId::PpOcrV6Tiny);
+    settings.offline.translate_model = Some(LocalModelId::IndexTranslate2b);
+    *env.settings.lock() = Arc::new(settings);
+    env.offline_ready(LocalModelId::IndexTranslate2b);
+    let (_, _, sink) = capture_and_wait(&env, &core, HotkeyAction::OcrTranslate).await;
+    assert!(matches!(sink.terminal(), Some(StreamEvent::Error(e)) if e.code == ErrorCode::LocalRuntime));
+    assert_eq!(env.llm_count(), 0);
+}
+
+/// 离线翻译模型只负责翻译：润色 / 校对明确提示不支持（不悄悄换云端）；提升译文退化为一次普通翻译；
+/// 词典式退化为普通翻译
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn offline_translation_rejects_polish_and_simplifies_refine_and_dictionary() {
+    let mut settings = configured();
+    settings.offline.translate_model = Some(LocalModelId::IndexTranslate2b);
+    let (env, core) = setup(settings);
+    env.offline_ready(LocalModelId::IndexTranslate2b);
+    let host = pinned("p-1");
+    for task in [TaskKind::Polish, TaskKind::Proofread] {
+        let sink = Collector::new();
+        let mut req = text_req(0, "The meeting moved to Thursday.", "natural");
+        req.task = task;
+        core.translate_start(req, host.clone(), sink.clone())
+            .await
+            .expect("start");
+        until("error", WAIT, || sink.terminal().is_some()).await;
+        assert!(
+            matches!(sink.terminal(), Some(StreamEvent::Error(e)) if e.code == ErrorCode::NotConfigured),
+            "{task:?}: {:?}",
+            sink.terminal()
+        );
+    }
+    assert_eq!(env.llm_count(), 0, "润色 / 校对没有发给任何模型");
+    // 提升译文：一次普通翻译（没有反思、没有阶段提示）
+    let sink = Collector::new();
+    let mut req = text_req(0, "The meeting has been moved to Thursday afternoon.", "natural");
+    req.task = TaskKind::Refine;
+    req.draft = Some("会议改到周四下午。".to_owned());
+    core.translate_start(req, host.clone(), sink.clone())
+        .await
+        .expect("start");
+    until("refined", WAIT, || sink.terminal().is_some()).await;
+    assert!(matches!(sink.terminal(), Some(StreamEvent::Done { .. })));
+    assert!(phases(&sink).is_empty(), "{:?}", phases(&sink));
+    let purposes: Vec<Purpose> = env.llm_calls.lock().iter().map(|(_, p, _)| *p).collect();
+    assert_eq!(purposes, vec![Purpose::Translate]);
+    // 词典式：Meta 里 dict_mode = false
+    let sink = Collector::new();
+    core.translate_start(text_req(0, "serendipity", "natural"), host, sink.clone())
+        .await
+        .expect("start");
+    until("translated", WAIT, || sink.terminal().is_some()).await;
+    let dict = sink.take().iter().find_map(|e| match e {
+        StreamEvent::Meta { dict_mode, .. } => *dict_mode,
+        _ => None,
+    });
+    assert_eq!(dict, Some(false));
+    assert!(env.llm_providers.lock().iter().all(|p| p == "@offline"));
+}
+
+/// PaddleOCR 云端：识别经引擎（编码字节 + Token，按服务的上限编码），排队提示照常转发；直接翻译走两步，第二步用云端
+/// 的翻译模型
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn paddle_ocr_cloud_recognises_through_the_engine_with_its_token() {
+    let mut settings = configured();
+    let mut paddle = super::plan::tests::provider("paddle", &["PP-OCRv6"]);
+    paddle.protocol = wisp_types::Protocol::PaddleOcr;
+    paddle.template_id = Some("paddleocr".to_owned());
+    settings.providers.push(paddle);
+    settings.defaults.ocr = Some(model_ref("paddle", "PP-OCRv6"));
+    let (env, core) = setup(settings);
+    env.engine.lock().phase = Some(StreamPhase::Queued);
+    let (_, _, sink) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    assert!(matches!(sink.terminal(), Some(StreamEvent::Done { .. })));
+    assert_eq!(phases(&sink), vec![StreamPhase::Queued]);
+    {
+        let calls = env.engine_calls.lock();
+        assert!(matches!(&calls[0].0, EngineRef::Cloud { model, .. } if model == "PP-OCRv6"));
+        assert!(!calls[0].2, "云端用编码字节");
+    }
+    assert!(env.count("key_get") >= 1, "Token 经钥匙串读取");
+    assert_eq!(env.llm_count(), 0);
+    let (_, _, sink) = capture_and_wait(&env, &core, HotkeyAction::OcrTranslate).await;
+    assert!(matches!(sink.terminal(), Some(StreamEvent::Done { .. })));
+    assert_eq!(*env.llm_providers.lock(), vec!["p".to_owned()]);
+}
+
+/// 直接翻译分两步（离线 OCR 只能转录）时，第二步的翻译模型同样先检查：离线翻译模型没下载 / 在下载、或根本没有服务商时，
+/// 与 OCR 未就绪一样直接显示卡片（截图前或 commit 时），不先跑一遍识别再给通用错误
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn direct_translate_checks_the_second_step_before_recognising() {
+    let mut settings = offline_ocr(LocalModelId::PpOcrV6Tiny);
+    settings.offline.translate_model = Some(LocalModelId::IndexTranslate2b);
+    let (env, core) = setup(settings);
+    env.offline_ready(LocalModelId::PpOcrV6Tiny);
+    // 截图之前：翻译模型没下载
+    hotkey(&core, HotkeyAction::OcrTranslate);
+    until("card", WAIT, || env.prepare_count() == 1).await;
+    let (req, _) = env.last_prepare().expect("prepare");
+    assert_eq!(
+        ocr_payload(&req).not_ready,
+        Some(NotReady::OfflineModelMissing {
+            model: LocalModelId::IndexTranslate2b
+        })
+    );
+    assert!(!env.called("capture_all"), "没就绪时不截图");
+    // commit 时：截图期间翻译模型开始下载
+    env.offline_ready(LocalModelId::IndexTranslate2b);
+    hotkey(&core, HotkeyAction::OcrTranslate);
+    until("overlays", WAIT, || env.called("create_overlays")).await;
+    // 面板（上一张卡片）还开着：截图会话的冻结帧稍晚才就绪
+    let mut init = None;
+    until("overlay init", WAIT, || {
+        init = core.overlay_init("overlay-0").ok().flatten();
+        init.is_some()
+    })
+    .await;
+    let overlay = init.expect("session").session_id;
+    core.overlay_ready(overlay, MONITOR);
+    env.offline
+        .lock()
+        .insert(LocalModelId::IndexTranslate2b, OfflineStatus::Downloading);
+    core.overlay_commit(commit_on(overlay, MONITOR)).await.expect("commit");
+    core.overlay_done(overlay);
+    until("second card", WAIT, || env.prepare_count() == 2).await;
+    let (req, _) = env.last_prepare().expect("prepare");
+    assert_eq!(
+        ocr_payload(&req).not_ready,
+        Some(NotReady::OfflineModelDownloading {
+            model: LocalModelId::IndexTranslate2b
+        })
+    );
+    assert_eq!(env.engine_count(), 0, "第一步没有开始识别");
+    until("overlay gone", WAIT, || env.called("destroy_overlays")).await;
+    // 没有任何服务商、只装了离线 OCR：没有能翻译的模型
+    let mut settings = Settings::default();
+    settings.offline.ocr_model = Some(LocalModelId::PpOcrV6Tiny);
+    *env.settings.lock() = Arc::new(settings);
+    hotkey(&core, HotkeyAction::OcrTranslate);
+    until("third card", WAIT, || env.prepare_count() == 3).await;
+    let (req, _) = env.last_prepare().expect("prepare");
+    assert_eq!(ocr_payload(&req).not_ready, Some(NotReady::NoProvider));
+    assert_eq!(env.engine_count(), 0);
+    assert_eq!(env.llm_count(), 0);
+    // 只做 OCR（不翻译）不受影响：照常开始截图
+    hotkey(&core, HotkeyAction::Ocr);
+    until("overlays again", WAIT, || env.count("create_overlays") == 2).await;
+}
+
+/// 面板里切到「翻译」重新识别（离线 OCR 只能转录，同样分两步）：第二步的翻译模型没就绪时直接报，不先识别一遍
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn translating_again_in_the_panel_checks_the_second_step_first() {
+    let mut settings = offline_ocr(LocalModelId::PpOcrV6Small);
+    settings.offline.translate_model = Some(LocalModelId::IndexTranslate2b);
+    let (env, core) = setup(settings);
+    env.offline_ready(LocalModelId::PpOcrV6Small);
+    env.offline_ready(LocalModelId::IndexTranslate2b);
+    let (payload, session, sink) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    assert!(matches!(sink.terminal(), Some(StreamEvent::Done { .. })));
+    assert_eq!(env.engine_count(), 1);
+    // 翻译模型被删掉之后，在面板里要 translate 模式
+    env.offline
+        .lock()
+        .insert(LocalModelId::IndexTranslate2b, OfflineStatus::Missing);
+    let again = Collector::new();
+    core.ocr_start(
+        OcrReq {
+            session_id: session,
+            capture_id: payload.capture_id.clone(),
+            mode: OcrMode::Translate,
+            model_ref: None,
+            target_lang: None,
+        },
+        RequestHost::Panel { session_id: session },
+        again.clone(),
+    )
+    .await
+    .expect("translate again");
+    until("ended", WAIT, || again.terminal().is_some()).await;
+    assert!(
+        matches!(
+            again.terminal(),
+            Some(StreamEvent::Error(ref e)) if e.code == ErrorCode::NotConfigured
+        ),
+        "{:?}",
+        again.terminal()
+    );
+    assert_eq!(env.engine_count(), 1, "没有先识别一遍");
+    assert_eq!(env.llm_count(), 0);
+    // 只要原文（paragraphs）不受影响
+    let original = Collector::new();
+    core.ocr_start(
+        OcrReq {
+            session_id: session,
+            capture_id: payload.capture_id.clone(),
+            mode: OcrMode::Paragraphs,
+            model_ref: None,
+            target_lang: None,
+        },
+        RequestHost::Panel { session_id: session },
+        original.clone(),
+    )
+    .await
+    .expect("recognise again");
+    until("recognised", WAIT, || original.terminal().is_some()).await;
+    assert!(matches!(original.terminal(), Some(StreamEvent::Done { .. })));
+    assert_eq!(env.engine_count(), 2);
 }

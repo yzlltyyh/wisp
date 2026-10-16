@@ -13,15 +13,19 @@
  * - 重新测试不会改掉用户选好的默认模型：拉到模型后只补上还没选、或已经不在启用列表里的那一项；连接（协议 + base_url）
  *   没变、已经有模型时不再重新拉取；
  * - 拉到模型后默认模型卡片立即展开，展开过程中滚动跟随（lib/reveal.ts），不等弹簧结束；
- * - 阶段切换只有新阶段的进入动画（stepSwitch 的 initial / animate），旧阶段立即卸载；切换后焦点交给新阶段的标题。
+ * - 阶段切换只有新阶段的进入动画（stepSwitch 的 initial / animate），旧阶段立即卸载；切换后焦点交给新阶段的标题；
+ * - 卡片下方一条安静的「不想填 API Key？使用离线模型」：进入离线阶段（OfflinePacks：轻量 / 高质量两档，按本机适配标注
+ *   推荐），「下载并继续」开始后台下载并在本机选用它们，引导继续往下走；选了离线模型也算「这一步已完成」。
  */
 import { Check, ChevronRight, Plus } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { needsFitConfirm, packFitness } from '../../shared/offline/catalog'
+import { useOfflineModels } from '../../shared/offline/store'
 import { useT } from '../../shared/i18n/useT'
 import { api } from '../../shared/ipc'
 import { isUsableModel } from '../../shared/models'
-import type { ModelRef, Provider, ProviderTemplate } from '../../shared/ipc/types'
+import type { LocalModelId, ModelRef, Provider, ProviderTemplate } from '../../shared/ipc/types'
 import { adaptPreset, presets, usePreset } from '../../shared/motion/presets'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
 import { Button, Field, Icon, SegmentedControl, Select, Skeleton, TextField } from '../../shared/ui'
@@ -44,6 +48,7 @@ import {
   templateName,
   uniqueName,
 } from '../../settings/providers/model'
+import { translateReady } from '../../settings/providers/engine'
 import { FeaturedCards } from '../../settings/providers/TemplateCard'
 import { TemplateTile } from '../../settings/providers/TemplatePicker'
 import { addProvider } from '../../settings/providers/persist'
@@ -65,6 +70,7 @@ import {
   StepLayout,
   type StepProps,
 } from '../shared'
+import { effectivePack, OfflinePacks, startPack } from './OfflinePacks'
 import {
   fetchFingerprint,
   type ModelDefaults,
@@ -72,7 +78,7 @@ import {
   type ModelPhase,
 } from './modelDraft'
 
-const PHASES: readonly ModelPhase[] = ['summary', 'choose', 'others', 'form']
+const PHASES: readonly ModelPhase[] = ['summary', 'choose', 'offline', 'others', 'form']
 
 /** 同一张卡片：OpenAI 的两个模板共用一张 */
 function sameCard(a: string, b: string): boolean {
@@ -89,7 +95,8 @@ export function Model({
   const t = useT()
   const settings = useSettings()
   const reduced = useReducedMotionPref()
-  const configured = (settings?.providers.length ?? 0) > 0 && settings?.defaults.translate !== null
+  // 已经可以翻译：接入了服务并选了默认翻译模型，或者在本机选用了离线翻译模型
+  const configured = translateReady(settings)
   const { state, update, key } = store
   const phase: ModelPhase = state.phase ?? (configured ? 'summary' : 'choose')
   const draft = state.draft
@@ -177,13 +184,22 @@ export function Model({
   const phaseBack: (() => void) | null =
     phase === 'form' && draft
       ? () => go(isFeaturedTemplate(draft.template.id) ? 'choose' : 'others')
-      : phase === 'others'
+      : phase === 'others' || phase === 'offline'
         ? () => go('choose')
         : phase === 'choose' && configured
           ? () => go('summary')
           : null
 
   const ready = draft !== null && defaults.translate !== null
+  const offlineSnap = useOfflineModels(phase === 'offline')
+  const startOffline = async () => {
+    setSaving(true)
+    try {
+      if (await startPack(effectivePack(state.pack, offlineSnap))) onNext()
+    } finally {
+      setSaving(false)
+    }
+  }
   const motion = adaptPreset(presets.stepSwitch(dir), 'fade', reduced)
 
   let body: ReactNode
@@ -201,6 +217,27 @@ export function Model({
         {t('common.action.next')}
       </Button>
     )
+  } else if (phase === 'offline') {
+    body = <OfflinePacks pick={state.pack} onPick={(pack) => update({ pack })} />
+    next = (
+      <Button
+        variant="primary"
+        size="md"
+        loading={saving}
+        disabled={!offlineSnap}
+        onClick={() => void startOffline()}
+        data-default
+        data-testid="onboarding-offline-start"
+      >
+        {
+          // 选中的这一档不适合本机（内存不足 / 只能在 CPU 上慢慢跑）：按钮写明「仍要下载」，原因就在选项旁边
+          offlineSnap &&
+          needsFitConfirm(packFitness(effectivePack(state.pack, offlineSnap), offlineSnap.models))
+            ? t('onboarding.model.offline.start_anyway')
+            : t('onboarding.model.offline.start')
+        }
+      </Button>
+    )
   } else if (phase === 'others') {
     body = (
       <div className="ob-others" data-testid="onboarding-others">
@@ -209,7 +246,8 @@ export function Model({
         ) : (
           <div className="st-tiles ob-tiles">
             {templates
-              .filter((tpl) => !isFeaturedTemplate(tpl.id))
+              // 文字识别服务（PaddleOCR）不能翻译：这一步要接入的是翻译模型，它留在设置里添加
+              .filter((tpl) => !isFeaturedTemplate(tpl.id) && tpl.group !== 'ocr')
               .map((tpl) => (
                 <TemplateTile
                   key={tpl.id}
@@ -268,7 +306,10 @@ export function Model({
           onPick={(tpl) => void pick(tpl)}
           onOthers={() => go('others')}
         />
-        <SyncLink onOpened={onNext} />
+        <div className="ob-alt-links">
+          <OfflineLink onOpen={() => go('offline')} />
+          <SyncLink onOpened={onNext} />
+        </div>
       </div>
     )
     next = <SkipStep onClick={onNext} />
@@ -277,8 +318,20 @@ export function Model({
   return (
     <StepLayout
       // 填写表单时服务头部就是这一屏的标题（窗口只有 580 高，也让出说明文字的高度）
-      title={phase === 'form' ? undefined : t('onboarding.model.title')}
-      description={phase === 'form' ? undefined : t('onboarding.model.description')}
+      title={
+        phase === 'form'
+          ? undefined
+          : phase === 'offline'
+            ? t('onboarding.model.offline.title')
+            : t('onboarding.model.title')
+      }
+      description={
+        phase === 'form'
+          ? undefined
+          : phase === 'offline'
+            ? t('onboarding.model.offline.description')
+            : t('onboarding.model.description')
+      }
       data-testid="onboarding-model"
       footer={
         <StepFooter
@@ -544,6 +597,23 @@ function ProviderSetup({
   )
 }
 
+/** 「不想填 API Key？使用离线模型」：与同步链接同一种安静的样式 */
+function OfflineLink({ onOpen }: { onOpen: () => void }) {
+  const t = useT()
+  return (
+    <p className="ob-sync-link">
+      <button
+        type="button"
+        className="ob-later"
+        onClick={onOpen}
+        data-testid="onboarding-offline-link"
+      >
+        {t('onboarding.model.offline.link')}
+      </button>
+    </p>
+  )
+}
+
 /**
  * 「已在其他设备上使用 Wisp？连接同步」：一条安静的链接，打开设置的「同步」分组，引导同时跳过这一步——
  * 连接之后模型服务与 Key 会从其他设备同步过来，不必在这里再接入一次
@@ -578,15 +648,22 @@ function Summary({ onAdd }: { onAdd: () => void }) {
   const settings = useSettings()
   if (!settings) return null
   const d = settings.defaults
+  const o = settings.offline
   const providerOf = (ref: ModelRef | null) =>
     settings.providers.find((p) => p.id === ref?.provider_id)
-  const row = (label: string, ref: ModelRef | null) => {
+  const row = (label: string, ref: ModelRef | null, local: LocalModelId | null) => {
     const p = providerOf(ref)
     return (
       <div className="ob-summary-row">
         <span className="ob-summary-label">{label}</span>
         <span className="ob-summary-value">
-          {ref ? (
+          {local ? (
+            // 本机选用的离线模型优先（只在这台设备上生效）
+            <>
+              <b>{t(`common.offline_model.${local}`)}</b>
+              <span>{t('settings.engine.group_offline')}</span>
+            </>
+          ) : ref ? (
             <>
               <b>{ref.model_id}</b>
               <span>{p ? providerName(p) : ''}</span>
@@ -605,13 +682,15 @@ function Summary({ onAdd }: { onAdd: () => void }) {
           <Icon icon={Check} size={16} />
         </span>
         <span>
-          {t('onboarding.model.configured', {
-            names: formatList(settings.providers.map((p) => providerName(p))),
-          })}
+          {settings.providers.length > 0
+            ? t('onboarding.model.configured', {
+                names: formatList(settings.providers.map((p) => providerName(p))),
+              })
+            : t('onboarding.model.offline.configured')}
         </span>
       </div>
-      {row(t('settings.defaults.translate'), d.translate)}
-      {row(t('settings.defaults.ocr'), d.ocr)}
+      {row(t('settings.defaults.translate'), d.translate, o.translate_model)}
+      {row(t('settings.defaults.ocr'), d.ocr, o.ocr_model)}
       <button
         type="button"
         className="ob-summary-add"

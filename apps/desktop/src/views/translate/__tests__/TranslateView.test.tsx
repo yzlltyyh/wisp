@@ -13,7 +13,7 @@ import { presets } from '../../../shared/motion/presets'
 import { FloatingContext } from '../../../shared/ui/floating'
 import type { PanelPhase, ViewProps } from '../../../panel/types'
 import { boot, WispIpcError } from '../../../shared/ipc'
-import { styleList } from '../catalog'
+import { resetCatalog, styleList } from '../catalog'
 import { MoreMenu, StyleMenu } from '../menus'
 import { prewarmRender, presetMotion, statusLineText, TranslateView } from '../TranslateView'
 import { t } from '../../../shared/i18n/i18n'
@@ -25,6 +25,7 @@ import {
   idleTransport,
   installFakeIpc,
   press,
+  snapshot,
   start,
   type FakeIpc,
 } from './harness'
@@ -586,6 +587,72 @@ describe('长文本 / 未就绪 / 错误', () => {
     // 有部分正文的错误态：底栏保留复制（不能固定 / 展开一个出错的结果）
     expect(screen.getByTestId('tv-copy')).toBeInTheDocument()
     expect(screen.queryByTestId('tv-pin')).toBeNull()
+  })
+
+  it('离线翻译模型不支持润色：有默认的云端翻译模型时显式「用 <模型> 处理这一次」，这一次带上它的模型引用', async () => {
+    await mount(
+      payload({
+        request_id: null,
+        task: 'polish',
+        not_ready: { reason: 'offline_task_unsupported', task: 'polish' },
+      }),
+    )
+    const use = await screen.findByTestId('tv-not-ready-use-cloud')
+    expect(use).toHaveTextContent('用 GPT-5.4 mini 处理这一次')
+    expect(ipc.starts).toHaveLength(0)
+    fireEvent.click(use)
+    await flush()
+    expect(ipc.starts).toHaveLength(1)
+    expect(ipc.starts[0]).toMatchObject({
+      task: 'polish',
+      model_ref: { provider_id: 'openai-main', model_id: 'gpt-5.4-mini' },
+    })
+    expect(screen.queryByTestId('tv-not-ready')).toBeNull()
+  })
+
+  it('离线翻译模型不支持润色、也没有默认的云端翻译模型：只有「去设置」（离线模型分组）', async () => {
+    const s = snapshot()
+    resetCatalog({
+      ...s,
+      settings: { ...s.settings, defaults: { ...s.settings.defaults, translate: null } },
+    })
+    await mount(
+      payload({
+        request_id: null,
+        task: 'polish',
+        not_ready: { reason: 'offline_task_unsupported', task: 'polish' },
+      }),
+    )
+    fireEvent.click(await screen.findByTestId('tv-not-ready-settings'))
+    expect(screen.queryByTestId('tv-not-ready-use-cloud')).toBeNull()
+    expect(ipc.calls.find(([c]) => c === 'window_open')?.[1]).toEqual({
+      target: { kind: 'settings', section: 'offline' },
+    })
+  })
+
+  it('离线模型冷启动：骨架下方有「第一次加载需要十几秒」（由 CSS 延迟淡入），第一段文字到达后消失', async () => {
+    await mount(payload())
+    ipc.push('rx', start('rx'), { type: 'phase', phase: 'loading_model' })
+    const note = await screen.findByTestId('tv-loading-note')
+    expect(note).toHaveTextContent('第一次加载需要十几秒，之后会快很多')
+    expect(note).toHaveClass('ui-late')
+    ipc.push('rx', delta('你好'))
+    await waitFor(() => expect(screen.queryByTestId('tv-loading-note')).toBeNull())
+  })
+
+  it('缺 Microsoft Visual C++ 运行库：错误卡片的第一个按钮打开官方下载页', async () => {
+    await mount(payload())
+    ipc.push(
+      'rx',
+      start('rx'),
+      error('local_runtime', { hint: 'errors.hint.local.vc_runtime_missing' }),
+    )
+    const link = await screen.findByTestId('tv-error-link')
+    expect(link).toHaveTextContent('下载运行库')
+    fireEvent.click(link)
+    expect(ipc.calls.find(([c]) => c === 'open_url')?.[1]).toEqual({
+      url: 'https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist',
+    })
   })
 
   it('系统凭据存储不可用：卡片提供「去设置」（组件库）', async () => {

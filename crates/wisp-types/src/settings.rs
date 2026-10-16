@@ -27,16 +27,18 @@ use crate::defaults;
 use crate::hotkey::{Binding, HotkeyAction, ModifierKey};
 use crate::lang::{Lang, UiLanguage};
 use crate::llm::{Defaults, ImageDetail, Provider};
+use crate::local::{DownloadSource, LocalModelId};
 use crate::style::OcrMode;
 
-/// 当前 settings.json 的 schema 版本
-pub const SETTINGS_SCHEMA_VERSION: u32 = 1;
+/// 当前 settings.json 的 schema 版本。v2 新增 `offline` 分组（v1 → v2 是恒等迁移）：版本号提上来，是为了让降级后的
+/// 旧版本把 `offline` 当作「更新版本的内容」原样保留，而不是写盘时丢掉
+pub const SETTINGS_SCHEMA_VERSION: u32 = 2;
 
 lenient_struct! {
     /// `settings.json`
     #[derive(Debug, Clone, PartialEq, Serialize)]
     pub struct Settings {
-        /// 1；启动时按版本号迁移（settings/migrate.rs）
+        /// 当前为 2；启动时按版本号迁移（settings/migrate.rs）
         pub schema_version: u32,
         pub general: General,
         pub hotkeys: HotkeySettings,
@@ -51,6 +53,8 @@ lenient_struct! {
         pub advanced: Advanced,
         /// 多设备同步（只属于本机，不参与同步）
         pub sync: SyncSettings,
+        /// 离线模型（只属于本机，不参与同步）
+        pub offline: OfflineSettings,
     }
 }
 
@@ -68,6 +72,7 @@ impl Default for Settings {
             appearance: Appearance::default(),
             advanced: Advanced::default(),
             sync: SyncSettings::default(),
+            offline: OfflineSettings::default(),
         }
     }
 }
@@ -653,6 +658,36 @@ impl Default for SyncContent {
             images: true,
             ocr_history: true,
             verification_codes: true,
+        }
+    }
+}
+
+lenient_struct! {
+    /// 离线模型。整组只属于本机（不参与同步）：各设备的算力不同，而且同步不能把这台设备从离线改回云端——用户选择离线，
+    /// 识别与翻译的内容就绝不上传。这里的选择优先于同步的 `defaults` 与风格绑定的模型；`defaults` 与风格里不能写离线模型
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+    pub struct OfflineSettings {
+        /// null：文字识别用的离线模型（只允许文字识别类，见 [`LocalModelId::kind`]）；null 时用 `defaults.ocr`
+        pub ocr_model: Option<LocalModelId>,
+        /// null：翻译用的离线模型（只允许翻译类）；null 时按风格绑定与 `defaults.translate`
+        pub translate_model: Option<LocalModelId>,
+        /// 5（只允许 `defaults::OFFLINE_IDLE_RELEASE_MIN` 里的 1 / 5 / 15 / 30）：闲置多少分钟后释放模型占用的内存（不删除文件）
+        pub idle_release_min: u32,
+        /// true：使用显卡加速（出现异常时可以关闭，改用 CPU）
+        pub use_gpu: bool,
+        /// "auto"：模型文件的下载源
+        pub download_source: DownloadSource,
+    }
+}
+
+impl Default for OfflineSettings {
+    fn default() -> Self {
+        Self {
+            ocr_model: None,
+            translate_model: None,
+            idle_release_min: defaults::OFFLINE_IDLE_RELEASE_DEFAULT_MIN,
+            use_gpu: true,
+            download_source: DownloadSource::Auto,
         }
     }
 }

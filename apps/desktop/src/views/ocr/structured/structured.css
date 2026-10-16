@@ -1,0 +1,96 @@
+/*
+ * 结构化结果预览（随预览的 chunk 加载）：与 OCR 文本框占同一个位置（.ocr-text 的收缩、内部滚动与边缘渐隐），
+ * 正文沿用 Markdown-lite 的 .ui-md；表格与公式是这里新加的。颜色只取令牌；不写动效。
+ */
+@layer components {
+  .ocr-preview.ocr-text {
+    box-sizing: border-box;
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    font-size: var(--text-body);
+    line-height: var(--lh-body);
+    color: var(--fg);
+    overflow-wrap: anywhere;
+    user-select: text;
+  }
+  .ocr-preview > * + * {
+    margin-top: 10px;
+  }
+  .ocr-preview-md {
+    color: var(--fg);
+  }
+
+  /* ---- 表格：细分隔线、表头淡底；横向放不下时在表格内左右滚动（不撑宽面板） */
+  .ocr-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    border-radius: var(--r-row);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+  }
+  .ocr-table {
+    width: max-content;
+    min-width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    font-variant-numeric: tabular-nums;
+  }
+  .ocr-table th,
+  .ocr-table td {
+    padding: 5px 10px;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: normal;
+    box-shadow:
+      inset -1px 0 0 var(--hairline),
+      inset 0 -1px 0 var(--hairline);
+  }
+  .ocr-table tr > :last-child {
+    box-shadow: inset 0 -1px 0 var(--hairline);
+  }
+  .ocr-table tbody tr:last-child > * {
+    box-shadow: inset -1px 0 0 var(--hairline);
+  }
+  .ocr-table tbody tr:last-child > :last-child {
+    box-shadow: none;
+  }
+  .ocr-table th {
+    font-weight: 600;
+    background: var(--fill-control);
+  }
+  .ocr-table code {
+    font-family: var(--font-mono);
+    font-size: 0.95em;
+  }
+
+  /* ---- 公式：等宽源码，可以选中；右上角复制 */
+  .ocr-math {
+    margin: 0;
+    border-radius: var(--r-row);
+    background: var(--fill-control);
+  }
+  .ocr-math-head {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 24px;
+    padding: 2px 2px 0 10px;
+    font-size: var(--text-caption);
+    line-height: var(--lh-caption);
+    color: var(--fg-2);
+  }
+  .ocr-math-label {
+    flex: 1;
+  }
+  .ocr-math-tex {
+    margin: 0;
+    padding: 0 10px 8px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-meta);
+    line-height: 1.6;
+    white-space: pre;
+    color: var(--fg);
+  }
+}

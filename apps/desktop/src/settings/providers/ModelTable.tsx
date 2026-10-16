@@ -6,6 +6,8 @@
  * 副行，不和 ID 抢宽度；推理档位不再占一整列（大多数行用不到），在这一行的 ⋯ 菜单里选（只对开了推理的行出现）。
  * 列标题写明「图片」「推理」两列图标的含义（不用等 tooltip）；vision 三态是 roving tabindex 的单选组。
  * 「全部停用」跳过被默认模型 / 风格引用的模型并提示（否则默认模型随之失效）。
+ * 文字识别服务（PaddleOCR，`service`）的模型不是 LLM：没有「图片」「推理」两列与能力缓存，只有启用、名称与删除；
+ * `noteFor` 可以给某些模型加一句副行说明（例如 PP-StructureV3 较慢）。
  */
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Brain, Eye, EyeOff, Plus, ScanEye, Trash2, Undo2, MoreHorizontal } from 'lucide-react'
@@ -43,6 +45,10 @@ export interface ModelTableProps {
   onResetCaps?: (modelId: string) => void
   /** 默认值引用的模型（不能删除，停用时提示） */
   referenced?: ReadonlySet<string>
+  /** 文字识别服务的模型：不显示「图片」「推理」两列 */
+  service?: boolean
+  /** 模型 ID 下面的副行说明（没有时返回 null） */
+  noteFor?: (m: ModelEntry) => string | null
 }
 
 const VISION_ORDER: readonly Vision[] = ['yes', 'unknown', 'no']
@@ -56,6 +62,8 @@ export function ModelTable({
   showEffort,
   onResetCaps,
   referenced,
+  service = false,
+  noteFor,
 }: ModelTableProps) {
   const t = useT()
   const [query, setQuery] = useState('')
@@ -146,8 +154,14 @@ export function ModelTable({
           <div className="st-models-head" aria-hidden="true">
             <span className="st-models-head-switch" />
             <span className="st-model-name">{t('settings.models.col_model')}</span>
-            <span className="st-models-head-vision">{t('settings.models.col_vision')}</span>
-            <span className="st-models-head-reasoning">{t('settings.models.col_reasoning')}</span>
+            {service ? null : (
+              <>
+                <span className="st-models-head-vision">{t('settings.models.col_vision')}</span>
+                <span className="st-models-head-reasoning">
+                  {t('settings.models.col_reasoning')}
+                </span>
+              </>
+            )}
             <span className="st-models-head-more" />
           </div>
           <div ref={scroller} className="st-models-scroll" style={{ height }}>
@@ -168,11 +182,16 @@ export function ModelTable({
                 ) : isRef ? (
                   <Badge tone="accent">{t('settings.models.default')}</Badge>
                 ) : null
-                const effortOn = showEffort && m.reasoning
+                const effortOn = !service && showEffort && m.reasoning
+                const extra = noteFor?.(m) ?? null
                 const effortNote =
                   effortOn && m.reasoning_effort ? (
                     <span className="st-model-effort">
                       {t('settings.models.effort_note', { level: effortLabel(m.reasoning_effort) })}
+                    </span>
+                  ) : extra ? (
+                    <span className="st-model-effort" data-testid={`model-note-${m.id}`}>
+                      {extra}
                     </span>
                   ) : null
                 const effortItems: MenuEntry[] = effortOn
@@ -213,31 +232,35 @@ export function ModelTable({
                         </span>
                       ) : null}
                     </span>
-                    <VisionToggle
-                      value={m.vision}
-                      model={m.id}
-                      onChange={(v) => update(i, { vision: v, vision_source: 'user' })}
-                    />
-                    <span className="st-model-reasoning">
-                      <Tooltip content={t('settings.models.reasoning_tip')}>
-                        <button
-                          type="button"
-                          className="st-chip-toggle"
-                          aria-pressed={m.reasoning}
-                          aria-label={t('settings.models.reasoning')}
-                          onClick={() => update(i, { reasoning: !m.reasoning })}
-                          data-testid={`model-reasoning-${m.id}`}
-                        >
-                          <Icon icon={Brain} size={14} />
-                        </button>
-                      </Tooltip>
-                    </span>
+                    {service ? null : (
+                      <VisionToggle
+                        value={m.vision}
+                        model={m.id}
+                        onChange={(v) => update(i, { vision: v, vision_source: 'user' })}
+                      />
+                    )}
+                    {service ? null : (
+                      <span className="st-model-reasoning">
+                        <Tooltip content={t('settings.models.reasoning_tip')}>
+                          <button
+                            type="button"
+                            className="st-chip-toggle"
+                            aria-pressed={m.reasoning}
+                            aria-label={t('settings.models.reasoning')}
+                            onClick={() => update(i, { reasoning: !m.reasoning })}
+                            data-testid={`model-reasoning-${m.id}`}
+                          >
+                            <Icon icon={Brain} size={14} />
+                          </button>
+                        </Tooltip>
+                      </span>
+                    )}
                     <DropdownMenu
                       label={t('common.action.more')}
                       align="end"
                       items={[
                         ...effortItems,
-                        ...(onResetCaps
+                        ...(onResetCaps && !service
                           ? [
                               {
                                 id: 'caps',

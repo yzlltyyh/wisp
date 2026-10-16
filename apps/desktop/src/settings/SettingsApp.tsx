@@ -70,6 +70,7 @@ const LOADERS: Record<SettingsSection, () => Promise<PageModule>> = {
   general: () => import('./pages/GeneralPage'),
   hotkeys: () => import('./pages/HotkeysPage'),
   providers: () => import('./pages/ProvidersPage'),
+  offline: () => import('./pages/OfflinePage'),
   translate: () => import('./pages/TranslatePage'),
   ocr: () => import('./pages/OcrPage'),
   clipboard: () => import('./pages/ClipboardPage'),

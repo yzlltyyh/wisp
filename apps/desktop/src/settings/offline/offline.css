@@ -1,0 +1,179 @@
+/*
+ * 设置 → 离线模型的样式（随离线模型页的 chunk 加载；引导页的离线入口也引用）。沿用设置窗口的分组卡片与行：
+ * 模型卡的一行与 .ui-fieldrow 同样的内边距与分隔线，图标方块与服务列表的 .st-logo 同款（中性底）。
+ * 颜色只取令牌；时长只取 --dur-* / --ease-*。
+ */
+@layer components {
+  /* ------------------------------------------------ 模型卡的一行 */
+  .st-om-row {
+    padding: 10px 12px;
+    box-sizing: border-box;
+  }
+  .st-om-row + .st-om-row,
+  .st-om-row + .st-om-confirm,
+  .st-om-confirm + .st-om-row,
+  .st-om-confirm + .st-om-confirm {
+    box-shadow: inset 0 1px 0 var(--hairline);
+  }
+  .st-om-main {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 28px;
+  }
+  .st-om-icon {
+    align-self: flex-start;
+    margin-top: 1px;
+    color: var(--fg-2);
+  }
+  .st-om-text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .st-om-title {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    min-width: 0;
+    font-size: var(--text-ui);
+    line-height: var(--lh-ui);
+  }
+  .st-om-title b {
+    font-weight: 500;
+  }
+  .st-om-note,
+  .st-om-status {
+    margin: 0;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+    text-wrap: pretty;
+  }
+  .st-om-status {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .st-om-status > .ui-icon {
+    flex: none;
+  }
+  .st-om-status[data-tone='warning'] {
+    color: var(--warning-text);
+  }
+  .st-om-status[data-tone='danger'] {
+    color: var(--danger-text);
+  }
+  .st-om-actions {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+  }
+  /* 「用于识别 / 用于翻译」按下时：强调色的淡底 + 对勾，像一个开着的开关 */
+  .st-window .ui-btn.st-om-use[data-on],
+  .ob-window .ui-btn.st-om-use[data-on] {
+    color: var(--accent-text);
+    background: var(--accent-soft);
+    box-shadow: none;
+  }
+
+  /* 运行状态的小圆点：已加载是成功色；加载中是强调色并脉动（减少动效时静止，base.css 统一处理） */
+  .st-om-dot {
+    width: 6px;
+    height: 6px;
+    flex: none;
+    border-radius: 50%;
+    background: var(--success-text);
+  }
+  .st-om-dot[data-load='loading'] {
+    background: var(--accent);
+    animation: wisp-pulse var(--pulse-period) var(--ease-pulse) infinite;
+  }
+
+  /* ------------------------------------------------ 下载进度：状态文字 + 百分比，下方 4 px 细条 */
+  .st-om-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    /* 与名称左缘对齐（28 px 图标 + 12 px 间距） */
+    margin: 8px 0 2px 40px;
+  }
+  .st-om-progress-line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+    font-variant-numeric: tabular-nums;
+  }
+  .st-om-progress-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .st-om-percent {
+    flex: none;
+    color: var(--fg);
+  }
+
+  /* 原地确认：取这一行当时的高度（ModelRow 写 min-height） */
+  .ui-confirm.st-om-confirm {
+    padding: 8px 12px;
+  }
+
+  /* ------------------------------------------------ 本机 */
+  .st-om-device {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .st-om-device > .ui-icon {
+    color: var(--fg-2);
+  }
+  .st-om-skeleton {
+    padding: 4px 4px 0;
+  }
+
+  /* ------------------------------------------------ 许可与官方页面（页尾的一段小字） */
+  .st-om-licenses {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 12px 4px 0;
+    font-size: var(--text-meta);
+    line-height: var(--lh-meta);
+    color: var(--fg-2);
+  }
+  .st-om-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+  }
+  .st-om-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-chip);
+    font: inherit;
+    color: var(--accent-text);
+    background: none;
+    cursor: pointer;
+  }
+  .st-om-link:hover {
+    text-decoration: underline;
+  }
+  .st-om-link:focus-visible {
+    outline-offset: 2px;
+  }
+}

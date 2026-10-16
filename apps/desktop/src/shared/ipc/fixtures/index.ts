@@ -322,6 +322,11 @@ export const StreamEvent__phase = {
   "phase": "reviewing"
 } satisfies T.StreamEvent
 
+export const StreamEvent__phase_loading_model = {
+  "type": "phase",
+  "phase": "loading_model"
+} satisfies T.StreamEvent
+
 export const StreamEvent__delta = {
   "type": "delta",
   "text": "敏捷的棕色狐狸"
@@ -330,6 +335,11 @@ export const StreamEvent__delta = {
 export const StreamEvent__notice = {
   "type": "notice",
   "kind": "param_degraded"
+} satisfies T.StreamEvent
+
+export const StreamEvent__notice_partial = {
+  "type": "notice",
+  "kind": "partial"
 } satisfies T.StreamEvent
 
 export const StreamEvent__done = {
@@ -1262,6 +1272,21 @@ export const NotReady__selection_unavailable = {
   "reason_key": "errors.platform.clipboard_too_large"
 } satisfies T.NotReady
 
+export const NotReady__offline_model_missing = {
+  "reason": "offline_model_missing",
+  "model": "index_translate_2b"
+} satisfies T.NotReady
+
+export const NotReady__offline_model_downloading = {
+  "reason": "offline_model_downloading",
+  "model": "paddleocr_vl_1_6"
+} satisfies T.NotReady
+
+export const NotReady__offline_task_unsupported = {
+  "reason": "offline_task_unsupported",
+  "task": "polish"
+} satisfies T.NotReady
+
 export const OcrPayload = {
   "capture_id": "c-7",
   "request_id": "r-2",
@@ -1679,7 +1704,7 @@ export const OverlayCommitAck = {
 
 export const SettingsSnapshot = {
   "settings": {
-    "schema_version": 1,
+    "schema_version": 2,
     "general": {
       "launch_at_login": true,
       "start_hidden": true,
@@ -1859,6 +1884,13 @@ export const SettingsSnapshot = {
         "ocr_history": true,
         "verification_codes": true
       }
+    },
+    "offline": {
+      "ocr_model": null,
+      "translate_model": null,
+      "idle_release_min": 5,
+      "use_gpu": true,
+      "download_source": "auto"
     }
   },
   "styles": [
@@ -1984,6 +2016,12 @@ export const SettingsSnapshot = {
       "error_detail": null,
       "progress": null,
       "device_count": 0
+    },
+    "offline": {
+      "installed": [
+        "pp_ocrv6_small",
+        "index_translate_2b"
+      ]
     }
   }
 } satisfies T.SettingsSnapshot
@@ -2080,6 +2118,12 @@ export const RuntimeInfo = {
     "error_detail": null,
     "progress": null,
     "device_count": 0
+  },
+  "offline": {
+    "installed": [
+      "pp_ocrv6_small",
+      "index_translate_2b"
+    ]
   }
 } satisfies T.RuntimeInfo
 
@@ -2357,6 +2401,227 @@ export const SyncConnectResult__restored = {
   }
 } satisfies T.SyncConnectResult
 
+export const LocalModelsSnapshot = {
+  "models": [
+    {
+      "id": "pp_ocrv6_tiny",
+      "kind": "ocr",
+      "download_bytes": 31040000,
+      "pending_runtime_bytes": 0,
+      "state": {
+        "state": "not_installed"
+      },
+      "load": "unloaded",
+      "memory_estimate_mb": 300,
+      "fitness": {
+        "level": "good",
+        "reason_key": null
+      },
+      "update_available": false
+    },
+    {
+      "id": "pp_ocrv6_small",
+      "kind": "ocr",
+      "download_bytes": 31040000,
+      "pending_runtime_bytes": 0,
+      "state": {
+        "state": "installed"
+      },
+      "load": "loaded",
+      "memory_estimate_mb": 300,
+      "fitness": {
+        "level": "good",
+        "reason_key": null
+      },
+      "update_available": false
+    },
+    {
+      "id": "paddleocr_vl_1_6",
+      "kind": "ocr",
+      "download_bytes": 1953600000,
+      "pending_runtime_bytes": 32200000,
+      "state": {
+        "state": "downloading",
+        "done": 820000000,
+        "total": 1985800000,
+        "bytes_per_sec": 12400000
+      },
+      "load": "unloaded",
+      "memory_estimate_mb": 3000,
+      "fitness": {
+        "level": "good",
+        "reason_key": null
+      },
+      "update_available": false
+    },
+    {
+      "id": "index_translate_2b",
+      "kind": "translate",
+      "download_bytes": 1312164352,
+      "pending_runtime_bytes": 0,
+      "state": {
+        "state": "installed"
+      },
+      "load": "loading",
+      "memory_estimate_mb": 2200,
+      "fitness": {
+        "level": "good",
+        "reason_key": null
+      },
+      "update_available": true
+    },
+    {
+      "id": "index_translate_9b",
+      "kind": "translate",
+      "download_bytes": 5780090304,
+      "pending_runtime_bytes": 0,
+      "state": {
+        "state": "paused",
+        "done": 1200000000,
+        "total": 5780090304
+      },
+      "load": "unloaded",
+      "memory_estimate_mb": 7500,
+      "fitness": {
+        "level": "slow",
+        "reason_key": "settings.offline.fitness.cpu_only"
+      },
+      "update_available": false
+    }
+  ],
+  "runtimes": [
+    {
+      "id": "llama_cpp",
+      "version": "b11669",
+      "installed": true,
+      "size": 61000000,
+      "in_use": true
+    },
+    {
+      "id": "onnx_runtime",
+      "version": "1.28.3",
+      "installed": false,
+      "size": 9100000,
+      "in_use": false
+    }
+  ],
+  "device": {
+    "total_memory": 17179869184,
+    "apple_silicon": false,
+    "gpus": [
+      {
+        "name": "NVIDIA GeForce RTX 3060",
+        "vram_total_mb": 12288,
+        "integrated": false
+      }
+    ],
+    "gpu_probed": true
+  },
+  "disk_used": 2400000000,
+  "disk_free": 120000000000
+} satisfies T.LocalModelsSnapshot
+
+export const LocalModelInfo = {
+  "id": "paddleocr_vl_1_6",
+  "kind": "ocr",
+  "download_bytes": 31040000,
+  "pending_runtime_bytes": 0,
+  "state": {
+    "state": "failed",
+    "code": "disk_full"
+  },
+  "load": "unloaded",
+  "memory_estimate_mb": 300,
+  "fitness": {
+    "level": "unknown",
+    "reason_key": "settings.offline.fitness.gpu_unknown"
+  },
+  "update_available": false
+} satisfies T.LocalModelInfo
+
+export const LocalModelState__not_installed = {
+  "state": "not_installed"
+} satisfies T.LocalModelState
+
+export const LocalModelState__queued = {
+  "state": "queued"
+} satisfies T.LocalModelState
+
+export const LocalModelState__downloading = {
+  "state": "downloading",
+  "done": 3100000,
+  "total": 6240000,
+  "bytes_per_sec": 0
+} satisfies T.LocalModelState
+
+export const LocalModelState__paused = {
+  "state": "paused",
+  "done": 3100000,
+  "total": 6240000
+} satisfies T.LocalModelState
+
+export const LocalModelState__verifying = {
+  "state": "verifying"
+} satisfies T.LocalModelState
+
+export const LocalModelState__installed = {
+  "state": "installed"
+} satisfies T.LocalModelState
+
+export const LocalModelState__broken = {
+  "state": "broken"
+} satisfies T.LocalModelState
+
+export const LocalModelState__failed = {
+  "state": "failed",
+  "code": "checksum_mismatch"
+} satisfies T.LocalModelState
+
+export const LocalRuntimeInfo = {
+  "id": "onnx_runtime",
+  "version": "1.28.3",
+  "installed": true,
+  "size": 21400000,
+  "in_use": true
+} satisfies T.LocalRuntimeInfo
+
+export const DeviceInfo = {
+  "total_memory": 17179869184,
+  "apple_silicon": false,
+  "gpus": [
+    {
+      "name": "NVIDIA GeForce RTX 3060",
+      "vram_total_mb": 12288,
+      "integrated": false
+    }
+  ],
+  "gpu_probed": true
+} satisfies T.DeviceInfo
+
+export const DeviceInfo__apple_silicon = {
+  "total_memory": 34359738368,
+  "apple_silicon": true,
+  "gpus": [],
+  "gpu_probed": true
+} satisfies T.DeviceInfo
+
+export const GpuInfo = {
+  "name": "NVIDIA GeForce RTX 3060",
+  "vram_total_mb": 12288,
+  "integrated": false
+} satisfies T.GpuInfo
+
+export const Fitness = {
+  "level": "insufficient",
+  "reason_key": "settings.offline.fitness.low_memory"
+} satisfies T.Fitness
+
+export const OfflineSummary = {
+  "installed": [
+    "paddleocr_vl_1_6"
+  ]
+} satisfies T.OfflineSummary
+
 export const OnboardingHotkey = {
   "action": "ocr"
 } satisfies T.EventMap['onboarding:hotkey']
@@ -2369,7 +2634,7 @@ export const HotkeyTestReceived = {
 } satisfies T.EventMap['hotkey:test_received']
 
 export const Settings = {
-  "schema_version": 1,
+  "schema_version": 2,
   "general": {
     "launch_at_login": true,
     "start_hidden": true,
@@ -2549,6 +2814,13 @@ export const Settings = {
       "ocr_history": true,
       "verification_codes": true
     }
+  },
+  "offline": {
+    "ocr_model": null,
+    "translate_model": null,
+    "idle_release_min": 5,
+    "use_gpu": true,
+    "download_source": "auto"
   }
 } satisfies T.Settings
 
@@ -2742,6 +3014,14 @@ export const SyncSettings = {
     "verification_codes": true
   }
 } satisfies T.Settings['sync']
+
+export const OfflineSettings = {
+  "ocr_model": "pp_ocrv6_small",
+  "translate_model": "index_translate_9b",
+  "idle_release_min": 15,
+  "use_gpu": false,
+  "download_source": "model_scope"
+} satisfies T.Settings['offline']
 
 export const SyncContent = {
   "settings": false,

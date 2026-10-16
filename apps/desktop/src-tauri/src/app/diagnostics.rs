@@ -1,6 +1,9 @@
 //! 诊断导出：把日志、脱敏后的 settings.json、styles.json、state.json 与 `app_info` 打包成 zip，
 //! 输出到用户在保存对话框里选择的位置。
 //!
+//! `app_info` 里另有离线模型的摘要（已安装的模型 id 与大小、运行时版本、推理进程的状态、最近一次失败的种类、内存与
+//! 显卡名称），不含模型目录的路径。
+//!
 //! 诊断包**不含** Key（Key 只在钥匙串里，本来就读不到）、请求头的值、URL 的 query、同步服务器的地址与账号、同步用的
 //! 设备编号（它是服务器上文件名的一部分）、正文（剪贴板、
 //! OCR、译文从不写日志，术语表与同步的本机数据库不打包）。日志逐行再过一遍 `logging::redact`；日志总量上限 [`MAX_LOG_BYTES`]（取最新的）。
@@ -47,6 +50,8 @@ pub async fn export(app: &tauri::AppHandle) -> Result<Option<String>, IpcError> 
             "startup_ms": state.perf.startup(),
             "arch": std::env::consts::ARCH,
             "debug_build": cfg!(debug_assertions),
+            // 离线模型：模型 id 与大小、运行时版本、槽位状态、最近一次失败的种类、内存与显卡名称（不含路径）
+            "offline": state.models.diagnostics(),
         }))
         .unwrap_or(Value::Null),
         settings: redacted_settings(&state.settings.get()),

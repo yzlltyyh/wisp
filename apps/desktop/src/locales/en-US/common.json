@@ -58,7 +58,10 @@
     "no_results": "No results",
     "on": "On",
     "off": "Off",
-    "selected": "Selected"
+    "selected": "Selected",
+    "loading_model": "Loading the offline model…",
+    "loading_slow": "The first load takes 10–20 seconds; later ones are much faster",
+    "queued": "Processing in the cloud…"
   },
   "lang": {
     "auto": "Detect",
@@ -133,5 +136,20 @@
     "paragraphs": "Paragraphs",
     "markdown": "Structured",
     "translate": "Direct translation"
+  },
+  "offline_model": {
+    "pp_ocrv6_tiny": "PP-OCRv6 Tiny",
+    "pp_ocrv6_small": "PP-OCRv6 Small",
+    "paddleocr_vl_1_6": "PaddleOCR-VL-1.6",
+    "index_translate_2b": "Index-Translate 2B",
+    "index_translate_9b": "Index-Translate 9B"
+  },
+  "download_error": {
+    "network": "The connection dropped. What’s downloaded is kept, and retrying picks up where it stopped",
+    "server": "The download source is unavailable right now. Try again later",
+    "checksum_mismatch": "The files failed verification and were discarded. Try again",
+    "disk_full": "Not enough disk space. Free some up and try again",
+    "io": "Couldn’t write to the models folder",
+    "extract": "Couldn’t unpack the runtime. Try again"
   }
 }

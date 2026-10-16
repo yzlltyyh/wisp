@@ -449,6 +449,120 @@ fn runtime_info() -> RuntimeInfo {
         orphan_keys: 1,
         autostart_issue: None,
         sync: SyncStatus::off(),
+        offline: OfflineSummary {
+            installed: vec![LocalModelId::PpOcrV6Small, LocalModelId::IndexTranslate2b],
+        },
+    }
+}
+
+fn gpu() -> GpuInfo {
+    GpuInfo {
+        name: s("NVIDIA GeForce RTX 3060"),
+        vram_total_mb: 12_288,
+        integrated: false,
+    }
+}
+
+fn device_info() -> DeviceInfo {
+    DeviceInfo {
+        total_memory: Some(17_179_869_184),
+        apple_silicon: false,
+        gpus: vec![gpu()],
+        gpu_probed: true,
+    }
+}
+
+fn local_model(id: LocalModelId, state: LocalModelState, load: LoadState, fitness: Fitness) -> LocalModelInfo {
+    LocalModelInfo {
+        id,
+        kind: id.kind(),
+        download_bytes: 31_040_000,
+        pending_runtime_bytes: 0,
+        state,
+        load,
+        memory_estimate_mb: 300,
+        fitness,
+        update_available: false,
+    }
+}
+
+fn local_models_snapshot() -> LocalModelsSnapshot {
+    LocalModelsSnapshot {
+        models: vec![
+            local_model(
+                LocalModelId::PpOcrV6Tiny,
+                LocalModelState::NotInstalled,
+                LoadState::Unloaded,
+                Fitness::plain(FitnessLevel::Good),
+            ),
+            local_model(
+                LocalModelId::PpOcrV6Small,
+                LocalModelState::Installed,
+                LoadState::Loaded,
+                Fitness::plain(FitnessLevel::Good),
+            ),
+            LocalModelInfo {
+                download_bytes: 1_953_600_000,
+                pending_runtime_bytes: 32_200_000,
+                memory_estimate_mb: 3_000,
+                ..local_model(
+                    LocalModelId::PaddleOcrVl16,
+                    LocalModelState::Downloading {
+                        done: 820_000_000,
+                        total: 1_985_800_000,
+                        bytes_per_sec: 12_400_000,
+                    },
+                    LoadState::Unloaded,
+                    Fitness::plain(FitnessLevel::Good),
+                )
+            },
+            LocalModelInfo {
+                download_bytes: 1_312_164_352,
+                memory_estimate_mb: 2_200,
+                update_available: true,
+                ..local_model(
+                    LocalModelId::IndexTranslate2b,
+                    LocalModelState::Installed,
+                    LoadState::Loading,
+                    Fitness::plain(FitnessLevel::Good),
+                )
+            },
+            LocalModelInfo {
+                download_bytes: 5_780_090_304,
+                memory_estimate_mb: 7_500,
+                ..local_model(
+                    LocalModelId::IndexTranslate9b,
+                    LocalModelState::Paused {
+                        done: 1_200_000_000,
+                        total: 5_780_090_304,
+                    },
+                    LoadState::Unloaded,
+                    Fitness {
+                        level: FitnessLevel::Slow,
+                        reason_key: Some(s("settings.offline.fitness.cpu_only")),
+                    },
+                )
+            },
+        ],
+        runtimes: vec![
+            LocalRuntimeInfo {
+                id: LocalRuntimeId::LlamaCpp,
+                version: s("b11669"),
+                installed: true,
+                size: 61_000_000,
+                in_use: true,
+            },
+            LocalRuntimeInfo {
+                id: LocalRuntimeId::OnnxRuntime,
+                version: s("1.28.3"),
+                installed: false,
+                size: 9_100_000,
+                in_use: false,
+            },
+        ],
+        device: device_info(),
+        disk_used: 2_400_000_000,
+        disk_free: Some(120_000_000_000),
     }
 }
 
@@ -756,6 +870,13 @@ fn all_samples() -> Samples {
             phase: StreamPhase::Reviewing,
         },
     );
+    // 离线模型冷启动时的阶段（文件名后缀不是标签值，不参与后缀检查）
+    x.add(
+        "StreamEvent.phase_loading_model",
+        StreamEvent::Phase {
+            phase: StreamPhase::LoadingModel,
+        },
+    );
     x.add(
         "StreamEvent.delta",
         StreamEvent::Delta {
@@ -766,6 +887,13 @@ fn all_samples() -> Samples {
         "StreamEvent.notice",
         StreamEvent::Notice {
             kind: NoticeKind::ParamDegraded,
+        },
+    );
+    // 离线文档识别有区域没能识别（文件名后缀不是标签值，不参与后缀检查）
+    x.add(
+        "StreamEvent.notice_partial",
+        StreamEvent::Notice {
+            kind: NoticeKind::Partial,
         },
     );
     x.add(
@@ -1087,6 +1215,22 @@ fn all_samples() -> Samples {
         NotReady::SelectionUnavailable {
             reason_key: s("errors.platform.clipboard_too_large"),
         },
+    );
+    x.add(
+        "NotReady.offline_model_missing",
+        NotReady::OfflineModelMissing {
+            model: LocalModelId::IndexTranslate2b,
+        },
+    );
+    x.add(
+        "NotReady.offline_model_downloading",
+        NotReady::OfflineModelDownloading {
+            model: LocalModelId::PaddleOcrVl16,
+        },
+    );
+    x.add(
+        "NotReady.offline_task_unsupported",
+        NotReady::OfflineTaskUnsupported { task: TaskKind::Polish },
     );
     x.add("OcrPayload", ocr_payload());
     x.add("ClipboardPayload", clipboard_payload());
@@ -1468,6 +1612,83 @@ fn all_samples() -> Samples {
         },
     );
 
+    // ===== ipc：离线模型 =====
+    x.add("LocalModelsSnapshot", local_models_snapshot());
+    x.add(
+        "LocalModelInfo",
+        local_model(
+            LocalModelId::PaddleOcrVl16,
+            LocalModelState::Failed {
+                code: DownloadErrorCode::DiskFull,
+            },
+            LoadState::Unloaded,
+            Fitness {
+                level: FitnessLevel::Unknown,
+                reason_key: Some(s("settings.offline.fitness.gpu_unknown")),
+            },
+        ),
+    );
+    x.add("LocalModelState.not_installed", LocalModelState::NotInstalled);
+    x.add("LocalModelState.queued", LocalModelState::Queued);
+    x.add(
+        "LocalModelState.downloading",
+        LocalModelState::Downloading {
+            done: 3_100_000,
+            total: 6_240_000,
+            bytes_per_sec: 0,
+        },
+    );
+    x.add(
+        "LocalModelState.paused",
+        LocalModelState::Paused {
+            done: 3_100_000,
+            total: 6_240_000,
+        },
+    );
+    x.add("LocalModelState.verifying", LocalModelState::Verifying);
+    x.add("LocalModelState.installed", LocalModelState::Installed);
+    x.add("LocalModelState.broken", LocalModelState::Broken);
+    x.add(
+        "LocalModelState.failed",
+        LocalModelState::Failed {
+            code: DownloadErrorCode::ChecksumMismatch,
+        },
+    );
+    x.add(
+        "LocalRuntimeInfo",
+        LocalRuntimeInfo {
+            id: LocalRuntimeId::OnnxRuntime,
+            version: s("1.28.3"),
+            installed: true,
+            size: 21_400_000,
+            in_use: true,
+        },
+    );
+    x.add("DeviceInfo", device_info());
+    x.add(
+        "DeviceInfo.apple_silicon",
+        DeviceInfo {
+            total_memory: Some(34_359_738_368),
+            apple_silicon: true,
+            gpus: Vec::new(),
+            gpu_probed: true,
+        },
+    );
+    x.add("GpuInfo", gpu());
+    x.add(
+        "Fitness",
+        Fitness {
+            level: FitnessLevel::Insufficient,
+            reason_key: Some(s("settings.offline.fitness.low_memory")),
+        },
+    );
+    x.add(
+        "OfflineSummary",
+        OfflineSummary {
+            installed: vec![LocalModelId::PaddleOcrVl16],
+        },
+    );
+
     x.add_as(
         "OnboardingHotkey",
         "T.EventMap['onboarding:hotkey']",
@@ -1622,6 +1843,17 @@ fn all_samples() -> Samples {
                 images: false,
                 ..SyncContent::default()
             },
+        },
+    );
+    x.add_as(
+        "OfflineSettings",
+        "T.Settings['offline']",
+        OfflineSettings {
+            ocr_model: Some(LocalModelId::PpOcrV6Small),
+            translate_model: Some(LocalModelId::IndexTranslate9b),
+            idle_release_min: 15,
+            use_gpu: false,
+            download_source: DownloadSource::ModelScope,
         },
     );
     x.add_as(
@@ -1821,7 +2053,7 @@ fn settings_tolerate_missing_fields() {
 /// 下面的默认内容示例（excluded_apps 以预置名单代替占位）必须与 `Settings::default()` 一致
 #[test]
 fn settings_default_matches_contract_example() {
-    let mut example = serde_json::json!({ "schema_version": 1,
+    let mut example = serde_json::json!({ "schema_version": 2,
       "general": { "launch_at_login": true, "start_hidden": true, "ui_language": "system", "update_policy": "notify", "developer_mode": false },
       "hotkeys": { "bindings": {}, "bobber": { "enabled": false }, "double_tap": { "enabled": false, "key": null, "interval_ms": 300 },
         "mouse": { "enabled": false, "long_press": false, "middle": { "enabled": true, "action": "translate_selection" }, "back": { "enabled": false, "action": "clipboard" }, "forward": { "enabled": false, "action": "ocr" } },
@@ -1834,7 +2066,8 @@ fn settings_default_matches_contract_example() {
       "appearance": { "theme": "system", "accent": "system", "font_size": 14, "translate_min_width": 360, "translate_max_width": 520, "clipboard_width": 420, "max_height_ratio": 0.6, "material": "system", "reduce_motion": "system" },
       "advanced": { "log_level": "info", "webview_low_memory_when_hidden": true, "unload_panel_after_idle_min": null },
       "sync": { "enabled": false, "server_url": "", "username": "", "auto": true,
-        "content": { "settings": true, "api_keys": true, "clipboard": true, "images": true, "ocr_history": true, "verification_codes": true } } });
+        "content": { "settings": true, "api_keys": true, "clipboard": true, "images": true, "ocr_history": true, "verification_codes": true } },
+      "offline": { "ocr_model": null, "translate_model": null, "idle_release_min": 5, "use_gpu": true, "download_source": "auto" } });
     example["clipboard"]["excluded_apps"] =
         serde_json::to_value(wisp_types::defaults::default_excluded_apps()).expect("序列化失败");
     // 注意：f32 经 `serde_json::to_value` 会被拓宽成 0.6000000238418579；落盘与 IPC 都走 `to_string`（输出 0.6），

@@ -73,6 +73,10 @@
     "internal": {
       "title": "Something went wrong",
       "detail": "Please retry. If it keeps happening, export diagnostics from About"
+    },
+    "local_runtime": {
+      "title": "The offline model hit a problem",
+      "detail": "Please retry. If it keeps happening, free memory or download the model again in Settings › Offline models"
     }
   },
   "subcode": {
@@ -99,7 +103,17 @@
     "check_protocol": "Check that the protocol matches the base_url",
     "check_settings": "Check the service settings",
     "param_adjusted": "Incompatible parameters were adjusted. Click Retry",
-    "param_rejected": "The model rejected a request parameter. Switch model or check the service template"
+    "param_rejected": "The model rejected a request parameter. Switch model or check the service template",
+    "local": {
+      "out_of_memory": "Not enough free memory. Close some apps or use a smaller model, then retry",
+      "vc_runtime_missing": "The Microsoft Visual C++ runtime is missing. Install it, then retry",
+      "system_library_missing": "A system library the inference component needs is missing. Update your system or install it, then retry",
+      "gpu_failed": "GPU acceleration failed. Turn off GPU acceleration in settings, then retry",
+      "start_failed": "The inference component could not start, possibly blocked by security software. Delete it in settings and download it again",
+      "crashed": "The offline model stopped unexpectedly. Please retry",
+      "model_corrupt": "Model files are missing or damaged. Download the model again in settings",
+      "load_timeout": "Loading the model timed out. Please retry; the first load can take longer on a slow disk"
+    }
   },
   "details": {
     "title": "Details",
@@ -116,7 +130,8 @@
     "retry_in": "Retry in {n}s",
     "open_settings": "Open settings",
     "choose_model": "Choose model",
-    "switch_model": "Switch model"
+    "switch_model": "Switch model",
+    "vc_runtime": "Get the runtime"
   },
   "ipc": {
     "invalid_argument": "Invalid argument",

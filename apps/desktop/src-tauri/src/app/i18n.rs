@@ -132,6 +132,8 @@ const KEYS: &[&str] = &[
     "notify.update_ready.body",
     "notify.update_installing.title",
     "notify.update_installing.body",
+    "notify.offline_ready.title",
+    "notify.offline_ready.body",
     "app_menu.about",
     "app_menu.settings",
     "app_menu.hide",
@@ -265,6 +267,11 @@ fn lookup(lang: Lang, key: &str) -> Option<&'static str> {
         (EnUs, "notify.update_installing.title") => "Updating Wisp",
         (ZhCn, "notify.update_installing.body") => "正在安装 {version}，完成后会自动重新打开。",
         (EnUs, "notify.update_installing.body") => "Installing version {version}. Wisp will reopen when it's done.",
+        // 离线模型下载完成（设置窗口不在前台时；{model} 是模型的产品名，不翻译）
+        (ZhCn, "notify.offline_ready.title") => "离线模型已下载",
+        (EnUs, "notify.offline_ready.title") => "Offline model downloaded",
+        (ZhCn, "notify.offline_ready.body") => "{model} 已可以使用，识别与翻译都在这台设备上完成。",
+        (EnUs, "notify.offline_ready.body") => "{model} is ready. Recognition and translation run on this device.",
         // ---- macOS 应用菜单（app_menu.rs；用词与系统应用一致） ----
         (ZhCn, "app_menu.about") => "关于 Wisp",
         (EnUs, "app_menu.about") => "About Wisp",

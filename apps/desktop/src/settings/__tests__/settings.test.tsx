@@ -122,6 +122,7 @@ describe('窗口框架', () => {
       'settings-nav-general',
       'settings-nav-hotkeys',
       'settings-nav-providers',
+      'settings-nav-offline',
       'settings-nav-translate',
       'settings-nav-ocr',
       'settings-nav-clipboard',
@@ -158,7 +159,7 @@ describe('窗口框架', () => {
     await screen.findByTestId('general-launch')
     const general = screen.getByTestId('settings-nav-general')
     general.focus()
-    for (let i = 0; i < 5; i++)
+    for (let i = 0; i < 6; i++)
       fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'ArrowDown' })
     expect(screen.getByTestId('settings-nav-clipboard')).toHaveFocus()
     await waitFor(() =>

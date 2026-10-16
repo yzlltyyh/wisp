@@ -17,7 +17,7 @@
 //! - 每个顶层分组的每个字段是一个 key：`/<group>/<field>`；更深的值整体作为一个寄存器
 //!   （`Option<结构体>` 因此天然是原子的，不会拼出半新半旧的模型引用）。
 //! - 只属于本机的字段不投影，反投影时保留本机值：`schema_version`、开机启动、开发者模式、`advanced`、`sync`、
-//!   剪贴板记录开关、疑似密钥检测、识别历史开关。
+//!   `offline`（离线模型的选择）、剪贴板记录开关、疑似密钥检测、识别历史开关。
 //! - 按系统区分的字段：快捷键绑定、双击修饰键、复制等待、窗口材质（`@<os>/hotkeys/bindings` 等）。
 //! - `providers`：每个 provider 一个整体寄存器 `/providers/<id>`，删除即墓碑；顺序是另一个寄存器
 //!   `/providers/@order`（id 数组）。provider 的值去掉本机学习到的模型能力缓存（`caps`、`missing_upstream`、
@@ -517,8 +517,9 @@ fn order_ids(value: &Value) -> Option<Vec<String>> {
 const PROVIDERS: &str = "providers";
 const SCHEMA_VERSION: &str = "schema_version";
 
-/// 整组只属于本机的分组
-const LOCAL_GROUPS: [&str; 2] = ["advanced", "sync"];
+/// 整组只属于本机的分组。`offline`：各设备的算力不同，而且同步绝不能把一台选了离线模型的设备改回云端（用户选择离线，
+/// 识别与翻译的内容就不上传）
+const LOCAL_GROUPS: [&str; 3] = ["advanced", "sync", "offline"];
 
 /// 只属于本机的字段：开机启动会安装系统自启项；开发者模式、剪贴板记录开关、疑似密钥检测、识别历史开关
 /// 是每台设备自己的选择（例如工作电脑不记录剪贴板）
@@ -1248,6 +1249,8 @@ mod tests {
         assert_eq!(parse_settings_key("/providers/@other"), SettingsKey::Unknown);
         assert_eq!(parse_settings_key("/schema_version"), SettingsKey::Local);
         assert_eq!(parse_settings_key("/advanced/log_level"), SettingsKey::Local);
+        assert_eq!(parse_settings_key("/offline/translate_model"), SettingsKey::Local);
+        assert_eq!(parse_settings_key("/offline/use_gpu"), SettingsKey::Local);
         assert_eq!(parse_settings_key("/hotkeys/bindings"), SettingsKey::Unknown);
         assert_eq!(parse_settings_key("/clipboard/excluded_apps"), SettingsKey::Unknown);
         assert_eq!(parse_settings_key("/translate/nope"), SettingsKey::Unknown);
@@ -1308,6 +1311,9 @@ mod tests {
             .chain(OS_APP_SETS.iter())
         {
             assert!(schema.get(*g).is_some_and(|s| s.contains(*f)), "{g}.{f}");
+        }
+        for g in LOCAL_GROUPS {
+            assert!(schema.contains_key(g), "{g}");
         }
     }
 }

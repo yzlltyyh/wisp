@@ -39,6 +39,8 @@ import './ocr.css'
 import {
   ChevronDown,
   BrainCircuit,
+  Code,
+  Table2,
   CircleAlert,
   Crop,
   Ellipsis,
@@ -114,6 +116,15 @@ import {
 } from '../../shared/ui'
 import { syncFadeEdges } from '../../shared/ui/ScrollArea'
 import {
+  OCR_MODELS,
+  engineSupports,
+  isSlowCloudModel,
+  ocrEngineOf,
+  offlineIdOf,
+  offlineRef,
+  type OcrEngine,
+} from '../../shared/offline/catalog'
+import {
   LAYOUT,
   OCR_MODES,
   copyTarget,
@@ -125,10 +136,13 @@ import {
   sameModel,
   selectedText,
   settingsSectionFor,
+  hasStructure,
   styleList,
   thumbMaxWidth,
   visionModels,
 } from './model'
+import { useStructuredModule } from './structuredModule'
+import { isOfflineNotReady, OfflineCard } from '../../shared/offline/OfflineCard'
 import type { ChipMode } from '../clipboard/entities'
 import { LongTextPrompt } from '../translate/LongTextPrompt'
 import { registerOcrMessages } from './i18n'
@@ -256,6 +270,13 @@ export function OcrView(props: OcrViewProps) {
     dir: 1,
     compact: 0,
   })
+  /**
+   * 载荷里的未就绪已经解决（离线模型在卡片上下载完成、这张截图还在）：视图转为正常识别。只在面板里发生
+   */
+  const [readyNow, setReadyNow] = useState(false)
+  /** 结构化结果有表格 / 公式时默认显示预览；切到源码后才能编辑（本次会话内记住选择） */
+  const [showSource, setShowSource] = useState(false)
+  const blocked = payload.not_ready !== null && !readyNow
   /** 第一次有结果之后底栏一直保留（重新识别期间也在，按钮按状态置灰） */
   const [footerSeen, setFooterSeen] = useState(false)
   const errorRef = useRef<HTMLDivElement>(null)
@@ -291,11 +312,24 @@ export function OcrView(props: OcrViewProps) {
   const styles = styleList(snap)
   const effStyle = styleId ?? defaultStyleId(snap)
   const models = visionModels(snap)
+  /** 本机选用的离线识别模型（优先于默认 OCR 模型） */
+  const offlineOcr = snap?.settings.offline?.ocr_model ?? null
   const currentModel: ModelRef | null =
     model ??
     (main.state.start
       ? { provider_id: main.state.start.provider_id, model_id: main.state.start.model_id }
-      : (snap?.settings.defaults.ocr ?? null))
+      : offlineOcr
+        ? offlineRef(offlineOcr)
+        : (snap?.settings.defaults.ocr ?? null))
+  /** 下一次识别会用到的引擎（决定哪些模式可用：PP-OCRv6 没有「结构化」） */
+  const engineFor = (ref: ModelRef | null): OcrEngine =>
+    ocrEngineOf(
+      ref,
+      offlineOcr,
+      snap?.settings.defaults.ocr ?? null,
+      snap?.settings.providers ?? [],
+    )
+  const engine = engineFor(model)
   const ocrText = edit ?? main.text()
   const edited = edit !== null && edit !== main.text()
 
@@ -413,7 +447,7 @@ export function OcrView(props: OcrViewProps) {
 
   /** 识别（重新识别、换模式 / 模型）；编辑过的文本会被覆盖时先确认 */
   function recognize(next: Rerun = {}, force = false): void {
-    if (payload.not_ready && !pinned) return
+    if (blocked && !pinned) return
     if (!force && edited && !direct) {
       setConfirm(next)
       return
@@ -677,7 +711,7 @@ export function OcrView(props: OcrViewProps) {
   }
 
   function pin(): void {
-    if (host !== 'panel' || payload.not_ready) return
+    if (host !== 'panel' || blocked) return
     const ocrDone = settled(main)
     // 译文区展开但译文请求还没有 id：固定窗口不能把识别请求接到译文区上（见 OcrViewProps.pin）
     const trAttach = trOpen && tr.state.requestId !== null
@@ -770,7 +804,7 @@ export function OcrView(props: OcrViewProps) {
       run: () => pickStyle(st.id),
     })
   })
-  useKeyScope('ocr', bindings, { enabled: !payload.not_ready || pinned !== null })
+  useKeyScope('ocr', bindings, { enabled: !blocked || pinned !== null })
 
   // ---- 布局（flex，见 ocr.css；这里只给出上限与下限，并在内容变矮时让下方的块贴着卡片底边）----
 
@@ -807,7 +841,7 @@ export function OcrView(props: OcrViewProps) {
     section: sectionBox.current?.offsetHeight ?? 0,
   })
   const mainNatural = (): number => {
-    const el = mainBox.current?.querySelector<HTMLElement>('textarea, .ui-stream')
+    const el = mainBox.current?.querySelector<HTMLElement>('textarea, .ui-stream, .ocr-preview')
     return el ? el.scrollHeight : 0
   }
   // 每次提交之后（布局刚算过）：内容变矮、卡片随后收缩时，让下方的块贴着卡片底边；记下是否已到上限、正文的自然高度。
@@ -866,8 +900,11 @@ export function OcrView(props: OcrViewProps) {
 
   // OCR 文本框：可滚动方向的边缘渐隐（与 StreamView 一致）
   const textRef = useRef<HTMLTextAreaElement>(null)
+  /** 结构化结果的预览（与文本框同一个位置、同样的边缘渐隐） */
+  const previewRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     if (textRef.current && active) syncFadeEdges(textRef.current)
+    if (previewRef.current && active) syncFadeEdges(previewRef.current)
   })
   const editableNow = !direct && (main.state.phase === 'done' || main.state.phase === 'cancelled')
   useEffect(() => {
@@ -925,16 +962,71 @@ export function OcrView(props: OcrViewProps) {
       data-testid={testId}
     />
   )
-  const modelItems: MenuEntry[] = models.length
-    ? models.map((v) => ({
-        id: `model-${v.ref.provider_id}/${v.ref.model_id}`,
-        label: modelLabel(v.model),
-        hint: v.unconfirmed ? t('ocr.menu.unknown_vision') : v.provider.name,
-        checked: sameModel(v.ref, currentModel),
-        onSelect: () => recognize({ model: v.ref }),
-      }))
-    : [{ id: 'no-models', label: t('ocr.menu.no_models'), disabled: true }]
-  const currentModelLabel = models.find((v) => sameModel(v.ref, currentModel))?.model ?? null
+  // 识别模型菜单：已下载的离线模型、文字识别服务（PaddleOCR）、各服务的视觉模型。只有一类时不加分组标题（与原来一样
+  // 是一列模型，服务名在右侧）
+  const installedOffline = OCR_MODELS.filter((id) => snap?.runtime.offline?.installed.includes(id))
+  const services = models.filter((v) => v.service)
+  const llms = models.filter((v) => !v.service)
+  const grouped =
+    [installedOffline.length > 0, services.length > 0, llms.length > 0].filter(Boolean).length > 1
+  /** 选一个模型重新识别：新模型不支持当前的「结构化」时改用段落（与 Rust 的兜底一致，界面不留一个置灰的选中项） */
+  const pickModel = (ref: ModelRef) =>
+    recognize(
+      mode === 'markdown' && !direct && !engineSupports(engineFor(ref), 'markdown')
+        ? { model: ref, mode: 'paragraphs' }
+        : { model: ref },
+    )
+  const llmItem = (v: (typeof models)[number]): MenuEntry => ({
+    id: `model-${v.ref.provider_id}/${v.ref.model_id}`,
+    label: modelLabel(v.model),
+    hint: v.unconfirmed
+      ? t('ocr.menu.unknown_vision')
+      : grouped && v.service
+        ? undefined
+        : v.provider.name,
+    checked: sameModel(v.ref, currentModel),
+    onSelect: () => pickModel(v.ref),
+  })
+  const modelItems: MenuEntry[] =
+    models.length || installedOffline.length
+      ? [
+          ...(installedOffline.length > 0 && grouped
+            ? [{ type: 'label' as const, id: 'group-offline', label: t('ocr.menu.offline') }]
+            : []),
+          ...installedOffline.map((id): MenuEntry => ({
+            id: `model-offline/${id}`,
+            label: t(`common.offline_model.${id}`),
+            checked: sameModel(offlineRef(id), currentModel),
+            onSelect: () => pickModel(offlineRef(id)),
+          })),
+          ...services.flatMap((v, i): MenuEntry[] => [
+            ...(grouped && (i === 0 || services[i - 1]?.provider.id !== v.provider.id)
+              ? [
+                  ...(i > 0 || installedOffline.length > 0
+                    ? [{ type: 'separator' as const, id: `sep-${v.provider.id}` }]
+                    : []),
+                  { type: 'label' as const, id: `group-${v.provider.id}`, label: v.provider.name },
+                ]
+              : []),
+            llmItem(v),
+          ]),
+          ...(grouped && llms.length > 0
+            ? [
+                { type: 'separator' as const, id: 'sep-llm' },
+                { type: 'label' as const, id: 'group-llm', label: t('ocr.menu.cloud') },
+              ]
+            : []),
+          ...llms.map(llmItem),
+        ]
+      : [{ id: 'no-models', label: t('ocr.menu.no_models'), disabled: true }]
+  /** 当前模型的显示名（离线模型用它的本地化名称） */
+  const currentLocal = offlineIdOf(currentModel)
+  const currentModelName: string | null = currentLocal
+    ? t(`common.offline_model.${currentLocal}`)
+    : (() => {
+        const hit = models.find((v) => sameModel(v.ref, currentModel))?.model
+        return hit ? modelLabel(hit) : null
+      })()
   const styleMenuLabel = t('ocr.a11y.style_menu')
   // 模式页：三种模式 +「视觉模型 ›」（同一个浮层里换成模型页）+「OCR 设置…」；矮面板里按 compact 收起低频项
   const mainItems = (compact: MenuState['compact']): MenuEntry[] => [
@@ -944,20 +1036,29 @@ export function OcrView(props: OcrViewProps) {
           ...(compact < 2
             ? [{ type: 'label' as const, id: 'modes', label: t('ocr.menu.modes') }]
             : []),
-          ...OCR_MODES.map((each) => ({
-            id: `mode-${each}`,
-            label: t(`common.ocr_mode.${each}`),
-            // 说明放第二行（可以折行）：右侧的提示列放不下整句时会被截成省略号（Chromium / WebView2）
-            description: compact < 3 ? t(`ocr.mode_hint.${each}`) : undefined,
-            checked: each === mode,
-            onSelect: () => recognize({ mode: each }),
-          })),
+          ...OCR_MODES.map((each) => {
+            // 当前引擎不支持的模式（PP-OCRv6 与云端 PP-OCRv6 没有「结构化」）：置灰，第二行说明原因
+            const supported = engineSupports(engine, each)
+            return {
+              id: `mode-${each}`,
+              label: t(`common.ocr_mode.${each}`),
+              // 说明放第二行（可以折行）：右侧的提示列放不下整句时会被截成省略号（Chromium / WebView2）
+              description: !supported
+                ? t('ocr.menu.mode_unsupported', { model: currentModelName ?? '' })
+                : compact < 3
+                  ? t(`ocr.mode_hint.${each}`)
+                  : undefined,
+              disabled: !supported,
+              checked: each === mode,
+              onSelect: () => recognize({ mode: each }),
+            }
+          }),
           { type: 'separator' as const, id: 'sep-modes' },
         ]),
     {
       id: 'models',
       label: t('ocr.menu.models'),
-      hint: currentModelLabel ? modelLabel(currentModelLabel) : undefined,
+      hint: currentModelName ?? undefined,
       submenu: true,
       onSelect: () => openMenu('footer', 'models', 1),
     },
@@ -1039,17 +1140,27 @@ export function OcrView(props: OcrViewProps) {
   const exhausted = done && s.done?.truncated === 'max_tokens' && !s.hasText
   const noText = done && (exhausted || s.done?.no_text === true || !s.hasText)
   const editable = !direct && ((done && !noText) || (cancelled && s.hasText))
-  const notReady: NotReady | null = pinned ? null : payload.not_ready
+  const notReady: NotReady | null = pinned || !blocked ? null : payload.not_ready
+  /** 离线模型在卡片上下载完成：截图还在（有 capture_id）就直接识别这张截图，否则卡片提示重新截图 */
+  const offlineReady = (): void => {
+    if (!payload.capture_id) return
+    setReadyNow(true)
+    main.begin((cb) => api.ocrStart(ocrReq(mode, null, direct ? payload.target_lang : null), cb))
+  }
   const modeName = t(`common.ocr_mode.${direct ? 'translate' : mode}`)
   // 头部第二行：识别中… / 「模式 · 模型」（出错时同样保留，失败只由错误卡片表达）
   let metaStatus: ReactNode = null
   if (!notReady) {
     if (live(main) || s.phase === 'idle') {
-      metaStatus = t(direct ? 'common.state.translating' : 'common.state.recognizing')
+      // 等第一段文字时：离线模型冷启动、云端排队各有一句（同一句也出现在骨架下方）
+      metaStatus =
+        s.stage === 'loading_model'
+          ? t('common.state.loading_model')
+          : s.stage === 'queued'
+            ? t('common.state.queued')
+            : t(direct ? 'common.state.translating' : 'common.state.recognizing')
     } else {
-      const modelName =
-        s.start?.model_label ||
-        (s.phase === 'error' && currentModelLabel ? modelLabel(currentModelLabel) : null)
+      const modelName = s.start?.model_label || (s.phase === 'error' ? currentModelName : null)
       // 「模式 · 模型」：放不下时在两段之间换行（不在模型名中间断开），换到行首的分隔点被裁掉（ocr.css）；
       // 读屏读到的仍是「模式 · 模型」
       metaStatus = (
@@ -1095,6 +1206,8 @@ export function OcrView(props: OcrViewProps) {
     tone: 'warning' as const,
   }
   const cachedNote = { icon: Zap, text: noteText(t('panel.status.cached')) }
+  // 文档解析有区域没能识别（结果不完整）：一句安静的提示，不用警示色——识别出的部分照常可用
+  const partialNote = { icon: Info, text: noteText(t('ocr.meta.partial')) }
   const degradedNote = { icon: Info, text: noteText(t('panel.status.param_degraded')) }
   // 重新识别期间头部已显示「识别中…」，状态行留空（不重复）；思考耗尽且没有结果时正文区的空状态已经说明原因，状态行
   // 只留模型 · 耗时（不再用琥珀色重复）
@@ -1104,13 +1217,15 @@ export function OcrView(props: OcrViewProps) {
       ? null
       : s.done?.truncated
         ? truncatedNote
-        : edited
-          ? { icon: Pencil, text: noteText(t('ocr.meta.edited')) }
-          : s.done?.cached
-            ? cachedNote
-            : s.notices.includes('param_degraded')
-              ? degradedNote
-              : null
+        : s.notices.includes('partial')
+          ? partialNote
+          : edited
+            ? { icon: Pencil, text: noteText(t('ocr.meta.edited')) }
+            : s.done?.cached
+              ? cachedNote
+              : s.notices.includes('param_degraded')
+                ? degradedNote
+                : null
 
   // 译文区的状态行提示：思考耗尽 > 已截断 > 原文已修改 > 来自缓存 > 参数降级
   const ts = tr.state
@@ -1141,14 +1256,28 @@ export function OcrView(props: OcrViewProps) {
           onOpenSettings={() => openSettings(settingsSectionFor(run.state.error?.code ?? ''))}
           onChooseModel={chooseModel ? () => openMenu('error', 'models') : undefined}
           onSwitchModel={chooseModel ? () => openMenu('error', 'models') : undefined}
+          onOpenUrl={(url) => void api.openUrl(url).catch(warn('open_url'))}
         />
       </div>
     ) : null
 
   const shrinkable = editable || live(main) || (settled(main) && !noText && direct)
+  // 结构化模式开始识别时就预取预览代码；结果里有表格 / 公式时默认显示预览（源码可以切换回来编辑）
+  const structuredMod = useStructuredModule(!direct && mode === 'markdown')
+  const structured = editable && mode === 'markdown' && hasStructure(ocrText)
+  const preview = structured && !showSource
   let body: ReactNode
   if (notReady) {
-    body = <NotReadyBody notReady={notReady} direct={direct} snap={snap} open={openSettings} />
+    body = (
+      <NotReadyBody
+        notReady={notReady}
+        direct={direct}
+        snap={snap}
+        open={openSettings}
+        onOfflineReady={offlineReady}
+        canResume={payload.capture_id !== ''}
+      />
+    )
   } else if (s.phase === 'error') {
     body = errorCard(main, () => recognize({}, true), true)
   } else if (noText) {
@@ -1201,6 +1330,18 @@ export function OcrView(props: OcrViewProps) {
         />
       </div>
     )
+  } else if (preview && structuredMod) {
+    const Preview = structuredMod.StructuredPreview
+    body = (
+      <Preview
+        text={ocrText}
+        label={t('ocr.a11y.text')}
+        className="ocr-text"
+        scrollRef={previewRef}
+        onScroll={(e) => syncFadeEdges(e.currentTarget)}
+        data-testid="ocr-preview"
+      />
+    )
   } else if (editable) {
     body = (
       <TextArea
@@ -1230,9 +1371,17 @@ export function OcrView(props: OcrViewProps) {
         skeleton={3}
         ghost={mainGhost}
         waitingNote={
-          direct && styleId !== null && live(src) && !mainGhost
-            ? t('ocr.translation.transcribing')
-            : null
+          // 头部已经写着「正在加载离线模型…」/「云端处理中…」：骨架下方只补一句为什么要等。加载通常一两秒就完成，
+          // 说明几秒后才淡入（CSS 的 animation-delay，见 components.css 的 .ui-late），快的时候不会一闪而过
+          s.stage === 'loading_model' ? (
+            <span className="ui-late">{t('common.state.loading_slow')}</span>
+          ) : s.stage === 'queued' ? (
+            engine.kind === 'cloud' && isSlowCloudModel(engine.model) ? (
+              t('ocr.wait.queued_slow')
+            ) : null
+          ) : direct && styleId !== null && live(src) && !mainGhost ? (
+            t('ocr.translation.transcribing')
+          ) : null
         }
         label={t(direct ? 'ocr.a11y.translation' : 'ocr.a11y.text')}
         data-testid="ocr-stream"
@@ -1360,11 +1509,22 @@ export function OcrView(props: OcrViewProps) {
               elapsedMs={settledStatus ? elapsedOf(s.done) : null}
               usage={settledStatus ? (s.done?.usage ?? null) : null}
               state={cancelled ? 'cancelled' : null}
-              note={note}
+              // 「已复制」只停留一两秒：显示期间由它占住提示的位置，之后提示（部分区域未能识别、来自缓存……）再回来——
+              // 两者并排时底栏放不下，「已复制」会被裁掉一半
+              note={toast.on ? null : note}
               trailing={<InlineToast show={toast.on}>{toast.text}</InlineToast>}
               className="ocr-status"
             />
             <span className="ocr-actions">
+              {structured && structuredMod ? (
+                <IconButton
+                  icon={showSource ? Table2 : Code}
+                  label={t(showSource ? 'ocr.preview.show_preview' : 'ocr.preview.show_source')}
+                  active={showSource}
+                  onClick={() => setShowSource((v) => !v)}
+                  data-testid="ocr-source-toggle"
+                />
+              ) : null}
               {noText ? null : (
                 <CopyButton
                   text={() => (direct ? main.text() : ocrText)}
@@ -1638,15 +1798,51 @@ function NotReadyBody({
   direct,
   snap,
   open,
+  onOfflineReady,
+  canResume,
 }: {
   notReady: NotReady
   direct: boolean
   snap: ReturnType<typeof useSettingsSnapshot>
   open: (section: SettingsSection) => void
+  /** 离线模型下载完成 */
+  onOfflineReady: () => void
+  /** 这张截图还在：下载完成后直接识别（否则提示重新截图） */
+  canResume: boolean
 }) {
   const t = useT()
   const action = direct ? 'ocr_translate' : 'ocr'
   const key = hotkeyFor(snap, action)
+  if (isOfflineNotReady(notReady)) {
+    const retakeNow = () => {
+      void api.triggerAction(action, 'panel').catch(warn('trigger_action'))
+    }
+    return (
+      <div className="ocr-notready">
+        <OfflineCard
+          notReady={notReady}
+          onReady={onOfflineReady}
+          readyAction={
+            canResume ? undefined : (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={retakeNow}
+                data-testid="ocr-offline-retake"
+              >
+                {t('panel.not_ready.retake')}
+                {key?.combo ? <Kbd combo={key.combo} variant="inline" /> : null}
+              </Button>
+            )
+          }
+          // 「切换模型」：设置 › OCR 的「OCR 模型」（本机的离线选择在那里改）
+          onSwitchModel={() => open('ocr')}
+          resumes={canResume}
+          data-testid="ocr-offline-card"
+        />
+      </div>
+    )
+  }
   let detail: ReactNode = null
   if (notReady.reason === 'permission_missing' && notReady.permission === 'screen_recording') {
     detail = key ? (

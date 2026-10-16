@@ -27,6 +27,12 @@ import type { MockAssets } from './assets'
 import type { MockBus } from './bus'
 import type { MockDesktop } from './desktop'
 import { HOTKEY_ACTIONS, SAMPLE, type MockFixtures } from './fixtures'
+import {
+  createOfflineState,
+  installOfflineDefaults,
+  offlineSummary,
+  type MockOffline,
+} from './localModels'
 import type { MockRouter } from './router'
 import { mockInspect } from './smart'
 import { textStream, type MockStreams } from './streams'
@@ -49,6 +55,8 @@ export interface MockState {
   onboardingDone: boolean
   /** 同步：状态与一台假的 WebDAV 服务器（sync.ts） */
   sync: MockSync
+  /** 离线模型：设置页的快照与下载进度（localModels.ts） */
+  offline: MockOffline
 }
 
 export function createState(f: MockFixtures): MockState {
@@ -65,6 +73,7 @@ export function createState(f: MockFixtures): MockState {
     update: f.update(),
     onboardingDone: false,
     sync: createSyncState(f),
+    offline: createOfflineState(f.os),
   }
 }
 
@@ -95,6 +104,7 @@ export function installDefaults(d: DefaultsDeps): void {
       update: state.update,
       glossary_count: state.glossary.length,
       sync: state.sync.status,
+      offline: offlineSummary(state.offline),
     },
   })
   const settingsChanged = () => {
@@ -635,6 +645,9 @@ export function installDefaults(d: DefaultsDeps): void {
 
   // ----- 同步
   installSyncDefaults(d)
+
+  // ----- 离线模型
+  installOfflineDefaults(d)
 }
 
 // ---------------------------------------------------------------------------
@@ -699,19 +712,25 @@ function overlayInit(d: DefaultsDeps, monitorId: string): OverlayInit {
   }
 }
 
-/** URL 预览的简化规则（权威实现在 wisp-llm/url.rs）：末尾 # 表示强制使用原样 URL */
+/**
+ * URL 预览的简化规则（权威实现在 wisp-llm/url.rs）：末尾 # 表示强制使用原样 URL；PaddleOCR 的地址就是完整的接口地址，
+ * 原样使用
+ */
 function previewUrl(
   p: Pick<Provider, 'protocol' | 'base_url'>,
   modelId: string | null,
 ): UrlPreview {
   const raw = p.base_url.trim()
+  if (p.protocol === 'paddle_ocr') {
+    return { method: 'POST', url: raw.replace(/\/+$/, ''), version_appended: false, forced: false }
+  }
   if (raw.endsWith('#')) {
     return { method: 'POST', url: raw.slice(0, -1), version_appended: false, forced: true }
   }
   const base = raw.replace(/\/+$/, '')
   const hasVersion = /\/v\d+(beta\d*)?$/.test(base)
   const model = modelId ?? '{model}'
-  const path: Record<Provider['protocol'], [string, string]> = {
+  const path: Record<Exclude<Provider['protocol'], 'paddle_ocr'>, [string, string]> = {
     openai_chat: ['/v1', '/chat/completions'],
     openai_responses: ['/v1', '/responses'],
     anthropic_messages: ['/v1', '/messages'],

@@ -144,11 +144,13 @@ pub(crate) fn normalize(base: &str, protocol: Protocol) -> Normalized {
     } else {
         format!("https://{s}")
     };
-    let version_appended = !forced && !has_version_segment(path_of(&prefix));
+    // PaddleOCR 的地址就是完整的接口地址（任务式 `…/ocr/jobs`、serving 式 `…/ocr` / `…/layout-parsing`），不补版本段
+    let version_appended = protocol.is_llm() && !forced && !has_version_segment(path_of(&prefix));
     if version_appended {
         prefix.push_str(match protocol {
             Protocol::OpenAiChat | Protocol::OpenAiResponses | Protocol::AnthropicMessages => "/v1",
             Protocol::Gemini => "/v1beta",
+            Protocol::PaddleOcr => "",
         });
     }
     Normalized {
@@ -200,6 +202,8 @@ pub(crate) fn join(prefix: &str, protocol: Protocol, ep: Endpoint, model: Option
         (Protocol::OpenAiChat | Protocol::OpenAiResponses, Endpoint::Models) => format!("{prefix}/models"),
         (Protocol::AnthropicMessages, Endpoint::Models) => format!("{prefix}/models?limit=1000"),
         (Protocol::Gemini, Endpoint::Models) => format!("{prefix}/models?pageSize=1000"),
+        // 原样使用用户填写的接口地址（没有模型列表端点）
+        (Protocol::PaddleOcr, _) => prefix.to_owned(),
     }
 }
 

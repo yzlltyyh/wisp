@@ -1,6 +1,6 @@
 /**
  * NotReadyCard：翻译 / OCR 视图的 `not_ready`（没有接入模型、没有默认 / 视觉模型、缺屏幕录制权限、
- * 截图失败、系统凭据存储不可用）。结构同 ErrorCard，语气是引导而不是报错（图标用中性色）。按钮只显示调用方提供了回调的那些。
+ * 截图失败、系统凭据存储不可用、离线模型未下载 / 下载中 / 不支持该任务）。结构同 ErrorCard，语气是引导而不是报错（图标用中性色）。按钮只显示调用方提供了回调的那些。
  * 出现动效 presets.cardIn。
  *
  * 取词失败（缺辅助功能权限、管理员窗口、Wayland 先复制、平台层给出原因的取词不可用）不走这张卡片：它们以输入视图打开，
@@ -12,7 +12,9 @@
  * - `detail`：覆盖默认说明（OCR 视图把「授权后按 ⌥S 重新截图」与说明合并成一句、带键帽）；
  * - `onRetry`：截图失败时的「重新截图」（`trigger_action(…, origin = panel)`；`retryShortcut` 是截图快捷键，
  *   以键帽显示在按钮里）。缺屏幕录制权限时没有它——macOS 要重启 Wisp 才生效，重新截图仍会落回这张卡片；
- * - `keychain_unavailable` 同样有「去设置」（Key 只能在设置里重新填写）。
+ * - `keychain_unavailable` 同样有「去设置」（Key 只能在设置里重新填写）；
+ * - 离线模型未下载 / 下载中：默认只有说明与「去设置」；视图用 shared/offline/OfflineCard 换上就地下载、进度与「切换模型」
+ *   （`title` / `children` / `actions` 覆盖默认的标题、在说明下方插入进度、替换按钮）。
  */
 import type { LucideIcon } from 'lucide-react'
 import {
@@ -20,6 +22,7 @@ import {
   ClipboardCopy,
   Cpu,
   Eye,
+  HardDriveDownload,
   KeyRound,
   ScreenShare,
   ShieldAlert,
@@ -52,6 +55,14 @@ export interface NotReadyCardProps {
   retryShortcut?: string | null
   /** 覆盖默认说明（调用方把补充提示合并进来时用） */
   detail?: ReactNode
+  /** 覆盖默认标题 */
+  title?: ReactNode
+  /** 说明下方的附加内容（例如下载进度） */
+  children?: ReactNode
+  /** 替换默认按钮 */
+  actions?: ReactNode
+  /** 覆盖默认图标 */
+  icon?: LucideIcon
   className?: string
   'data-testid'?: string
 }
@@ -70,6 +81,10 @@ export function NotReadyCard({
   onRetry,
   retryShortcut = null,
   detail: detailOverride,
+  title: titleOverride,
+  children,
+  actions,
+  icon: iconOverride,
   className,
   'data-testid': testId = 'not-ready-card',
 }: NotReadyCardProps) {
@@ -174,6 +189,25 @@ export function NotReadyCard({
         t('panel.not_ready.selection_unavailable.detail'),
       )
       break
+    // 离线模型：这里只给出说明与「去设置」；就地下载、进度与「切换模型」由视图按需补充
+    case 'offline_model_missing':
+    case 'offline_model_downloading': {
+      const model = t(`common.offline_model.${notReady.model}`)
+      icon = HardDriveDownload
+      title = t(`panel.not_ready.${notReady.reason}.title`, { model })
+      detail = t(`panel.not_ready.${notReady.reason}.detail`)
+      if (onOpenSettings)
+        buttons.push({ id: 'settings', label: t('common.action.go_settings'), run: onOpenSettings })
+      break
+    }
+    case 'offline_task_unsupported':
+      title = t('panel.not_ready.offline_task_unsupported.title')
+      detail = t('panel.not_ready.offline_task_unsupported.detail', {
+        task: t(`panel.task.${notReady.task}`),
+      })
+      if (onOpenSettings)
+        buttons.push({ id: 'settings', label: t('common.action.go_settings'), run: onOpenSettings })
+      break
   }
   return (
     <m.section
@@ -184,11 +218,16 @@ export function NotReadyCard({
       {...enter}
     >
       <span className="ui-notready-icon" aria-hidden="true">
-        <Icon icon={icon} size={18} />
+        <Icon icon={iconOverride ?? icon} size={18} />
       </span>
-      <p className="ui-notready-title">{title}</p>
+      <p className="ui-notready-title">{titleOverride ?? title}</p>
       <p className="ui-notready-detail">{keepQuoted(detailOverride ?? detail)}</p>
-      {buttons.length > 0 ? (
+      {children}
+      {actions !== undefined ? (
+        actions ? (
+          <div className="ui-notready-actions">{actions}</div>
+        ) : null
+      ) : buttons.length > 0 ? (
         <div className="ui-notready-actions">
           {buttons.map((b, i) => (
             <Button

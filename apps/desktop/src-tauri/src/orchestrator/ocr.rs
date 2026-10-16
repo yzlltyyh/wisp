@@ -42,18 +42,22 @@ use wisp_prompts::PostKind;
 use wisp_types::{
     Anchor, AppRef, DictMode, ErrorCode, LlmError, MonitorId, NotReady, OcrMode, OcrPayload, OcrReq, OverlayCommit,
     OverlayCommitAck, OverlayEndReason, OverlayInit, OverlayMode, PanelPayload, PanelTransition, PanelView,
-    PermissionKind, PermissionState, PhysSize, RequestId, StartAck, StreamEvent, TaskKind,
+    PermissionKind, PermissionState, PhysSize, Protocol, RequestId, Settings, StartAck, StreamEvent, TaskKind,
 };
 
 use super::RequestHost;
-use super::captures::{Crop, CropImage, ENCODE_WAIT, Encoded, ModelKey, thumb_path};
+use super::captures::{Crop, CropImage, ENCODE_WAIT, Encoded, thumb_path};
 use super::engine::{
-    Core, KeyFetch, KeySource, ScreenHold, Trigger, blocking, log_dispatched, not_ready_error, owner_of,
+    Core, KeyFetch, KeySource, OfflineSnapshot, ScreenHold, Trigger, blocking, log_dispatched, not_ready_error,
+    owner_of,
 };
 use super::env::Env;
+use super::env::{EngineImage, EngineRequest};
 use super::fsm::{Event, Flow, Stage};
 use super::not_ready;
-use super::plan::{Resolved, TextInput, build_ocr_prompt, default_ocr_mode, plan_text};
+use super::plan::{
+    EngineRef, OcrTarget, TextInput, adapt_for, build_ocr_prompt, default_ocr_mode, plan_text, resolve_style,
+};
 use super::registry::{Lane, OpenSpec, Owner, PumpEnd, Sink, pump};
 use super::translate::TextJob;
 use crate::app::perf::PerfStage;
@@ -151,11 +155,13 @@ pub(super) struct OverlayState {
 pub(super) struct OcrJob {
     pub(super) id: RequestId,
     pub(super) token: CancellationToken,
-    pub(super) resolved: Resolved,
+    pub(super) target: OcrTarget,
     pub(super) mode: OcrMode,
-    pub(super) target: wisp_types::Lang,
+    /// 直接翻译的目标语言
+    pub(super) target_lang: wisp_types::Lang,
     pub(super) crop: Arc<Crop>,
-    /// 直接翻译且开启了「同时转录原文」：先 paragraphs 转录（缓存在截图上），再走翻译管线
+    /// 两步直接翻译：先 paragraphs 转录（缓存在截图上），再走翻译管线。开启了「同时转录原文」，或识别目标不能一次
+    /// 调用直接翻译（离线引擎、PaddleOCR 云端）时
     pub(super) two_step: bool,
     pub(super) run: Option<u64>,
     pub(super) trace: Option<u64>,
@@ -173,7 +179,7 @@ pub(super) struct OcrLaunch {
     pub(super) img: RgbaImage,
     /// 截图直接翻译（剪贴板图片总是 false）
     pub(super) direct: bool,
-    pub(super) resolved: Resolved,
+    pub(super) target: OcrTarget,
     pub(super) anchor: AnchorSource,
     pub(super) prev: Option<AppRef>,
     pub(super) transition: PanelTransition,
@@ -220,8 +226,14 @@ fn teardown_work(env: Arc<dyn Env>, st: OverlayState, focus: FocusReturn, reason
     }
 }
 
-fn model_key(r: &Resolved) -> ModelKey {
-    (r.provider.id.clone(), r.model.id.clone())
+/// 截图按哪种协议的上限编码：视觉 LLM 按它的协议，PaddleOCR 云端按服务的上传上限；离线引擎的编码只用于缩略图与
+/// 识别历史（引擎直接用像素），按最宽松的 OpenAI 口径
+fn encode_protocol(target: &OcrTarget) -> Protocol {
+    match target {
+        OcrTarget::Llm(r) => r.provider.protocol,
+        OcrTarget::Engine(EngineRef::Cloud { .. }) => Protocol::PaddleOcr,
+        OcrTarget::Engine(EngineRef::Local(_)) => Protocol::OpenAiChat,
+    }
 }
 
 impl Core {
@@ -290,8 +302,9 @@ impl Core {
             }
             return;
         }
-        // 1. 未就绪：没配置模型时不截图，直接显示卡片
-        let resolved = match not_ready::check_ocr(&settings, None, &self.keys()) {
+        // 1. 未就绪：没配置模型（或选用的离线模型还没下载）时不截图，直接显示卡片
+        let offline = self.offline_index(&settings, None).await;
+        let target = match self.check_ocr_run(&settings, direct, &offline) {
             Ok(r) => r,
             Err(nr) => {
                 if self.advance(run, Event::NotReady).is_some() {
@@ -339,7 +352,7 @@ impl Core {
         }
         // 3. 预读 Key（用户框选要几秒，commit 时早已读好）——只在读取不会弹系统对话框时；可能弹框时等 Overlay 拆完再读
         //    （commit 时再读）。「减少动效」（macOS 读系统偏好）与截图并行读取，不排在截图与建 Overlay 之间
-        let key = self.prefetch_key_if_quiet(&resolved.provider);
+        let key = target.key_provider().and_then(|p| self.prefetch_key_if_quiet(p));
         let reduce = {
             let env = Arc::clone(&self.env);
             tauri::async_runtime::spawn_blocking(move || env.reduce_motion())
@@ -853,9 +866,10 @@ impl Core {
             }
             None => None,
         };
-        let readiness = not_ready::check_ocr(&settings, None, &self.keys());
-        let (img, resolved) = match (cropped, readiness) {
-            (Some(Ok(img)), Ok(resolved)) => (img, resolved),
+        let offline = self.offline_index(&settings, None).await;
+        let readiness = self.check_ocr_run(&settings, direct, &offline);
+        let (img, target) = match (cropped, readiness) {
+            (Some(Ok(img)), Ok(target)) => (img, target),
             (cropped, readiness) => {
                 let nr = match (cropped, readiness) {
                     (_, Err(nr)) => nr,
@@ -898,7 +912,7 @@ impl Core {
                 started,
                 img,
                 direct,
-                resolved,
+                target,
                 anchor,
                 prev,
                 transition: PanelTransition::Enter,
@@ -922,7 +936,7 @@ impl Core {
             started,
             img,
             direct,
-            resolved,
+            target,
             anchor,
             prev,
             transition,
@@ -937,11 +951,12 @@ impl Core {
             },
             direct,
         );
-        let target = settings.translate.primary_lang;
+        let target_lang = settings.translate.primary_lang;
+        // 引擎不支持的默认模式（PP-OCR 的 markdown）退回 paragraphs：视图按实际的模式显示
         let ocr_mode = if direct {
             OcrMode::Translate
         } else {
-            default_ocr_mode(&settings)
+            target.effective_mode(default_ocr_mode(&settings))
         };
         let lane = if direct { Lane::OcrTranslate } else { Lane::Ocr };
         let id = self.registry.new_id();
@@ -950,10 +965,10 @@ impl Core {
             OpenSpec {
                 owner: Owner::Unbound,
                 lane,
-                model: resolved.info(),
+                model: target.info(),
                 meta: direct.then_some(StreamEvent::Meta {
                     detected_source_lang: None,
-                    target_lang: Some(target),
+                    target_lang: Some(target_lang),
                     dict_mode: None,
                     low_confidence: None,
                 }),
@@ -969,31 +984,37 @@ impl Core {
             self.captures.remove(&crop.id);
             return None;
         }
+        let info = target.info();
         log::info!(
             "run {run}: recognising {}x{} px → request {id} model={}/{}",
             crop.size.width,
             crop.size.height,
-            resolved.provider.id,
-            resolved.model.id
+            info.provider_id,
+            info.model_id
         );
         // 编码与请求在后台，与面板的 prepare 并行，不阻塞调用方（截图 commit 不等编码就返回飞入目标）
         {
             let core = Arc::clone(self);
+            // 离线引擎：保留缩放后的像素直接交给引擎（不经 PNG 编码、解码）；编码照做，供缩略图与识别历史
+            let keep_pixels = target.local().is_some();
+            if keep_pixels {
+                crop.expect_pixels();
+            }
+            let protocol = encode_protocol(&target);
             let job = OcrJob {
                 id: id.clone(),
                 token,
-                resolved: resolved.clone(),
-                mode: ocr_mode,
+                two_step: two_step(&settings, &target, direct),
                 target,
+                mode: ocr_mode,
+                target_lang,
                 crop: Arc::clone(&crop),
-                two_step: direct && settings.ocr.direct_translate_transcribe,
                 run: Some(run),
                 trace: Some(trace),
                 started: Some(started),
                 key,
             };
             let max_edge = settings.ocr.max_edge_px.clamp(512, 4096);
-            let protocol = resolved.provider.protocol;
             // OCR 历史开启时把裁剪帧留给历史用的缩略图：编码完成、请求已经可以发出之后另起阻塞任务生成，
             // 不占请求的关键路径；写入历史时不必再从编码字节解码
             let history_thumb = settings.ocr.history;
@@ -1001,10 +1022,15 @@ impl Core {
             let encode_delay = *self.encode_delay.lock();
             tauri::async_runtime::spawn(async move {
                 let crop_ref = Arc::clone(&job.crop);
+                let crop_px = Arc::clone(&crop_ref);
                 let encoded = blocking(move || {
                     #[cfg(test)]
                     std::thread::sleep(encode_delay);
-                    let img = wisp_capture::fit_long_edge(img, max_edge);
+                    let img = Arc::new(wisp_capture::fit_long_edge(img, max_edge));
+                    if keep_pixels {
+                        // 先交像素：离线引擎的请求不等 PNG 编码
+                        crop_px.set_pixels(Arc::clone(&img));
+                    }
                     let e = wisp_capture::encode_for_llm(&img, protocol);
                     let enc = Encoded {
                         bytes: Arc::new(e.bytes),
@@ -1012,14 +1038,14 @@ impl Core {
                         width: e.width,
                         height: e.height,
                     };
-                    (enc, history_thumb.then(|| (img.width(), img.height(), img.into_raw())))
+                    (enc, history_thumb.then_some(img))
                 })
                 .await;
                 match encoded {
                     Some((enc, frame)) => {
                         crop_ref.set_ready(enc);
-                        if let Some((w, h, rgba)) = frame {
-                            crop_ref.spawn_history_thumb(w, h, rgba);
+                        if let Some(img) = frame {
+                            crop_ref.spawn_history_thumb(img);
                         }
                     }
                     None => crop_ref.set_failed(),
@@ -1033,7 +1059,7 @@ impl Core {
             mode: ocr_mode,
             thumb_url: thumb_path(&crop.id),
             image_size: crop.size,
-            target_lang: target,
+            target_lang,
             not_ready: None,
         };
         let req = PanelShowRequest {
@@ -1057,7 +1083,8 @@ impl Core {
 
     async fn image_ocr_flow(self: Arc<Self>, run: u64, t: Trigger, img: RgbaImage) {
         let settings = self.env.settings();
-        let readiness = not_ready::check_ocr(&settings, None, &self.keys());
+        let offline = self.offline_index(&settings, None).await;
+        let readiness = not_ready::check_ocr(&settings, None, &self.keys(), &offline);
         let transition = if t.origin == TriggerOrigin::Clipboard {
             PanelTransition::Crossfade
         } else {
@@ -1065,7 +1092,7 @@ impl Core {
         };
         // 读 Key 不会弹框时与编码并行地预读（与截图触发时的预读同理）
         let key = match &readiness {
-            Ok(r) => self.prefetch_key_if_quiet(&r.provider),
+            Ok(t) => t.key_provider().and_then(|p| self.prefetch_key_if_quiet(p)),
             Err(_) => None,
         };
         // 被取代的 Overlay 拆完、进行中的截图段做完，再读前台应用、显示面板
@@ -1079,7 +1106,7 @@ impl Core {
                         .await;
                 }
             }
-            Ok(resolved) => {
+            Ok(target) => {
                 let key = key.map_or(KeySource::Read, KeySource::Prefetched);
                 self.launch_ocr(OcrLaunch {
                     run,
@@ -1087,7 +1114,7 @@ impl Core {
                     started: t.started,
                     img,
                     direct: false,
-                    resolved,
+                    target,
                     anchor,
                     prev,
                     transition,
@@ -1096,6 +1123,30 @@ impl Core {
                 .await;
             }
         }
+    }
+
+    /// 截图触发与 commit 时的未就绪检查：OCR 本身（[`not_ready::check_ocr`]），以及直接翻译分两步（先转录、再翻译）时
+    /// 第二步的翻译模型——缺离线翻译模型、没有任何服务商时与 OCR 未就绪走同一条路径（卡片里可以就地下载），不必先跑完
+    /// 一遍识别才得到一张通用的错误卡
+    fn check_ocr_run(
+        &self,
+        settings: &Settings,
+        direct: bool,
+        offline: &OfflineSnapshot,
+    ) -> Result<OcrTarget, NotReady> {
+        let target = not_ready::check_ocr(settings, None, &self.keys(), offline)?;
+        if two_step(settings, &target, direct) {
+            self.check_translate_step(settings, offline)?;
+        }
+        Ok(target)
+    }
+
+    /// 两步直接翻译的第二步（翻译）能不能马上做：按默认风格解析翻译模型，与 [`Self::direct_two_step`] 的第二步一致
+    fn check_translate_step(&self, settings: &Settings, offline: &OfflineSnapshot) -> Result<(), NotReady> {
+        let styles = self.env.styles();
+        let id = &settings.translate.default_style;
+        let style = resolve_style(&styles, id, id);
+        not_ready::check_text(settings, &style, None, TaskKind::Translate, &self.keys(), offline).map(|_| ())
     }
 
     pub(super) async fn show_ocr_not_ready_session(
@@ -1297,6 +1348,8 @@ impl Core {
     pub(super) async fn execute_ocr(self: Arc<Self>, mut job: OcrJob) {
         let key = std::mem::replace(&mut job.key, KeySource::Read);
         let end = self.ocr_pipeline(&job, key).await;
+        // 离线引擎的像素只为这一次识别保留（取消、失败的路径同样释放）
+        job.crop.drop_pixels();
         self.record_ocr_history(&job, &end);
         self.request_ended(job.run, job.trace, &end);
     }
@@ -1322,7 +1375,7 @@ impl Core {
             CropImage::Pending | CropImage::Failed => None,
         };
         let ticket = job.crop.history_ticket();
-        let (mode, model) = (job.mode, job.resolved.info().model_label);
+        let (mode, model) = (job.mode, job.target.info().model_label);
         let env = Arc::clone(&self.env);
         let crop = Arc::clone(&job.crop);
         tauri::async_runtime::spawn_blocking(move || {
@@ -1341,107 +1394,45 @@ impl Core {
 
     pub(super) async fn ocr_pipeline(self: &Arc<Self>, job: &OcrJob, key: KeySource) -> PumpEnd {
         // 没有预读的 Key 时，读 Key 与等编码并行。不需要 Key、也没存 Key 的 Provider（回环地址的本地模型）不访问钥匙串
-        // （[`Self::key_not_needed`]，与翻译的预读同一口径）：钥匙串锁定 / 不可用时也不会走到弹框或失败的路径
-        let key = match key {
-            KeySource::Read if self.key_not_needed(&job.resolved.provider) => KeySource::Known(None),
-            KeySource::Read => KeySource::Prefetched(self.prefetch_key(&job.resolved.provider.id)),
-            other => other,
+        // （[`Self::key_not_needed`]，与翻译的预读同一口径）：钥匙串锁定 / 不可用时也不会走到弹框或失败的路径。
+        // 离线引擎完全不碰钥匙串
+        let key = match (key, job.target.key_provider()) {
+            (_, None) => KeySource::Known(None),
+            (KeySource::Read, Some(p)) if self.key_not_needed(p) => KeySource::Known(None),
+            (KeySource::Read, Some(p)) => KeySource::Prefetched(self.prefetch_key(&p.id)),
+            (other, Some(_)) => other,
         };
-        // 等编码完成（commit 时在后台进行；重新识别时早已完成）
-        let crop = Arc::clone(&job.crop);
-        let image = match blocking(move || crop.wait(ENCODE_WAIT)).await {
-            Some(CropImage::Ready(enc)) => enc,
-            _ => {
-                if job.token.is_cancelled() {
-                    return PumpEnd::Cancelled;
-                }
-                let err = LlmError::new(ErrorCode::Internal, "the screenshot is no longer available");
-                self.registry.emit(&job.id, StreamEvent::Error(err.clone()));
-                return PumpEnd::Failed(err);
-            }
-        };
-        // 这张图是按 commit 时的协议编码的：重新识别 / 从菜单换到别的协议（例如 OpenAI 的 20 MB → Anthropic 的 5 MB、长边
-        // 8000）超出上限时，按目标协议重新编码一次并替换缓存的那份
-        let protocol = job.resolved.provider.protocol;
-        let image = if wisp_capture::fits_protocol(image.bytes.len(), image.width, image.height, protocol) {
-            image
+        // 两步直接翻译的第一步是 paragraphs 转录；引擎不支持的模式退回 paragraphs
+        let first_mode = if job.two_step {
+            OcrMode::Paragraphs
         } else {
-            let bytes = Arc::clone(&image.bytes);
-            match blocking(move || wisp_capture::reencode_for_llm(&bytes, protocol))
-                .await
-                .flatten()
-            {
-                Some(e) => {
-                    log::info!(
-                        "request {}: screenshot re-encoded for {protocol:?} ({}x{} → {}x{})",
-                        job.id,
-                        image.width,
-                        image.height,
-                        e.width,
-                        e.height
-                    );
-                    let enc = Encoded {
-                        bytes: Arc::new(e.bytes),
-                        mime: e.mime,
-                        width: e.width,
-                        height: e.height,
-                    };
-                    job.crop.set_ready(enc.clone());
-                    Arc::new(enc)
-                }
-                None => image,
-            }
+            job.target.effective_mode(job.mode)
         };
-        let secret = match self.read_key(&job.id, &job.resolved, key, &job.token).await {
-            Ok(s) => s,
+        let started = match &job.target {
+            OcrTarget::Llm(resolved) => self.start_llm_ocr(job, resolved, key, first_mode).await,
+            OcrTarget::Engine(engine) => self.start_engine_ocr(job, engine, key, first_mode).await,
+        };
+        let (rx, post, key_later) = match started {
+            Ok(v) => v,
             Err(end) => return end,
         };
-        if job.token.is_cancelled() {
-            return PumpEnd::Cancelled;
-        }
-        let settings = self.env.settings();
-        let reasoning = job.resolved.model.reasoning;
-        let first_mode = if job.two_step { OcrMode::Paragraphs } else { job.mode };
-        let built = build_ocr_prompt(first_mode, job.target, reasoning);
-        let post = built.post;
-        // 两次调用模式的第二步还要用同一个 Key
-        let (key_now, key_later) = if job.two_step {
-            (secret.as_ref().map(|s| Secret::new(s.expose().to_owned())), secret)
-        } else {
-            (secret, None)
-        };
-        let req = wisp_llm::ChatRequest {
-            request_id: job.id.clone(),
-            provider: job.resolved.provider.clone(),
-            key: key_now,
-            model: job.resolved.model.clone(),
-            system: built.system,
-            user: UserContent::Image {
-                bytes: image.llm_bytes(),
-                mime: image.mime,
-                text: built.user_text,
-                detail: settings.ocr.image_detail,
-            },
-            temperature: built.temperature,
-            max_output_tokens: built.max_output_tokens,
-            purpose: Purpose::Ocr,
-        };
-        let rx = self.env.llm_stream(req, job.token.clone());
-        log_dispatched(&job.id, job.trace, job.started, &job.resolved);
+        log_dispatched(&job.id, job.trace, job.started, &job.target.info());
         if job.two_step {
             return self.direct_two_step(job, rx, post, key_later).await;
         }
         let (end, _) = pump(&self.registry, &job.id, rx, post, "").await;
+        // 离线引擎的像素只为这一次识别保留
+        job.crop.drop_pixels();
         if let PumpEnd::Done { usage, no_text, .. } = &end {
-            if let Some(u) = usage {
-                self.env
-                    .record_usage(&job.resolved.provider.id, &job.resolved.model.id, u);
+            if let (Some(u), OcrTarget::Llm(r)) = (usage, &job.target) {
+                self.env.record_usage(&r.provider.id, &r.model.id, u);
             }
             let text = self.registry.text(&job.id).unwrap_or_default();
             if !no_text && !text.trim().is_empty() {
+                let settings = self.env.settings();
                 if job.mode == OcrMode::Paragraphs && job.crop.direct {
                     // 直接翻译的「查看原文」：连同模型缓存下来，再次切换时不重复请求
-                    job.crop.set_transcript(model_key(&job.resolved), text.clone());
+                    job.crop.set_transcript(job.target.model_key(), text.clone());
                 }
                 if settings.ocr.auto_copy && job.mode != OcrMode::Translate && !job.crop.direct {
                     // 识别完成后自动复制（来源 Wisp，正常进入剪贴板历史）
@@ -1457,7 +1448,160 @@ impl Core {
         end
     }
 
-    /// 直接翻译 + 同时转录原文：第一步 paragraphs 转录不转发（缓存在截图上），第二步把转录文本交给翻译管线
+    /// 等编码完成（commit 时在后台进行；重新识别时早已完成）；丢失时写入 Error
+    async fn wait_encoded(&self, job: &OcrJob) -> Result<Arc<Encoded>, PumpEnd> {
+        let crop = Arc::clone(&job.crop);
+        match blocking(move || crop.wait(ENCODE_WAIT)).await {
+            Some(CropImage::Ready(enc)) => Ok(enc),
+            _ => Err(self.screenshot_gone(job)),
+        }
+    }
+
+    fn screenshot_gone(&self, job: &OcrJob) -> PumpEnd {
+        if job.token.is_cancelled() {
+            return PumpEnd::Cancelled;
+        }
+        let err = LlmError::new(ErrorCode::Internal, "the screenshot is no longer available");
+        self.registry.emit(&job.id, StreamEvent::Error(err.clone()));
+        PumpEnd::Failed(err)
+    }
+
+    /// 这张图是按 commit 时的协议编码的：重新识别 / 从菜单换到别的协议（例如 OpenAI 的 20 MB → Anthropic 的 5 MB、长边
+    /// 8000）超出上限时，按目标协议重新编码一次并替换缓存的那份
+    async fn fit_encoded(&self, job: &OcrJob, image: Arc<Encoded>, protocol: Protocol) -> Arc<Encoded> {
+        if wisp_capture::fits_protocol(image.bytes.len(), image.width, image.height, protocol) {
+            return image;
+        }
+        let bytes = Arc::clone(&image.bytes);
+        match blocking(move || wisp_capture::reencode_for_llm(&bytes, protocol))
+            .await
+            .flatten()
+        {
+            Some(e) => {
+                log::info!(
+                    "request {}: screenshot re-encoded for {protocol:?} ({}x{} → {}x{})",
+                    job.id,
+                    image.width,
+                    image.height,
+                    e.width,
+                    e.height
+                );
+                let enc = Encoded {
+                    bytes: Arc::new(e.bytes),
+                    mime: e.mime,
+                    width: e.width,
+                    height: e.height,
+                };
+                job.crop.set_ready(enc.clone());
+                Arc::new(enc)
+            }
+            None => image,
+        }
+    }
+
+    /// 视觉 LLM：读 Key → 提示词 → `llm_stream`。返回事件流、后处理种类，以及两步直接翻译的第二步要沿用的 Key
+    async fn start_llm_ocr(
+        &self,
+        job: &OcrJob,
+        resolved: &super::plan::Resolved,
+        key: KeySource,
+        first_mode: OcrMode,
+    ) -> Result<OcrStarted, PumpEnd> {
+        let image = self.wait_encoded(job).await?;
+        let image = self.fit_encoded(job, image, resolved.provider.protocol).await;
+        let secret = self.read_key(&job.id, &resolved.provider, key, &job.token).await?;
+        if job.token.is_cancelled() {
+            return Err(PumpEnd::Cancelled);
+        }
+        let settings = self.env.settings();
+        let built = build_ocr_prompt(first_mode, job.target_lang, resolved.model.reasoning);
+        let post = built.post;
+        // 两次调用模式的第二步还要用同一个 Key
+        let (key_now, key_later) = if job.two_step {
+            (secret.as_ref().map(|s| Secret::new(s.expose().to_owned())), secret)
+        } else {
+            (secret, None)
+        };
+        let req = wisp_llm::ChatRequest {
+            request_id: job.id.clone(),
+            provider: resolved.provider.clone(),
+            key: key_now,
+            model: resolved.model.clone(),
+            system: built.system,
+            user: UserContent::Image {
+                bytes: image.llm_bytes(),
+                mime: image.mime,
+                text: built.user_text,
+                detail: settings.ocr.image_detail,
+            },
+            temperature: built.temperature,
+            max_output_tokens: built.max_output_tokens,
+            purpose: Purpose::Ocr,
+        };
+        Ok((self.env.llm_stream(req, job.token.clone()), post, key_later))
+    }
+
+    /// 识别引擎：离线引擎直接用缩放后的像素（没有保留时从编码字节解码），云端用编码字节（按服务的上限）与 Token。
+    /// 结果与视觉 LLM 一样经 OCR 后处理（无文字判定、去围栏）
+    async fn start_engine_ocr(
+        &self,
+        job: &OcrJob,
+        engine: &EngineRef,
+        key: KeySource,
+        first_mode: OcrMode,
+    ) -> Result<OcrStarted, PumpEnd> {
+        let (image, key) = match engine {
+            EngineRef::Local(_) => {
+                let crop = Arc::clone(&job.crop);
+                let pixels = blocking(move || crop.wait_pixels(ENCODE_WAIT)).await.flatten();
+                let pixels = match pixels {
+                    Some(p) => p,
+                    None => {
+                        // 重新识别（像素已释放）：从编码字节解码一次
+                        let enc = self.wait_encoded(job).await?;
+                        let bytes = Arc::clone(&enc.bytes);
+                        match blocking(move || wisp_capture::decode_image(&bytes).ok())
+                            .await
+                            .flatten()
+                        {
+                            Some(img) => Arc::new(img),
+                            None => return Err(self.screenshot_gone(job)),
+                        }
+                    }
+                };
+                (EngineImage::Rgba(pixels), None)
+            }
+            EngineRef::Cloud { provider, .. } => {
+                let image = self.wait_encoded(job).await?;
+                let image = self.fit_encoded(job, image, Protocol::PaddleOcr).await;
+                let secret = self.read_key(&job.id, provider, key, &job.token).await?;
+                (
+                    EngineImage::Encoded {
+                        bytes: Arc::clone(&image.bytes),
+                        mime: image.mime,
+                    },
+                    secret,
+                )
+            }
+        };
+        if job.token.is_cancelled() {
+            return Err(PumpEnd::Cancelled);
+        }
+        let settings = self.env.settings();
+        let req = EngineRequest {
+            request_id: job.id.clone(),
+            engine: engine.clone(),
+            mode: first_mode,
+            image,
+            key,
+            max_side: settings.ocr.max_edge_px,
+        };
+        let rx = self.env.ocr_engine_stream(req, job.token.clone());
+        Ok((rx, PostKind::Ocr { mode: first_mode }, None))
+    }
+
+    /// 直接翻译 + 同时转录原文：第一步 paragraphs 转录不转发（缓存在截图上），第二步把转录文本交给翻译管线。
+    /// 第一步的阶段提示（离线模型加载中、云端排队中）照常转发，用户看得到在等什么
     pub(super) async fn direct_two_step(
         self: &Arc<Self>,
         job: &OcrJob,
@@ -1480,6 +1624,11 @@ impl Core {
                     break Ok((usage, fin.no_text, elapsed_ms));
                 }
                 Some(StreamEvent::Error(e)) => break Err(e),
+                Some(ev @ StreamEvent::Phase { .. }) => {
+                    if !self.registry.emit(&job.id, ev) {
+                        break Err(LlmError::new(ErrorCode::Cancelled, "cancelled"));
+                    }
+                }
                 Some(_) => {}
                 None => {
                     break Err(LlmError::new(
@@ -1490,6 +1639,7 @@ impl Core {
             }
         };
         drop(rx);
+        job.crop.drop_pixels();
         let (usage, no_text, elapsed_ms) = match outcome {
             Err(e) if e.code == ErrorCode::Cancelled || job.token.is_cancelled() => return PumpEnd::Cancelled,
             Err(e) => {
@@ -1498,9 +1648,8 @@ impl Core {
             }
             Ok(v) => v,
         };
-        if let Some(u) = &usage {
-            self.env
-                .record_usage(&job.resolved.provider.id, &job.resolved.model.id, u);
+        if let (Some(u), OcrTarget::Llm(r)) = (&usage, &job.target) {
+            self.env.record_usage(&r.provider.id, &r.model.id, u);
         }
         if no_text || transcript.trim().is_empty() {
             let done = StreamEvent::Done {
@@ -1521,22 +1670,31 @@ impl Core {
                 PumpEnd::Cancelled
             };
         }
-        job.crop.set_transcript(model_key(&job.resolved), transcript.clone());
-        // 第二步：复用翻译管线（检测、方向、默认风格、词典式、缓存），目标语言沿用截图时的
+        job.crop.set_transcript(job.target.model_key(), transcript.clone());
+        // 第二步：复用翻译管线（检测、方向、默认风格、词典式、缓存），目标语言沿用截图时的。选了离线翻译模型时
+        // 这一步同样在本机完成（与第一步合起来完全离线）
         let settings = self.env.settings();
         let styles = self.env.styles();
-        let plan = plan_text(
+        let mut plan = plan_text(
             &settings,
             &styles,
             &TextInput {
                 text: &transcript,
                 task: TaskKind::Translate,
                 style_id: &settings.translate.default_style,
-                target: Some(job.target),
+                target: Some(job.target_lang),
                 dict_mode: DictMode::Auto,
             },
         );
-        let resolved = match not_ready::check_text(&settings, &plan.style, None, TaskKind::Translate, &self.keys()) {
+        let offline = self.offline_index(&settings, None).await;
+        let resolved = match not_ready::check_text(
+            &settings,
+            &plan.style,
+            None,
+            TaskKind::Translate,
+            &self.keys(),
+            &offline,
+        ) {
             Ok(r) => r,
             Err(nr) => {
                 let err = not_ready_error(&nr);
@@ -1544,14 +1702,14 @@ impl Core {
                 return PumpEnd::Failed(err);
             }
         };
+        adapt_for(&mut plan, &resolved);
         if !self.registry.emit(&job.id, plan.meta()) {
             return PumpEnd::Cancelled;
         }
         // 同一个 Provider 时沿用已读出的 Key，不再访问钥匙串
-        let key = if resolved.provider.id == job.resolved.provider.id {
-            KeySource::Known(secret)
-        } else {
-            KeySource::Read
+        let key = match &job.target {
+            OcrTarget::Llm(r) if r.provider.id == resolved.provider.id => KeySource::Known(secret),
+            _ => KeySource::Read,
         };
         let text_job = TextJob {
             id: job.id.clone(),
@@ -1578,17 +1736,25 @@ impl Core {
             .filter(|c| c.owner() == owner)
             .ok_or_else(|| IpcError::not_found("capture"))?;
         let settings = self.env.settings();
-        let target = req.target_lang.unwrap_or(settings.translate.primary_lang);
+        let target_lang = req.target_lang.unwrap_or(settings.translate.primary_lang);
         let lane = if req.mode == OcrMode::Translate {
             Lane::OcrTranslate
         } else {
             Lane::Ocr
         };
-        let readiness = not_ready::check_ocr(&settings, req.model_ref.as_ref(), &self.keys());
+        let offline = self.offline_index(&settings, req.model_ref.as_ref()).await;
+        // 不能一次调用直接翻译的引擎在 translate 模式下走「识别 → 翻译」两步：第二步的翻译模型同样先检查（缺离线翻译模型、
+        // 没有服务商时与 OCR 未就绪一样直接报，不先跑完一遍识别）
+        let readiness = not_ready::check_ocr(&settings, req.model_ref.as_ref(), &self.keys(), &offline).and_then(|t| {
+            if req.mode == OcrMode::Translate && !t.can_translate() {
+                self.check_translate_step(&settings, &offline)?;
+            }
+            Ok(t)
+        });
         let id = self.registry.new_id();
         let meta = (req.mode == OcrMode::Translate).then_some(StreamEvent::Meta {
             detected_source_lang: None,
-            target_lang: Some(target),
+            target_lang: Some(target_lang),
             dict_mode: None,
             low_confidence: None,
         });
@@ -1597,7 +1763,7 @@ impl Core {
             OpenSpec {
                 owner: owner.clone(),
                 lane,
-                model: readiness.as_ref().map(Resolved::info).unwrap_or_default(),
+                model: readiness.as_ref().map(OcrTarget::info).unwrap_or_default(),
                 meta,
                 sink: Some(sink),
                 trace: None,
@@ -1609,10 +1775,10 @@ impl Core {
             Err(nr) => {
                 self.registry.emit(&id, StreamEvent::Error(not_ready_error(&nr)));
             }
-            Ok(resolved) => {
+            Ok(target) => {
                 // 「查看原文」：转录已缓存时不重复请求；用户在「重新识别 ▾」里明确换了模型时，只有同一个
                 // 模型的转录才算命中，否则重新请求并覆盖缓存
-                let wanted = req.model_ref.as_ref().map(|_| model_key(&resolved));
+                let wanted = req.model_ref.as_ref().map(|_| target.model_key());
                 let cached = (crop.direct && req.mode == OcrMode::Paragraphs)
                     .then(|| crop.transcript_for(wanted.as_ref()))
                     .flatten();
@@ -1629,21 +1795,23 @@ impl Core {
                             },
                         );
                 } else {
+                    let info = target.info();
                     log::info!(
                         "request {id} (ocr {:?}) from {owner:?} capture={} model={}/{}",
                         req.mode,
                         crop.id,
-                        resolved.provider.id,
-                        resolved.model.id
+                        info.provider_id,
+                        info.model_id
                     );
                     let job = OcrJob {
                         id: id.clone(),
                         token,
-                        resolved,
-                        mode: req.mode,
+                        // 不能一次调用直接翻译的引擎：translate 模式走「识别 → 翻译」两步
+                        two_step: req.mode == OcrMode::Translate && !target.can_translate(),
                         target,
+                        mode: req.mode,
+                        target_lang,
                         crop,
-                        two_step: false,
                         run: None,
                         trace: None,
                         started: None,
@@ -1663,4 +1831,12 @@ impl Core {
             long_text: None,
         })
     }
+}
+
+/// 识别请求已经发出：事件流、后处理种类、两步直接翻译的第二步要沿用的 Key
+type OcrStarted = (tokio::sync::mpsc::Receiver<StreamEvent>, PostKind, Option<Secret>);
+
+/// 直接翻译是否分两步：先转录、再走翻译管线（用户要求先转录，或识别引擎本身不能翻译）
+fn two_step(settings: &Settings, target: &OcrTarget, direct: bool) -> bool {
+    direct && (settings.ocr.direct_translate_transcribe || !target.can_translate())
 }

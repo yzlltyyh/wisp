@@ -83,6 +83,7 @@ const Protocol = enumOf<T.Protocol>()('Protocol', {
   openai_responses: 1,
   anthropic_messages: 1,
   gemini: 1,
+  paddle_ocr: 1,
 })
 const ThinkingOff = enumOf<T.ThinkingOff>()('ThinkingOff', {
   none: 1,
@@ -94,6 +95,7 @@ const ThinkingOff = enumOf<T.ThinkingOff>()('ThinkingOff', {
   openai_effort: 1,
   anthropic_effort: 1,
   gemini_level: 1,
+  chat_template_kwargs: 1,
 })
 const MaxTokensField = enumOf<T.MaxTokensField>()('MaxTokensField', {
   max_completion_tokens: 1,
@@ -135,6 +137,7 @@ const ErrorCode = enumOf<T.ErrorCode>()('ErrorCode', {
   not_configured: 1,
   keychain: 1,
   internal: 1,
+  local_runtime: 1,
 })
 const ErrorSubcode = enumOf<T.ErrorSubcode>()('ErrorSubcode', {
   region: 1,
@@ -148,14 +151,21 @@ const NoticeKind = enumOf<T.NoticeKind>()('NoticeKind', {
   param_degraded: 1,
   retried: 1,
   cache_hit: 1,
+  partial: 1,
 })
-const StreamPhase = enumOf<T.StreamPhase>()('StreamPhase', { reviewing: 1, improving: 1 })
+const StreamPhase = enumOf<T.StreamPhase>()('StreamPhase', {
+  reviewing: 1,
+  improving: 1,
+  loading_model: 1,
+  queued: 1,
+})
 const TemplateGroup = enumOf<T.TemplateGroup>()('TemplateGroup', {
   openai: 1,
   anthropic: 1,
   gemini: 1,
   other: 1,
   local: 1,
+  ocr: 1,
 })
 const TestVerdict = enumOf<T.TestVerdict>()('TestVerdict', { ok: 1, partial: 1, failed: 1 })
 const OutputFormat = enumOf<T.OutputFormat>()('OutputFormat', { plain_text: 1, markdown_lite: 1 })
@@ -172,6 +182,38 @@ const TaskKind = enumOf<T.TaskKind>()('TaskKind', {
   refine: 1,
 })
 const DictMode = enumOf<T.DictMode>()('DictMode', { auto: 1, dictionary: 1, prose: 1 })
+const LocalModelId = enumOf<T.LocalModelId>()('LocalModelId', {
+  pp_ocrv6_tiny: 1,
+  pp_ocrv6_small: 1,
+  paddleocr_vl_1_6: 1,
+  index_translate_2b: 1,
+  index_translate_9b: 1,
+})
+const LocalModelKind = enumOf<T.LocalModelKind>()('LocalModelKind', { ocr: 1, translate: 1 })
+const LocalRuntimeId = enumOf<T.LocalRuntimeId>()('LocalRuntimeId', {
+  llama_cpp: 1,
+  onnx_runtime: 1,
+})
+const DownloadSource = enumOf<T.DownloadSource>()('DownloadSource', {
+  auto: 1,
+  model_scope: 1,
+  hugging_face: 1,
+})
+const DownloadErrorCode = enumOf<T.DownloadErrorCode>()('DownloadErrorCode', {
+  network: 1,
+  server: 1,
+  checksum_mismatch: 1,
+  disk_full: 1,
+  io: 1,
+  extract: 1,
+})
+const LoadState = enumOf<T.LoadState>()('LoadState', { unloaded: 1, loading: 1, loaded: 1 })
+const FitnessLevel = enumOf<T.FitnessLevel>()('FitnessLevel', {
+  good: 1,
+  slow: 1,
+  insufficient: 1,
+  unknown: 1,
+})
 const ClipKind = enumOf<T.ClipKind>()('ClipKind', {
   text: 1,
   rich_text: 1,
@@ -886,6 +928,9 @@ export const registry = {
     elevated: {},
     keychain_unavailable: {},
     selection_unavailable: { reason_key: str },
+    offline_model_missing: { model: LocalModelId },
+    offline_model_downloading: { model: LocalModelId },
+    offline_task_unsupported: { task: TaskKind },
   }),
   TranslatePayload: obj<T.TranslatePayload>()('TranslatePayload', TranslatePayloadFields),
   OcrPayload: obj<T.OcrPayload>()('OcrPayload', OcrPayloadFields),
@@ -1054,6 +1099,7 @@ export const registry = {
     orphan_keys: num,
     autostart_issue: opt(nul(str)),
     sync: ref('SyncStatus'),
+    offline: ref('OfflineSummary'),
   }),
   SettingsIssueKind,
   SettingsFileIssue: obj<T.SettingsFileIssue>()('SettingsFileIssue', {
@@ -1242,6 +1288,14 @@ export const registry = {
     appearance: ref('Appearance'),
     advanced: ref('Advanced'),
     sync: ref('SyncSettings'),
+    offline: ref('OfflineSettings'),
+  }),
+  OfflineSettings: obj<T.OfflineSettings>()('OfflineSettings', {
+    ocr_model: nul(LocalModelId),
+    translate_model: nul(LocalModelId),
+    idle_release_min: num,
+    use_gpu: bool,
+    download_source: DownloadSource,
   }),
   SyncContent: obj<T.SyncContent>()('SyncContent', {
     settings: bool,
@@ -1297,6 +1351,60 @@ export const registry = {
   SyncConnectResult: obj<T.SyncConnectResult>()('SyncConnectResult', {
     outcome: SyncConnectOutcome,
     status: ref('SyncStatus'),
+  }),
+  // ----- 离线模型
+  LocalModelId,
+  LocalModelKind,
+  LocalRuntimeId,
+  DownloadSource,
+  DownloadErrorCode,
+  LoadState,
+  FitnessLevel,
+  LocalModelState: union<T.LocalModelState, 'state'>()('LocalModelState', 'state', {
+    not_installed: {},
+    queued: {},
+    downloading: { done: num, total: num, bytes_per_sec: num },
+    paused: { done: num, total: num },
+    verifying: {},
+    installed: {},
+    broken: {},
+    failed: { code: DownloadErrorCode },
+  }),
+  Fitness: obj<T.Fitness>()('Fitness', { level: FitnessLevel, reason_key: nul(str) }),
+  LocalModelInfo: obj<T.LocalModelInfo>()('LocalModelInfo', {
+    id: LocalModelId,
+    kind: LocalModelKind,
+    download_bytes: num,
+    pending_runtime_bytes: num,
+    state: ref('LocalModelState'),
+    load: LoadState,
+    memory_estimate_mb: num,
+    fitness: ref('Fitness'),
+    update_available: bool,
+  }),
+  LocalRuntimeInfo: obj<T.LocalRuntimeInfo>()('LocalRuntimeInfo', {
+    id: LocalRuntimeId,
+    version: str,
+    installed: bool,
+    size: num,
+    in_use: bool,
+  }),
+  GpuInfo: obj<T.GpuInfo>()('GpuInfo', { name: str, vram_total_mb: num, integrated: bool }),
+  DeviceInfo: obj<T.DeviceInfo>()('DeviceInfo', {
+    total_memory: nul(num),
+    apple_silicon: bool,
+    gpus: arr(ref('GpuInfo')),
+    gpu_probed: bool,
+  }),
+  LocalModelsSnapshot: obj<T.LocalModelsSnapshot>()('LocalModelsSnapshot', {
+    models: arr(ref('LocalModelInfo')),
+    runtimes: arr(ref('LocalRuntimeInfo')),
+    device: ref('DeviceInfo'),
+    disk_used: num,
+    disk_free: nul(num),
+  }),
+  OfflineSummary: obj<T.OfflineSummary>()('OfflineSummary', {
+    installed: arr(LocalModelId),
   }),
 } as const satisfies Record<string, Spec>
 

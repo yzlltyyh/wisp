@@ -11,6 +11,7 @@ import type {
   SettingsSnapshot,
   Style,
 } from '../../shared/ipc'
+import { isOcrService } from '../../shared/offline/catalog'
 import { stripUrlBreaks } from '../../shared/stream/urlBreaks'
 
 /** 三种识别模式（translate 是直接翻译，不在「重新识别」的模式列表里） */
@@ -22,19 +23,26 @@ export interface VisionModel {
   ref: ModelRef
   /** vision = unknown：列出但带「未确认是否支持图片」 */
   unconfirmed: boolean
+  /** 文字识别服务（PaddleOCR）的模型 */
+  service: boolean
 }
 
-/** 能用于 OCR 的模型：已启用、vision 为 yes / unknown（vision = no 的不出现） */
+/**
+ * 能用于 OCR 的模型：已启用、vision 为 yes / unknown（vision = no 的不出现）；文字识别服务（PaddleOCR）的模型按协议就能
+ * 识别图片，不看 vision 字段
+ */
 export function visionModels(snapshot: SettingsSnapshot | null): VisionModel[] {
   const out: VisionModel[] = []
   for (const provider of snapshot?.settings.providers ?? []) {
+    const service = isOcrService(provider)
     for (const model of provider.models) {
-      if (!model.enabled || model.vision === 'no') continue
+      if (!model.enabled || (!service && model.vision === 'no')) continue
       out.push({
         provider,
         model,
         ref: { provider_id: provider.id, model_id: model.id },
-        unconfirmed: model.vision === 'unknown',
+        unconfirmed: !service && model.vision === 'unknown',
+        service,
       })
     }
   }
@@ -90,6 +98,11 @@ export function settingsSectionFor(reason: string): SettingsSection {
     case 'no_vision':
     case 'image_too_large':
       return 'ocr'
+    case 'offline_model_missing':
+    case 'offline_model_downloading':
+    case 'offline_task_unsupported':
+    case 'local_runtime':
+      return 'offline'
     default:
       return 'providers'
   }
@@ -185,4 +198,16 @@ export function layoutFor(o: LayoutInput): Layout {
 export function thumbMaxWidth(contentWidth: number): number {
   const w = contentWidth > 0 ? contentWidth : 408
   return Math.max(96, Math.min(240, Math.round(w * (w < 400 ? 0.38 : 0.55))))
+}
+
+/**
+ * 结构化结果里有没有需要预览的结构：管道表格（表头行 + 分隔行）、HTML 表格、独立成行的公式（`$$…$$` / `\[…\]`）。
+ * 只做判定（面板首屏里的轻量检查）；真正的解析与渲染在懒加载的 structured/ 里
+ */
+export function hasStructure(text: string): boolean {
+  return (
+    /^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-*:?\s*$/m.test(text) ||
+    /<table[\s>]/i.test(text) ||
+    /^\s*(\$\$|\\\[)/m.test(text)
+  )
 }

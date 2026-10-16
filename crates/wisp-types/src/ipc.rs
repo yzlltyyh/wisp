@@ -10,6 +10,7 @@ use crate::geom::{MonitorId, MonitorInfo, PhysSize, Rect};
 use crate::hotkey::{ExtTriggerStatus, HotkeyAction, HotkeyStatus, HotkeyTarget};
 use crate::lang::Lang;
 use crate::llm::{ModelRef, RequestId, TruncateReason, Usage};
+use crate::local::{LocalModelId, OfflineSummary};
 use crate::perm::{PermissionKind, PermissionSet};
 use crate::settings::Settings;
 use crate::style::{DictMode, OcrMode, Style, TaskKind};
@@ -132,6 +133,18 @@ pub enum NotReady {
     /// `InputPayload.hint` 显示在输入框上方的提示条里（NotReadyBanner）。Wayland 的「先复制」仍用 `WaylandCopyFirst`
     SelectionUnavailable {
         reason_key: String,
+    },
+    /// 选用的离线模型还没有下载（或文件损坏需要重新下载）。卡片提供「下载」（就地下载，完成后重试本次请求）与「改用其他模型」
+    OfflineModelMissing {
+        model: LocalModelId,
+    },
+    /// 选用的离线模型正在下载：卡片显示进度（`offline_models:changed`），完成后重试本次请求
+    OfflineModelDownloading {
+        model: LocalModelId,
+    },
+    /// 离线翻译模型只负责翻译：润色、校对这类任务不支持（不会悄悄改用云端）
+    OfflineTaskUnsupported {
+        task: TaskKind,
     },
 }
 
@@ -548,6 +561,8 @@ pub struct RuntimeInfo {
     pub autostart_issue: Option<String>,
     /// 多设备同步的状态（不含地址、账号与设备名）；未开启时 `phase = off`
     pub sync: SyncStatus,
+    /// 离线模型摘要（已安装的模型）。没有读过模型库存之前为空，读过之后随安装 / 删除更新
+    pub offline: OfflineSummary,
 }
 
 /// 配置文件问题的种类
@@ -813,9 +828,11 @@ pub mod event {
     pub const GLOSSARY_CHANGED: &str = "glossary:changed";
     /// `QueueStatus` → panel、悬浮剪贴板：连续粘贴的进度与结束
     pub const CLIPBOARD_QUEUE: &str = "clipboard:queue";
+    /// `LocalModelsSnapshot` → 全部：离线模型的下载进度（节流）、安装 / 删除、加载 / 释放
+    pub const OFFLINE_MODELS_CHANGED: &str = "offline_models:changed";
 
     /// 全部事件名（顺序与 events.ts 的 `EVENT_NAMES` 一致）
-    pub const ALL: [&str; 20] = [
+    pub const ALL: [&str; 21] = [
         PANEL_PREPARE,
         PANEL_HIDE_REQUEST,
         PANEL_FOCUS_CHANGED,
@@ -836,5 +853,6 @@ pub mod event {
         SYNC_STATUS,
         GLOSSARY_CHANGED,
         CLIPBOARD_QUEUE,
+        OFFLINE_MODELS_CHANGED,
     ];
 }

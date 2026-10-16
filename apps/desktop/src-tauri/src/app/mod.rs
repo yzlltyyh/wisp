@@ -24,6 +24,8 @@ pub mod sections {
     pub const GENERAL: &str = "general";
     pub const HOTKEYS: &str = "hotkeys";
     pub const PROVIDERS: &str = "providers";
+    /// 离线模型（下载、运行状态、推理组件）
+    pub const OFFLINE: &str = "offline";
     pub const TRANSLATE: &str = "translate";
     pub const OCR: &str = "ocr";
     pub const CLIPBOARD: &str = "clipboard";
@@ -32,8 +34,8 @@ pub mod sections {
     pub const ABOUT: &str = "about";
     /// 全部分组（顺序即导航顺序）。前端镜像是 `shared/ipc/sections.ts` 的 `SETTINGS_SECTIONS`，由下面的黄金样例
     /// 比对
-    pub const ALL: [&str; 9] = [
-        GENERAL, HOTKEYS, PROVIDERS, TRANSLATE, OCR, CLIPBOARD, APPEARANCE, SYNC, ABOUT,
+    pub const ALL: [&str; 10] = [
+        GENERAL, HOTKEYS, PROVIDERS, OFFLINE, TRANSLATE, OCR, CLIPBOARD, APPEARANCE, SYNC, ABOUT,
     ];
 
     /// OCR 分组里的「识别历史」（OCR 面板 ⋯ 菜单的入口直达这里）
@@ -144,6 +146,8 @@ pub fn runtime_info(app: &tauri::AppHandle, state: &AppState) -> RuntimeInfo {
         autostart_issue: settings.general.launch_at_login.then(autostart::issue).flatten(),
         // 只有阶段、时间、计数与错误种类，不含地址、账号与设备名（诊断包的 app_info 也用它）
         sync: state.sync.status(),
+        // 只读缓存（没读过库存时为空），不读盘
+        offline: state.models.summary(),
     }
 }
 

@@ -50,7 +50,23 @@
     "save": "Save and continue",
     "configured": "Connected: {names}",
     "add_another": "Add another service",
-    "sync_link": "Already use Wisp on another device? Connect sync"
+    "sync_link": "Already use Wisp on another device? Connect sync",
+    "offline": {
+      "link": "Rather not use an API key? Use offline models",
+      "title": "Use offline models",
+      "description": "The models are downloaded and run on this device, so the text you recognize and translate never leaves it.",
+      "light": "Light",
+      "quality": "High quality",
+      "light_desc": "Runs smoothly on most devices",
+      "quality_desc": "Tables, complex layouts and better translations",
+      "models": "{ocr} + {translate}",
+      "size": "About {size}",
+      "recommended": "Recommended",
+      "note": "Downloads continue in the background, so you can go on. Follow the progress in Settings › Offline models; you can switch to other models any time.",
+      "start": "Download and continue",
+      "configured": "Using offline models (on this device only)",
+      "start_anyway": "Download anyway and continue"
+    }
   },
   "try": {
     "title": "Try it",

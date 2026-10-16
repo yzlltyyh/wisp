@@ -34,8 +34,10 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::watch;
 use wisp_llm::{CancellationToken, Secret};
+use wisp_types::defaults::OFFLINE_PROVIDER_ID;
 use wisp_types::{
-    AppRef, ErrorCode, HotkeyAction, LlmError, NotReady, OverlayEndReason, OverlayMode, RequestId, StreamEvent,
+    AppRef, ErrorCode, HotkeyAction, LlmError, LocalModelId, ModelRef, NotReady, OverlayEndReason, OverlayMode,
+    RequestId, Settings, StreamEvent,
 };
 
 use super::cache::TranslationCache;
@@ -43,9 +45,10 @@ use super::captures::{CaptureStore, Crop};
 use super::env::Env;
 use super::fsm::{self, Event, Flow, Stage, Transition};
 use super::not_ready::KeyIndex;
+use super::not_ready::{OfflineIndex, OfflineStatus};
 use super::ocr::{FocusReturn, OverlayState};
-use super::plan::{Resolved, Throughput};
-use super::registry::{Owner, PumpEnd, Registry, Sink, Tags};
+use super::plan::Throughput;
+use super::registry::{ModelInfo, Owner, PumpEnd, Registry, Sink, Tags};
 use super::{RequestCaller, RequestHost};
 use crate::app::perf::PerfStage;
 use crate::bus::{Command, TriggerOrigin};
@@ -257,6 +260,21 @@ pub(super) async fn cpu<T: Send + 'static>(heavy: bool, f: impl FnOnce() -> T + 
 
 pub(super) struct EnvKeys<'a>(&'a dyn Env);
 
+/// 离线模型的就绪快照（[`Core::offline_index`]）：没取过的模型一律按「没下载」回答——只有用不到离线模型时才不取，
+/// 那时也不会有人问
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct OfflineSnapshot([Option<OfflineStatus>; LocalModelId::ALL.len()]);
+
+impl OfflineIndex for OfflineSnapshot {
+    fn offline_status(&self, model: LocalModelId) -> OfflineStatus {
+        LocalModelId::ALL
+            .iter()
+            .position(|m| *m == model)
+            .and_then(|i| self.0[i])
+            .unwrap_or(OfflineStatus::Missing)
+    }
+}
+
 impl KeyIndex for EnvKeys<'_> {
     fn keychain_state(&self) -> wisp_types::KeychainState {
         self.0.keychain_state()
@@ -266,12 +284,24 @@ impl KeyIndex for EnvKeys<'_> {
     }
 }
 
-/// 未就绪 → 前端发起的请求里的错误（这类请求没有载荷可放 `not_ready`，以 ErrorCard 呈现）
+/// 未就绪 → 前端发起的请求里的错误（这类请求没有载荷可放 `not_ready`，以 ErrorCard 呈现）。每个原因显式映射：
+/// 新增的原因必须在这里决定怎样呈现
 pub(super) fn not_ready_error(nr: &NotReady) -> LlmError {
+    let configured = |message: &str| LlmError::new(ErrorCode::NotConfigured, message);
     match nr {
         NotReady::KeychainUnavailable => LlmError::new(ErrorCode::Keychain, "the system keychain is unavailable"),
-        NotReady::NoVisionModel => LlmError::new(ErrorCode::NotConfigured, "no vision model is configured"),
-        _ => LlmError::new(ErrorCode::NotConfigured, "no model is configured"),
+        NotReady::NoVisionModel => configured("no vision model is configured"),
+        NotReady::NoProvider | NotReady::NoDefaultModel { .. } => configured("no model is configured"),
+        NotReady::OfflineModelMissing { .. } => configured("the offline model is not downloaded"),
+        NotReady::OfflineModelDownloading { .. } => configured("the offline model is still downloading"),
+        NotReady::OfflineTaskUnsupported { .. } => configured("the offline translation model only translates"),
+        // 以下原因只出现在 Rust 发起的流程里（取词、截图），前端发起的请求不会遇到；仍给一个固定的说明
+        NotReady::PermissionMissing { .. } => configured("a permission is missing"),
+        NotReady::WaylandCopyFirst | NotReady::SelectionUnavailable { .. } => {
+            configured("the selection is unavailable")
+        }
+        NotReady::CaptureFailed { .. } => configured("the screenshot failed"),
+        NotReady::Elevated => configured("the target app runs with higher privileges"),
     }
 }
 
@@ -289,20 +319,17 @@ pub(super) fn owner_of(host: &RequestHost) -> Owner {
     }
 }
 
-/// 请求「已发出」的日志（`llm_stream` 返回之后打印；`trace` 与 `perf …` 行对得上，`+ms` 与其中的 `shown_ms` 同一起点）
-pub(super) fn log_dispatched(id: &str, trace: Option<u64>, started: Option<Instant>, resolved: &Resolved) {
+/// 请求「已发出」的日志（`llm_stream` / `ocr_engine_stream` 返回之后打印；`trace` 与 `perf …` 行对得上，`+ms` 与其中的
+/// `shown_ms` 同一起点）
+pub(super) fn log_dispatched(id: &str, trace: Option<u64>, started: Option<Instant>, model: &ModelInfo) {
     match (trace, started) {
         (Some(trace), Some(t0)) => log::info!(
             "request {id} dispatched trace={trace} at +{} ms model={}/{}",
             t0.elapsed().as_millis(),
-            resolved.provider.id,
-            resolved.model.id
+            model.provider_id,
+            model.model_id
         ),
-        _ => log::info!(
-            "request {id} dispatched model={}/{}",
-            resolved.provider.id,
-            resolved.model.id
-        ),
+        _ => log::info!("request {id} dispatched model={}/{}", model.provider_id, model.model_id),
     }
 }
 
@@ -349,6 +376,27 @@ impl Core {
 
     pub(super) fn keys(&self) -> EnvKeys<'_> {
         EnvKeys(&*self.env)
+    }
+
+    /// 离线模型的就绪快照：设置或这次请求用到离线模型时才在阻塞线程里向模型服务要（第一次要读模型库存），
+    /// 没用到时不做任何事
+    pub(super) async fn offline_index(&self, settings: &Settings, explicit: Option<&ModelRef>) -> OfflineSnapshot {
+        let needed = settings.offline.ocr_model.is_some()
+            || settings.offline.translate_model.is_some()
+            || explicit.is_some_and(|r| r.provider_id == OFFLINE_PROVIDER_ID);
+        if !needed {
+            return OfflineSnapshot::default();
+        }
+        let env = Arc::clone(&self.env);
+        blocking(move || {
+            let mut snap = OfflineSnapshot::default();
+            for (i, m) in LocalModelId::ALL.into_iter().enumerate() {
+                snap.0[i] = Some(env.offline_status(m));
+            }
+            snap
+        })
+        .await
+        .unwrap_or_default()
     }
 
     // ------------------------------------------------------------------------------------------------
@@ -860,7 +908,9 @@ impl Core {
     /// 请求不访问钥匙串、直接以「没有 Key」发出。钥匙串不可用 / 锁定 / 没有默认钥匙串时本地模型照常可用
     /// （与 `not_ready::check_key` 判为就绪的口径一致）
     pub(super) fn key_not_needed(&self, provider: &wisp_types::Provider) -> bool {
-        !super::plan::provider_needs_key(provider) && !self.env.has_key(&provider.id)
+        // 离线模型的合成服务商：key 是推理进程每次启动随机生成的，由模型服务填入，钥匙串里不会有
+        super::plan::is_offline(provider)
+            || (!super::plan::provider_needs_key(provider) && !self.env.has_key(&provider.id))
     }
 
     /// 取得请求用的 Key。失败时写入 `Error{keychain, retryable}`；最多等 [`KEY_WAIT`]（系统对话框一直没人回答），
@@ -868,17 +918,17 @@ impl Core {
     pub(super) async fn read_key(
         &self,
         id: &str,
-        resolved: &Resolved,
+        provider: &wisp_types::Provider,
         src: KeySource,
         token: &CancellationToken,
     ) -> Result<Option<Secret>, PumpEnd> {
         let fetch = match src {
             KeySource::Known(secret) => return Ok(secret),
-            _ if self.key_not_needed(&resolved.provider) => return Ok(None),
-            KeySource::Prefetched(k) if k.provider_id == resolved.provider.id => k,
-            KeySource::Prefetched(_) | KeySource::Read => self.prefetch_key(&resolved.provider.id),
+            _ if self.key_not_needed(provider) => return Ok(None),
+            KeySource::Prefetched(k) if k.provider_id == provider.id => k,
+            KeySource::Prefetched(_) | KeySource::Read => self.prefetch_key(&provider.id),
         };
-        let optional = !super::plan::provider_needs_key(&resolved.provider);
+        let optional = !super::plan::provider_needs_key(provider);
         let joined = tokio::select! {
             r = tokio::time::timeout(KEY_WAIT, fetch.join()) => r,
             () = token.cancelled() => return Err(PumpEnd::Cancelled),

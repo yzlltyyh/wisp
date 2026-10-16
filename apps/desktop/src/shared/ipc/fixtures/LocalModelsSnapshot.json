@@ -1,0 +1,119 @@
+{
+  "models": [
+    {
+      "id": "pp_ocrv6_tiny",
+      "kind": "ocr",
+      "download_bytes": 31040000,
+      "pending_runtime_bytes": 0,
+      "state": {
+        "state": "not_installed"
+      },
+      "load": "unloaded",
+      "memory_estimate_mb": 300,
+      "fitness": {
+        "level": "good",
+        "reason_key": null
+      },
+      "update_available": false
+    },
+    {
+      "id": "pp_ocrv6_small",
+      "kind": "ocr",
+      "download_bytes": 31040000,
+      "pending_runtime_bytes": 0,
+      "state": {
+        "state": "installed"
+      },
+      "load": "loaded",
+      "memory_estimate_mb": 300,
+      "fitness": {
+        "level": "good",
+        "reason_key": null
+      },
+      "update_available": false
+    },
+    {
+      "id": "paddleocr_vl_1_6",
+      "kind": "ocr",
+      "download_bytes": 1953600000,
+      "pending_runtime_bytes": 32200000,
+      "state": {
+        "state": "downloading",
+        "done": 820000000,
+        "total": 1985800000,
+        "bytes_per_sec": 12400000
+      },
+      "load": "unloaded",
+      "memory_estimate_mb": 3000,
+      "fitness": {
+        "level": "good",
+        "reason_key": null
+      },
+      "update_available": false
+    },
+    {
+      "id": "index_translate_2b",
+      "kind": "translate",
+      "download_bytes": 1312164352,
+      "pending_runtime_bytes": 0,
+      "state": {
+        "state": "installed"
+      },
+      "load": "loading",
+      "memory_estimate_mb": 2200,
+      "fitness": {
+        "level": "good",
+        "reason_key": null
+      },
+      "update_available": true
+    },
+    {
+      "id": "index_translate_9b",
+      "kind": "translate",
+      "download_bytes": 5780090304,
+      "pending_runtime_bytes": 0,
+      "state": {
+        "state": "paused",
+        "done": 1200000000,
+        "total": 5780090304
+      },
+      "load": "unloaded",
+      "memory_estimate_mb": 7500,
+      "fitness": {
+        "level": "slow",
+        "reason_key": "settings.offline.fitness.cpu_only"
+      },
+      "update_available": false
+    }
+  ],
+  "runtimes": [
+    {
+      "id": "llama_cpp",
+      "version": "b11669",
+      "installed": true,
+      "size": 61000000,
+      "in_use": true
+    },
+    {
+      "id": "onnx_runtime",
+      "version": "1.28.3",
+      "installed": false,
+      "size": 9100000,
+      "in_use": false
+    }
+  ],
+  "device": {
+    "total_memory": 17179869184,
+    "apple_silicon": false,
+    "gpus": [
+      {
+        "name": "NVIDIA GeForce RTX 3060",
+        "vram_total_mb": 12288,
+        "integrated": false
+      }
+    ],
+    "gpu_probed": true
+  },
+  "disk_used": 2400000000,
+  "disk_free": 120000000000
+}

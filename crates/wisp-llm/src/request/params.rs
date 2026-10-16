@@ -24,6 +24,8 @@ pub(crate) enum Thinking {
     GeminiLevelLow,
     /// Gemini 2.5 Flash（含 lite）：`thinkingConfig: {thinkingBudget: 0}`
     GeminiBudgetZero,
+    /// `chat_template_kwargs: {enable_thinking: false}`（llama-server 等按 chat template 关思考的服务）
+    TemplateKwargsOff,
 }
 
 /// 一次请求的参数决定
@@ -96,6 +98,7 @@ pub(crate) fn plan(i: &PlanInput<'_>) -> Plan {
                 ThinkingOff::DeepSeek | ThinkingOff::Glm | ThinkingOff::MiniMax => Thinking::Disabled,
                 ThinkingOff::Qwen => Thinking::EnableFalse,
                 ThinkingOff::Kimi => Thinking::KimiLow,
+                ThinkingOff::ChatTemplateKwargs => Thinking::TemplateKwargsOff,
                 ThinkingOff::None
                 | ThinkingOff::OpenAiEffort
                 | ThinkingOff::AnthropicEffort
@@ -116,6 +119,8 @@ pub(crate) fn plan(i: &PlanInput<'_>) -> Plan {
                     Thinking::None
                 }
             }
+            // 不是 LLM 服务：请求在构造阶段已被拒绝
+            Protocol::PaddleOcr => Thinking::None,
         }
     };
 
@@ -136,7 +141,7 @@ pub(crate) fn plan(i: &PlanInput<'_>) -> Plan {
                     None
                 }
             }
-            Protocol::Gemini => None,
+            Protocol::Gemini | Protocol::PaddleOcr => None,
         }
     };
 

@@ -15,6 +15,8 @@ export interface SegmentOption<V extends string> {
   label: string
   icon?: LucideIcon
   disabled?: boolean
+  /** 悬停说明（例如置灰的原因） */
+  title?: string
 }
 
 export interface SegmentedControlProps<V extends string> {
@@ -97,6 +99,7 @@ export function SegmentedControl<V extends string>({
           aria-checked={o.value === value}
           tabIndex={o.value === value ? 0 : -1}
           disabled={disabled || o.disabled}
+          title={o.title}
           className="ui-segmented-item"
           data-testid={`${testId}-${o.value}`}
           onClick={() => onChange(o.value)}

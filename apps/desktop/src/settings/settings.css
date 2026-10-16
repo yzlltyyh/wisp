@@ -575,6 +575,10 @@
   .ob-window .ui-btn.st-btn-danger:not(:disabled) {
     color: var(--danger-text);
   }
+  /* 卡片里插在某一行下方的确认条（「下载并使用」）：与卡片边缘留出同样的间距，不贴边 */
+  .ui-section-card > .ui-confirm-clip > .ui-confirm {
+    margin: 0 6px 6px;
+  }
   /* 原地确认：一行（DangerRow）、分组标题右侧（HeaderConfirm）、编辑器底栏 */
   .ui-confirm.st-confirm-row {
     min-height: var(--h-row);

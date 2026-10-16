@@ -4,6 +4,7 @@
 import {
   ClipboardList,
   Cloud,
+  HardDriveDownload,
   Info,
   Keyboard,
   Languages,
@@ -19,6 +20,7 @@ export const SECTION_ICONS: Record<SettingsSection, LucideIcon> = {
   general: Settings2,
   hotkeys: Keyboard,
   providers: Server,
+  offline: HardDriveDownload,
   translate: Languages,
   ocr: ScanText,
   clipboard: ClipboardList,

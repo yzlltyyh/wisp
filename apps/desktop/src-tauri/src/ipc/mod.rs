@@ -22,6 +22,7 @@
 pub mod cmd_app;
 pub mod cmd_clipboard;
 pub mod cmd_hotkeys;
+pub mod cmd_models;
 pub mod cmd_overlay;
 pub mod cmd_provider;
 pub mod cmd_settings;
@@ -220,6 +221,16 @@ commands![
     cmd_sync::sync_disconnect,
     cmd_sync::sync_reset_remote,
     cmd_sync::sync_generate_passphrase,
+    // ---- 离线模型----
+    cmd_models::offline_models_get,
+    cmd_models::offline_model_download,
+    cmd_models::offline_model_pause,
+    cmd_models::offline_model_cancel,
+    cmd_models::offline_model_delete,
+    cmd_models::offline_runtime_delete,
+    cmd_models::offline_release,
+    cmd_models::offline_reveal,
+    cmd_models::offline_devices_refresh,
     // ---- 快捷键----
     cmd_hotkeys::hotkey_status,
     cmd_hotkeys::hotkey_record_begin,

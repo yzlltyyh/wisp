@@ -154,6 +154,8 @@ async function thumb(
 }
 
 interface PayloadOptions {
+  /** 截图的 id（未就绪时 Rust 还没有截图：空串） */
+  captureId?: string
   mode?: OcrMode
   requestId?: string | null
   notReady?: Extract<PanelPayload, { kind: 'ocr' }>['not_ready']
@@ -171,7 +173,7 @@ async function ocrPayload(ctx: MockContext, o: PayloadOptions = {}): Promise<Pan
   const th = Math.max(8, Math.round((tw * h) / w))
   return {
     kind: 'ocr',
-    capture_id: 'cap-1',
+    capture_id: o.captureId ?? 'cap-1',
     request_id: o.requestId === undefined ? 'r-ocr' : o.requestId,
     mode: o.mode ?? 'lines',
     thumb_url: o.noThumb ? '' : await thumb(ctx, tw, th, lines),
@@ -306,6 +308,72 @@ async function pinnedOcr(ctx: MockContext, state: Partial<PinState>, height = 36
 }
 
 const pinnedScenario = (spec: Spec): Scenario => ({ ...scenario(spec), view: 'pinned' })
+
+// ---------------------------------------------------------------------------
+// 离线模型与 PaddleOCR 云端
+
+const OFFLINE_SMALL = {
+  provider_id: '@offline',
+  model_id: 'pp_ocrv6_small',
+  model_label: 'PP-OCRv6 Small',
+}
+const OFFLINE_VL = {
+  provider_id: '@offline',
+  model_id: 'paddleocr_vl_1_6',
+  model_label: 'PaddleOCR-VL',
+}
+const PADDLE_STRUCTURE = {
+  provider_id: 'paddleocr',
+  model_id: 'PP-StructureV3',
+  model_label: 'PP-StructureV3',
+}
+
+/** 结构化结果：管道表格、带合并单元格的 HTML 表格（PaddleX 的输出形式）、公式 */
+const OCR_TABLES = `## 季度指标
+
+| 指标 | Q1 | Q2 | 变化 |
+| :--- | ---: | ---: | :---: |
+| 唤出 p95 | 118 ms | 96 ms | **−19%** |
+| 首 token p95 | 1.4 s | 1.1 s | −21% |
+| 常驻内存 | 64 MB | 58 MB | −9% |
+
+<div style="text-align: center;"><html><body><table border=1><tr><td rowspan=2>平台</td><td colspan=2>安装包</td></tr><tr><td>大小</td><td>预算</td></tr><tr><td>macOS</td><td>9.8 MB</td><td>12 MB</td></tr><tr><td>Windows</td><td>7.6 MB</td><td>10 MB</td></tr></table></body></html></div>
+
+内存估算按 $M = n \\times s^2$ 计算：
+
+$$
+T_{p95} = \\mu + 1.645\\,\\sigma
+$$`
+
+/** 本机已下载 PP-OCRv6 Small 与 VL、加上一个 PaddleOCR 服务；`select` 时选用 Small 作为离线识别模型 */
+function seedOffline(select: boolean): void {
+  const state = window.__WISP_MOCK__?.state
+  if (!state) return
+  const snap = state.offline.snapshot
+  state.offline.snapshot = {
+    ...snap,
+    models: snap.models.map((m) =>
+      m.id === 'pp_ocrv6_small' || m.id === 'paddleocr_vl_1_6'
+        ? { ...m, state: { state: 'installed' as const } }
+        : m,
+    ),
+  }
+  const paddle = provider('paddleocr', 'PaddleOCR', [
+    model('PP-OCRv6', 'unknown'),
+    model('PP-StructureV3', 'unknown'),
+    model('PaddleOCR-VL-1.6', 'unknown'),
+  ])
+  paddle.protocol = 'paddle_ocr'
+  paddle.base_url = 'https://paddleocr.aistudio-app.com/api/v2/ocr/jobs'
+  paddle.template_id = 'paddleocr'
+  state.settings.providers = [...state.settings.providers, paddle]
+  if (select) state.settings.offline = { ...state.settings.offline, ocr_model: 'pp_ocrv6_small' }
+}
+
+const offlineMissing = (id: 'pp_ocrv6_small' | 'paddleocr_vl_1_6') => ({
+  reason: 'offline_model_missing' as const,
+  model: id,
+})
 
 export const scenarios: readonly Scenario[] = [
   scenario({
@@ -541,6 +609,7 @@ export const scenarios: readonly Scenario[] = [
         ctx,
         await ocrPayload(ctx, {
           requestId: null,
+          captureId: '',
           noThumb: true,
           notReady: { reason: 'permission_missing', permission: 'screen_recording' },
         }),
@@ -565,6 +634,7 @@ export const scenarios: readonly Scenario[] = [
         ctx,
         await ocrPayload(ctx, {
           requestId: null,
+          captureId: '',
           noThumb: true,
           notReady: { reason: 'capture_failed', message: 'errors.capture.backend' },
         }),
@@ -810,6 +880,241 @@ export const scenarios: readonly Scenario[] = [
       )
       await until(() => $('[data-testid="view-ocr"][data-phase="done"]') !== null)
       await pause(600)
+    },
+  }),
+  // ---- 离线模型与 PaddleOCR 云端
+  scenario({
+    id: 'offline-loading',
+    label: 'OCR · 正在加载离线模型（PP-OCRv6 冷启动）',
+    async run(ctx) {
+      seedOffline(true)
+      ctx.stream('r-ocr', [
+        { type: 'start', request_id: 'r-ocr', ...OFFLINE_SMALL, upstream_id: null },
+        { type: 'phase', phase: 'loading_model' },
+        { wait: 60_000 },
+      ])
+      show(ctx, await ocrPayload(ctx))
+      // 「第一次加载需要十几秒」在约 3 秒后才淡入：等它出现再截图
+      await pause(3_800)
+    },
+  }),
+  scenario({
+    id: 'offline-partial',
+    label: 'OCR · PaddleOCR-VL 结构化结果：部分区域未能识别（状态行的提示）',
+    async run(ctx) {
+      seedOffline(false)
+      ctx.stream(
+        'r-ocr',
+        ctx.textStream(OCR_TABLES, {
+          chunkChars: 40,
+          intervalMs: 10,
+          firstTokenMs: 100,
+          model: OFFLINE_VL,
+          before: [{ type: 'notice', kind: 'partial' }],
+          done: { elapsed_ms: 4_200, usage: null },
+        }),
+      )
+      show(ctx, await ocrPayload(ctx, { mode: 'markdown', size: [1280, 900] }), {
+        maxHeight: 640,
+      })
+      await until(phase('done'))
+      await until(() => $('[data-testid="ocr-preview"]') !== null)
+      // 自动复制的「已复制」先占住状态行一两秒，收起后才是这条提示
+      await pause(2_200)
+    },
+  }),
+  scenario({
+    id: 'cloud-queued',
+    label: 'OCR · 云端处理中（PaddleOCR PP-StructureV3 排队）',
+    async run(ctx) {
+      const state = window.__WISP_MOCK__?.state
+      seedOffline(false)
+      if (state)
+        state.settings.defaults.ocr = { provider_id: 'paddleocr', model_id: 'PP-StructureV3' }
+      ctx.stream('r-ocr', [
+        { type: 'start', request_id: 'r-ocr', ...PADDLE_STRUCTURE, upstream_id: null },
+        { type: 'phase', phase: 'queued' },
+        { wait: 60_000 },
+      ])
+      show(ctx, await ocrPayload(ctx, { mode: 'markdown' }))
+      await pause(500)
+    },
+  }),
+  scenario({
+    id: 'table',
+    label: 'OCR · 结构化结果：表格与公式的预览',
+    async run(ctx) {
+      seedOffline(false)
+      ctx.stream(
+        'r-ocr',
+        ctx.textStream(OCR_TABLES, {
+          chunkChars: 24,
+          intervalMs: 16,
+          firstTokenMs: 200,
+          model: PADDLE_STRUCTURE,
+          done: { elapsed_ms: 28_400, usage: null },
+        }),
+      )
+      show(ctx, await ocrPayload(ctx, { mode: 'markdown', size: [1280, 900] }), {
+        maxHeight: 640,
+      })
+      await until(phase('done'))
+      await until(() => $('[data-testid="ocr-preview"]') !== null)
+      await pause(400)
+    },
+  }),
+  scenario({
+    id: 'table-source',
+    label: 'OCR · 结构化结果：切到 Markdown 源码（可编辑）',
+    async run(ctx) {
+      seedOffline(false)
+      ctx.stream(
+        'r-ocr',
+        ctx.textStream(OCR_TABLES, {
+          chunkChars: 40,
+          intervalMs: 10,
+          firstTokenMs: 100,
+          model: PADDLE_STRUCTURE,
+        }),
+      )
+      show(ctx, await ocrPayload(ctx, { mode: 'markdown', size: [1280, 900] }), {
+        maxHeight: 640,
+      })
+      await until(() => $('[data-testid="ocr-source-toggle"]') !== null)
+      click('[data-testid="ocr-source-toggle"]')
+      await pause(400)
+    },
+  }),
+  scenario({
+    id: 'offline-menu',
+    label: 'OCR · 识别模型菜单（离线 / PaddleOCR / 视觉模型分组）',
+    async run(ctx) {
+      seedOffline(true)
+      await recognized(ctx)
+      click('[data-testid="ocr-recognize-menu"]')
+      await until(() => $('[data-testid="ocr-recognize-list-item-models"]') !== null)
+      click('[data-testid="ocr-recognize-list-item-models"]')
+      await pause(500)
+    },
+  }),
+  scenario({
+    id: 'offline-modes',
+    label: 'OCR · 选用 PP-OCRv6 时「结构化」置灰并说明',
+    async run(ctx) {
+      seedOffline(true)
+      ctx.stream(
+        'r-ocr',
+        ctx.textStream(OCR_TEXT, {
+          chunkChars: 8,
+          intervalMs: 16,
+          firstTokenMs: 120,
+          model: OFFLINE_SMALL,
+          done: { elapsed_ms: 310, usage: null },
+        }),
+      )
+      show(ctx, await ocrPayload(ctx))
+      await until(phase('done'))
+      click('[data-testid="ocr-recognize-menu"]')
+      await pause(500)
+    },
+  }),
+  scenario({
+    id: 'offline-missing',
+    label: 'OCR · 未就绪：离线识别模型还没下载（就地下载）',
+    async run(ctx) {
+      show(
+        ctx,
+        await ocrPayload(ctx, {
+          requestId: null,
+          captureId: '',
+          noThumb: true,
+          notReady: offlineMissing('pp_ocrv6_small'),
+        }),
+      )
+      await pause(500)
+    },
+  }),
+  scenario({
+    id: 'offline-downloading',
+    label: 'OCR · 未就绪：离线识别模型下载中（42%）',
+    async run(ctx) {
+      const state = window.__WISP_MOCK__?.state
+      if (state) {
+        const snap = state.offline.snapshot
+        state.offline.snapshot = {
+          ...snap,
+          models: snap.models.map((m) =>
+            m.id === 'paddleocr_vl_1_6'
+              ? {
+                  ...m,
+                  state: {
+                    state: 'downloading' as const,
+                    done: 0.42 * 1986e6,
+                    total: 1986e6,
+                    bytes_per_sec: 12.4e6,
+                  },
+                }
+              : m,
+          ),
+        }
+      }
+      show(
+        ctx,
+        await ocrPayload(ctx, {
+          requestId: null,
+          captureId: '',
+          noThumb: true,
+          notReady: { reason: 'offline_model_downloading', model: 'paddleocr_vl_1_6' },
+        }),
+      )
+      await pause(500)
+    },
+  }),
+  scenario({
+    id: 'offline-failed',
+    label: 'OCR · 未就绪：离线识别模型下载失败（文件校验没有通过）',
+    async run(ctx) {
+      const state = window.__WISP_MOCK__?.state
+      if (state) {
+        const snap = state.offline.snapshot
+        state.offline.snapshot = {
+          ...snap,
+          models: snap.models.map((m) =>
+            m.id === 'pp_ocrv6_small'
+              ? { ...m, state: { state: 'failed' as const, code: 'checksum_mismatch' as const } }
+              : m,
+          ),
+        }
+      }
+      show(
+        ctx,
+        await ocrPayload(ctx, {
+          requestId: null,
+          captureId: '',
+          noThumb: true,
+          notReady: offlineMissing('pp_ocrv6_small'),
+        }),
+      )
+      await pause(500)
+    },
+  }),
+  scenario({
+    id: 'offline-ready',
+    label: 'OCR · 未就绪卡片：下载完成（提示重新截图）',
+    async run(ctx) {
+      show(
+        ctx,
+        await ocrPayload(ctx, {
+          requestId: null,
+          captureId: '',
+          noThumb: true,
+          notReady: offlineMissing('pp_ocrv6_small'),
+        }),
+      )
+      await until(() => $('[data-testid="ocr-offline-card-download"]') !== null)
+      click('[data-testid="ocr-offline-card-download"]')
+      await until(() => $('[data-testid="ocr-offline-retake"]') !== null)
+      await pause(400)
     },
   }),
 ]

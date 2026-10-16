@@ -3,9 +3,11 @@
 
 use wisp_capture::CaptureError;
 use wisp_platform::{SelectionError, reason};
-use wisp_types::{KeychainState, ModelRef, NotReady, PermissionKind, Settings, Style, TaskKind};
+use wisp_types::{
+    KeychainState, LocalModelId, ModelRef, NotReady, PermissionKind, Provider, Settings, Style, TaskKind,
+};
 
-use super::plan::{Resolved, provider_needs_key, resolve_ocr_model, resolve_text_model};
+use super::plan::{EngineRef, OcrTarget, Resolved, provider_needs_key, resolve_ocr_target, resolve_text_model};
 
 /// 截图失败的原因 key（`NotReady::CaptureFailed.message`，前端 `locales/*/errors.json` 的 `capture` 分组）
 pub mod capture_reason {
@@ -17,9 +19,26 @@ pub mod capture_reason {
     pub const UNSUPPORTED: &str = "errors.capture.unsupported";
 }
 
-/// 文本任务能否发出请求：没有 Provider → `NoProvider`；请求指定、风格绑定、默认翻译模型都解析不出
-/// → `NoDefaultModel`；钥匙串不可用（`Unavailable` / 仅本次会话）且这个 Provider 需要 Key 又没有 Key →
-/// `KeychainUnavailable`（发请求之前就能判断；读取时被拒绝则是请求里的 `Error{keychain}`，不在这里）。
+/// 离线模型能不能马上用
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OfflineStatus {
+    /// 模型与它需要的推理组件都已安装
+    Ready,
+    /// 没下载（或文件损坏、缺推理组件）
+    Missing,
+    /// 正在下载、排队或校验
+    Downloading,
+}
+
+/// 离线模型的就绪情况（模型服务的库存与下载队列；不读盘）
+pub trait OfflineIndex {
+    fn offline_status(&self, model: LocalModelId) -> OfflineStatus;
+}
+
+/// 文本任务能否发出请求：没有 Provider → `NoProvider`；请求指定、离线翻译模型、风格绑定、默认翻译模型都解析不出
+/// → `NoDefaultModel`；离线翻译模型：润色 / 校对 → `OfflineTaskUnsupported`（只负责翻译，不悄悄换云端），没下载 /
+/// 下载中 → `OfflineModelMissing` / `OfflineModelDownloading`；钥匙串不可用（`Unavailable` / 仅本次会话）且这个 Provider
+/// 需要 Key 又没有 Key → `KeychainUnavailable`（发请求之前就能判断；读取时被拒绝则是请求里的 `Error{keychain}`，不在这里）。
 /// 返回解析好的模型
 pub fn check_text(
     settings: &Settings,
@@ -27,21 +46,39 @@ pub fn check_text(
     explicit: Option<&ModelRef>,
     task: TaskKind,
     keys: &dyn KeyIndex,
+    offline: &dyn OfflineIndex,
 ) -> Result<Resolved, NotReady> {
     let resolved = resolve_text_model(settings, explicit, style, task)?;
-    check_key(&resolved, keys)?;
+    if let Some(model) = resolved.offline_model() {
+        if matches!(task, TaskKind::Polish | TaskKind::Proofread) {
+            return Err(NotReady::OfflineTaskUnsupported { task });
+        }
+        check_offline(model, offline)?;
+        return Ok(resolved);
+    }
+    check_key(&resolved.provider, keys)?;
     Ok(resolved)
 }
 
-/// OCR 能否发出请求：没有 Provider → `NoProvider`；没有可用的视觉模型 → `NoVisionModel`；钥匙串同 [`check_text`]。
-/// 截图权限与截图失败不在这里（见 [`capture_not_ready`]）。
+/// OCR 能否发出请求：没有 Provider（也没选离线 OCR 模型）→ `NoProvider`；没有可用的视觉模型 → `NoVisionModel`；
+/// 离线 OCR 模型没下载 / 下载中 → `OfflineModelMissing` / `OfflineModelDownloading`；钥匙串同 [`check_text`]
+/// （PaddleOCR 云端的 Token 与 LLM 的 Key 同一机制）。截图权限与截图失败不在这里（见 [`capture_not_ready`]）。
 ///
 /// 注意：因此 OCR 视图的 `OcrPayload.not_ready` 也可能是 `KeychainUnavailable`（钥匙串不可用且视觉模型的 Provider
 /// 需要 Key 又没有 Key）；前端的 `NotReadyCard` 覆盖全部 `NotReady`
-pub fn check_ocr(settings: &Settings, explicit: Option<&ModelRef>, keys: &dyn KeyIndex) -> Result<Resolved, NotReady> {
-    let resolved = resolve_ocr_model(settings, explicit)?;
-    check_key(&resolved, keys)?;
-    Ok(resolved)
+pub fn check_ocr(
+    settings: &Settings,
+    explicit: Option<&ModelRef>,
+    keys: &dyn KeyIndex,
+    offline: &dyn OfflineIndex,
+) -> Result<OcrTarget, NotReady> {
+    let target = resolve_ocr_target(settings, explicit)?;
+    match &target {
+        OcrTarget::Engine(EngineRef::Local(model)) => check_offline(*model, offline)?,
+        OcrTarget::Engine(EngineRef::Cloud { provider, .. }) => check_key(provider, keys)?,
+        OcrTarget::Llm(r) => check_key(&r.provider, keys)?,
+    }
+    Ok(target)
 }
 
 /// 钥匙串状态与 Key 索引（不读明文）
@@ -50,15 +87,23 @@ pub trait KeyIndex {
     fn has_key(&self, provider_id: &str) -> bool;
 }
 
-fn check_key(resolved: &Resolved, keys: &dyn KeyIndex) -> Result<(), NotReady> {
+fn check_key(provider: &Provider, keys: &dyn KeyIndex) -> Result<(), NotReady> {
     let unavailable = matches!(
         keys.keychain_state(),
         KeychainState::Unavailable | KeychainState::SessionOnly
     );
-    if unavailable && !keys.has_key(&resolved.provider.id) && provider_needs_key(&resolved.provider) {
+    if unavailable && !keys.has_key(&provider.id) && provider_needs_key(provider) {
         return Err(NotReady::KeychainUnavailable);
     }
     Ok(())
+}
+
+fn check_offline(model: LocalModelId, offline: &dyn OfflineIndex) -> Result<(), NotReady> {
+    match offline.offline_status(model) {
+        OfflineStatus::Ready => Ok(()),
+        OfflineStatus::Missing => Err(NotReady::OfflineModelMissing { model }),
+        OfflineStatus::Downloading => Err(NotReady::OfflineModelDownloading { model }),
+    }
 }
 
 /// 取词失败 → 输入视图顶部的提示（`InputPayload.hint`）。**所有**取词失败都以输入视图打开，这里只决定提示条的内容；None = 不带提示（`Empty` / `Timeout`：用户可能本来就没选中文字；
@@ -176,6 +221,27 @@ mod tests {
 
     struct Keys(KeychainState, bool);
 
+    /// 没有任何离线模型
+    struct NoOffline;
+
+    impl OfflineIndex for NoOffline {
+        fn offline_status(&self, _: LocalModelId) -> OfflineStatus {
+            OfflineStatus::Missing
+        }
+    }
+
+    struct Offline(LocalModelId, OfflineStatus);
+
+    impl OfflineIndex for Offline {
+        fn offline_status(&self, model: LocalModelId) -> OfflineStatus {
+            if model == self.0 {
+                self.1
+            } else {
+                OfflineStatus::Missing
+            }
+        }
+    }
+
     impl KeyIndex for Keys {
         fn keychain_state(&self) -> KeychainState {
             self.0
@@ -190,7 +256,7 @@ mod tests {
         let s = crate::orchestrator::plan::tests::configured();
         let styles = wisp_prompts::builtin_styles();
         let style = &styles[0];
-        let ok = |k: Keys| check_text(&s, style, None, TaskKind::Translate, &k).map(|r| r.model.id);
+        let ok = |k: Keys| check_text(&s, style, None, TaskKind::Translate, &k, &NoOffline).map(|r| r.model.id);
         assert_eq!(ok(Keys(KeychainState::Available, false)), Ok("m".to_owned()));
         assert_eq!(ok(Keys(KeychainState::SessionOnly, true)), Ok("m".to_owned()));
         assert_eq!(
@@ -206,19 +272,67 @@ mod tests {
                 style,
                 None,
                 TaskKind::Translate,
-                &Keys(KeychainState::Unavailable, false)
+                &Keys(KeychainState::Unavailable, false),
+                &NoOffline,
             )
             .is_ok()
         );
         assert_eq!(
-            check_ocr(&s, None, &Keys(KeychainState::Unavailable, false)),
+            check_ocr(&s, None, &Keys(KeychainState::Unavailable, false), &NoOffline),
             Err(NotReady::KeychainUnavailable)
         );
         let mut empty = s.clone();
         empty.providers.clear();
         assert_eq!(
-            check_ocr(&empty, None, &Keys(KeychainState::Available, false)),
+            check_ocr(&empty, None, &Keys(KeychainState::Available, false), &NoOffline),
             Err(NotReady::NoProvider)
+        );
+    }
+
+    #[test]
+    fn offline_models_report_missing_downloading_and_unsupported_tasks() {
+        let mut s = crate::orchestrator::plan::tests::configured();
+        let styles = wisp_prompts::builtin_styles();
+        let style = &styles[0];
+        let keys = Keys(KeychainState::Unavailable, false);
+        s.offline.translate_model = Some(LocalModelId::IndexTranslate2b);
+        let check = |task, offline: &dyn OfflineIndex| check_text(&s, style, None, task, &keys, offline);
+        assert_eq!(
+            check(TaskKind::Translate, &NoOffline),
+            Err(NotReady::OfflineModelMissing {
+                model: LocalModelId::IndexTranslate2b
+            })
+        );
+        let downloading = Offline(LocalModelId::IndexTranslate2b, OfflineStatus::Downloading);
+        assert_eq!(
+            check(TaskKind::Translate, &downloading),
+            Err(NotReady::OfflineModelDownloading {
+                model: LocalModelId::IndexTranslate2b
+            })
+        );
+        let ready = Offline(LocalModelId::IndexTranslate2b, OfflineStatus::Ready);
+        // 钥匙串不可用也不影响离线模型
+        assert!(check(TaskKind::Translate, &ready).is_ok());
+        assert!(check(TaskKind::Refine, &ready).is_ok(), "提升译文退化为单次翻译");
+        for task in [TaskKind::Polish, TaskKind::Proofread] {
+            assert_eq!(
+                check(task, &ready),
+                Err(NotReady::OfflineTaskUnsupported { task }),
+                "不悄悄换云端"
+            );
+        }
+        // OCR
+        s.offline.ocr_model = Some(LocalModelId::PpOcrV6Tiny);
+        assert_eq!(
+            check_ocr(&s, None, &keys, &NoOffline),
+            Err(NotReady::OfflineModelMissing {
+                model: LocalModelId::PpOcrV6Tiny
+            })
+        );
+        let tiny = Offline(LocalModelId::PpOcrV6Tiny, OfflineStatus::Ready);
+        assert_eq!(
+            check_ocr(&s, None, &keys, &tiny).map(|t| t.local()),
+            Ok(Some(LocalModelId::PpOcrV6Tiny))
         );
     }
 }

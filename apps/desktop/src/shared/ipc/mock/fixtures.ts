@@ -130,7 +130,7 @@ export function createFixtures(boot: Boot) {
 
   function defaultSettings(): Settings {
     return {
-      schema_version: 1,
+      schema_version: 2,
       general: {
         launch_at_login: true,
         start_hidden: true,
@@ -232,6 +232,13 @@ export function createFixtures(boot: Boot) {
           verification_codes: true,
         },
       },
+      offline: {
+        ocr_model: null,
+        translate_model: null,
+        idle_release_min: 5,
+        use_gpu: true,
+        download_source: 'auto',
+      },
     }
   }
 
@@ -302,6 +309,7 @@ export function createFixtures(boot: Boot) {
       settings_issue: null,
       orphan_keys: 0,
       sync: syncOff(),
+      offline: { installed: [] },
     }
   }
 

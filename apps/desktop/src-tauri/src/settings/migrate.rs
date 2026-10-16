@@ -2,7 +2,8 @@
 //!
 //! 每份文档（settings / styles / glossary / state.json）各有一张迁移表：`steps[i]` 把 v(i+1) 的 JSON 变成 v(i+2)。
 //! 迁移在**宽松反序列化之前**、在 `serde_json::Value` 上进行（旧版本的字段名 / 形状在新结构里已经不存在）。
-//! 当前四份文档都是 v1，迁移表为空；以后升级 schema 时在对应的表末尾追加一步，并把版本常量加一。
+//! settings.json 目前是 v2（v1 → v2 是恒等迁移，见 [`settings_v1_to_v2`]），其余三份文档都是 v1；以后升级 schema 时在对应的表
+//! 末尾追加一步，并把版本常量加一。
 //!
 //! 版本号的处理：缺失、非整数或 0 视为 v1（手写的残缺文件）；高于当前版本（来自更新的 Wisp，用户降级）时不迁移、记 warn，
 //! 由宽松反序列化尽量读取。
@@ -22,8 +23,8 @@ use crate::error::IpcError;
 /// 一步迁移：把上一版本的文档变成下一版本
 pub type Step = fn(Value) -> Value;
 
-/// settings.json 的迁移表（v1 是第一个版本，暂无迁移）
-pub const SETTINGS_STEPS: &[Step] = &[];
+/// settings.json 的迁移表
+pub const SETTINGS_STEPS: &[Step] = &[settings_v1_to_v2];
 /// styles.json 的迁移表
 pub const STYLES_STEPS: &[Step] = &[];
 /// glossary.json 的迁移表
@@ -43,6 +44,12 @@ pub enum Outcome {
     Migrated { from: u32 },
     /// 文件来自更新的版本：原样保留
     Newer { found: u32 },
+}
+
+/// v1 → v2：新增只属于本机的 `offline` 分组（离线模型）。旧文件里没有它，宽松反序列化取默认值即可，内容不用改。
+/// 提版本号是为了降级：v1 的 Wisp 读到 v2 的文件时按「更新版本的内容」原样保留 `offline`，写盘不会把它丢掉
+fn settings_v1_to_v2(value: Value) -> Value {
+    value
 }
 
 /// 本版本不认识的内容（见模块说明）
@@ -357,5 +364,18 @@ mod tests {
     fn settings_migrate_sets_current_version() {
         let out = migrate(json!({"general": {}})).expect("migrate");
         assert_eq!(out["schema_version"], wisp_types::SETTINGS_SCHEMA_VERSION);
+    }
+
+    /// v1 → v2 只改版本号：内容原样（`offline` 由宽松反序列化补默认值）
+    #[test]
+    fn settings_v1_migrates_to_v2_unchanged() {
+        assert_eq!(SETTINGS_STEPS.len(), wisp_types::SETTINGS_SCHEMA_VERSION as usize - 1);
+        let v1 = json!({"schema_version": 1, "general": {"ui_language": "en-US"}, "providers": []});
+        let (out, outcome) = run(v1.clone(), 2, SETTINGS_STEPS);
+        assert_eq!(outcome, Outcome::Migrated { from: 1 });
+        let mut expected = v1;
+        expected["schema_version"] = json!(2);
+        assert_eq!(out, expected);
+        assert!(out.get("offline").is_none());
     }
 }

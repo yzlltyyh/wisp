@@ -657,8 +657,8 @@ describe('重新识别', () => {
     view()
     await recognize()
     fireEvent.click(screen.getByTestId('ocr-recognize-menu'))
-    fireEvent.click(await screen.findByRole('menuitem', { name: /视觉模型/ }))
-    // 同一个浮层里换成模型页，顶部有「‹ 视觉模型」返回行
+    fireEvent.click(await screen.findByRole('menuitem', { name: /识别模型/ }))
+    // 同一个浮层里换成模型页，顶部有「‹ 识别模型」返回行
     // 换页时旧页还在淡出：只看当前页
     const menu = (await screen.findByTestId('ocr-model-menu')).querySelector<HTMLElement>(
       '[data-page="models"]',
@@ -1015,7 +1015,7 @@ describe('直接翻译', () => {
     expect(callsOf('translate_start')).toHaveLength(1)
     // 「重新生成 ▾」→ 视觉模型 → llava
     fireEvent.click(screen.getByTestId('ocr-recognize-menu'))
-    fireEvent.click(await screen.findByRole('menuitem', { name: /视觉模型/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /识别模型/ }))
     fireEvent.click(within(await screen.findByTestId('ocr-model-menu')).getByText('llava'))
     expect(callsOf('ocr_start').at(-1)?.[1]).toMatchObject({
       req: { mode: 'paragraphs', model_ref: { provider_id: 'ollama', model_id: 'llava' } },
@@ -1035,7 +1035,7 @@ describe('直接翻译', () => {
     // 转录还在进行时收起「原文」
     fireEvent.click(screen.getByTestId('ocr-show-source'))
     fireEvent.click(screen.getByTestId('ocr-recognize-menu'))
-    fireEvent.click(await screen.findByRole('menuitem', { name: /视觉模型/ }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: /识别模型/ }))
     fireEvent.click(within(await screen.findByTestId('ocr-model-menu')).getByText('llava'))
     await settle()
     expect(callsOf('cancel').map(([, a]) => a.request_id)).toContain(id)

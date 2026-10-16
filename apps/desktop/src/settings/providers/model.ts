@@ -4,6 +4,7 @@
  */
 import { tKey } from '../../shared/i18n/i18n'
 import { isNonChatModel, isUsableModel } from '../../shared/models'
+import { isOcrService } from '../../shared/offline/catalog'
 import type {
   ModelEntry,
   ModelRef,
@@ -162,25 +163,40 @@ export function parseRefKey(key: string): ModelRef {
 export interface ModelOption {
   value: string
   label: string
+  /** 服务名（下拉里的分组标题） */
   hint: string
   vision: ModelEntry['vision']
+  /** 文字识别服务（PaddleOCR）的模型：只能用于 OCR */
+  service: boolean
 }
 
-/** 默认翻译模型的候选：全部 Provider 中已启用的对话模型（嵌入 / 语音 / 图像生成等不能翻译，shared/models.ts） */
+function modelOptions(p: Provider, keep: (m: ModelEntry) => boolean): ModelOption[] {
+  const service = isOcrService(p)
+  return p.models.filter(keep).map((m) => ({
+    value: refKey({ provider_id: p.id, model_id: m.id }) as string,
+    label: m.label?.trim() || m.id,
+    hint: providerName(p),
+    // 文字识别服务按协议就能识别图片（模板里的 vision 是未确认，不靠它判断）
+    vision: service ? 'yes' : m.vision,
+    service,
+  }))
+}
+
+/**
+ * 默认翻译模型的候选：全部 LLM 服务中已启用的对话模型（嵌入 / 语音 / 图像生成等不能翻译，shared/models.ts）；
+ * 文字识别服务（PaddleOCR）不能翻译，不列出
+ */
 export function translateOptions(providers: readonly Provider[]): ModelOption[] {
-  return providers.flatMap((p) =>
-    p.models.filter(isUsableModel).map((m) => ({
-      value: refKey({ provider_id: p.id, model_id: m.id }) as string,
-      label: m.label?.trim() || m.id,
-      hint: providerName(p),
-      vision: m.vision,
-    })),
-  )
+  return providers.filter((p) => !isOcrService(p)).flatMap((p) => modelOptions(p, isUsableModel))
 }
 
-/** 默认 OCR 模型的候选：已启用且 vision 为 Yes / Unknown */
+/**
+ * 默认 OCR 模型的候选：LLM 服务里已启用且 vision 为 Yes / Unknown 的模型，以及文字识别服务里已启用的模型。
+ * 文字识别服务排在前面（专门做这件事的服务）
+ */
 export function ocrOptions(providers: readonly Provider[]): ModelOption[] {
-  return translateOptions(providers).filter((o) => o.vision !== 'no')
+  const services = providers.filter(isOcrService).flatMap((p) => modelOptions(p, (m) => m.enabled))
+  return [...services, ...translateOptions(providers).filter((o) => o.vision !== 'no')]
 }
 
 /** 默认值指向的模型是否还在候选里（被删除 / 停用 / 改成不支持图片时提示） */
@@ -232,9 +248,15 @@ export function fillDefaults(
   provider: Provider,
   preferred: string | null = null,
 ): Settings['defaults'] | null {
+  const next = { ...settings.defaults }
+  // 文字识别服务（PaddleOCR）不能翻译：只补 OCR，取第一个启用的模型
+  if (isOcrService(provider)) {
+    const first = provider.models.find((m) => m.enabled)
+    if (next.ocr || !first) return null
+    return { ...next, ocr: { provider_id: provider.id, model_id: first.id } }
+  }
   const usable = provider.models.filter(isUsableModel)
   const probed = preferred === null ? undefined : usable.find((m) => m.id === preferred)
-  const next = { ...settings.defaults }
   let changed = false
   const first = probed ?? usable[0]
   if (!next.translate && first) {

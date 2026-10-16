@@ -6,7 +6,7 @@
  * 语调：danger（删除 / 清空，红底 + 红色确认）、warning（会丢掉改动但不是删除：琥珀底，确认按钮用中性的
  * secondary，例如「重新识别会覆盖修改」）、default（还原类，强调色淡底 + 主按钮）。
  */
-import { TriangleAlert } from 'lucide-react'
+import { TriangleAlert, type LucideIcon } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { useT } from '../i18n/useT'
@@ -27,6 +27,8 @@ export interface InlineConfirmProps {
   timeoutMs?: number | null
   /** 是否显示按钮（只靠按键确认时可以不显示） */
   buttons?: boolean
+  /** 前导图标（默认警示三角；「下载并使用」这类不是警告的确认换成对应的图标） */
+  icon?: LucideIcon
   className?: string
   'data-testid'?: string
 }
@@ -40,6 +42,7 @@ export function InlineConfirm({
   tone = 'danger',
   timeoutMs = ms(timing.confirmHold),
   buttons = true,
+  icon = TriangleAlert,
   className,
   'data-testid': testId = 'inline-confirm',
 }: InlineConfirmProps) {
@@ -65,7 +68,7 @@ export function InlineConfirm({
           {...motion}
         >
           <div className="ui-confirm" data-tone={tone} role="alert">
-            <Icon icon={TriangleAlert} size={14} className="ui-confirm-icon" />
+            <Icon icon={icon} size={14} className="ui-confirm-icon" />
             <span className="ui-confirm-text">{message}</span>
             {buttons ? (
               <span className="ui-confirm-actions">
