@@ -4,36 +4,17 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-/// 五个全局动作
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HotkeyAction {
-    TranslateSelection,
-    TranslateInput,
-    Ocr,
-    OcrTranslate,
-    Clipboard,
-}
+use crate::macros::str_enum;
 
-impl HotkeyAction {
-    /// 全部动作（顺序即设置页与托盘中的顺序）
-    pub const ALL: [HotkeyAction; 5] = [
-        Self::TranslateSelection,
-        Self::TranslateInput,
-        Self::Ocr,
-        Self::OcrTranslate,
-        Self::Clipboard,
-    ];
-
-    /// 序列化后的字符串（与 serde 一致）
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::TranslateSelection => "translate_selection",
-            Self::TranslateInput => "translate_input",
-            Self::Ocr => "ocr",
-            Self::OcrTranslate => "ocr_translate",
-            Self::Clipboard => "clipboard",
-        }
+str_enum! {
+    /// 五个全局动作。声明顺序（`ALL`）即设置页与托盘中的顺序
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+    pub enum HotkeyAction {
+        TranslateSelection = "translate_selection",
+        TranslateInput = "translate_input",
+        Ocr = "ocr",
+        OcrTranslate = "ocr_translate",
+        Clipboard = "clipboard",
     }
 }
 

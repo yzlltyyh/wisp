@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::app::AppRef;
 use crate::geom::PhysSize;
+use crate::macros::str_enum;
 use crate::style::OcrMode;
 
 /// 条目类型
@@ -192,65 +193,34 @@ pub enum PasteOutcome {
     Copied { reason: CopiedReason },
 }
 
-/// 智能识别出的片段种类。识别逻辑在 wisp-clipboard（每种一个识别器），前端只按种类决定图标与文案
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EntityKind {
-    Email,
-    /// 中国大陆手机号、带区号的固话、E.164 国际号码
-    Phone,
-    Url,
-    /// IPv4（每段 0–255）
-    Ip,
-    /// 验证码：关键词附近的 4–8 位数字或字母数字
-    Otp,
-    /// 快递单号
-    Tracking,
-    /// 「订单号」语境下的长编号
-    Order,
-    /// 带货币符号或「元」的金额
-    Amount,
-    /// 日期 / 日期时间
-    Datetime,
-    /// 18 位居民身份证号（校验位正确）
-    IdCard,
-    /// 银行卡号（Luhn 校验通过）
-    BankCard,
+str_enum! {
+    /// 智能识别出的片段种类。识别逻辑在 wisp-clipboard（每种一个识别器），前端只按种类决定图标与文案
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+    pub enum EntityKind {
+        Email = "email",
+        /// 中国大陆手机号、带区号的固话、E.164 国际号码
+        Phone = "phone",
+        Url = "url",
+        /// IPv4（每段 0–255）
+        Ip = "ip",
+        /// 验证码：关键词附近的 4–8 位数字或字母数字
+        Otp = "otp",
+        /// 快递单号
+        Tracking = "tracking",
+        /// 「订单号」语境下的长编号
+        Order = "order",
+        /// 带货币符号或「元」的金额
+        Amount = "amount",
+        /// 日期 / 日期时间
+        Datetime = "datetime",
+        /// 18 位居民身份证号（校验位正确）
+        IdCard = "id_card",
+        /// 银行卡号（Luhn 校验通过）
+        BankCard = "bank_card",
+    }
 }
 
 impl EntityKind {
-    /// 全部种类（声明顺序）
-    pub const ALL: [EntityKind; 11] = [
-        Self::Email,
-        Self::Phone,
-        Self::Url,
-        Self::Ip,
-        Self::Otp,
-        Self::Tracking,
-        Self::Order,
-        Self::Amount,
-        Self::Datetime,
-        Self::IdCard,
-        Self::BankCard,
-    ];
-
-    /// 序列化后的字符串（与 serde 一致）
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Email => "email",
-            Self::Phone => "phone",
-            Self::Url => "url",
-            Self::Ip => "ip",
-            Self::Otp => "otp",
-            Self::Tracking => "tracking",
-            Self::Order => "order",
-            Self::Amount => "amount",
-            Self::Datetime => "datetime",
-            Self::IdCard => "id_card",
-            Self::BankCard => "bank_card",
-        }
-    }
-
     /// 敏感种类：芯片里中间遮罩显示，识别默认关闭
     pub const fn is_sensitive(self) -> bool {
         matches!(self, Self::IdCard | Self::BankCard)
@@ -270,59 +240,28 @@ pub struct Entity {
     pub sensitive: bool,
 }
 
-/// 「粘贴为…」的文本变换。实现在 wisp-clipboard（每种一个变换），前端只负责展示
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TransformId {
-    /// 合并为一行
-    JoinLines,
-    /// 去掉首尾空白
-    Trim,
-    Upper,
-    Lower,
-    /// 每个单词首字母大写
-    Title,
-    /// 全角 → 半角
-    HalfWidth,
-    /// 半角 → 全角
-    FullWidth,
-    /// JSON 格式化（保留键的顺序）
-    JsonPretty,
-    /// JSON 压缩为一行
-    JsonMinify,
-    /// 去掉链接里的跟踪参数（utm_*、fbclid 等）
-    StripTracking,
-}
-
-impl TransformId {
-    /// 全部变换（声明顺序，也是菜单里的顺序）
-    pub const ALL: [TransformId; 10] = [
-        Self::JoinLines,
-        Self::Trim,
-        Self::Upper,
-        Self::Lower,
-        Self::Title,
-        Self::HalfWidth,
-        Self::FullWidth,
-        Self::JsonPretty,
-        Self::JsonMinify,
-        Self::StripTracking,
-    ];
-
-    /// 序列化后的字符串（与 serde 一致）
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::JoinLines => "join_lines",
-            Self::Trim => "trim",
-            Self::Upper => "upper",
-            Self::Lower => "lower",
-            Self::Title => "title",
-            Self::HalfWidth => "half_width",
-            Self::FullWidth => "full_width",
-            Self::JsonPretty => "json_pretty",
-            Self::JsonMinify => "json_minify",
-            Self::StripTracking => "strip_tracking",
-        }
+str_enum! {
+    /// 「粘贴为…」的文本变换。实现在 wisp-clipboard（每种一个变换），前端只负责展示。声明顺序（`ALL`）也是菜单里的顺序
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+    pub enum TransformId {
+        /// 合并为一行
+        JoinLines = "join_lines",
+        /// 去掉首尾空白
+        Trim = "trim",
+        Upper = "upper",
+        Lower = "lower",
+        /// 每个单词首字母大写
+        Title = "title",
+        /// 全角 → 半角
+        HalfWidth = "half_width",
+        /// 半角 → 全角
+        FullWidth = "full_width",
+        /// JSON 格式化（保留键的顺序）
+        JsonPretty = "json_pretty",
+        /// JSON 压缩为一行
+        JsonMinify = "json_minify",
+        /// 去掉链接里的跟踪参数（utm_*、fbclid 等）
+        StripTracking = "strip_tracking",
     }
 }
 

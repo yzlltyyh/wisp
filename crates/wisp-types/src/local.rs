@@ -7,52 +7,32 @@
 
 use serde::{Deserialize, Serialize};
 
-/// 离线模型的稳定 id：目录名、`installed.json`、设置（`offline.*_model`）与 IPC 都用它，发布后不改
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum LocalModelId {
-    /// PP-OCRv6 Tiny：最快，CPU 即可
-    #[serde(rename = "pp_ocrv6_tiny")]
-    PpOcrV6Tiny,
-    /// PP-OCRv6 Small：速度与准确率均衡
-    #[serde(rename = "pp_ocrv6_small")]
-    PpOcrV6Small,
-    /// PaddleOCR-VL-1.6：表格、公式与复杂版面（版面检测 + 视觉语言模型）
-    #[serde(rename = "paddleocr_vl_1_6")]
-    PaddleOcrVl16,
-    /// Index-Translate 2B
-    #[serde(rename = "index_translate_2b")]
-    IndexTranslate2b,
-    /// Index-Translate 9B
-    #[serde(rename = "index_translate_9b")]
-    IndexTranslate9b,
+use crate::macros::str_enum;
+
+str_enum! {
+    /// 离线模型的稳定 id：目录名、`installed.json`、设置（`offline.*_model`）与 IPC 都用它，发布后不改。
+    /// 声明顺序（`ALL`）即设置页的显示顺序：先文字识别、后翻译，同一类里由轻到重
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+    pub enum LocalModelId {
+        /// PP-OCRv6 Tiny：最快，CPU 即可
+        PpOcrV6Tiny = "pp_ocrv6_tiny",
+        /// PP-OCRv6 Small：速度与准确率均衡
+        PpOcrV6Small = "pp_ocrv6_small",
+        /// PaddleOCR-VL-1.6：表格、公式与复杂版面（版面检测 + 视觉语言模型）
+        PaddleOcrVl16 = "paddleocr_vl_1_6",
+        /// Index-Translate 2B
+        IndexTranslate2b = "index_translate_2b",
+        /// Index-Translate 9B
+        IndexTranslate9b = "index_translate_9b",
+    }
 }
 
 impl LocalModelId {
-    /// 全部模型，按设置页的显示顺序（先文字识别、后翻译；同一类里由轻到重）
-    pub const ALL: [Self; 5] = [
-        Self::PpOcrV6Tiny,
-        Self::PpOcrV6Small,
-        Self::PaddleOcrVl16,
-        Self::IndexTranslate2b,
-        Self::IndexTranslate9b,
-    ];
-
     /// 模型的用途
     pub const fn kind(self) -> LocalModelKind {
         match self {
             Self::PpOcrV6Tiny | Self::PpOcrV6Small | Self::PaddleOcrVl16 => LocalModelKind::Ocr,
             Self::IndexTranslate2b | Self::IndexTranslate9b => LocalModelKind::Translate,
-        }
-    }
-
-    /// 与 serde 一致的 id（目录名、日志）
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::PpOcrV6Tiny => "pp_ocrv6_tiny",
-            Self::PpOcrV6Small => "pp_ocrv6_small",
-            Self::PaddleOcrVl16 => "paddleocr_vl_1_6",
-            Self::IndexTranslate2b => "index_translate_2b",
-            Self::IndexTranslate9b => "index_translate_9b",
         }
     }
 
@@ -70,27 +50,14 @@ pub enum LocalModelKind {
     Translate,
 }
 
-/// 推理运行时：按需下载，与模型分开存放、分开删除
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum LocalRuntimeId {
-    /// llama.cpp 的 `llama-server`（PaddleOCR-VL、Index-Translate）
-    #[serde(rename = "llama_cpp")]
-    LlamaCpp,
-    /// ONNX Runtime 动态库（PP-OCRv6、版面检测）
-    #[serde(rename = "onnx_runtime")]
-    OnnxRuntime,
-}
-
-impl LocalRuntimeId {
-    /// 全部运行时（设置页的显示顺序）
-    pub const ALL: [Self; 2] = [Self::LlamaCpp, Self::OnnxRuntime];
-
-    /// 与 serde 一致的 id（目录名、日志）
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::LlamaCpp => "llama_cpp",
-            Self::OnnxRuntime => "onnx_runtime",
-        }
+str_enum! {
+    /// 推理运行时：按需下载，与模型分开存放、分开删除。声明顺序（`ALL`）即设置页的显示顺序
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+    pub enum LocalRuntimeId {
+        /// llama.cpp 的 `llama-server`（PaddleOCR-VL、Index-Translate）
+        LlamaCpp = "llama_cpp",
+        /// ONNX Runtime 动态库（PP-OCRv6、版面检测）
+        OnnxRuntime = "onnx_runtime",
     }
 }
 

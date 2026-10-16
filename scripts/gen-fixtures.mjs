@@ -14,6 +14,8 @@
  * 样例都在 `apps/desktop/src/shared/ipc/fixtures/`，Rust 是唯一来源，前端只读不改：
  * - `<Type>[.<variant>].json` + `index.ts`：IPC 类型的黄金样例（wisp-types `tests/golden.rs`）；
  * - `consts/HotkeyDefaults.json`：三端默认快捷键（首选 / 备选，wisp-types `tests/consts.rs`）——设置页显示「Rust 尝试的组合」；
+ * - `consts/EntityKinds.json` / `consts/TransformIds.json`：识别种类与「粘贴为…」变换的全部取值（wisp-types
+ *   `tests/consts.rs`，取自 `EntityKind::ALL` / `TransformId::ALL`）——前端测试拿它比对类型联合与展示注册表；
  * - `consts/BuiltinStyles.json`：6 个内置风格（wisp-prompts `tests/fixtures_consts.rs`）——浏览器 mock 的 `styles()`；
  * - `consts/SettingsSections.json` / `consts/SettingsAnchors.json`：设置分组与分组内锚点（wisp-desktop `app::sections`）；
  * - `desktop/IpcError.json`：命令错误的形状（wisp-desktop `error::tests::golden_ipc_error`，前端 golden.test.ts 校验键集合）。
@@ -36,10 +38,14 @@ export const GENERATORS = [
     outputs: [`${FIXTURES}/*.json`, `${FIXTURES}/index.ts`],
   },
   {
-    name: '默认快捷键表',
+    name: '默认快捷键、识别种类与变换清单',
     source: 'crates/wisp-types/tests/consts.rs',
     cargo: ['-p', 'wisp-types', '--test', 'consts'],
-    outputs: [`${FIXTURES}/consts/HotkeyDefaults.json`],
+    outputs: [
+      `${FIXTURES}/consts/HotkeyDefaults.json`,
+      `${FIXTURES}/consts/EntityKinds.json`,
+      `${FIXTURES}/consts/TransformIds.json`,
+    ],
   },
   {
     name: '内置风格',

@@ -1,0 +1,13 @@
+[
+  "email",
+  "phone",
+  "url",
+  "ip",
+  "otp",
+  "tracking",
+  "order",
+  "amount",
+  "datetime",
+  "id_card",
+  "bank_card"
+]

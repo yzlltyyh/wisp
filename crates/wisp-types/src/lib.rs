@@ -39,6 +39,7 @@ pub mod lang;
 pub mod lenient;
 pub mod llm;
 pub mod local;
+mod macros;
 pub mod perm;
 pub mod settings;
 pub mod style;
