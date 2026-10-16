@@ -1,7 +1,7 @@
 /**
  * 设置 → OCR：默认模式（纯文本 / 段落 / 结构化，与面板同一组名字：common.ocr_mode）、图片长边上限（512–4096，默认 2048）、
- * 图片细节（original 只发给 OpenAI 官方端点）、识别后自动复制、截图翻译时附原文、窗口识别、飞入动效、
- * OCR 默认模型的快捷入口（只列视觉模型）、识别历史（开关、上限、列表与回看、关开关时询问是否清空，OcrHistory.tsx）。
+ * 图片细节（original 只发给 OpenAI 官方端点）、识别后自动复制、默认排版（原样 / 去掉空行）、截图翻译时附原文、窗口识别、
+ * 飞入动效、OCR 默认模型的快捷入口（只列视觉模型）、识别历史（开关、上限、列表与回看、关开关时询问是否清空，OcrHistory.tsx）。
  *
  * 锚点 `ocr_history`（OCR 面板 ⋯ 菜单「识别历史…」）：进入分组后把识别历史滚到可见位置、焦点给
  * 分组标题，并短暂高亮（`data-flash`，减少动效时不闪）。
@@ -11,7 +11,7 @@ import { AnimatePresence, m } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { useT } from '../../shared/i18n/useT'
 import type { SettingsAnchor } from '../../shared/ipc/sections'
-import type { ImageDetail, OcrMode } from '../../shared/ipc/types'
+import type { ImageDetail, OcrLayout, OcrMode } from '../../shared/ipc/types'
 import { usePreset } from '../../shared/motion/presets'
 import { duration, ms } from '../../shared/motion/tokens'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
@@ -90,6 +90,8 @@ export default function OcrPage() {
   )
   const markdownOk = engineSupports(engine, 'markdown')
   const shownMode = o.default_mode === 'translate' ? 'lines' : o.default_mode
+  // 「合并为一行」不能作为默认（Rust 读设置时会改回原样），这里只列出能作默认的两项
+  const layout = o.layout === 'join_lines' ? 'keep' : o.layout
   const edge = String(o.max_edge_px)
   const edgeOptions = (EDGES as readonly string[]).includes(edge) ? EDGES : [...EDGES, edge]
 
@@ -173,6 +175,20 @@ export default function OcrPage() {
           onChange={(v) => void patchSettings(at('ocr.auto_copy', v))}
           ariaLabel={t('settings.ocr.auto_copy')}
           data-testid="ocr-auto-copy"
+        />
+        <SegmentRow<Exclude<OcrLayout, 'join_lines'>>
+          label={t('settings.ocr.layout')}
+          description={t(`settings.ocr.layout_desc.${layout}`)}
+          message={t('settings.ocr.layout_note')}
+          messageTone="default"
+          value={layout}
+          options={(['keep', 'remove_blank_lines'] as const).map((v) => ({
+            value: v,
+            label: t(`settings.ocr.layouts.${v}`),
+          }))}
+          onChange={(v) => void patchSettings(at('ocr.layout', v))}
+          ariaLabel={t('settings.ocr.layout')}
+          data-testid="ocr-layout"
         />
         <SwitchRow
           label={t('settings.ocr.transcribe')}

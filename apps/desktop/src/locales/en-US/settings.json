@@ -559,6 +559,16 @@
     "after": "After recognition",
     "auto_copy": "Copy the result automatically",
     "auto_copy_desc": "Put the recognized text on the clipboard when done",
+    "layout": "Layout",
+    "layout_desc": {
+      "keep": "Keep line breaks and blank lines as recognized",
+      "remove_blank_lines": "No blank lines between paragraphs"
+    },
+    "layouts": {
+      "keep": "As recognized",
+      "remove_blank_lines": "Remove blank lines"
+    },
+    "layout_note": "Not for structured mode or direct translation. Switch anytime in the result panel.",
     "transcribe": "Include source when translating screenshots",
     "transcribe_desc": "Transcribe first, then translate — one extra request",
     "capture": "Capture",

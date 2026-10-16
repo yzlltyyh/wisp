@@ -559,6 +559,16 @@
     "after": "识别之后",
     "auto_copy": "自动复制结果",
     "auto_copy_desc": "识别完成后把文字放进剪贴板",
+    "layout": "排版",
+    "layout_desc": {
+      "keep": "保留识别出的换行与空行",
+      "remove_blank_lines": "段落之间不再空行"
+    },
+    "layouts": {
+      "keep": "原样",
+      "remove_blank_lines": "去掉空行"
+    },
+    "layout_note": "不影响结构化与直接翻译；结果面板里可随时切换",
     "transcribe": "截图翻译时附原文",
     "transcribe_desc": "先转录原文再翻译，会多一次请求",
     "capture": "截图",

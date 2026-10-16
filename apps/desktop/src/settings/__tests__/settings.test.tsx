@@ -1207,6 +1207,44 @@ describe('其他分组', () => {
     )
   })
 
+  it('OCR：默认排版在「自动复制」下面，只有原样 / 去掉空行；说明随选项变化，附注说明适用范围', async () => {
+    const h = installHarness()
+    renderApp('ocr')
+    const row = await screen.findByTestId('ocr-layout')
+    expect(screen.getByTestId('ocr-auto-copy').nextElementSibling).toBe(row)
+    const radios = within(row).getAllByRole('radio')
+    expect(radios.map((r) => r.textContent)).toEqual(['原样', '去掉空行'])
+    expect(within(row).getByRole('radio', { name: '原样' })).toHaveAttribute('aria-checked', 'true')
+    expect(row).toHaveTextContent('保留识别出的换行与空行')
+    expect(row).toHaveTextContent('不影响结构化与直接翻译；结果面板里可随时切换')
+    // 附注是普通说明，不是错误提示
+    expect(within(row).queryByRole('alert')).toBeNull()
+
+    await userEvent.click(within(row).getByRole('radio', { name: '去掉空行' }))
+    expect(h.callsOf('settings_patch').at(-1)).toEqual({
+      patch: { ocr: { layout: 'remove_blank_lines' } },
+    })
+    await waitFor(() =>
+      expect(within(row).getByRole('radio', { name: '去掉空行' })).toHaveAttribute(
+        'aria-checked',
+        'true',
+      ),
+    )
+    expect(row).toHaveTextContent('段落之间不再空行')
+    expect(row).toHaveTextContent('不影响结构化与直接翻译')
+  })
+
+  it('OCR：设置里出现不能作默认的「合并为一行」时按原样显示', async () => {
+    const base = snapshot()
+    installHarness(
+      snapshot({ ocr: { ...base.settings.ocr, layout: 'join_lines' } }, base.runtime, base.styles),
+    )
+    renderApp('ocr')
+    const row = await screen.findByTestId('ocr-layout')
+    expect(within(row).getByRole('radio', { name: '原样' })).toHaveAttribute('aria-checked', 'true')
+    expect(row).toHaveTextContent('保留识别出的换行与空行')
+  })
+
   it('关于：已知新版本时可以安装；第三方许可按许可证分组', async () => {
     const h = installHarness(
       snapshot(
