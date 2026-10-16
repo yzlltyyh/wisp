@@ -41,8 +41,8 @@ const DISMISS_GRACE: Duration = Duration::from_secs(1);
 
 type ClickCb = Arc<dyn Fn() + Send + Sync>;
 
-/// 没有合成器时窗口的底色（24 位 TrueColor 像素，接近圆盘渐变的中间色）
-const DISC_PIXEL: u32 = 0x004A_8CF5;
+/// 没有合成器时窗口的底色（24 位 TrueColor 像素，圆盘渐变的中间色，即品牌蓝 #3266E3）
+const DISC_PIXEL: u32 = 0x0032_66E3;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {

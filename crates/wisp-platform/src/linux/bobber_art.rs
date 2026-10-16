@@ -1,9 +1,12 @@
-//! 浮标的软件光栅化（纯逻辑，只依赖 std）。
+//! 浮标的软件光栅化（纯逻辑，只依赖 std 与同样只依赖 std 的 `common::bobber_glyph`）。
 //!
 //! 浮标是原生小窗（没有 WebView，内存不到 1 MB）。X11 下没有可用的矢量绘图库，这里用有符号距离场（SDF）+ 解析抗锯齿
-//! 直接画出 34 pt 的 ARGB 图像：柔和投影、品牌蓝渐变圆盘（22 pt）、顶部高光描边、白色 wisp 字形（与应用图标一致：
-//! 右上方的圆点 + 向左下方收细的尾迹）。每帧只有约 4–5 千个像素，逐帧重绘出现动画（scale 0.6→1 + 淡入）的成本
-//! 在 0.1 ms 量级，因此不需要预渲染位图。
+//! 直接画出 34 pt 的 ARGB 图像：柔和投影、品牌蓝圆盘（22 pt，以 `#3266E3` 为中间色的轻微竖直渐变）、顶部高光描边、
+//! 白色字形（应用图标的小尺寸字形 `wisp-mark-micro`，几何见 `common::bobber_glyph`，与 Windows 浮标相同）。每帧只有
+//! 约 4–5 千个像素，字形的距离只在它的包围盒里计算，逐帧重绘出现动画（scale 0.6→1 + 淡入）的成本在 1 ms 以内，
+//! 因此不需要预渲染位图。
+
+use crate::common::bobber_glyph;
 
 /// 一帧的绘制参数
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -25,6 +28,10 @@ pub struct BobberStyle {
 /// 以便在任何平台上单测；`x11::bobber` 的单测校验两者一致）
 pub const WINDOW_PT: f64 = 34.0;
 pub const ICON_PT: f64 = 22.0;
+
+/// 圆盘渐变的上下两端（RGB）
+const DISC_TOP: u32 = 0x3E6FE5;
+const DISC_BOTTOM: u32 = 0x2F60D5;
 
 /// 窗口边长（设备像素）
 pub fn window_px(scale: f64) -> u32 {
@@ -103,40 +110,6 @@ fn coverage(d: f64) -> f64 {
     (0.5 - d).clamp(0.0, 1.0)
 }
 
-/// 字形尾迹：三次贝塞尔采样成折线，每个点带半径（pt，以图标中心为原点）
-fn tail_polyline() -> Vec<(f64, f64, f64)> {
-    let p0 = (2.4, -3.1);
-    let p1 = (4.4, 2.6);
-    let p2 = (0.2, 6.2);
-    let p3 = (-5.2, 5.0);
-    let n = 28;
-    (0..=n)
-        .map(|i| {
-            let t = f64::from(i) / f64::from(n);
-            let u = 1.0 - t;
-            let x = u * u * u * p0.0 + 3.0 * u * u * t * p1.0 + 3.0 * u * t * t * p2.0 + t * t * t * p3.0;
-            let y = u * u * u * p0.1 + 3.0 * u * u * t * p1.1 + 3.0 * u * t * t * p2.1 + t * t * t * p3.1;
-            // 头部附近粗、末端细
-            let r = 1.55 + (0.42 - 1.55) * t.powf(0.85);
-            (x, y, r)
-        })
-        .collect()
-}
-
-/// 点到「变半径线段」的有符号距离（pt）
-fn capsule_dist(px: f64, py: f64, a: (f64, f64, f64), b: (f64, f64, f64)) -> f64 {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let len2 = dx * dx + dy * dy;
-    let t = if len2 > 0.0 {
-        (((px - a.0) * dx + (py - a.1) * dy) / len2).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let (cx, cy) = (a.0 + dx * t, a.1 + dy * t);
-    let r = a.2 + (b.2 - a.2) * t;
-    ((px - cx).powi(2) + (py - cy).powi(2)).sqrt() - r
-}
-
 /// 画一帧，返回 `window_px × window_px` 的预乘 ARGB 像素，按 X11 32 位 ZPixmap 小端字节序（B, G, R, A）排列
 pub fn render(style: &BobberStyle) -> Vec<u8> {
     let size = window_px(style.scale);
@@ -145,12 +118,17 @@ pub fn render(style: &BobberStyle) -> Vec<u8> {
     let zoom = (style.zoom * (1.0 - 0.04 * style.pressed.clamp(0.0, 1.0))).max(0.01);
     let opacity = style.opacity.clamp(0.0, 1.0);
     let radius = ICON_PT / 2.0;
-    let tail = tail_polyline();
-    let head = (2.4, -3.1, 2.75);
+    let glyph_shape = bobber_glyph::glyph();
+    // 字形（含一个设备像素的抗锯齿边缘）只可能出现在这个包围盒里（pt），盒外的像素跳过距离计算
+    let (gx0, gx1, gy0, gy1) = {
+        let (x0, x1, y0, y1) = glyph_shape.bounds();
+        let aa = 1.0 / (s * zoom);
+        (x0 - aa, x1 + aa, y0 - aa, y1 + aa)
+    };
 
-    // 配色：品牌蓝渐变；深色主题下投影更重、描边更亮
-    let top = Rgba::hex(0x63A4FF, 1.0);
-    let bottom = Rgba::hex(0x2F6FEB, 1.0);
+    // 配色：品牌蓝 #3266E3 上下各向白 / 黑偏约 6 %（中部即品牌色）；深色主题下投影更重、描边更亮
+    let top = Rgba::hex(DISC_TOP, 1.0);
+    let bottom = Rgba::hex(DISC_BOTTOM, 1.0);
     let hover_tint = Rgba::hex(0xFFFFFF, 1.0);
     let shadow_alpha = if style.dark { 0.55 } else { 0.30 };
     let rim_alpha = if style.dark { 0.38 } else { 0.28 };
@@ -184,12 +162,11 @@ pub fn render(style: &BobberStyle) -> Vec<u8> {
                 let ring_alpha = rim_alpha * (1.0 - t).powf(1.4);
                 px.over(Rgba::hex(0xFFFFFF, ring_alpha), ring);
                 // 4. 字形
-                let mut gd = ((ux - head.0).powi(2) + (uy - head.1).powi(2)).sqrt() - head.2;
-                for w in tail.windows(2) {
-                    gd = gd.min(capsule_dist(ux, uy, w[0], w[1]));
+                if (gx0..=gx1).contains(&ux) && (gy0..=gy1).contains(&uy) {
+                    let gd = glyph_shape.distance(ux, uy);
+                    let gc = coverage(gd * to_px) * disc_cov;
+                    px.over(glyph, gc * 0.97);
                 }
-                let gc = coverage(gd * to_px) * disc_cov;
-                px.over(glyph, gc * 0.97);
             }
 
             let a = (px.a * opacity).clamp(0.0, 1.0);
@@ -213,11 +190,8 @@ pub fn render_opaque(style: &BobberStyle) -> Vec<u8> {
     flat.opacity = 1.0;
     let mut px = render(&flat);
     let size = window_px(style.scale) as usize;
-    let fallback_bg = if style.dark {
-        [0x2F, 0x6F, 0xEB]
-    } else {
-        [0x63, 0xA4, 0xFF]
-    };
+    let hex = |v: u32| [(v >> 16) as u8, (v >> 8) as u8, v as u8];
+    let fallback_bg = if style.dark { hex(DISC_BOTTOM) } else { hex(DISC_TOP) };
     for chunk in px.chunks_exact_mut(4).take(size * size) {
         let a = f64::from(chunk[3]) / 255.0;
         // 把预乘像素合成到圆盘底色上（遮罩外的像素不可见，取什么值都可以）
@@ -292,9 +266,14 @@ mod tests {
         for px in buf.chunks_exact(4) {
             assert!(px[0] <= px[3] && px[1] <= px[3] && px[2] <= px[3], "{px:?}");
         }
-        // 字形头部是白色
-        let head = pixel(&buf, size, 34 + 5, 34 - 6);
-        assert!(head[0] > 230 && head[1] > 230 && head[2] > 230, "{head:?}");
+        // 字形腹部（源稿 (66, 64)，离轮廓约 2 pt）是白色
+        let (bx, by) = bobber_glyph::to_pt(66.0, 64.0);
+        let body = pixel(&buf, size, (34.0 + bx * 2.0) as u32, (34.0 + by * 2.0) as u32);
+        assert!(body[0] > 230 && body[1] > 230 && body[2] > 230, "{body:?}");
+        // 眼睛处露出圆盘的蓝色
+        let (ex, ey) = bobber_glyph::to_pt(75.0, 50.0);
+        let eye = pixel(&buf, size, (34.0 + ex * 2.0) as u32, (34.0 + ey * 2.0) as u32);
+        assert!(eye[0] > eye[2] + 60, "{eye:?}");
     }
 
     #[test]

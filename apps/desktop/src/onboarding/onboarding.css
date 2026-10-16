@@ -319,7 +319,8 @@
     text-align: center;
   }
   /*
-   * 图标自带圆角方块下的柔和投影（app-icon.svg 的 #shadow），这里不再叠 CSS drop-shadow：WKWebView 对 <img> 的
+   * 应用图标是平面的品牌蓝圆角方块（app-icon.svg 四周留 10% 透明边距，看到的方块约 58 px）。浅色、深色主题共用这一张：
+   * 深色变体 app-icon-dark.svg 的藏青底在深色窗口上几乎看不出轮廓。不叠 CSS drop-shadow：WKWebView 对 <img> 的
    * drop-shadow 会沿 SVG 画布边界画出一个 72×72 的矩形「底框」（深色模式下尤其明显）
    */
   .ob-welcome-icon {

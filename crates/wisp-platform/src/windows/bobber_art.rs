@@ -1,7 +1,7 @@
-//! 浮标的像素绘制（纯逻辑，不调用 Win32）：与应用图标一致的品牌圆盘——柔和投影、品牌蓝竖直渐变圆盘、顶部高光
-//! 内描边、白色 wisp 字形（右上方的圆点 + 向左下方收细的尾迹，与 X11 浮标同一几何）。用有符号距离场 + 解析抗锯齿
-//! 直接画出，字形只由圆与变半径线段组成，100 % 缩放（22 px 圆盘）下依然清晰。输出 `UpdateLayeredWindow` 需要的
-//! 预乘 BGRA（自上而下）。
+//! 浮标的像素绘制（纯逻辑，不调用 Win32）：与应用图标一致的品牌圆盘——柔和投影、品牌蓝圆盘（以 `#3266E3` 为中间色的
+//! 轻微竖直渐变）、顶部高光内描边、白色字形（应用图标的小尺寸字形 `wisp-mark-micro`，几何见
+//! `common::bobber_glyph`，与 X11 浮标相同）。用有符号距离 + 解析抗锯齿直接画出，100 % 缩放（22 px 圆盘）下依然
+//! 清晰。输出 `UpdateLayeredWindow` 需要的预乘 BGRA（自上而下）。
 //!
 //! 分两层输出（只有图标区域接收点击）：**圆盘层**只有圆盘及其抗锯齿边缘的 alpha 非零（分层窗口按 alpha
 //! 做命中测试，其余像素点击穿透）；**投影层**放进一个 `WS_EX_TRANSPARENT` 的窗口，完全不接收点击。投影层在圆盘完全
@@ -11,6 +11,7 @@
 //! 减少动效时只做 ≤100 ms 的淡入淡出；悬停 80 ms 提亮，按下缩到 0.96。缩放帧在第一次显示前一次性预渲染（按缩放
 //! 等距分布，每一步不到 1 pt），动画期间由 vsync 驱动、每次合成推送一帧，静止时没有任何定时器。
 
+use crate::common::bobber_glyph;
 use crate::common::gesture::{
     BOBBER_APPEAR, BOBBER_APPEAR_SCALE, BOBBER_DIAMETER, BOBBER_DISAPPEAR, BOBBER_HOVER, BOBBER_REDUCED_FADE,
     BOBBER_WINDOW,
@@ -79,9 +80,9 @@ impl Color {
 
 const BLACK: Color = Color::hex(0x000000);
 const WHITE: Color = Color::hex(0xFFFFFF);
-/// 品牌蓝渐变（与应用图标一致）：上浅下深
-const DISC_TOP: Color = Color::hex(0x63A4FF);
-const DISC_BOTTOM: Color = Color::hex(0x2F6FEB);
+/// 品牌蓝 `#3266E3` 上下各向白 / 黑偏约 6 %：圆盘中部就是应用图标的品牌色，竖直方向留一点体积感
+const DISC_TOP: Color = Color::hex(0x3E6FE5);
+const DISC_BOTTOM: Color = Color::hex(0x2F60D5);
 
 /// 随系统明暗变化的参数：深色背景上投影更重、高光更亮
 #[derive(Debug, Clone, Copy)]
@@ -156,42 +157,6 @@ pub(crate) enum Layer {
     Shadow,
 }
 
-/// wisp 字形的头部：圆心（pt，以圆盘中心为原点，y 向下）与半径
-const HEAD: (f64, f64, f64) = (2.4, -3.1, 2.75);
-
-/// 字形尾迹：从头部出发的三次贝塞尔采样成折线，每个点带半径（pt），头部附近粗、末端细
-fn tail_polyline() -> Vec<(f64, f64, f64)> {
-    let p0 = (HEAD.0, HEAD.1);
-    let p1 = (4.4, 2.6);
-    let p2 = (0.2, 6.2);
-    let p3 = (-5.2, 5.0);
-    let n = 28;
-    (0..=n)
-        .map(|i| {
-            let t = f64::from(i) / f64::from(n);
-            let u = 1.0 - t;
-            let x = u * u * u * p0.0 + 3.0 * u * u * t * p1.0 + 3.0 * u * t * t * p2.0 + t * t * t * p3.0;
-            let y = u * u * u * p0.1 + 3.0 * u * u * t * p1.1 + 3.0 * u * t * t * p2.1 + t * t * t * p3.1;
-            let r = 1.55 + (0.42 - 1.55) * t.powf(0.85);
-            (x, y, r)
-        })
-        .collect()
-}
-
-/// 点到「变半径线段」的有符号距离（pt）
-fn capsule_dist(px: f64, py: f64, a: (f64, f64, f64), b: (f64, f64, f64)) -> f64 {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let len2 = dx * dx + dy * dy;
-    let t = if len2 > 0.0 {
-        clamp01(((px - a.0) * dx + (py - a.1) * dy) / len2)
-    } else {
-        0.0
-    };
-    let (cx, cy) = (a.0 + dx * t, a.1 + dy * t);
-    let r = a.2 + (b.2 - a.2) * t;
-    ((px - cx).powi(2) + (py - cy).powi(2)).sqrt() - r
-}
-
 /// 渲染某一层的一帧：边长 `size` 像素的预乘 BGRA（自上而下）。`scale` 为 DPI 缩放，`content` 为整体缩放（出现
 /// 动画 0.6..=1、按下 0.96，围绕中心缩放），`hover` 为悬停高亮程度（0..=1，只影响圆盘层）
 pub(crate) fn render(size: i32, scale: f64, content: f64, hover: f64, dark: bool, layer: Layer) -> Vec<u8> {
@@ -203,9 +168,13 @@ pub(crate) fn render(size: i32, scale: f64, content: f64, hover: f64, dark: bool
     // pt 距离 → 物理像素距离（抗锯齿按物理像素计算）
     let to_px = scale * zoom;
     let tint = clamp01(hover) * HOVER_TINT;
-    let tail = tail_polyline();
-    // 字形（含最小缩放下约 0.85 pt 的抗锯齿边缘）只可能出现在这个包围盒里（pt），盒外的像素跳过距离计算
-    let (gx0, gx1, gy0, gy1) = (-7.0, 6.5, -7.0, 7.0);
+    let glyph = bobber_glyph::glyph();
+    // 字形（含一个物理像素的抗锯齿边缘）只可能出现在这个包围盒里（pt），盒外的像素跳过距离计算
+    let (gx0, gx1, gy0, gy1) = {
+        let (x0, x1, y0, y1) = glyph.bounds();
+        let aa = 1.0 / to_px;
+        (x0 - aa, x1 + aa, y0 - aa, y1 + aa)
+    };
 
     for y in 0..size {
         for x in 0..size {
@@ -236,10 +205,7 @@ pub(crate) fn render(size: i32, scale: f64, content: f64, hover: f64, dark: bool
                 px.over(WHITE, ring * p.rim_alpha * (1.0 - t).powf(1.4));
                 // 4. 字形
                 if (gx0..=gx1).contains(&ux) && (gy0..=gy1).contains(&uy) {
-                    let mut gd = ((ux - HEAD.0).powi(2) + (uy - HEAD.1).powi(2)).sqrt() - HEAD.2;
-                    for w in tail.windows(2) {
-                        gd = gd.min(capsule_dist(ux, uy, w[0], w[1]));
-                    }
+                    let gd = glyph.distance(ux, uy);
                     px.over(WHITE, coverage(gd * to_px) * disc * 0.97);
                 }
             }
@@ -516,22 +482,25 @@ mod tests {
 
     #[test]
     fn glyph_is_legible_at_100_percent() {
-        // 100 % 缩放（22 px 圆盘）：头部圆点内是近白色的不透明像素
+        // 100 % 缩放（22 px 圆盘）：字形腹部（源稿 (66, 64)，离轮廓约 2 pt）是近白色的不透明像素
         let scale = 1.0;
         let size = window_px(scale);
         let buf = render(size, scale, 1.0, 0.0, false, Layer::Disc);
         let c = f64::from(size) / 2.0;
-        let hx = (c + HEAD.0 * scale) as i32;
-        let hy = (c + HEAD.1 * scale) as i32;
-        let p = px_at(&buf, size, hx, hy);
+        let (bx, by) = bobber_glyph::to_pt(66.0, 64.0);
+        let p = px_at(&buf, size, (c + bx * scale) as i32, (c + by * scale) as i32);
         assert_eq!(p[3], 255);
-        assert!(p[0] > 235 && p[1] > 235 && p[2] > 235, "head should be white: {p:?}");
-        // 字形像素的数量足以辨认（头部 + 尾迹）
+        assert!(p[0] > 235 && p[1] > 235 && p[2] > 235, "body should be white: {p:?}");
+        // 眼睛处露出圆盘的蓝色（B 通道明显高于 R）
+        let (ex, ey) = bobber_glyph::to_pt(75.0, 50.0);
+        let e = px_at(&buf, size, (c + ex * scale) as i32, (c + ey * scale) as i32);
+        assert!(e[0] > e[2] + 40, "eye should show the disc: {e:?}");
+        // 字形像素的数量足以辨认（头部 + 尾迹 + 纸片）
         let white = buf
             .chunks_exact(4)
             .filter(|p| p[3] == 255 && p[2] > 220 && p[1] > 220)
             .count();
-        assert!(white > 25, "glyph pixels: {white}");
+        assert!(white > 40, "glyph pixels: {white}");
     }
 
     #[test]
