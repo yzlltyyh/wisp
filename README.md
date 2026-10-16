@@ -131,10 +131,10 @@ Wisp 把三件最常用的小事收进一个随叫随到的面板：选中文字
    - **屏幕录制**：截图 OCR。授权后需要点「重新启动 Wisp」才会生效。macOS 15 起系统会定期再次确认屏幕录制授权，照常允许即可。
 
    「输入监控」只在你启用双击修饰键等扩展触发时才需要。
-4. 如果钥匙串询问 Wisp 能否使用钥匙串里保存的 API Key，输入登录密码后选「始终允许」（通常只在更新版本之后出现）。
+4. 如果钥匙串询问 Wisp 能否使用钥匙串里保存的 API Key，输入登录密码后选「始终允许」（通常只在从旧版本更新上来之后出现）。
 
 > [!IMPORTANT]
-> 这一版只做了 ad-hoc 签名，没有固定的签名身份：**每次更新到新版本后，macOS 都会把 Wisp 当成一个新应用**。更新后菜单栏里 Wisp 的菜单会提示「更新后需要重新授权」——到「系统设置 → 隐私与安全性」的「辅助功能」和「屏幕录制」里，先用「−」移除旧的 Wisp，再重新添加或打开开关；钥匙串会要求输入登录密码，然后选「始终允许」。
+> Wisp 用固定的自签名证书签名（没有经过 Apple 公证），更新版本后已授予的权限保持有效。**从 0.1.1 及更早的版本（当时只有 ad-hoc 签名）更新上来时，需要最后一次重新授权**：菜单栏里 Wisp 的菜单会提示「更新后需要重新授权」——到「系统设置 → 隐私与安全性」的「辅助功能」和「屏幕录制」里，先用「−」移除旧的 Wisp，再重新添加或打开开关；钥匙串询问时输入登录密码，然后选「始终允许」。之后的更新不再需要这一步。
 
 ### Windows
 
@@ -258,7 +258,7 @@ Key 只写入系统凭据存储：macOS 钥匙串与 Linux Secret Service 里服
 
 ## 已知限制
 
-- **未签名、未公证**：macOS 首次打开要手动放行，且每次更新后要重新授权（见[安装 · macOS](#macos)）；Windows 首次运行有 SmartScreen 提示。
+- **未经 Apple 公证、Windows 未签名**：macOS 版用自签名证书签名，首次打开要手动放行，从 0.1.1 及更早的版本更新上来时要重新授权一次（见[安装 · macOS](#macos)）；Windows 首次运行有 SmartScreen 提示。
 - **Windows**：测试覆盖不如 macOS 充分，可能还有未发现的兼容性问题；遇到问题请按[反馈](#反馈)一节提交。
 - **Linux**：完整功能需要 X11 会话；Ubuntu 25.10 起（包括 26.04 LTS）和 Fedora 43 起的默认 GNOME 只有 Wayland 会话，多数功能不可用（见[安装 · Linux](#linux)）。Linux 版本主要经过 CI 与自动化测试，真机上的测试有限。
 - **Gemini 接口的退役风险**：Gemini 协议使用 `generateContent` / `streamGenerateContent`。Google 正在推广新的 Interactions API，如果旧接口将来下线，Gemini 协议会失效；届时可以改用 Gemini 的 OpenAI 兼容端点（协议选 OpenAI Chat Completions，Base URL 填 `https://generativelanguage.googleapis.com/v1beta/openai`）。

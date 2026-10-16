@@ -396,7 +396,7 @@ gh release edit v<版本> -R yzlltyyh/wisp --draft=false --latest
 | Secret | 作用 | 缺失时 |
 | --- | --- | --- |
 | `TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 更新器签名（`.sig` 与 `latest.json`） | 仍生成全部安装包，但没有 `.sig` / `latest.json`，Release 说明顶部有警告，已安装的版本不会自动更新到这一版 |
-| `MACOS_SELF_SIGNED_P12_BASE64`、`MACOS_SELF_SIGNED_P12_PASSWORD`（可选） | macOS 用固定的自签证书签名，更新后系统授权保持有效 | ad-hoc 签名：每个版本都被 macOS 当作新应用，更新后需要重新授权 |
+| `MACOS_SELF_SIGNED_P12_BASE64`、`MACOS_SELF_SIGNED_P12_PASSWORD`（正式发布必需） | macOS 用固定的自签证书签名，更新后系统授权保持有效 | 正式发布（推 tag，或手动触发时填了 tag）在 prepare 里直接失败；tag 留空的测试草稿用 ad-hoc 签名（也可以勾选「模拟未配置 macOS 自签证书」演练这条分支） |
 
 ### 更新器密钥
 
@@ -417,7 +417,7 @@ pnpm tauri signer generate -w <仓库之外的路径>/wisp.key   # 交互式设�
 
 ### macOS 证书
 
-自签证书：在钥匙串助理里创建「代码签名」类型的自签证书（或参考 `scripts/dev-sign-macos.sh --init` 的做法），用 `openssl pkcs12 -export -legacy` 导出 p12，`base64` 编码后存为 secret。证书一旦用于发布同样不能更换，否则所有用户都要重新授权。
+发布用的自签证书（CN「Wisp Release」，有效期 20 年）已经生成并配置成上表的两个 secret，由维护者在仓库之外保管、备份。它与更新器密钥一样**只生成一次、不能更换**：系统授权（辅助功能、屏幕录制、输入监控）与钥匙串条目都绑定签名身份，换证书或哪一版退回 ad-hoc，所有用户更新后都要重新授权——所以正式发布缺少它时工作流直接失败。证书的生成方法（只做过一次，供参考）：用系统自带的 `/usr/bin/openssl`（LibreSSL）生成 RSA 3072、扩展用途为 `codeSigning` 的自签证书（配置与 `scripts/dev-sign-macos.sh` 的 `create_p12` 相同，只是证书名与有效期不同），`openssl pkcs12 -export` 导出 p12，再分别存为 secret：`base64 -i <p12> | gh secret set MACOS_SELF_SIGNED_P12_BASE64`、`gh secret set MACOS_SELF_SIGNED_P12_PASSWORD < <口令文件>`。
 
 工作流里不要写 `APPLE_CERTIFICATE*` / `APPLE_SIGNING_IDENTITY: ${{ secrets.… }}` 这样的映射：未配置的 secret 会展开成空字符串，tauri-cli 会用空串覆盖配置里的 ad-hoc 签名。将来接入 Apple Developer ID 签名与公证、Windows 代码签名时，接入点见 `release.yml` 里「构建」一步的注释。
 

@@ -34,6 +34,7 @@ Each version ends with an English summary.
 - PaddleOCR 云端识别：在「模型与服务」里添加 PaddleOCR，填入 AI Studio 的访问令牌，就可以用 PP-OCRv6、PP-StructureV3 与 PaddleOCR-VL-1.6 识别截图；也可以填 AI Studio 上部署的服务或自托管的 PaddleX 服务。访问令牌与 API Key 一样只保存在系统凭据存储里；PP-StructureV3 较慢（每张几秒到几十秒，随服务负载变化），界面上会提示。
 - 结构化识别的结果里有表格或公式时，OCR 面板直接显示表格，公式可以单独复制；随时可以切回 Markdown 源码编辑。
 
+- macOS 版改用固定的自签名证书签名：以后更新版本时，已授予的辅助功能、屏幕录制与输入监控权限保持有效，不用再每次重新授权。从 0.1.1 更新到这一版时还需要最后一次重新授权（菜单栏会提示）。
 ### 修复
 
 - 用 Windows 记事本等编辑器保存、带 UTF-8 BOM 的 settings.json、styles.json、glossary.json 与 state.json 不再被当成损坏的文件而恢复默认。
@@ -64,6 +65,7 @@ Each version ends with an English summary.
 - A model is loaded the first time you use it (the very first load can take around ten seconds) and its memory is freed after a while without use (5 minutes by default, adjustable) or when the system runs low on memory; the files stay. GPU acceleration uses Metal on macOS and Vulkan on Windows and Linux, and can be turned off to run on the CPU. You can also free memory or delete a model at any time.
 - Which offline models you use is a per-device choice that never syncs, and Wisp never falls back to a cloud service when an offline model fails. Offline translation models only translate: Polish and Proofread still need a model service, and Improve translation and dictionary-style results become a regular translation. Screenshot translate with offline OCR recognizes first and then translates, staying on your device when translation is offline too.
 - Onboarding can set you up with offline models instead of a service: Light (PP-OCRv6 Small + Index-Translate 2B, about 1.3 GB) or Quality (PaddleOCR-VL + Index-Translate 9B, about 7.2 GB), with a recommendation for your device and the download running in the background. The translation and OCR model menus in Settings list offline models too, and picking one that isn't downloaded yet offers to download and use it.
+- The macOS build is now signed with a stable self-signed certificate, so Accessibility, Screen Recording, and Input Monitoring permissions stay granted across updates. Updating from 0.1.1 to this version needs one last re-grant (the menu bar tells you).
 - PaddleOCR in the cloud: add PaddleOCR in Models & services and enter an AI Studio access token to recognize screenshots with PP-OCRv6, PP-StructureV3, and PaddleOCR-VL-1.6, or point it at a service deployed on AI Studio or a self-hosted PaddleX service. The access token is kept only in the system credential store, like an API key; PP-StructureV3 is slower (a few seconds to tens of seconds per image, depending on load), and the UI says so.
 - When a structured OCR result contains tables or formulas, the OCR panel shows the tables as real tables and lets you copy each formula; you can switch back to the Markdown source to edit it at any time.
 - Fixes: configuration files saved with a UTF-8 BOM (for example by Windows Notepad) are no longer treated as corrupt and reset; providers and glossary entries in Settings are now saved one at a time, so changes made in the files or synced from another device aren't overwritten by stale values in an open Settings window.

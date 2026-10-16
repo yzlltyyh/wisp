@@ -133,10 +133,10 @@ The release notes of every version end with the SHA-256 checksums of all package
    - **Screen Recording** — for screenshot OCR. Click **Relaunch Wisp** after granting it, or it won't take effect. Starting with macOS 15, the system periodically asks you to confirm Screen Recording access again; simply allow it.
 
    **Input Monitoring** is needed only if you turn on extra triggers such as double-tapping a modifier key.
-4. If Keychain asks whether Wisp may use the API key saved in your keychain, enter your login password and choose **Always Allow**. This usually happens only after an update.
+4. If Keychain asks whether Wisp may use the API key saved in your keychain, enter your login password and choose **Always Allow**. This usually happens only after updating from an older version.
 
 > [!IMPORTANT]
-> This release is ad-hoc signed and has no stable signing identity, so **macOS treats every new version of Wisp as a different app**. After an update, the Wisp menu in the menu bar shows "Re-grant permissions after update": in **System Settings → Privacy & Security**, open **Accessibility** and **Screen Recording**, remove the old Wisp entry with **−**, then add it again or turn its switch on. Keychain will ask for your login password; choose **Always Allow**.
+> Wisp is signed with a stable self-signed certificate (it is not notarized by Apple), so the permissions you grant stay in place across updates. **Updating from 0.1.1 or earlier (which were only ad-hoc signed) needs one last re-grant**: the Wisp menu in the menu bar shows "Re-grant permissions after update" — in **System Settings → Privacy & Security**, open **Accessibility** and **Screen Recording**, remove the old Wisp entry with **−**, then add it again or turn its switch on. If Keychain asks, enter your login password and choose **Always Allow**. Later updates don't need this step.
 
 ### Windows
 
@@ -260,7 +260,7 @@ Common keys inside the panel: <kbd>Esc</kbd> closes it, <kbd>⌘ C</kbd> copies,
 
 ## Known limitations
 
-- **Not signed or notarized**: on macOS you have to allow Wisp manually the first time and grant its permissions again after every update (see [Install · macOS](#macos)); on Windows, SmartScreen warns you on first run.
+- **Not notarized by Apple; not signed on Windows**: the macOS build is signed with a self-signed certificate, so you have to allow Wisp manually the first time, and updating from 0.1.1 or earlier needs one re-grant of its permissions (see [Install · macOS](#macos)); on Windows, SmartScreen warns you on first run.
 - **Windows**: test coverage is not yet as thorough as on macOS, so there may still be undiscovered compatibility issues. If you run into problems, please report them as described under [Feedback](#feedback).
 - **Linux**: full functionality requires an X11 session. The default GNOME on Ubuntu 25.10 and later (including 26.04 LTS) and on Fedora 43 and later is Wayland-only, so most features are unavailable there (see [Install · Linux](#linux)). The Linux builds are tested mainly through CI and automated tests, with limited testing on real hardware.
 - **Gemini API retirement risk**: the Gemini protocol uses `generateContent` / `streamGenerateContent`. Google is promoting its newer Interactions API; if the older endpoints are retired, the Gemini protocol will stop working. In that case, switch to Gemini's OpenAI-compatible endpoint: choose the OpenAI Chat Completions protocol with the Base URL `https://generativelanguage.googleapis.com/v1beta/openai`.

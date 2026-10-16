@@ -180,7 +180,9 @@ function testBody() {
   assert.ok(withKey.includes('重新授予') && !withKey.includes('固定的自签名证书'))
   assert.ok(withKey.includes('钥匙串会要求输入登录密码，然后选「始终允许」'))
   const cert = body({ changes, updater: true, test: false, macCert: true })
-  assert.ok(cert.includes('固定的自签名证书') && !cert.includes('重新授予'))
+  // 有固定证书时不再要求每次更新重新授予，只提醒从 ad-hoc 签名的旧版本升级上来的那一次
+  assert.ok(cert.includes('固定的自签名证书') && !cert.includes('每次更新版本后'))
+  assert.ok(cert.includes('最后一次重新授予'))
   assert.ok(cert.includes('钥匙串仍可能要求输入登录密码'))
   // 文档链接：正式版指向 tag，测试草稿指向提交（测试草稿没有 git tag）
   assert.ok(withKey.includes('https://github.com/yzlltyyh/wisp/blob/v0.1.0/README.md#安装'))

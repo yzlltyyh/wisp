@@ -16,7 +16,8 @@
 #
 # 降级（两条分支在下面的 build 作业里分开写）：
 # - 没有 TAURI_SIGNING_PRIVATE_KEY：用 no-updater 配置关闭更新器产物，照样出安装包，Release 说明顶部加警告；
-# - 没有 MACOS_SELF_SIGNED_P12_BASE64：macOS 保持 ad-hoc 签名（tauri.conf.json 的 signingIdentity "-"）。
+# - 没有 MACOS_SELF_SIGNED_P12_BASE64：手动触发的测试草稿里 macOS 保持 ad-hoc 签名（tauri.conf.json 的 signingIdentity "-"）；
+#   推 tag 的正式发布缺证书时在 prepare 里直接失败——发布过固定证书之后再退回 ad-hoc，会让所有用户更新后重新授权。
 # 手动触发时可以勾选「模拟缺少」来验证这两条降级分支，不必删除 secret；测试草稿还可以只构建一个平台（例如只用 Linux
 # 演练「没有私钥」分支），节省 runner 时间。
 #
@@ -99,6 +100,25 @@ jobs:
         run: |
           if [ "$HAS_UPDATER_KEY" = true ] && [ "$WITHOUT_UPDATER_KEY" != true ] && [ "$HAS_UPDATER_KEY_PASSWORD" != true ]; then
             echo "::error::配置了 TAURI_SIGNING_PRIVATE_KEY，但 TAURI_SIGNING_PRIVATE_KEY_PASSWORD 为空：私钥有口令保护，签名会在三个平台构建完之后失败。补上口令 secret，或勾选「模拟未配置 TAURI_SIGNING_PRIVATE_KEY」走降级分支"
+            exit 1
+          fi
+      - name: 正式发布必须用固定的 macOS 自签证书（缺少时在花 macOS / Windows 分钟数之前失败）
+        env:
+          HAS_MAC_P12: ${{ secrets.MACOS_SELF_SIGNED_P12_BASE64 != '' }}
+          HAS_MAC_P12_PASSWORD: ${{ secrets.MACOS_SELF_SIGNED_P12_PASSWORD != '' }}
+          WITHOUT_MAC_P12: ${{ inputs.without_macos_cert }}
+          # 正式发布：推 tag，或手动触发时填了 tag（留空才是 CI 测试草稿）
+          FORMAL: ${{ github.event_name == 'push' || inputs.tag != '' }}
+        # 系统授权（辅助功能、屏幕录制、输入监控）与钥匙串条目都绑定签名身份：发布过一次固定证书之后，哪一版退回 ad-hoc
+        # 或换了证书，所有用户更新后都要重新授权。所以正式发布缺证书时直接失败，不静默降级；tag 留空的测试草稿
+        # 仍可勾选「模拟未配置 macOS 自签证书」演练 ad-hoc 分支
+        run: |
+          if [ "$HAS_MAC_P12" = true ] && [ "$HAS_MAC_P12_PASSWORD" != true ]; then
+            echo "::error::配置了 MACOS_SELF_SIGNED_P12_BASE64，但 MACOS_SELF_SIGNED_P12_PASSWORD 为空"
+            exit 1
+          fi
+          if [ "$FORMAL" = true ] && { [ "$HAS_MAC_P12" != true ] || [ "$WITHOUT_MAC_P12" = true ]; }; then
+            echo "::error::正式发布必须用 MACOS_SELF_SIGNED_P12_BASE64 的固定证书签名：用 ad-hoc 签名发布会让已授权的用户更新后全部失效。补上 secret（或取消「模拟未配置 macOS 自签证书」）后重新运行"
             exit 1
           fi
       - name: 版本与 tag、Release 说明、草稿 Release
