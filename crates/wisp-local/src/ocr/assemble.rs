@@ -6,7 +6,11 @@
 //! - paragraphs：相邻视觉行在行距 ≤ 1.5 × 行高、左边界接近、上一行接近右边界时合并为一段；英文行尾的连字符断词还原；
 //!   列表项另起一段。段与段之间空一行（与视觉模型的 paragraphs 模式相同）。
 //! - 置信度低于 [`MIN_SCORE`] 的行丢弃。没有文字时输出 [`NO_TEXT`]（编排器的无文字判定照常生效）。
+//!
+//! 这里只管几何（分行、分栏、缩进、段落边界）；只看文字本身的规则（是否加空格、断词还原、列表项）在 [`wisp_text::join`]。
 
+use wisp_text::join::{join_line, needs_space, starts_list_item};
+use wisp_text::script::is_unspaced;
 use wisp_types::OcrMode;
 
 use super::TextLine;
@@ -332,109 +336,11 @@ impl Paragraph {
     }
 }
 
-/// 把下一行接到段落末尾：英文行尾的连字符断词还原；CJK 两侧不加空格；其余加一个空格
-fn join_line(text: &mut String, next: &str) {
-    let mut tail = text.chars().rev();
-    let hyphenated = matches!(
-        (tail.next(), tail.next(), next.chars().next()),
-        (Some('-'), Some(a), Some(b)) if a.is_ascii_alphabetic() && b.is_ascii_lowercase()
-    );
-    if hyphenated {
-        text.pop();
-    } else if needs_space(text, next, None) {
-        text.push(' ');
-    }
-    text.push_str(next);
-}
-
-/// `a` 与 `b` 拼接时是否需要空格。`gap` 是两者的间距与行高之比（同一视觉行内拼接时有；跨行拼接时为 None）
-fn needs_space(a: &str, b: &str, gap: Option<f32>) -> bool {
-    let (Some(x), Some(y)) = (a.chars().next_back(), b.chars().next()) else {
-        return false;
-    };
-    if x.is_whitespace() || y.is_whitespace() {
-        return false;
-    }
-    match (is_cjk(x), is_cjk(y)) {
-        (true, true) => false,
-        // CJK 与拉丁文之间：视觉上明显分开（约半个字宽）才加
-        (true, false) | (false, true) => gap.is_some_and(|g| g > 0.5),
-        (false, false) => true,
-    }
-}
-
-/// 汉字、假名、CJK 标点与全角字符（彼此之间不加空格）。韩文以空格分词，不算在内
-fn is_cjk(c: char) -> bool {
-    matches!(
-        c as u32,
-        0x2E80..=0x2FDF      // CJK 部首
-            | 0x3000..=0x303F // CJK 符号与标点
-            | 0x3040..=0x30FF // 平假名、片假名
-            | 0x3100..=0x312F // 注音
-            | 0x31F0..=0x31FF // 片假名扩展
-            | 0x3400..=0x4DBF // 扩展 A
-            | 0x4E00..=0x9FFF // 基本汉字
-            | 0xF900..=0xFAFF // 兼容汉字
-            | 0xFE30..=0xFE4F // 竖排标点
-            | 0xFF00..=0xFFEF // 全角与半角形式
-            | 0x20000..=0x3134F // 扩展 B 及以后
-    )
-}
-
-/// 列表项的开头：项目符号，或「1.」「1)」「(1)」「①」这类编号
-fn starts_list_item(text: &str) -> bool {
-    let mut chars = text.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if matches!(
-        first,
-        '•' | '·'
-            | '●'
-            | '○'
-            | '◦'
-            | '▪'
-            | '■'
-            | '□'
-            | '◆'
-            | '►'
-            | '▶'
-            | '‣'
-            | '⁃'
-            | '✓'
-            | '✔'
-            | '☐'
-            | '☑'
-    ) || ('\u{2460}'..='\u{2473}').contains(&first)
-    {
-        return true;
-    }
-    if matches!(first, '-' | '*' | '+') {
-        return chars.next() == Some(' ');
-    }
-    // 1. / 1) / 1、 / (1)
-    let rest = text
-        .strip_prefix('(')
-        .or_else(|| text.strip_prefix('（'))
-        .unwrap_or(text);
-    let digits = rest.chars().take_while(char::is_ascii_digit).count();
-    if (1..=3).contains(&digits) {
-        let after: String = rest.chars().skip(digits).take(2).collect();
-        let mut it = after.chars();
-        return match (it.next(), it.next()) {
-            (Some('.' | ')' | '）'), Some(' ')) => true,
-            (Some('、' | '）'), _) => true,
-            (Some(')'), _) => text.starts_with('(') || text.starts_with('（'),
-            _ => false,
-        };
-    }
-    false
-}
-
-/// 一个「字宽」：按片段宽度除以显示宽度（CJK 记 2、其余记 1）估计，取中位数
+/// 一个「字宽」：按片段宽度除以显示宽度估计，取中位数。显示宽度粗略地把不用空格分词的东亚文字（汉字、假名、
+/// 全角形式等）记 2、其余记 1，只用来折算缩进，谚文按 1 计带来的偏差可以接受
 fn char_unit(rows: &[Row], h: f32) -> f32 {
     let unit = median(rows.iter().flat_map(|r| r.segments.iter()).filter_map(|s| {
-        let units: usize = s.text.chars().map(|c| if is_cjk(c) { 2 } else { 1 }).sum();
+        let units: usize = s.text.chars().map(|c| if is_unspaced(c) { 2 } else { 1 }).sum();
         (units >= 4).then(|| (s.x1 - s.x0) / units as f32)
     }));
     if unit.is_finite() && unit > 0.5 {
@@ -592,24 +498,5 @@ mod tests {
         assert_eq!(assemble(&input, OcrMode::Markdown), "Hello");
         assert_eq!(assemble(&input, OcrMode::Translate), "Hello");
         assert_eq!(assemble(&input, OcrMode::Lines), "Hello");
-    }
-
-    #[test]
-    fn list_markers() {
-        for yes in [
-            "• item",
-            "- item",
-            "1. item",
-            "12) item",
-            "(3) item",
-            "（3）项",
-            "3、项",
-            "① 项",
-        ] {
-            assert!(starts_list_item(yes), "{yes}");
-        }
-        for no in ["-5 degrees", "1.5 GB", "2026 年", "item", "*bold*"] {
-            assert!(!starts_list_item(no), "{no}");
-        }
     }
 }

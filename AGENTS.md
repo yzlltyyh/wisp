@@ -10,6 +10,7 @@ Wisp 是常驻后台的轻量桌面工具：划词翻译、截图 OCR、剪贴�
 apps/desktop/src/          前端：entries/（五个页面入口）、panel/、views/、settings/、onboarding/、pinned/、floating/（悬浮剪贴板）、overlay/、shared/、locales/
 apps/desktop/src-tauri/    Rust 应用（wisp-desktop）：app/、orchestrator/、windows/、hotkeys/、clipboard_svc/、settings/、sync_svc/、models_svc/（离线模型）、ipc/、tray/、updater/
 crates/wisp-types          跨 crate / IPC / 持久化的共享类型
+crates/wisp-text           确定性的纯文本规则：文字分类、片段与跨行拼接、列表项判定（不依赖任何 crate）
 crates/wisp-llm            四种协议的流式 LLM 客户端
 crates/wisp-prompts        提示词模板（templates/）、风格、语言检测、后处理
 crates/wisp-clipboard      剪贴板历史存储（SQLite + FTS5）
@@ -44,7 +45,7 @@ pnpm i18n:check && pnpm check:contract && pnpm check:size
 
 - **注释用简体中文，标识符用英文。** 注释说明为什么这样做，不复述代码；注释应自成一体，把理由直接写出来，不用编号或文档章节号代替解释（引用公开的上游 issue / PR 链接可以）。
 - **平台差异只放在 `crates/wisp-platform`、`crates/wisp-capture` 与 `apps/desktop/src-tauri/src/windows/native/`**（以及 `lib.rs` 的插件注册）。其他位置不写 `#[cfg(target_os)]`，通过 trait 调用。desktop 的 `windows` 模块与 `windows` crate 同名：引用自己的模块写 `crate::windows::…`，引用 crate 写 `::windows::…`。
-- **`crates/*` 不依赖 Tauri。** crate 之间只能横向依赖 `wisp-types`（`wisp-prompts` 的 `eval` feature 例外）。
+- **`crates/*` 不依赖 Tauri。** crate 之间只能横向依赖 `wisp-types` 与 `wisp-text`（`wisp-prompts` 的 `eval` feature 例外）；`wisp-text` 不依赖任何 crate，只放确定性的纯文本规则（版面与几何留在调用方）。`pnpm check:contract` 检查这条边界。
 - **IPC**：命令、事件、字段、枚举值都用 snake_case；命令返回 `Result<T, IpcError>`；`ipc/` 只做参数校验与分发，字符串、浮点数与集合参数在命令体第一步校验。新增命令要同时改 `ipc/mod.rs` 的 `commands!` 与前端 `shared/ipc/commands.ts`。事件名引用 `wisp_types` 里的常量。
 - **类型同步**：改 `crates/wisp-types` 时同步 `apps/desktop/src/shared/ipc/types.ts`，并重新生成 `shared/ipc/fixtures/`（不要手改生成的文件）。
 - **前端**：`@tauri-apps/*` 只能在 `apps/desktop/src/shared/ipc/` 里引用；动效时长与曲线只用 `shared/motion/` 的令牌或 `--dur-*` / `--ease-*`；颜色只用设计令牌；覆盖层（`overlay/`）是原生 TS，不引入 React / Motion。

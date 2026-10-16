@@ -40,7 +40,7 @@
 - 公开项写中文文档注释；`unsafe` 块前写 `// SAFETY:` 注释说明为什么成立。
 - 错误类型用 `thiserror`，日志用 `log` 宏。
 - 可能阻塞的系统调用（无障碍接口、剪贴板、X11）要有超时，不要在 async 上下文里直接阻塞，放进 `spawn_blocking` 或工作线程。
-- `crates/*` 不得依赖 Tauri，保证可以脱离 WebView 测试。
+- `crates/*` 不得依赖 Tauri，保证可以脱离 WebView 测试。crate 之间只能横向依赖 `wisp-types` 与 `wisp-text`（`wisp-prompts` 的 `eval` feature 例外）；`wisp-text` 不依赖任何 crate，只放确定性的纯文本规则。`pnpm check:contract` 会检查。
 - 跨 IPC 的类型放在 `crates/wisp-types`，同步修改 `apps/desktop/src/shared/ipc/types.ts` 并重新生成黄金样例（`node scripts/gen-fixtures.mjs`）。
 
 ### 前端

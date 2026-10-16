@@ -1,0 +1,15 @@
+[package]
+name = "wisp-text"
+description = "Wisp 的纯文本规则：文字分类、片段与跨行拼接、列表项判定（零依赖、确定性）"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# 刻意不依赖任何 crate（包括 wisp-types）：其他 crate 都可以横向依赖它而不形成环，规则也能单独测试
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,7 +1,8 @@
 //! Wisp 的离线模型。
 //!
-//! 在本机下载、存放、运行 OCR 与翻译模型，以及访问 PaddleOCR 云端。只依赖 `wisp-types`，不依赖 Tauri；平台相关的
-//! 部分（受托管子进程、内存与磁盘信息）由 desktop 经 [`launch::Launcher`] 等接口注入，本 crate 不写 `cfg(target_os)`。
+//! 在本机下载、存放、运行 OCR 与翻译模型，以及访问 PaddleOCR 云端。只依赖 `wisp-types` 与 `wisp-text`，不依赖 Tauri；
+//! 平台相关的部分（受托管子进程、内存与磁盘信息）由 desktop 经 [`launch::Launcher`] 等接口注入，本 crate 不写
+//! `cfg(target_os)`。
 //!
 //! ## 模块
 //!

@@ -15,6 +15,7 @@ repository = "https://github.com/yzlltyyh/wisp"
 [workspace.dependencies]
 # ---- 本仓库 crate ----
 wisp-types = { path = "crates/wisp-types" }
+wisp-text = { path = "crates/wisp-text" }
 wisp-llm = { path = "crates/wisp-llm" }
 wisp-prompts = { path = "crates/wisp-prompts" }
 wisp-clipboard = { path = "crates/wisp-clipboard" }

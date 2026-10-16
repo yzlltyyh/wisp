@@ -20,7 +20,9 @@
  *      令牌重新定义后才能用，`--animate-*` 的定义本身按 CSS 动画规则检查。确有必要时在同一行或上一行写注释
  *      `motion-ok: <原因>` 豁免；
  *   ⑤ crate 依赖边界：除 wisp-desktop 外，任何 workspace crate（含 dev / build 依赖）都不能依赖
- *      tauri / tao / wry（保证 crates/* 无头可测）。
+ *      tauri / tao / wry（保证 crates/* 无头可测）；工作区内依赖按白名单：crates/* 之间只能横向依赖
+ *      wisp-types 与 wisp-text，这两个不依赖任何工作区 crate，wisp-text 除开发依赖外不依赖任何 crate
+ *      （wisp-prompts 的 eval feature 打开的可选依赖例外）。
  * 事件名由 wisp-types 的黄金测试 `event_names_match_frontend` 比对，不在这里重复。
  */
 import assert from 'node:assert/strict'
@@ -396,6 +398,54 @@ export function guiLeaks(meta) {
   return leaks
 }
 
+/** crates/* 之间唯一允许的横向依赖：共享数据类型与纯文本规则。它们自己不依赖任何工作区 crate，否则可能成环 */
+const SHARED_CRATES = new Set(['wisp-types', 'wisp-text'])
+/** 除开发依赖外不依赖任何 crate：只放确定性的纯文本规则，任何 crate 引用它都不会带进别的依赖 */
+const ZERO_DEP_CRATES = new Set(['wisp-text'])
+/** 白名单的例外：这些 feature 打开的可选依赖（评测运行器要经 wisp-llm 真的发请求，不进应用） */
+const FEATURE_EXCEPTIONS = [{ member: 'wisp-prompts', feature: 'eval' }]
+
+/**
+ * 从 cargo metadata 找出违反工作区内依赖白名单的直接依赖（含 dev / build 依赖）；wisp-desktop 是装配层，不受限。
+ * 返回 `[{ member, dep, kind, rule }]`，`rule` 为 `lateral`（依赖了白名单外的工作区 crate）、`shared`（共享 crate
+ * 依赖了工作区 crate）或 `zero_dep`（零依赖的 crate 有了普通 / 构建依赖）
+ */
+export function workspaceDepViolations(meta) {
+  const pkgs = new Map(meta.packages.map((p) => [p.id, p]))
+  const members = meta.workspace_members.map((id) => pkgs.get(id)).filter(Boolean)
+  const names = new Set(members.map((p) => p.name))
+  const out = []
+  for (const member of members) {
+    if (member.name === 'wisp-desktop') continue
+    const shared = SHARED_CRATES.has(member.name)
+    const exempt = new Set(
+      FEATURE_EXCEPTIONS.filter((e) => e.member === member.name)
+        .flatMap((e) => member.features?.[e.feature] ?? [])
+        .filter((f) => f.startsWith('dep:'))
+        .map((f) => f.slice('dep:'.length)),
+    )
+    for (const d of member.dependencies ?? []) {
+      const kind = d.kind ?? 'normal'
+      if (d.name === member.name) continue
+      if (names.has(d.name)) {
+        if (d.optional && exempt.has(d.rename ?? d.name)) continue
+        if (shared) out.push({ member: member.name, dep: d.name, kind, rule: 'shared' })
+        else if (!SHARED_CRATES.has(d.name))
+          out.push({ member: member.name, dep: d.name, kind, rule: 'lateral' })
+      } else if (ZERO_DEP_CRATES.has(member.name) && kind !== 'dev') {
+        out.push({ member: member.name, dep: d.name, kind, rule: 'zero_dep' })
+      }
+    }
+  }
+  return out
+}
+
+const DEP_RULES = {
+  lateral: 'crates/* 之间只能横向依赖 wisp-types 与 wisp-text（wisp-prompts 的 eval feature 例外）',
+  shared: 'wisp-types 与 wisp-text 不依赖任何工作区 crate',
+  zero_dep: 'wisp-text 只放确定性的纯文本规则，除开发依赖外不依赖任何 crate',
+}
+
 function checkCrateBoundary(problems) {
   const r = spawnSync('cargo', ['metadata', '--format-version', '1', '--locked'], {
     cwd: ROOT,
@@ -413,10 +463,17 @@ function checkCrateBoundary(problems) {
     })
     return false
   }
-  for (const l of guiLeaks(JSON.parse(r.stdout))) {
+  const meta = JSON.parse(r.stdout)
+  for (const l of guiLeaks(meta)) {
     problems.push({
       file: `crates/${l.member}/Cargo.toml`,
       msg: `${l.member} 间接依赖了 ${l.path.at(-1)}（${l.path.join(' → ')}）：crates/* 必须无头可测，不能引入 tauri`,
+    })
+  }
+  for (const v of workspaceDepViolations(meta)) {
+    problems.push({
+      file: `crates/${v.member}/Cargo.toml`,
+      msg: `${v.member} 的 ${v.kind} 依赖 ${v.dep} 不在白名单里：${DEP_RULES[v.rule]}`,
     })
   }
   return true
@@ -521,7 +578,37 @@ function selfTest() {
     [4, 4],
   )
   assert.deepEqual(lines('el.animate(kf, 300)', 'shared/motion/presets.ts'), [])
-  ok('check-contract 自检通过（Tailwind 令牌写法与内置动画、WAAPI、Motion、CSS 规则、注释剥离）')
+  // 工作区内依赖白名单：共享 crate 可被横向依赖；eval 的可选依赖例外，其他 feature 的不算；dev 依赖同样受限
+  const dep = (name, extra = {}) => ({ name, kind: null, rename: null, optional: false, ...extra })
+  const pkg = (name, dependencies, features = {}) => ({ id: name, name, dependencies, features })
+  const workspace = [
+    pkg('wisp-types', [dep('serde'), dep('wisp-text')]),
+    pkg('wisp-text', [dep('proptest', { kind: 'dev' }), dep('regex')]),
+    pkg('wisp-llm', [dep('wisp-types'), dep('wisp-text')]),
+    pkg('wisp-prompts', [dep('wisp-types'), dep('wisp-llm', { optional: true })], {
+      eval: ['dep:wisp-llm', 'dep:tokio'],
+    }),
+    pkg('wisp-clipboard', [dep('wisp-types'), dep('wisp-llm', { kind: 'dev' })]),
+    pkg('wisp-sync', [dep('wisp-clipboard', { optional: true })], {
+      extra: ['dep:wisp-clipboard'],
+    }),
+    pkg('wisp-desktop', [dep('wisp-llm'), dep('wisp-sync'), dep('tauri')]),
+  ]
+  assert.deepEqual(
+    workspaceDepViolations({
+      workspace_members: workspace.map((p) => p.id),
+      packages: [...workspace, pkg('serde', []), pkg('regex', []), pkg('tauri', [])],
+    }).map((v) => `${v.member} ${v.kind} ${v.dep} ${v.rule}`),
+    [
+      'wisp-types normal wisp-text shared',
+      'wisp-text normal regex zero_dep',
+      'wisp-clipboard dev wisp-llm lateral',
+      'wisp-sync normal wisp-clipboard lateral',
+    ],
+  )
+  ok(
+    'check-contract 自检通过（Tailwind 令牌写法与内置动画、WAAPI、Motion、CSS 规则、注释剥离、工作区内依赖白名单）',
+  )
 }
 
 function main() {
@@ -554,7 +641,10 @@ function main() {
     `命令：${nCommands} 条，Rust / commands![…] / COMMAND_NAMES 一致，均带 rename_all = "snake_case"`,
   )
   ok(`前端 ${fe.length} 个文件：@tauri-apps/* 只在传输层；没有动效魔法数`)
-  if (cargoChecked) ok('crate 依赖边界：只有 wisp-desktop 依赖 tauri')
+  if (cargoChecked)
+    ok(
+      'crate 依赖边界：只有 wisp-desktop 依赖 tauri；crates/* 之间只横向依赖 wisp-types 与 wisp-text',
+    )
 
   if (values.rust) {
     const passed =

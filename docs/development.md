@@ -98,7 +98,7 @@ pnpm lint && pnpm format:check && pnpm typecheck && pnpm test
 
 # 一致性检查
 pnpm i18n:check        # 两种语言的文案 key 与占位符一致；Rust 下发的 key 都有文案；没有硬编码的界面文字
-pnpm check:contract    # 前后端命令清单一致；@tauri-apps/* 只在 shared/ipc 引用；动效没有魔法数；crates/* 不依赖 Tauri
+pnpm check:contract    # 前后端命令清单一致；@tauri-apps/* 只在 shared/ipc 引用；动效没有魔法数；crates/* 不依赖 Tauri，彼此只横向依赖 wisp-types / wisp-text
 pnpm check:size        # 生产构建前端，检查体积预算与入口依赖图
 node scripts/bump.mjs --check   # 各处版本号一致
 ```
@@ -113,6 +113,7 @@ node scripts/bump.mjs --check   # 各处版本号一致
 | 发布脚本、`cliff.toml`、`CHANGELOG.md` | `node scripts/release/self-test.mjs` |
 | GitHub 工作流或 shell 脚本 | `actionlint`、`shellcheck` |
 | 假模型、提示词评测 | `cargo test -p wisp-llm --features fake --locked`、`cargo test -p wisp-prompts --features eval --locked` |
+| 文本规则（`crates/wisp-text`） | `cargo test -p wisp-text --locked` 与 `cargo test -p wisp-local --locked`：后者把 PP-OCRv6 的黄金样例与一组构造的版面拼成文本，与 `crates/wisp-local/tests/fixtures/assemble/` 逐字比对。规则有意改变时先审阅差异，确认后用 `UPDATE_GOLDEN=1 cargo test -p wisp-local --test assemble_golden` 重写 |
 | 离线模型（`crates/wisp-local`、`models_svc/`、`wisp-platform` 的 `system` / `pressure` / `child`） | `cargo test -p wisp-local --features ort,fake --locked` 与 `cargo test -p wisp-platform --locked`（含 `child_guard`）；改了 Windows / Linux 的平台代码时加 `pnpm check:cross`。对真实运行时、模型与 PaddleOCR 服务的测试见下文[离线模型与 PaddleOCR 的真机测试](#离线模型与-paddleocr-的真机测试) |
 | 多设备同步（`crates/wisp-sync`） | `cargo test -p wisp-sync --locked`：加解密与篡改检测、投影往返、合并性质（proptest）、多设备收敛模拟（内存远端）与 WebDAV 客户端（wiremock），都不需要真实账号。对真实服务器的测试默认忽略，用环境变量提供账号：`WISP_SYNC_TEST_URL=https://… WISP_SYNC_TEST_USER=… WISP_SYNC_TEST_PASS=… cargo test -p wisp-sync --locked --test live_webdav --test live_engine -- --ignored`。`live_webdav` 是传输层冒烟，只在地址下 `wisp/` 里的随机子目录中读写；`live_engine` 让两台模拟设备经真实服务器走完连接、加入、同步、删除与清空、清除服务器数据，在地址下单独的 `e2e-<随机 id>/` 目录里进行，不碰真实的同步数据。两者结束时（包括失败时）都会删除自己建的目录。不要把真实的地址与账号写进仓库 |
 | 界面交互（焦点、键盘、逐帧布局） | 浏览器级用例：`pnpm -C apps/desktop exec playwright install webkit chromium`（第一次），然后 `pnpm -C apps/desktop exec playwright test`（配置在 `apps/desktop/playwright.config.ts`，运行 `src/**/__e2e__/*.e2e.ts`） |
@@ -122,7 +123,7 @@ node scripts/bump.mjs --check   # 各处版本号一致
 
 ### 离线模型与 PaddleOCR 的真机测试
 
-`crates/wisp-local` 的默认测试不需要网络、真实模型与令牌：下载器（wiremock 与脚本化服务器：续传、换源、校验失败、区间提取等）、解包的安全检查、存储布局、设备适配、llama-server 的参数与输出解析、帧协议与工作进程、文本拼装、OTSL 表格、版面后处理、PaddleOCR 两种接口（wiremock）；`wisp-platform` 的 `child_guard`（`harness = false`，测试二进制自己充当守护进程）覆盖守护进程、Job Object 与孤儿清扫。对真实运行时、模型与服务的测试都标了 `#[ignore]`，需要手动运行；**模型与运行时不提交进仓库**。
+`crates/wisp-local` 的默认测试不需要网络、真实模型与令牌：下载器（wiremock 与脚本化服务器：续传、换源、校验失败、区间提取等）、解包的安全检查、存储布局、设备适配、llama-server 的参数与输出解析、帧协议与工作进程、文本拼装（黄金输出）、OTSL 表格、版面后处理、PaddleOCR 两种接口（wiremock）；`wisp-platform` 的 `child_guard`（`harness = false`，测试二进制自己充当守护进程）覆盖守护进程、Job Object 与孤儿清扫。对真实运行时、模型与服务的测试都标了 `#[ignore]`，需要手动运行；**模型与运行时不提交进仓库**。
 
 **准备素材**：在一个被 `.gitignore` 忽略的目录里（建议 `artifacts/local-models/`）按下面的布局放好官方原件。下载地址与 SHA-256 以 `crates/wisp-local/src/catalog.rs` 为准，下载后逐个核对哈希（`shasum -a 256 <文件>`）。
 
@@ -236,6 +237,7 @@ pgrep -fl 'llama-server|wisp-worker|wisp-guard'
 | --- | --- |
 | 与操作系统打交道的代码 | `crates/wisp-platform`（trait 与三端实现）、`crates/wisp-capture`（截图）；窗口相关的放 `apps/desktop/src-tauri/src/windows/native/`。`#[cfg(target_os)]` 只写在这三处与 `lib.rs` 的插件注册里（见[架构 · 总览](architecture.md#总览)） |
 | 跨 crate、跨 IPC 或要持久化的类型 | `crates/wisp-types`，同时更新 `apps/desktop/src/shared/ipc/types.ts` 与黄金样例 |
+| 只看文字本身、要在多个 crate 里保持一致的规则（空格、断词、列表项……） | `crates/wisp-text`：不依赖任何 crate，只放确定性的纯文本规则；版面与几何留在调用方 |
 | 新的 Tauri 命令 | `apps/desktop/src-tauri/src/ipc/cmd_*.rs` 与 `ipc/mod.rs` 的 `commands!`，前端封装在 `apps/desktop/src/shared/ipc/commands.ts`；参数在命令体第一步校验 |
 | 提示词 | `crates/wisp-prompts/templates/` |
 | 离线模型的目录（文件、大小、SHA-256、下载地址、运行时版本） | `crates/wisp-local/src/catalog.rs`；换文件或换版本时把 `CATALOG_REVISION` 加一，并更新设置页与文档里的大小 |
