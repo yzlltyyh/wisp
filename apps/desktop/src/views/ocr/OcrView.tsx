@@ -170,7 +170,7 @@ import { useSettingsSnapshot } from './settings'
 import { LayoutSplit, layoutLabel } from './text/LayoutSplit'
 import { useOcrText } from './text/useOcrText'
 import { useTextSwap } from './text/useTextSwap'
-import { useRun, type Run, type RunState } from './useRun'
+import { isSettled, useRun, warnCode, type Run, type RunState } from './useRun'
 
 export interface OcrViewProps extends ViewProps<'ocr'> {
   /**
@@ -219,10 +219,9 @@ type SourceFailure =
 registerOcrMessages()
 
 const live = (r: Run): boolean => r.state.phase === 'waiting' || r.state.phase === 'streaming'
-const settled = (r: Run): boolean => r.state.phase === 'done' || r.state.phase === 'cancelled'
+const settled = (r: Run): boolean => isSettled(r.state)
 /** 带右侧说明（模式说明、服务名）的菜单宽度 */
 const MENU_WIDTH = 264
-const warn = (what: string) => (e: unknown) => console.warn(`[ocr] ${what}`, e)
 const modelKey = (ref: ModelRef | null): string => (ref ? `${ref.provider_id}/${ref.model_id}` : '')
 /** 状态行的耗时：命中缓存时是缓存查找的耗时、不是这次识别 / 翻译的耗时，不显示（改为注明「来自缓存」） */
 const elapsedOf = (done: RunState['done']): number | null =>
@@ -307,6 +306,9 @@ export function OcrView(props: OcrViewProps) {
 
   // 底栏的「已复制」：内容一变（编辑、重新识别）就立即收起，剪贴板里已不是眼前的内容
   const toast = useInlineToast()
+  /** 底栏提示复制的结果（已复制 / 复制失败） */
+  const flashCopied = (ok: boolean) =>
+    toast.show(t(ok ? 'common.state.copied' : 'common.state.copy_failed'))
 
   const styles = styleList(snap)
   const effStyle = styleId ?? defaultStyleId(snap)
@@ -657,9 +659,7 @@ export function OcrView(props: OcrViewProps) {
     if (direct || pinned || s.phase !== 'done' || !s.done || autoCopied.current === s.key || !snap)
       return
     autoCopied.current = s.key
-    if (snap.settings.ocr.auto_copy && !s.done.no_text && s.hasText) {
-      toast.show(t('common.state.copied'))
-    }
+    if (snap.settings.ocr.auto_copy && !s.done.no_text && s.hasText) flashCopied(true)
     // oxlint-disable-next-line react/exhaustive-deps -- 每次识别结束（设置就绪后）判断一次
   }, [main.state.key, main.state.phase, snap])
 
@@ -671,19 +671,25 @@ export function OcrView(props: OcrViewProps) {
 
   /**
    * 切换排版、新的文字就绪之后让剪贴板跟上：自动复制开着、在面板里（固定窗口不再带动剪贴板）、不是直接翻译（编辑过的
-   * 文字不能切换排版）；Rust 再核对这张截图自动复制之后剪贴板没有被别处改过，并替换掉那次复制新建的历史条目。写入了就
-   * 再显示「已复制」，否则收起（剪贴板里已不是眼前的内容）
+   * 文字不能切换排版）、识别是完整跑完的（被取消的半截文字不写进剪贴板，也不能替换掉之前那次完整结果的历史条目）；
+   * Rust 再核对这张截图自动复制之后剪贴板没有被别处改过，并替换掉那次复制新建的历史条目。写入了就再显示「已复制」，
+   * 否则收起（剪贴板里已不是眼前的内容）；等写入期间这次切换已不作数（`still`）时什么也不提示
    */
-  function followClipboard(next: string): Promise<boolean> {
-    const follow = host === 'panel' && !direct && snap?.settings.ocr.auto_copy === true
+  function followClipboard(next: string, still: () => boolean): Promise<boolean> {
+    const follow =
+      host === 'panel' &&
+      !direct &&
+      main.state.phase === 'done' &&
+      snap?.settings.ocr.auto_copy === true
     const written = follow
       ? api.ocrRecopy(payload.capture_id, next).catch((error: unknown) => {
-          warn('ocr_recopy')(error)
+          warnCode('ocr_recopy')(error)
           return false
         })
       : Promise.resolve(false)
     return written.then((ok) => {
-      if (ok) toast.show(t('common.state.copied'))
+      if (!still()) return false
+      if (ok) flashCopied(true)
       else toast.hide()
       return ok
     })
@@ -696,10 +702,7 @@ export function OcrView(props: OcrViewProps) {
    * 粘贴不成时（例如没有可以粘贴的目标）退回复制
    */
   function pasteFragment(entity: Entity, how: ChipMode): void {
-    const copy = () =>
-      void copyText(entity.value).then((ok) =>
-        toast.show(t(ok ? 'common.state.copied' : 'common.state.copy_failed')),
-      )
+    const copy = () => void copyText(entity.value).then(flashCopied)
     if (how === 'copy_only') {
       copy()
       return
@@ -713,9 +716,7 @@ export function OcrView(props: OcrViewProps) {
     const translation = direct ? main.text() : trOpen && tr.state.hasText ? tr.text() : null
     const text = copyTarget(selectedText(), translation, direct ? main.text() : ocrText)
     if (text.trim() === '') return false
-    void copyText(text).then((ok) =>
-      toast.show(t(ok ? 'common.state.copied' : 'common.state.copy_failed')),
-    )
+    void copyText(text).then(flashCopied)
     return true
   }
 
@@ -728,20 +729,20 @@ export function OcrView(props: OcrViewProps) {
       tr,
       src,
       mode,
-      ocrText,
+      ocrText: content.pending ? main.text() : ocrText,
       layers: direct ? null : content.layers(),
       style: effStyle,
       target,
       trOpen,
       srcOpen,
     })
-    void api.panelPin(sessionId, state, false).catch(warn('panel_pin'))
+    void api.panelPin(sessionId, state, false).catch(warnCode('panel_pin'))
   }
 
   function openSettings(section: SettingsSection, anchor: SettingsAnchor | null = null): void {
     void api
       .windowOpen(anchor ? { kind: 'settings', section, anchor } : { kind: 'settings', section })
-      .catch(warn('window_open'))
+      .catch(warnCode('window_open'))
     if (host === 'panel') requestHide('other')
   }
 
@@ -910,7 +911,7 @@ export function OcrView(props: OcrViewProps) {
     content.turned,
     reducedMotion,
   )
-  const editableNow = !direct && (main.state.phase === 'done' || main.state.phase === 'cancelled')
+  const editableNow = !direct && settled(main)
   useEffect(() => {
     const el = textRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
@@ -1109,7 +1110,8 @@ export function OcrView(props: OcrViewProps) {
           label: t('ocr.menu.retake'),
           icon: Crop,
           shortcut: shotKey?.combo ?? null,
-          onSelect: () => void api.triggerAction(shotAction, 'panel').catch(warn('trigger_action')),
+          onSelect: () =>
+            void api.triggerAction(shotAction, 'panel').catch(warnCode('trigger_action')),
         },
         { type: 'separator', id: 'sep' },
         {
@@ -1186,15 +1188,16 @@ export function OcrView(props: OcrViewProps) {
     if (live(main)) {
       announce = t(direct ? 'common.state.translating' : 'common.state.recognizing')
     } else if (s.phase === 'error') announce = t('ocr.meta.failed')
-    else if (cancelled) announce = t('panel.status.cancelled')
-    else if (exhausted) announce = t('ocr.empty.no_result')
-    else if (noText) announce = t('ocr.empty.no_text')
+    // 切换排版的结果排在「已取消」前面：取消后的半截文字同样可以切换，也要播报
     else if (content.notice) {
       const { layout: switched, copied } = content.notice
       announce = t(copied ? 'ocr.layout.switched_copied' : 'ocr.layout.switched', {
         name: t(layoutLabel(switched)),
       })
-    } else if (done) announce = t(direct ? 'ocr.a11y.translated' : 'ocr.a11y.recognized')
+    } else if (cancelled) announce = t('panel.status.cancelled')
+    else if (exhausted) announce = t('ocr.empty.no_result')
+    else if (noText) announce = t('ocr.empty.no_text')
+    else if (done) announce = t(direct ? 'ocr.a11y.translated' : 'ocr.a11y.recognized')
   }
 
   /** 状态行的提示（优先级见 notes.ts）：短句放不下时省略号截断，全文在 title 里 */
@@ -1230,7 +1233,7 @@ export function OcrView(props: OcrViewProps) {
           onOpenSettings={() => openSettings(settingsSectionFor(run.state.error?.code ?? ''))}
           onChooseModel={chooseModel ? () => openMenu('error', 'models') : undefined}
           onSwitchModel={chooseModel ? () => openMenu('error', 'models') : undefined}
-          onOpenUrl={(url) => void api.openUrl(url).catch(warn('open_url'))}
+          onOpenUrl={(url) => void api.openUrl(url).catch(warnCode('open_url'))}
         />
       </div>
     ) : null
@@ -1480,7 +1483,9 @@ export function OcrView(props: OcrViewProps) {
         />
         {footerOn && settledStatus && hasText && !direct ? (
           <OcrChips
-            text={content.edit ?? main.text()}
+            text={ocrText}
+            raw={main.text()}
+            editing={content.edit !== null}
             os={os}
             onPick={pasteFragment}
             onInspect={content.inspected}
@@ -1811,7 +1816,7 @@ function NotReadyBody({
   const key = hotkeyFor(snap, action)
   if (isOfflineNotReady(notReady)) {
     const retakeNow = () => {
-      void api.triggerAction(action, 'panel').catch(warn('trigger_action'))
+      void api.triggerAction(action, 'panel').catch(warnCode('trigger_action'))
     }
     return (
       <div className="ocr-notready">
@@ -1853,7 +1858,7 @@ function NotReadyBody({
     detail = t('ocr.hint.capture_backend_short')
   }
   const retake = () => {
-    void api.triggerAction(action, 'panel').catch(warn('trigger_action'))
+    void api.triggerAction(action, 'panel').catch(warnCode('trigger_action'))
   }
   return (
     <div className="ocr-notready">
@@ -1862,10 +1867,10 @@ function NotReadyBody({
         detail={detail}
         onOpenSettings={() => open(settingsSectionFor(notReady.reason))}
         onOpenSystemSettings={(kind) => {
-          void api.permissionsOpen(kind).catch(warn('permissions_open'))
+          void api.permissionsOpen(kind).catch(warnCode('permissions_open'))
         }}
         // macOS 的屏幕录制要重启 Wisp 才生效（与引导的权限步骤一致）：授权后直接在这里重启，不会再按 ⌥S 落回同一张卡片
-        onRelaunch={() => void api.appRelaunch().catch(warn('app_relaunch'))}
+        onRelaunch={() => void api.appRelaunch().catch(warnCode('app_relaunch'))}
         onRetry={retryable(notReady) ? retake : undefined}
         retryShortcut={key?.combo ?? null}
       />

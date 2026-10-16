@@ -11,7 +11,7 @@ import type {
   OcrPayload,
   PinState,
 } from '../../shared/ipc/types'
-import { pinStatusOf, seedOf, type Run, type RunState } from './useRun'
+import { isSettled, pinStatusOf, seedOf, type Run, type RunState } from './useRun'
 
 /** 组装时只读每个区的状态与全文（测试不必构造完整的 Run） */
 export type RunView = Pick<Run, 'state' | 'text'>
@@ -27,7 +27,10 @@ export interface PinInput {
   /** 原文转录（直接翻译） */
   src: RunView
   mode: OcrMode
-  /** 当前显示的 OCR 文本（编辑过的以编辑后的为准，否则是排版后的） */
+  /**
+   * 当前显示的 OCR 文本（编辑过的以编辑后的为准，否则是排版后的）；排版结果还没求得时由视图换成识别文本，固定窗口据此
+   * 知道要重新求（切换排版后等结果期间显示的是切换前的文字，不能当成新排版的结果交接）
+   */
   ocrText: string
   /** 结果文字的三层（识别文本、会话排版、编辑）；直接翻译为 null */
   layers: OcrLayers | null
@@ -38,8 +41,6 @@ export interface PinInput {
   trOpen: boolean
   srcOpen: boolean
 }
-
-const settled = (s: RunState): boolean => s.phase === 'done' || s.phase === 'cancelled'
 
 /** 一行写完的状态（模型 · 耗时）：只留给读不懂结构化 `status` 的旧前端 */
 export function statusLineOf(s: RunState): string | null {
@@ -87,7 +88,7 @@ export function pinStateOf(input: PinInput): PinState {
       ...pinExtras(main.state, payload),
     }
   }
-  const ocrDone = settled(main.state)
+  const ocrDone = isSettled(main.state)
   // 译文区展开但译文请求还没有 id（被拒绝、或还没回 ack）：固定窗口不能把识别请求接到译文区上
   const trAttach = trOpen && tr.state.requestId !== null
   return {
@@ -139,10 +140,11 @@ export interface PinRestore {
   /** OCR 模式且译文区展开：译文区的内容，以及译文所依据的原文与风格；否则为 null */
   translation: (RunSeed & { basis: TranslationBasis }) | null
   /**
-   * OCR 模式且识别已结束：正文的排版与编辑（`shown` 是交接时显示的文字，没有编辑时即排版结果）；正文区的识别文本在
-   * `main.text` 里。旧面板没有交接三层时按「原样、没有编辑」还原
+   * OCR 模式且识别已结束：正文的排版与编辑，以及交接时已经求得的排版结果（`laid`；有编辑、或交接的文字与识别文本相同——
+   * 交接时排版结果还没到，或这种排版没有改变文字——时为 null，固定窗口里重新求一次）；正文区的识别文本在 `main.text`
+   * 里。旧面板没有交接三层时按「原样、没有编辑」还原
    */
-  text: { layout: OcrLayout; edit: string | null; shown: string } | null
+  text: { layout: OcrLayout; edit: string | null; laid: string | null } | null
 }
 
 /** 固定窗口打开时怎么还原各区 */
@@ -185,6 +187,10 @@ export function pinRestoreOf(p: PinState, direct: boolean): PinRestore {
           basis: { raw, edit, style: p.style_id, target: null },
         }
       : null,
-    text: { layout: layers?.layout ?? 'keep', edit, shown: p.ocr_text },
+    text: {
+      layout: layers?.layout ?? 'keep',
+      edit,
+      laid: edit === null && p.ocr_text !== raw ? p.ocr_text : null,
+    },
   }
 }

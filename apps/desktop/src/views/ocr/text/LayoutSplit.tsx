@@ -51,7 +51,9 @@ export function LayoutSplit({
   const room = useMenuRoom(box)
   /** 0 完整；1 收起说明行（不适用的原因保留）；2 再收起标题 */
   const [compact, setCompact] = useState(0)
-  const { layout, recent, edited } = text
+  // 按下态与菜单勾选取会话排版：按钮出现时只有正在重新识别（整组置灰）这段时间排版不作用，此时显示的也应是会话
+  // 排版，不闪成「原样」
+  const { session: layout, recent, edited } = text
   const pressed = layout !== 'keep'
   const name = (l: OcrLayout): string => t(layoutLabel(l))
   const reason = (l: Tidy): string => t(`ocr.layout.unavailable.${l}`)

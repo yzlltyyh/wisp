@@ -50,6 +50,15 @@ export interface RunState {
   stage: StreamPhase | null
 }
 
+/** 这一区的请求已经结束、留下了结果（完成或取消；取消时留着已经收到的那部分文字） */
+export const isSettled = (s: RunState): boolean => s.phase === 'done' || s.phase === 'cancelled'
+
+/** 命令失败时只记命令名与错误码（错误信息可能带着请求的内容，不写进日志） */
+export const warnCode =
+  (cmd: string) =>
+  (error: unknown): void =>
+    console.warn(`[ocr] ${cmd} failed: ${WispIpcError.from(cmd, error).code}`)
+
 /**
  * 打开请求：把事件回调交给 IPC，返回 StartAck（stream_attach 没有返回值）。`current()` 在这次 begin 被新的 begin
  * 取代（或视图卸载）后为 false——要先等别的结果再发请求的 opener（直接翻译先等原文转录）据此放弃，不再发出注定被

@@ -49,7 +49,7 @@ const runOf = (key: number, raw: string, phase: RunPhase = 'done'): RunView => (
 function mount(
   initial: OcrLayout,
   run = runOf(1, RAW),
-  follow = vi.fn<(text: string) => Promise<boolean>>(async () => true),
+  follow = vi.fn<(text: string, still: () => boolean) => Promise<boolean>>(async () => true),
 ) {
   const hook = renderHook(
     (p: { run: RunView }) => useOcrText(p.run, { initial, enabled: true, follow }),
@@ -101,7 +101,7 @@ describe('useOcrText', () => {
     await answer(0, TIGHT)
     await act(async () => {})
     expect(follow).toHaveBeenCalledTimes(1)
-    expect(follow).toHaveBeenCalledWith(ONE)
+    expect(follow).toHaveBeenCalledWith(ONE, expect.any(Function))
     expect(result.current.notice).toEqual({ layout: 'join_lines', copied: true })
     expect(result.current.recent).toBe('join_lines')
   })
@@ -147,12 +147,58 @@ describe('useOcrText', () => {
 
   it('从固定交接还原：没有编辑时交接的文字就是排版结果，不再请求', () => {
     const { result } = mount('keep', runOf(5, RAW))
-    act(() => result.current.restore(5, { layout: 'remove_blank_lines', edit: null, shown: TIGHT }))
+    act(() => result.current.restore(5, { layout: 'remove_blank_lines', edit: null, laid: TIGHT }))
     expect(result.current).toMatchObject({
       display: TIGHT,
       pending: false,
       session: 'remove_blank_lines',
     })
     expect(pending).toHaveLength(0)
+  })
+
+  it('从固定交接还原、交接时排版结果还没到：重新求一次，等待期间显示识别文本', async () => {
+    const { result } = mount('keep', runOf(5, RAW))
+    act(() => result.current.restore(5, { layout: 'join_lines', edit: null, laid: null }))
+    expect(result.current).toMatchObject({ display: RAW, pending: true, session: 'join_lines' })
+    expect(pending.map((p) => [p.text, p.transform])).toEqual([[RAW, 'join_lines']])
+    await answer(0, ONE)
+    expect(result.current).toMatchObject({ display: ONE, pending: false })
+  })
+
+  it('排队的跟随在等排版结果期间用户开始编辑：不再跟随，也不播报', async () => {
+    const { result, follow } = mount('keep')
+    act(() => result.current.choose('join_lines'))
+    act(() => result.current.setEdit('改过'))
+    await answer(0, ONE)
+    await act(async () => {})
+    expect(follow).not.toHaveBeenCalled()
+    expect(result.current.notice).toBeNull()
+  })
+
+  it('排队的跟随在等排版结果期间开始重新识别：不把上一次结果的排版写进剪贴板', async () => {
+    const { result, rerender, follow } = mount('keep')
+    act(() => result.current.choose('join_lines'))
+    rerender({ run: runOf(2, '', 'streaming') })
+    await answer(0, ONE)
+    await act(async () => {})
+    expect(follow).not.toHaveBeenCalled()
+  })
+
+  it('跟随写入期间用户编辑了：这次切换不再作数（交给视图的 still 变为 false），不播报', async () => {
+    let release: (ok: boolean) => void = () => {}
+    const follow = vi.fn<(text: string, still: () => boolean) => Promise<boolean>>(
+      () => new Promise((resolve) => (release = resolve)),
+    )
+    const { result } = mount('keep', runOf(1, RAW), follow)
+    act(() => result.current.choose('remove_blank_lines'))
+    await answer(0, TIGHT)
+    await act(async () => {})
+    expect(follow).toHaveBeenCalledTimes(1)
+    const still = follow.mock.calls[0]?.[1]
+    expect(still?.()).toBe(true)
+    act(() => result.current.setEdit('改过'))
+    expect(still?.()).toBe(false)
+    await act(async () => release(true))
+    expect(result.current.notice).toBeNull()
   })
 })

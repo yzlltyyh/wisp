@@ -4,18 +4,13 @@
  * - 排版结果经 `text_transform` 求得，同一次结果、同一种排版只请求一次；等结果期间继续显示切换前的文字，不出现
  *   「处理中」；迟到的结果按 key 丢弃（重新识别之后不会被上一次的结果覆盖）；
  * - 用户切换之后的「剪贴板跟随」由视图给出（`follow`，返回是否已复制）：按切换的先后串行执行，只执行最近一次——
- *   连按 ⌘L 时，剪贴板最后留下的一定是眼前这一版；
+ *   连按 ⌘L 时，剪贴板最后留下的一定是眼前这一版；排队等着的跟随执行前后都再核对一次（见 `choose`）；
  * - 适用性不在前端判断：识别文本的可用变换来自芯片条已经在做的检视（`inspected`）。
  */
 import { useEffect, useLayoutEffect, useReducer, useRef } from 'react'
-import {
-  api,
-  WispIpcError,
-  type OcrLayers,
-  type OcrLayout,
-  type TransformId,
-} from '../../../shared/ipc'
+import { api, type OcrLayers, type OcrLayout, type TransformId } from '../../../shared/ipc'
 import type { RunView } from '../pinState'
+import { isSettled, warnCode } from '../useRun'
 import {
   canApply,
   initialText,
@@ -31,8 +26,11 @@ export interface OcrTextOptions {
   initial: OcrLayout
   /** 当前模式下排版是否作用（逐行 / 段落、非直接翻译） */
   enabled: boolean
-  /** 用户切换排版、新的文字就绪之后：让剪贴板跟上，返回是否已复制 */
-  follow(text: string): Promise<boolean>
+  /**
+   * 用户切换排版、新的文字就绪之后：让剪贴板跟上，返回是否已复制。`still` 报告这次切换是否仍然作数（写入期间用户编辑、
+   * 重新识别或又切换了就不再作数，不提示「已复制」）
+   */
+  follow(text: string, still: () => boolean): Promise<boolean>
 }
 
 export interface OcrText extends TextView {
@@ -49,26 +47,31 @@ export interface OcrText extends TextView {
   discard(): void
   /** 芯片条的检视结果（只记识别文本的那一次） */
   inspected(text: string, transforms: readonly TransformId[]): void
-  /** 从固定交接还原（`key` 为 Run.seed 返回的那次结果） */
-  restore(key: number, layers: { layout: OcrLayout; edit: string | null; shown: string }): void
+  /** 从固定交接还原（`key` 为 Run.seed 返回的那次结果；`laid` 见 PinRestore.text） */
+  restore(
+    key: number,
+    layers: { layout: OcrLayout; edit: string | null; laid: string | null },
+  ): void
   /** 交给固定窗口的三层 */
   layers(): OcrLayers
 }
 
 export function useOcrText(run: RunView, opts: OcrTextOptions): OcrText {
   const [state, dispatch] = useReducer(reduceText, opts.initial, initialText)
-  const { key, phase } = run.state
+  const { key } = run.state
   const raw = run.text()
   const input: TextInput = {
     key,
     raw,
-    applies: opts.enabled && (phase === 'done' || phase === 'cancelled') && raw.trim() !== '',
+    applies: opts.enabled && isSettled(run.state) && raw.trim() !== '',
   }
   const view = viewOf(state, input)
+  const switchable = input.applies && !view.edited
 
-  const latest = useRef(opts)
+  const now = { ...opts, key, switchable }
+  const latest = useRef(now)
   useLayoutEffect(() => {
-    latest.current = opts
+    latest.current = now
   })
   const inflight = useRef(new Map<string, Promise<string>>())
   /** 切换的序号：只有最近一次切换让剪贴板跟随 */
@@ -82,10 +85,8 @@ export function useOcrText(run: RunView, opts: OcrTextOptions): OcrText {
       p = api
         .textTransform(text, layout)
         .catch((error: unknown) => {
-          // 求不出来（例如超过 IPC 的长度上限）：按不适用处理，显示识别文本；只记错误码
-          console.warn(
-            `[ocr] text_transform failed: ${WispIpcError.from('text_transform', error).code}`,
-          )
+          // 求不出来（例如超过 IPC 的长度上限）：按不适用处理，显示识别文本
+          warnCode('text_transform')(error)
           return text
         })
         .then((out) => {
@@ -105,8 +106,6 @@ export function useOcrText(run: RunView, opts: OcrTextOptions): OcrText {
     // oxlint-disable-next-line react/exhaustive-deps -- 只在结果、排版或作用范围变化时请求
   }, [key, view.layout, view.pending, input.applies])
 
-  const switchable = input.applies && !view.edited
-
   const choose = (next: OcrLayout) => {
     if (!switchable || next === state.layout || !canApply(state, key, next)) return
     dispatch({ type: 'layout', layout: next, input })
@@ -114,12 +113,16 @@ export function useOcrText(run: RunView, opts: OcrTextOptions): OcrText {
     const k = key
     const ready =
       next === 'keep' ? raw : (state.key === k && state.laid[next]) || laid(k, next, raw)
+    // 跟随排在队列里、等着排版结果，可能晚于用户的下一步操作：执行前后都按最新的状态核对——仍是这一次结果、仍能切换
+    // （识别已结束、没有编辑），也没有更新的切换；否则跳过，不写剪贴板，也不播报
+    const still = () =>
+      mine === turn.current && latest.current.key === k && latest.current.switchable
     queue.current = queue.current
       .then(async () => {
         const text = await ready
-        if (mine !== turn.current) return
-        const copied = await latest.current.follow(text)
-        if (mine === turn.current) dispatch({ type: 'notice', key: k, layout: next, copied })
+        if (!still()) return
+        const copied = await latest.current.follow(text, still)
+        if (still()) dispatch({ type: 'notice', key: k, layout: next, copied })
       })
       .catch(() => {})
   }

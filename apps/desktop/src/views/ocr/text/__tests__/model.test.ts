@@ -125,16 +125,23 @@ const ROWS: Row[] = [
   [
     '从固定交接还原、没有编辑：交接的文字就是排版结果，首帧不用再等',
     'keep',
-    [{ type: 'restore', key: 3, layout: 'remove_blank_lines', edit: null, shown: TIGHT }],
+    [{ type: 'restore', key: 3, layout: 'remove_blank_lines', edit: null, laid: TIGHT }],
     at(3),
     { layout: 'remove_blank_lines', display: TIGHT, pending: false },
   ],
   [
     '从固定交接还原、有编辑：显示编辑，排版结果另求',
     'keep',
-    [{ type: 'restore', key: 3, layout: 'remove_blank_lines', edit: '改过', shown: '改过' }],
+    [{ type: 'restore', key: 3, layout: 'remove_blank_lines', edit: '改过', laid: null }],
     at(3),
     { display: '改过', pending: true, edited: true },
+  ],
+  [
+    '从固定交接还原、交接时排版结果还没到：显示识别文本，排版结果另求（不把旧文字当成排版结果）',
+    'keep',
+    [{ type: 'restore', key: 3, layout: 'join_lines', edit: null, laid: null }],
+    at(3),
+    { layout: 'join_lines', display: RAW, pending: true, edited: false },
   ],
 ]
 

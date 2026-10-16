@@ -50,13 +50,16 @@ export type TextAction =
   | { type: 'discard'; key: number }
   | { type: 'inspected'; key: number; transforms: readonly TransformId[] }
   | { type: 'notice'; key: number; layout: OcrLayout; copied: boolean }
-  | { type: 'restore'; key: number; layout: OcrLayout; edit: string | null; shown: string }
+  | { type: 'restore'; key: number; layout: OcrLayout; edit: string | null; laid: string | null }
+
+/** 选了某种排版之后左半按钮的切换目标：选的是整理方式就换成它，选原样不变 */
+const recentOf = (layout: OcrLayout, prev: Tidy): Tidy => (layout === 'keep' ? prev : layout)
 
 export function initialText(layout: OcrLayout): OcrTextState {
   return {
     key: 0,
     layout,
-    recent: layout === 'keep' ? 'remove_blank_lines' : layout,
+    recent: recentOf(layout, 'remove_blank_lines'),
     laid: {},
     edit: null,
     stale: null,
@@ -119,7 +122,7 @@ export function reduceText(s: OcrTextState, a: TextAction): OcrTextState {
       return {
         ...own,
         layout: a.layout,
-        recent: a.layout === 'keep' ? own.recent : a.layout,
+        recent: recentOf(a.layout, own.recent),
         stale: before.base,
         turned: true,
         notice: null,
@@ -150,10 +153,11 @@ export function reduceText(s: OcrTextState, a: TextAction): OcrTextState {
       return {
         ...own,
         layout: a.layout,
-        recent: a.layout === 'keep' ? own.recent : a.layout,
+        recent: recentOf(a.layout, own.recent),
         edit: a.edit,
-        // 没有编辑时交接的文字就是排版结果：固定窗口首帧直接显示它，不必再等一次 text_transform
-        laid: a.edit === null && a.layout !== 'keep' ? { [a.layout]: a.shown } : {},
+        // 交接时已经求得的排版结果：固定窗口首帧直接显示它，不必再等一次 text_transform；没有时（交接时还在等结果）
+        // 由 useOcrText 重新求
+        laid: a.laid && a.layout !== 'keep' ? { [a.layout]: a.laid } : {},
       }
     }
   }

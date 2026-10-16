@@ -306,16 +306,28 @@ describe('还原', () => {
     const plan = pinRestoreOf(p, false)
     expect(plan.main).toMatchObject({ attach: null, text: '原文\n\n第二段', phase: 'done' })
     expect(plan.main.extra.start?.model_label).toBe('Vision')
-    expect(plan.text).toEqual({
-      layout: 'remove_blank_lines',
-      edit: '改过的原文',
-      shown: '改过的原文',
-    })
+    expect(plan.text).toEqual({ layout: 'remove_blank_lines', edit: '改过的原文', laid: null })
     expect(plan.translation).toMatchObject({
       attach: 'r-tr',
       text: '译文',
       basis: { raw: '原文\n\n第二段', edit: '改过的原文', style: 'formal' },
     })
+  })
+
+  it('没有编辑时交接的文字与识别文本不同才当作排版结果；相同（交接时排版结果还没到）时固定窗口重新求', () => {
+    const laid = (ocrText: string) =>
+      pinRestoreOf(
+        pinStateOf(
+          input({
+            main: recognized('甲\n\n乙'),
+            ocrText,
+            layers: { raw: '甲\n\n乙', layout: 'join_lines', edit: null },
+          }),
+        ),
+        false,
+      ).text?.laid
+    expect(laid('甲乙')).toBe('甲乙')
+    expect(laid('甲\n\n乙')).toBeNull()
   })
 
   it('还在识别时只交接会话排版；旧面板没有三层时把显示的文字当作识别文本、按原样还原', () => {
@@ -335,7 +347,7 @@ describe('还原', () => {
       false,
     )
     expect(old.main.text).toBe('显示的')
-    expect(old.text).toEqual({ layout: 'keep', edit: null, shown: '显示的' })
+    expect(old.text).toEqual({ layout: 'keep', edit: null, laid: null })
     expect(old.translation?.basis).toEqual({
       raw: '显示的',
       edit: null,

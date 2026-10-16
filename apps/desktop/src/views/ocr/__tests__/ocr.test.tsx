@@ -138,10 +138,15 @@ function snapshot(autoCopy = true): SettingsSnapshot {
 }
 
 const NO_ENTITIES: ClipInspect = { entities: [], transforms: [] }
-/** text_inspect 的结果：undefined 模拟没实现这条命令的替身（未知命令一律返回 undefined），'fail' 模拟命令失败 */
-let inspectResult: ClipInspect | undefined | 'fail' = NO_ENTITIES
+/**
+ * text_inspect 的结果：undefined 模拟没实现这条命令的替身（未知命令一律返回 undefined），'fail' 模拟命令失败；函数按
+ * 检视的文字给出结果
+ */
+let inspectResult: ClipInspect | undefined | 'fail' | ((text: string) => ClipInspect) = NO_ENTITIES
 /** ocr_recopy 的结果：Rust 是否写入了剪贴板 */
 let recopyResult: boolean
+/** 不为 null 时 text_transform 等它 resolve 之后才返回（模拟排版结果还没到） */
+let transformHold: Promise<void> | null
 
 /** text_transform 的替身（只为用例里的几段文字给出结果；真实规则在 Rust） */
 function fakeTransform(text: string, transform: string): string {
@@ -157,13 +162,17 @@ function fakeTransport(): Transport {
       calls.push([cmd, args ?? {}])
       if (cmd === 'panel_pin') return Promise.resolve('p-1' as T)
       if (cmd === 'text_transform') {
-        return Promise.resolve(fakeTransform(args?.text as string, args?.transform as string) as T)
+        const out = fakeTransform(args?.text as string, args?.transform as string) as T
+        return transformHold ? transformHold.then(() => out) : Promise.resolve(out)
       }
       if (cmd === 'ocr_recopy') return Promise.resolve(recopyResult as T)
       // 识别完成后视图会检视文字（芯片）：默认没有片段，用例需要芯片时改 inspectResult
       if (cmd === 'text_inspect') {
         if (inspectResult === 'fail') {
           return Promise.reject({ code: 'internal', message: 'inspect failed', llm: null })
+        }
+        if (typeof inspectResult === 'function') {
+          return Promise.resolve(inspectResult(args?.text as string) as T)
         }
         // 默认没有片段；可用的排版按替身的结果列出（与 Rust 一样：列出的恰好是会改变文字的那些）
         if (inspectResult === NO_ENTITIES) {
@@ -322,6 +331,7 @@ beforeEach(() => {
   replays = new Map()
   inspectResult = NO_ENTITIES
   recopyResult = true
+  transformHold = null
   setTransport(fakeTransport())
   resetSettingsSnapshot(snapshot())
   // 用例里的断言用中文文案
@@ -894,6 +904,87 @@ describe('排版', () => {
     expect(callsOf('ocr_start').at(-1)?.[1]).toMatchObject({
       req: { mode: 'lines', layout: 'remove_blank_lines' },
     })
+  })
+
+  it('识别被取消后排版仍可切换显示，但剪贴板不跟随（半截文字不写进剪贴板）；切换照样播报', async () => {
+    view()
+    await recognize('r-ocr', PARAS)
+    await settle()
+    act(() => mod('KeyR'))
+    await push('r-1', start('r-1'), delta('第三段\n\n第四段'), error('cancelled'))
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-toggle'))
+    await settle()
+    expect(box().value).toBe('第三段\n第四段')
+    expect(callsOf('ocr_recopy')).toHaveLength(0)
+    expect(screen.getByTestId('ocr-announce')).toHaveTextContent(/^已切换为「去掉空行」$/)
+  })
+
+  it('重新识别期间排版按钮置灰，按下态仍是会话排版（不闪成原样）', async () => {
+    view({}, payload({ layout: 'remove_blank_lines' }))
+    await recognize('r-ocr', PARAS)
+    await settle()
+    act(() => mod('KeyR'))
+    await push('r-1', start('r-1'), delta('半'))
+    const toggle = screen.getByTestId('ocr-layout-toggle')
+    expect(toggle).toBeDisabled()
+    expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('固定时新排版的结果还没到：交接识别文本，固定窗口里重新求一次（不把切换前的文字当成排版结果）', async () => {
+    const first = view()
+    await recognize('r-ocr', PARAS)
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-toggle'))
+    await settle()
+    transformHold = new Promise(() => {})
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    fireEvent.click(await screen.findByTestId('ocr-layout-menu-item-join_lines'))
+    await settle()
+    // 等结果期间继续显示切换前的文字
+    expect(box().value).toBe(TIGHT)
+    act(() => mod('KeyP'))
+    const state = (callsOf('panel_pin')[0]?.[1] as { state: PinState } | undefined)?.state
+    if (!state) throw new Error('没有固定')
+    expect(state).toMatchObject({
+      ocr_text: PARAS,
+      ocr_layers: { raw: PARAS, layout: 'join_lines', edit: null },
+    })
+    first.unmount()
+    calls = []
+    transformHold = null
+    view({ host: 'pinned', sessionId: 0, pin: state }, payload({ request_id: null }))
+    await settle()
+    expect(callsOf('text_transform')).toEqual([
+      ['text_transform', { text: PARAS, transform: 'join_lines' }],
+    ])
+    expect(box().value).toBe('第一段第二段')
+    expect(screen.getByTestId('ocr-layout-toggle')).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('芯片按显示的文字检视（合并为一行后连起来的片段）；可用变换仍按识别文本，正在用的方式不置灰', async () => {
+    const RAW = '邮箱 a@b.\nco'
+    inspectResult = (text) => ({
+      entities: text.includes('a@b.co')
+        ? [{ kind: 'email', value: 'a@b.co', start: 3, end: 9, sensitive: false }]
+        : [],
+      transforms: text.includes('\n') ? ['join_lines'] : [],
+    })
+    view()
+    await recognize('r-ocr', RAW)
+    await settle()
+    expect(screen.queryByTestId('ocr-chips')).toBeNull()
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    fireEvent.click(await screen.findByTestId('ocr-layout-menu-item-join_lines'))
+    await settle()
+    expect(box().value).toBe('邮箱 a@b.co')
+    await waitFor(() => expect(screen.getByTestId('ocr-chips')).toHaveTextContent('a@b.co'))
+    // 切换排版立即检视（不等编辑的防抖），识别文本只检视了一次
+    expect(callsOf('text_inspect').map(([, a]) => a.text)).toEqual([RAW, '邮箱 a@b.co'])
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    expect(await screen.findByTestId('ocr-layout-menu-item-join_lines')).not.toHaveAttribute(
+      'aria-disabled',
+    )
   })
 
   it('⌘L 在原样与最近用过的整理方式之间切换', async () => {
