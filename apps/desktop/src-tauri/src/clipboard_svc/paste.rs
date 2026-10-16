@@ -81,29 +81,32 @@ pub struct CopyReceipt {
     pub change_id: u64,
     /// 这次写入在剪贴板历史里新建的条目。内容早已在历史里（只是移到顶部）、没有在记录（暂停、关闭）、被跳过或记录
     /// 失败时为 None——那样的条目不是这次复制产生的，切换排版时不能删
-    pub created: Option<i64>,
+    pub created: Option<CopiedItem>,
+}
+
+/// 一次写入新建的历史条目：行号连同内容 hash。行号没有 AUTOINCREMENT，这一条被删掉后行号可能分给别的条目（例如同步
+/// 拉来的新条目），所以删除之前要核对 hash 仍是这一条的
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CopiedItem {
+    pub id: i64,
+    pub hash: [u8; 32],
 }
 
 /// 一次自身写入在历史里的结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Recorded {
     /// 新建了这一条
-    Created(i64),
-    /// 内容已在历史里，这一条被移到顶部
-    Touched(i64),
+    Created(CopiedItem),
+    /// 记进了历史、但不归这次写入：内容早已在历史里（这一条被移到顶部），或新建了却没读到它的 hash（无法核对身份的
+    /// 条目以后不删）
+    Existing(i64),
 }
 
 impl Recorded {
-    fn id(self) -> i64 {
+    fn created(self) -> Option<CopiedItem> {
         match self {
-            Self::Created(id) | Self::Touched(id) => id,
-        }
-    }
-
-    fn created(self) -> Option<i64> {
-        match self {
-            Self::Created(id) => Some(id),
-            Self::Touched(_) => None,
+            Self::Created(item) => Some(item),
+            Self::Existing(_) => None,
         }
     }
 }
@@ -735,7 +738,7 @@ impl Engine {
         let (change_id, recorded) = self.write_and_record(text)?;
         let created = match (prev.created, recorded) {
             // 内容相同只会 touch 上一次新建的那一条：它仍是自动复制出来的，继续记在回执上
-            (Some(old), Some(r)) if r.id() == old => Some(old),
+            (Some(old), Some(Recorded::Existing(id))) if id == old.id => Some(old),
             (Some(old), Some(r)) => {
                 self.discard_copied(old);
                 r.created()
@@ -767,10 +770,12 @@ impl Engine {
             text: Some(text.to_owned()),
             ..RawClipboard::default()
         };
-        let recorded = match self.ingest(&raw) {
-            Ok(IngestOutcome::Inserted(meta)) => Some(Recorded::Created(meta.id)),
-            Ok(IngestOutcome::Touched(meta)) => Some(Recorded::Touched(meta.id)),
-            Ok(IngestOutcome::Skipped(_)) => None,
+        let recorded = match self.ingest_identified(&raw) {
+            Ok((IngestOutcome::Inserted(meta), Some(hash))) => {
+                Some(Recorded::Created(CopiedItem { id: meta.id, hash }))
+            }
+            Ok((IngestOutcome::Inserted(meta) | IngestOutcome::Touched(meta), _)) => Some(Recorded::Existing(meta.id)),
+            Ok((IngestOutcome::Skipped(_), _)) => None,
             Err(e) => {
                 log::info!("record copied text failed: {}", e.message);
                 None
@@ -779,10 +784,13 @@ impl Engine {
         Ok((change, recorded))
     }
 
-    /// 删掉一条被新版本取代的自动复制条目；收藏过的保留，已经不在了视为删掉
-    fn discard_copied(&self, id: i64) {
-        match self.delete(id, false) {
-            Ok(()) => log::debug!("replaced copy removed id={id}"),
+    /// 删掉一条被新版本取代的自动复制条目：只在这一行仍是当初新建的那一条（内容 hash 一致）时删；收藏过的保留，已经
+    /// 不在了、行号已经属于别的条目都视为删掉
+    fn discard_copied(&self, item: CopiedItem) {
+        let id = item.id;
+        match self.delete_checked(id, false, Some(&item.hash)) {
+            Ok(true) => log::debug!("replaced copy removed id={id}"),
+            Ok(false) => log::debug!("replaced copy is already gone id={id}"),
             Err(e) if e.code == IpcErrorCode::Conflict => log::debug!("replaced copy kept as a favorite id={id}"),
             Err(e) => log::info!("removing the replaced copy failed id={id}: {}", e.message),
         }

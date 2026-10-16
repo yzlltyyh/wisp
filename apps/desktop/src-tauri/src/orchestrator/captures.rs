@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use parking_lot::{Condvar, Mutex, RwLock};
 use tokio_util::bytes::Bytes;
 use wisp_capture::{Frame, RgbaImage};
-use wisp_types::{MonitorId, OcrMode, PhysSize};
+use wisp_types::{MonitorId, OcrMode, PhysSize, RequestId};
 
 use super::registry::Owner;
 use crate::assets::{Asset, AssetSource, CaptureVariant, parse_capture_path};
@@ -25,6 +25,10 @@ use crate::error::IpcError;
 
 /// 缩略图 / 请求等待编码完成的上限
 pub const ENCODE_WAIT: Duration = Duration::from_secs(5);
+
+/// 切换排版后的跟随等这次识别的自动复制交付完的上限：自动复制要写系统剪贴板（Windows 的 OpenClipboard 重试最长约
+/// 1.5 s）再记进历史，留出余量；等不到就放弃这次跟随（不写剪贴板、不删条目）
+const COPY_SETTLE_WAIT: Duration = Duration::from_secs(3);
 
 /// 编码好的裁剪图（缩略图资源与 OCR 请求共用同一份字节，不复制）
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,9 +92,25 @@ pub struct Crop {
     /// （之后的重新识别从编码字节解码）
     pixels: Mutex<Pixels>,
     pixels_ready: Condvar,
-    /// 这张截图最近一次自动复制（或切换排版后跟随）的回执。「写剪贴板 → 记下回执」整个在这把锁里完成（只在阻塞线程上
-    /// 持有）：跟随时核对的总是这张截图最近一次写进剪贴板的那一版，两次写入不会交错成「回执是旧的、剪贴板是新的」
-    copied: Mutex<Option<CopyReceipt>>,
+    /// 当前这次识别的自动复制（[`CopySlot`]）。只有一次识别自己的自动复制能成为回执，切换排版的跟随只认它
+    copy: Mutex<CopySlot>,
+    /// 自动复制交付完成（回执写下或作废）：等着跟随的阻塞线程据此醒来
+    copy_settled: Condvar,
+    /// 这张截图写剪贴板的串行锁：自动复制与跟随的「写剪贴板 → 换回执」整个在它里面完成（只在阻塞线程上持有，跨一次
+    /// 剪贴板写入），两次写入不会交错成「回执是旧的、剪贴板是新的」。状态另放在 `copy` 里、只短暂持有，异步路径上开始
+    /// 新一次识别时不会被进行中的写入挡住。加锁顺序固定为先这把、再 `copy`
+    copy_write: Mutex<()>,
+}
+
+/// 一张截图当前这次识别的自动复制
+#[derive(Debug)]
+enum CopySlot {
+    /// 没有可跟随的自动复制：还没识别过，或当前这次识别被取消、失败、没有文字、不自动复制、写入失败
+    None,
+    /// 这次识别还在进行，或结果已经发给前端、自动复制还没写完（Done 先到前端，自动复制随后才在阻塞线程上写入）
+    Pending(RequestId),
+    /// 这次识别的自动复制（或之后的跟随）写入的回执
+    Copied { request: RequestId, receipt: CopyReceipt },
 }
 
 /// 裁剪图的像素
@@ -253,36 +273,107 @@ impl Crop {
         self.thumb.lock().clone()
     }
 
-    /// 识别完成时的自动复制（**阻塞**，在阻塞线程上调用）：在复制锁里写入并记下回执。写入失败时回执保持原样
-    pub fn auto_copy(&self, write: impl FnOnce() -> Result<CopyReceipt, IpcError>) -> Result<(), IpcError> {
-        let mut g = self.copied.lock();
-        *g = Some(write()?);
-        Ok(())
+    /// 一次识别开始（commit、剪贴板图片、`ocr_start`）。**在把请求 id 交给前端之前同步调用**：之前的回执随之作废，
+    /// 之后的跟随只认这一次识别自己的自动复制。只拿状态锁、不碰写入锁，异步路径上调用也不会被进行中的写入挡住
+    pub fn copy_begin(&self, request: &str) {
+        *self.copy.lock() = CopySlot::Pending(request.to_owned());
+        self.copy_settled.notify_all();
     }
 
-    /// 切换排版后让剪贴板跟随（**阻塞**）：这张截图自动复制过时，在复制锁里把上次的回执交给 `write`，它写入了就换成新的
-    /// 回执。返回是否写入；还没有自动复制过（关闭了自动复制、识别还没完成）时不写
-    pub fn recopy(
+    /// 这次识别没有自动复制（取消、失败、没有文字、不自动复制、没有发出请求）：作废回执，正在等它的跟随随即放弃。
+    /// 已经开始了更新的一次识别时不动
+    pub fn copy_skipped(&self, request: &str) {
+        self.settle(request, None);
+    }
+
+    /// 识别完成时的自动复制（**阻塞**，在阻塞线程上调用）：在写入锁里写入，这次识别仍是当前这次时记下回执（写入失败
+    /// 时作废）。期间已经开始了新一次识别时不写——剪贴板留给新的结果
+    pub fn auto_copy(
         &self,
-        write: impl FnOnce(CopyReceipt) -> Result<Option<CopyReceipt>, IpcError>,
+        request: &str,
+        write: impl FnOnce() -> Result<CopyReceipt, IpcError>,
     ) -> Result<bool, IpcError> {
-        let mut g = self.copied.lock();
-        let Some(prev) = *g else {
+        let _write = self.copy_write.lock();
+        if !matches!(&*self.copy.lock(), CopySlot::Pending(r) if r == request) {
             return Ok(false);
-        };
-        match write(prev)? {
-            Some(next) => {
-                *g = Some(next);
+        }
+        match write() {
+            Ok(receipt) => {
+                self.settle(request, Some(receipt));
                 Ok(true)
             }
-            None => Ok(false),
+            Err(e) => {
+                self.settle(request, None);
+                Err(e)
+            }
         }
     }
 
-    /// 上次自动复制的回执（测试用）
+    /// 把 `request` 的自动复制定下来（`receipt` 为 None 即作废），唤醒等着的跟随；`request` 已不是当前这次识别时不动
+    fn settle(&self, request: &str, receipt: Option<CopyReceipt>) {
+        let mut slot = self.copy.lock();
+        if !matches!(&*slot, CopySlot::Pending(r) if r == request) {
+            return;
+        }
+        *slot = match receipt {
+            Some(receipt) => CopySlot::Copied {
+                request: request.to_owned(),
+                receipt,
+            },
+            None => CopySlot::None,
+        };
+        self.copy_settled.notify_all();
+    }
+
+    /// 切换排版后让剪贴板跟随（**阻塞**，在阻塞线程上调用）：`request` 是视图正在显示的那次识别。它的自动复制还没
+    /// 交付完时先等（最多 [`COPY_SETTLE_WAIT`]）；有回执时在写入锁里交给 `write`，它写入了就换成新的回执。返回是否
+    /// 写入。不是当前这次识别、这次识别没有自动复制（取消、失败、关闭了自动复制、写入失败）或等不到时不写
+    pub fn recopy(
+        &self,
+        request: &str,
+        write: impl FnOnce(CopyReceipt) -> Result<Option<CopyReceipt>, IpcError>,
+    ) -> Result<bool, IpcError> {
+        // 不持写入锁等：自动复制要拿写入锁才能交付
+        if !self.wait_settled(request, COPY_SETTLE_WAIT) {
+            return Ok(false);
+        }
+        let _write = self.copy_write.lock();
+        let prev = match &*self.copy.lock() {
+            CopySlot::Copied { request: r, receipt } if r == request => *receipt,
+            _ => return Ok(false),
+        };
+        let Some(next) = write(prev)? else {
+            return Ok(false);
+        };
+        let mut slot = self.copy.lock();
+        // 写入期间开始了新一次识别：回执留给它自己的自动复制
+        if let CopySlot::Copied { request: r, receipt } = &mut *slot
+            && r == request
+        {
+            *receipt = next;
+        }
+        Ok(true)
+    }
+
+    /// 等 `request` 的自动复制交付完；超时返回 false
+    fn wait_settled(&self, request: &str, timeout: Duration) -> bool {
+        let until = Instant::now() + timeout;
+        let mut slot = self.copy.lock();
+        while matches!(&*slot, CopySlot::Pending(r) if r == request) {
+            if self.copy_settled.wait_until(&mut slot, until).timed_out() {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// 当前这次识别自动复制的回执（测试用）
     #[cfg(test)]
     pub fn copied(&self) -> Option<CopyReceipt> {
-        *self.copied.lock()
+        match &*self.copy.lock() {
+            CopySlot::Copied { receipt, .. } => Some(*receipt),
+            CopySlot::None | CopySlot::Pending(_) => None,
+        }
     }
 }
 
@@ -352,7 +443,9 @@ impl CaptureStore {
             thumb: Mutex::new(None),
             pixels: Mutex::new(Pixels::None),
             pixels_ready: Condvar::new(),
-            copied: Mutex::new(None),
+            copy: Mutex::new(CopySlot::None),
+            copy_settled: Condvar::new(),
+            copy_write: Mutex::new(()),
         });
         self.crops.lock().insert(id, Arc::clone(&crop));
         crop
@@ -698,5 +791,82 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         assert!(store.remove(&id));
         assert_eq!(waiter.join().expect("join"), CropImage::Failed);
+    }
+
+    fn receipt(change_id: u64) -> CopyReceipt {
+        CopyReceipt {
+            change_id,
+            created: None,
+        }
+    }
+
+    /// 回执只属于一次识别：跟随等这次识别的自动复制交付完再拿它的回执；新一次识别开始后旧请求既不能跟随，迟到的
+    /// 自动复制也不再写剪贴板；开始新一次识别不会被进行中的剪贴板写入挡住
+    #[test]
+    fn copy_receipts_belong_to_one_recognition() {
+        let store = CaptureStore::new();
+        let crop = store.new_crop(Owner::Panel(1), PhysSize { width: 1, height: 1 }, false);
+        crop.copy_begin("r1");
+        // Done 已经到了前端、自动复制还没写：跟随在阻塞线程上等着
+        let follower = {
+            let crop = Arc::clone(&crop);
+            std::thread::spawn(move || {
+                let mut seen = None;
+                let wrote = crop.recopy("r1", |prev| {
+                    seen = Some(prev);
+                    Ok(Some(receipt(2)))
+                });
+                (wrote.expect("recopy"), seen)
+            })
+        };
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(crop.auto_copy("r1", || Ok(receipt(1))).expect("auto copy"));
+        assert_eq!(follower.join().expect("join"), (true, Some(receipt(1))));
+        assert_eq!(crop.copied(), Some(receipt(2)));
+
+        // 新一次识别开始：上一次的回执作废，迟到的自动复制不写
+        crop.copy_begin("r2");
+        assert_eq!(crop.copied(), None);
+        assert!(!crop.recopy("r1", |_| panic!("旧请求不跟随")).expect("recopy"));
+        assert!(
+            !crop
+                .auto_copy("r1", || panic!("被取代的自动复制不写"))
+                .expect("auto copy")
+        );
+        // 这次识别的自动复制失败：作废，之后的跟随不写
+        assert!(crop.auto_copy("r2", || Err(IpcError::internal("busy"))).is_err());
+        assert!(!crop.recopy("r2", |_| panic!("没有回执")).expect("recopy"));
+
+        // 跟随正在写剪贴板（持着写入锁）时开始新一次识别：只拿状态锁，立即返回
+        crop.copy_begin("r3");
+        assert!(crop.auto_copy("r3", || Ok(receipt(3))).expect("auto copy"));
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let slow = {
+            let crop = Arc::clone(&crop);
+            std::thread::spawn(move || {
+                crop.recopy("r3", |_| {
+                    entered_tx.send(()).expect("entered");
+                    release_rx.recv().expect("release");
+                    Ok(Some(receipt(4)))
+                })
+            })
+        };
+        entered_rx.recv().expect("writing");
+        let (begun_tx, begun_rx) = std::sync::mpsc::channel();
+        {
+            let crop = Arc::clone(&crop);
+            std::thread::spawn(move || {
+                crop.copy_begin("r4");
+                begun_tx.send(()).expect("begun");
+            });
+        }
+        assert!(
+            begun_rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "写入还没结束时就开始了"
+        );
+        release_tx.send(()).expect("release");
+        assert!(slow.join().expect("join").expect("recopy"), "它确实写了剪贴板");
+        assert_eq!(crop.copied(), None, "回执留给新一次识别自己的自动复制");
     }
 }

@@ -37,8 +37,8 @@ use super::{RequestCaller, RequestHost};
 use crate::app::perf::{PerfMarks, PerfStage};
 use crate::assets::AssetSource;
 use crate::bus::{Command, TriggerOrigin};
-use crate::clipboard_svc::CopyReceipt;
 use crate::clipboard_svc::smart::layout_text;
+use crate::clipboard_svc::{CopiedItem, CopyReceipt};
 use crate::error::IpcError;
 use crate::windows::{HiddenSet, OverlaySession, PanelShowRequest, PanelState};
 
@@ -111,6 +111,8 @@ struct FakeEnv {
     /// `copy_text` 新建的历史条目 id（1 起）；`recopy_text` 删掉的条目
     clip_items: AtomicI64,
     clip_removed: Mutex<Vec<i64>>,
+    /// `copy_text` 失败（模拟 Windows 剪贴板被别的程序占着）
+    copy_fails: Mutex<bool>,
     usage: Mutex<Vec<Usage>>,
     calls: Mutex<Vec<String>>,
     permission: Mutex<PermissionState>,
@@ -198,6 +200,7 @@ impl FakeEnv {
             clip_change: AtomicU64::new(100),
             clip_items: AtomicI64::new(0),
             clip_removed: Mutex::new(Vec::new()),
+            copy_fails: Mutex::new(false),
             usage: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
             permission: Mutex::new(PermissionState::Granted),
@@ -394,10 +397,13 @@ impl Env for FakeEnv {
         self.call("activate");
     }
     fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError> {
+        if *self.copy_fails.lock() {
+            return Err(IpcError::internal("clipboard busy"));
+        }
         self.copies.lock().push(text.to_owned());
         Ok(CopyReceipt {
             change_id: self.clip_change.fetch_add(1, Ordering::SeqCst) + 1,
-            created: Some(self.clip_items.fetch_add(1, Ordering::SeqCst) + 1),
+            created: Some(fake_item(self.clip_items.fetch_add(1, Ordering::SeqCst) + 1)),
         })
     }
     /// 剪贴板服务的跟随规则只模拟到「剪贴板没变才写、写了就删上一条」；收藏不删、内容相同时保留由剪贴板服务的用例覆盖
@@ -407,7 +413,7 @@ impl Env for FakeEnv {
         }
         let next = self.copy_text(text)?;
         if let Some(old) = prev.created {
-            self.clip_removed.lock().push(old);
+            self.clip_removed.lock().push(old.id);
         }
         Ok(Some(next))
     }
@@ -645,6 +651,13 @@ impl Env for FakeEnv {
         h.push(rec);
         i64::try_from(h.len()).ok()
     }
+}
+
+/// 假剪贴板历史里第 `id` 条（内容 hash 只需各条不同）
+fn fake_item(id: i64) -> CopiedItem {
+    let mut hash = [0; 32];
+    hash[..8].copy_from_slice(&id.to_le_bytes());
+    CopiedItem { id, hash }
 }
 
 fn setup(settings: Settings) -> (Arc<FakeEnv>, Arc<Core>) {
@@ -3422,15 +3435,16 @@ async fn ocr_recopy_follows_only_while_the_clipboard_still_holds_the_auto_copy()
     let crop = core.captures.crop(&cap).expect("crop");
     until("auto copy", WAIT, || crop.copied().is_some()).await;
     let first = crop.copied().expect("receipt");
-    assert_eq!(first.created, Some(1));
-    let recopy = |text: &str| core.ocr_recopy(&RequestCaller::Panel, &cap, text.to_owned());
+    assert_eq!(first.created, Some(fake_item(1)));
+    let rid = payload.request_id.clone().expect("request");
+    let recopy = |text: &str| core.ocr_recopy(&RequestCaller::Panel, &cap, &rid, text.to_owned());
 
     // 切换为「去掉空行」：写入，替换第 1 条
     assert!(recopy("第一段\n第二段").await.expect("recopy"));
     assert_eq!(env.copies.lock().last().map(String::as_str), Some("第一段\n第二段"));
     assert_eq!(*env.clip_removed.lock(), [1]);
     let second = crop.copied().expect("receipt");
-    assert_eq!(second.created, Some(2));
+    assert_eq!(second.created, Some(fake_item(2)));
     assert_ne!(second.change_id, first.change_id);
     // 切回原样：替换的是第 2 条，历史里始终只留一条
     assert!(recopy("第一段\n\n第二段").await.expect("recopy"));
@@ -3447,7 +3461,7 @@ async fn ocr_recopy_follows_only_while_the_clipboard_still_holds_the_auto_copy()
     // 不存在的截图：与条件不满足一样
     assert!(
         !core
-            .ocr_recopy(&RequestCaller::Panel, "c-404", "x".to_owned())
+            .ocr_recopy(&RequestCaller::Panel, "c-404", &rid, "x".to_owned())
             .await
             .expect("unknown capture")
     );
@@ -3462,9 +3476,10 @@ async fn ocr_recopy_never_writes_without_auto_copy_from_pinned_windows_or_for_di
     let (env, core) = setup(settings);
     let (payload, _, _) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
     tokio::time::sleep(Duration::from_millis(30)).await;
+    let rid = payload.request_id.clone().expect("request");
     assert!(
         !core
-            .ocr_recopy(&RequestCaller::Panel, &payload.capture_id, "x".to_owned())
+            .ocr_recopy(&RequestCaller::Panel, &payload.capture_id, &rid, "x".to_owned())
             .await
             .expect("recopy")
     );
@@ -3476,12 +3491,13 @@ async fn ocr_recopy_never_writes_without_auto_copy_from_pinned_windows_or_for_di
     let cap = payload.capture_id.clone();
     let crop = core.captures.crop(&cap).expect("crop");
     until("auto copy", WAIT, || crop.copied().is_some()).await;
+    let rid = payload.request_id.clone().expect("request");
     let mut off = (*env.settings()).clone();
     off.ocr.auto_copy = false;
     *env.settings.lock() = Arc::new(off);
     assert!(
         !core
-            .ocr_recopy(&RequestCaller::Panel, &cap, "x".to_owned())
+            .ocr_recopy(&RequestCaller::Panel, &cap, &rid, "x".to_owned())
             .await
             .expect("recopy")
     );
@@ -3494,7 +3510,10 @@ async fn ocr_recopy_never_writes_without_auto_copy_from_pinned_windows_or_for_di
     };
     for caller in [RequestCaller::Panel, p1] {
         assert!(
-            !core.ocr_recopy(&caller, &cap, "x".to_owned()).await.expect("recopy"),
+            !core
+                .ocr_recopy(&caller, &cap, &rid, "x".to_owned())
+                .await
+                .expect("recopy"),
             "{caller:?}"
         );
     }
@@ -3508,11 +3527,175 @@ async fn ocr_recopy_never_writes_without_auto_copy_from_pinned_windows_or_for_di
     let (payload, _, _) = capture_and_wait(&env, &core, HotkeyAction::OcrTranslate).await;
     assert_eq!(payload.mode, OcrMode::Translate);
     assert_eq!(payload.layout, OcrLayout::Keep);
+    let rid = payload.request_id.clone().expect("request");
     assert!(
         !core
-            .ocr_recopy(&RequestCaller::Panel, &payload.capture_id, "x".to_owned())
+            .ocr_recopy(&RequestCaller::Panel, &payload.capture_id, &rid, "x".to_owned())
             .await
             .expect("recopy")
     );
     assert!(env.copies.lock().is_empty());
+}
+
+/// 在面板里重新识别同一张截图（`ocr_start`），返回请求 id
+async fn re_recognise(
+    core: &Arc<Core>,
+    session: u64,
+    capture_id: &str,
+    sink: Arc<dyn super::registry::EventSink>,
+) -> String {
+    core.ocr_start(
+        OcrReq {
+            session_id: session,
+            capture_id: capture_id.to_owned(),
+            mode: OcrMode::Lines,
+            model_ref: None,
+            target_lang: None,
+            layout: None,
+        },
+        RequestHost::Panel { session_id: session },
+        sink,
+    )
+    .await
+    .expect("ocr_start")
+    .request_id
+}
+
+/// 跟随只作用于当前这次识别自动复制的那一条：重新识别进行中时，上一次结果的切换不再跟随；重新识别被取消后，半截文字
+/// 不写进剪贴板，上一次完整结果新建的历史条目也不删
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ocr_recopy_follows_only_the_current_recognition() {
+    let (env, core) = setup(configured());
+    env.llm_outputs.lock().insert("ocr", "第一段\n\n第二段".to_owned());
+    let (payload, session, _) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    let cap = payload.capture_id.clone();
+    let crop = core.captures.crop(&cap).expect("crop");
+    until("auto copy", WAIT, || crop.copied().is_some()).await;
+    let first = payload.request_id.clone().expect("request");
+
+    // 重新识别：文字长、流得慢（约 2 s），中途取消
+    env.llm_outputs.lock().insert("ocr", "第一段\n\n第二段".repeat(20));
+    *env.llm_pace.lock() = (Duration::from_millis(5), Duration::from_millis(40));
+    let sink = Collector::new();
+    let again = re_recognise(&core, session, &cap, sink.clone()).await;
+    until("partial text", WAIT, || !sink.text().is_empty()).await;
+    assert!(
+        !core
+            .ocr_recopy(&RequestCaller::Panel, &cap, &first, "第一段\n第二段".to_owned())
+            .await
+            .expect("recopy"),
+        "重新识别进行中：上一次结果的切换不再跟随"
+    );
+    core.cancel(&RequestCaller::Panel, &again);
+    until("cancelled", WAIT, || sink.terminal().is_some()).await;
+    assert!(is_cancelled(&sink.terminal()));
+    assert!(
+        !core
+            .ocr_recopy(&RequestCaller::Panel, &cap, &again, sink.text())
+            .await
+            .expect("recopy"),
+        "被取消的半截文字不跟随"
+    );
+    assert!(
+        !core
+            .ocr_recopy(&RequestCaller::Panel, &cap, &first, "第一段\n第二段".to_owned())
+            .await
+            .expect("recopy"),
+        "上一次结果的回执已随重新识别作废"
+    );
+    assert_eq!(env.copies.lock().len(), 1, "只有第一次识别的自动复制");
+    assert!(env.clip_removed.lock().is_empty(), "上一次完整结果的历史条目保留");
+}
+
+/// 重新识别时自动复制失败（Windows 剪贴板被占着）：没有这次的回执，切换排版不跟随，也不删上一次的条目
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ocr_recopy_does_nothing_when_this_recognitions_auto_copy_failed() {
+    let (env, core) = setup(configured());
+    env.llm_outputs.lock().insert("ocr", "第一段\n\n第二段".to_owned());
+    let (payload, session, _) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    let cap = payload.capture_id.clone();
+    let crop = core.captures.crop(&cap).expect("crop");
+    until("auto copy", WAIT, || crop.copied().is_some()).await;
+
+    *env.copy_fails.lock() = true;
+    let sink = Collector::new();
+    let again = re_recognise(&core, session, &cap, sink.clone()).await;
+    until("re-recognised", WAIT, || sink.terminal().is_some()).await;
+    assert!(matches!(sink.terminal(), Some(StreamEvent::Done { .. })));
+    *env.copy_fails.lock() = false;
+    let first = payload.request_id.clone().expect("request");
+    for request in [&again, &first] {
+        assert!(
+            !core
+                .ocr_recopy(&RequestCaller::Panel, &cap, request, "第一段\n第二段".to_owned())
+                .await
+                .expect("recopy"),
+            "{request}"
+        );
+    }
+    assert_eq!(env.copies.lock().len(), 1);
+    assert!(env.clip_removed.lock().is_empty());
+}
+
+/// 收到 Done 时就让「前端」切换排版：另起任务调用跟随，并把 Done 的投递拖住一会儿，使这次跟随先于自动复制到达
+struct FollowOnDone {
+    events: Arc<Collector>,
+    on_done: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+}
+
+impl super::registry::EventSink for FollowOnDone {
+    fn deliver(&self, ev: &StreamEvent) -> bool {
+        let ok = self.events.deliver(ev);
+        if matches!(ev, StreamEvent::Done { .. })
+            && let Some(follow) = self.on_done.lock().take()
+        {
+            follow();
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        ok
+    }
+}
+
+/// Done 已经到了前端、自动复制还没写入时切换排版：跟随等这次自动复制完成后再进行，替换的是这次新建的条目，剪贴板最后
+/// 是切换后的文字
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ocr_recopy_waits_for_the_auto_copy_of_the_result_it_follows() {
+    let (env, core) = setup(configured());
+    env.llm_outputs.lock().insert("ocr", "第一段\n\n第二段".to_owned());
+    let (payload, session, _) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    let cap = payload.capture_id.clone();
+    let crop = core.captures.crop(&cap).expect("crop");
+    until("auto copy", WAIT, || crop.copied().is_some()).await;
+
+    *env.llm_pace.lock() = (Duration::from_millis(80), Duration::from_millis(2));
+    let sink = Arc::new(FollowOnDone {
+        events: Collector::new(),
+        on_done: Mutex::new(None),
+    });
+    let again = re_recognise(&core, session, &cap, sink.clone()).await;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    {
+        let core = Arc::clone(&core);
+        let cap = cap.clone();
+        // 另起线程：在投递 Done 的工作线程上 spawn 的任务进的是它自己的 LIFO 槽，要等这次投递返回才会被执行
+        *sink.on_done.lock() = Some(Box::new(move || {
+            std::thread::spawn(move || {
+                let copied = tauri::async_runtime::block_on(core.ocr_recopy(
+                    &RequestCaller::Panel,
+                    &cap,
+                    &again,
+                    "第一段\n第二段".to_owned(),
+                ));
+                let _ = tx.send(copied);
+            });
+        }));
+    }
+    let copied = tokio::time::timeout(WAIT, rx).await.expect("follow").expect("sent");
+    assert!(copied.expect("recopy"), "这次自动复制之后剪贴板没变：跟随");
+    assert_eq!(
+        *env.copies.lock(),
+        ["第一段\n\n第二段", "第一段\n\n第二段", "第一段\n第二段"],
+        "先是这次识别的自动复制，再是切换后的文字"
+    );
+    assert_eq!(*env.clip_removed.lock(), [2], "替换的是这次自动复制新建的条目");
 }

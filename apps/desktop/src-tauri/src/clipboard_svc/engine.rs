@@ -598,13 +598,27 @@ impl Engine {
 
     /// 记录一份原始内容：持锁 `ingest` → `RecentCache::apply` → 推送 → 后台补图标 / 缩略图。**会阻塞**
     pub(crate) fn ingest(&self, raw: &RawClipboard) -> Result<IngestOutcome, IpcError> {
+        self.ingest_with(raw, false).map(|(outcome, _)| outcome)
+    }
+
+    /// 与 [`Self::ingest`] 相同，另外返回新建条目的内容 hash（读不到时为 None）。hash 在插入的同一个串行区里读：出了
+    /// 串行区，这一行可能已被删掉、行号分给了别的条目。**会阻塞**
+    pub(crate) fn ingest_identified(&self, raw: &RawClipboard) -> Result<(IngestOutcome, Option<[u8; 32]>), IpcError> {
+        self.ingest_with(raw, true)
+    }
+
+    fn ingest_with(&self, raw: &RawClipboard, identify: bool) -> Result<(IngestOutcome, Option<[u8; 32]>), IpcError> {
         let store = self.open_store("clipboard_event")?;
         let settings = self.host.settings();
         let policy = IngestPolicy::from(&settings.clipboard);
         let now = self.host.now_ms();
-        let outcome = {
+        let (outcome, hash) = {
             let serial = self.serial();
             let outcome = store.ingest(raw, &policy, now).map_err(store_error)?;
+            let hash = match &outcome {
+                IngestOutcome::Inserted(meta) if identify => sync_ident(&store, meta.id).map(|(hash, _)| hash),
+                _ => None,
+            };
             serial.cache().apply(&outcome);
             // 在串行区内投递（模块文档「事件的顺序」）
             match &outcome {
@@ -616,7 +630,7 @@ impl Engine {
             if let IngestOutcome::Inserted(meta) | IngestOutcome::Touched(meta) = &outcome {
                 self.notify_sync(&store, meta.id, meta.kind, |sink, hash| sink.content(hash));
             }
-            outcome
+            (outcome, hash)
         };
         // 后台任务在串行区外派发（单测的同步执行器会就地执行它们，它们自己也要进串行区）
         match &outcome {
@@ -642,7 +656,7 @@ impl Engine {
                 log::debug!("clipboard change skipped reason={reason:?}");
             }
         }
-        Ok(outcome)
+        Ok((outcome, hash))
     }
 
     /// 记录之后的后台工作：缺图标的取图标，缺缩略图的生成缩略图（都不在关键路径上）
@@ -771,6 +785,12 @@ impl Engine {
 
     /// 删除；置顶项要求 force（前端负责二次确认）。条目不存在时视为已删除。**会阻塞**
     pub(crate) fn delete(&self, id: i64, force: bool) -> Result<(), IpcError> {
+        self.delete_checked(id, force, None).map(drop)
+    }
+
+    /// 与 [`Self::delete`] 相同；`expect` 给出时只在这一行的内容 hash 仍等于它时才删（行号没有 AUTOINCREMENT，原条目
+    /// 被删掉后行号可能分给了别的条目），核对与删除在同一个串行区里。返回是否删掉了一条。**会阻塞**
+    pub(crate) fn delete_checked(&self, id: i64, force: bool, expect: Option<&[u8; 32]>) -> Result<bool, IpcError> {
         let store = self.open_store("delete")?;
         if !force && self.is_pinned(&store, id)? {
             return Err(IpcError::new(
@@ -780,7 +800,14 @@ impl Engine {
         }
         let serial = self.serial();
         // 删除之后行就没了：同步要用的 hash 在删除之前、同一个串行区里取
-        let ident = self.sync_sink().and_then(|_| sync_ident(&store, id));
+        let ident = (expect.is_some() || self.sync_sink().is_some())
+            .then(|| sync_ident(&store, id))
+            .flatten();
+        if let Some(want) = expect
+            && ident.is_none_or(|(hash, _)| hash != *want)
+        {
+            return Ok(false);
+        }
         let removed = store.delete(id).map_err(store_error)?;
         serial.cache().remove(id);
         if removed {
@@ -793,7 +820,7 @@ impl Engine {
             // 在串行区内投递（模块文档「事件的顺序」）
             self.emit(ClipboardChanged::Removed { id });
         }
-        Ok(())
+        Ok(removed)
     }
 
     /// 条目是否置顶（不存在视为否）。先看缓存（[`pinned_in_cache`]，几乎总能回答）；只有缓存被 ≥ 200 条置顶占满、

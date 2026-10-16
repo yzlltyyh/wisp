@@ -134,14 +134,14 @@ fn copies_pins_deletes_and_clears_notify_the_sink() {
 
     // OCR 切换排版后的跟随：替换掉的那一条经正常的删除路径通知同步
     let first = r.engine.copy_text("第一段\n\n第二段").expect("复制");
-    let replaced = hash(&r, first.created.expect("新建"));
+    let replaced = hash(&r, first.created.expect("新建").id);
     sink.take();
     let next = r
         .engine
         .recopy_text(first, "第一段\n第二段")
         .expect("跟随")
         .expect("写入");
-    let added = hash(&r, next.created.expect("新建"));
+    let added = hash(&r, next.created.expect("新建").id);
     assert_eq!(
         sink.take(),
         vec![SinkCall::Content(added), SinkCall::Delete(replaced)],
@@ -157,6 +157,42 @@ fn copies_pins_deletes_and_clears_notify_the_sink() {
     r.engine.set_sync_sink(None);
     r.copy_text(103, "after sync");
     assert!(sink.take().is_empty());
+}
+
+/// OCR 切换排版后的跟随删除被替换的条目之前先核对它的内容：行号没有 AUTOINCREMENT，原条目被删掉后，同步拉来的新条目
+/// 可能拿到同一个行号（这一步不改系统剪贴板的 change_id）。这时不能把那条不相干的条目删掉、再把删除传播到所有设备
+#[test]
+fn recopy_never_deletes_an_item_that_took_over_the_replaced_row_id() {
+    let r = rig();
+    let first = r.engine.copy_text("识别结果").expect("复制");
+    let old = first.created.expect("新建").id;
+    // 面板还开着时这一条在别处被删掉（悬浮剪贴板里手动删、别的设备删除后同步过来、验证码到期）
+    r.engine.delete(old, false).expect("删除");
+    // 同步拉来一条新条目：SQLite 把空出来的最大行号分给它
+    let synced = remote_text("另一台设备上复制的", T0, None);
+    let synced_hash = synced.hash;
+    let out = r
+        .engine
+        .apply_remote_batch(vec![ClipRemoteChange::Upsert(synced)], None);
+    assert_eq!(out, vec![RemoteOutcome::Applied]);
+    assert_eq!(store(&r).hash_of(old).expect("hash"), Some(synced_hash), "行号被复用");
+    let sink = with_sink(&r);
+
+    let next = r
+        .engine
+        .recopy_text(first, "排版后的识别结果")
+        .expect("跟随")
+        .expect("剪贴板没变：写入");
+    assert!(next.created.is_some());
+    assert_eq!(
+        store(&r).hash_of(old).expect("hash"),
+        Some(synced_hash),
+        "同步来的条目保留"
+    );
+    assert!(
+        !sink.take().contains(&SinkCall::Delete(synced_hash)),
+        "删除不传播到别的设备"
+    );
 }
 
 #[test]

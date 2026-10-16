@@ -1379,7 +1379,7 @@ fn copy_receipts_name_only_items_the_copy_created() {
     let r = rig();
     let first = r.engine.copy_text("识别结果").expect("复制");
     assert_eq!(first.change_id, r.port.clipboard.change_id());
-    assert_eq!(first.created, Some(r.top().id));
+    assert_eq!(first.created.map(|c| c.id), Some(r.top().id));
     // 内容早已在历史里：只是移到顶部，不是这次复制产生的
     let older = r.copy_text(500, "以前复制过的");
     let again = r.engine.copy_text("以前复制过的").expect("复制");
@@ -1396,11 +1396,11 @@ fn recopy(r: &Rig, prev: CopyReceipt, text: &str) -> Option<CopyReceipt> {
 fn recopy_replaces_the_item_the_auto_copy_created() {
     let r = rig();
     let first = r.engine.copy_text("第一段\n\n第二段").expect("复制");
-    let old = first.created.expect("新建");
+    let old = first.created.expect("新建").id;
     r.events();
     let next = recopy(&r, first, "第一段\n第二段").expect("剪贴板没变：写入");
     assert_eq!(next.change_id, r.port.clipboard.change_id());
-    let new = next.created.expect("新文本新建了一条");
+    let new = next.created.expect("新文本新建了一条").id;
     assert_ne!(new, old);
     assert_eq!(r.ids(), vec![new], "历史里只留现在这一版");
     let events = r.events();
@@ -1417,7 +1417,7 @@ fn recopy_replaces_the_item_the_auto_copy_created() {
     );
     // 再切回去：替换的是刚才那一条
     let back = recopy(&r, next, "第一段\n\n第二段").expect("写入");
-    assert_eq!(r.ids(), vec![back.created.expect("新建")]);
+    assert_eq!(r.ids(), vec![back.created.expect("新建").id]);
 }
 
 #[test]
@@ -1438,13 +1438,13 @@ fn recopy_keeps_favorites_and_named_items() {
     for name in [None, Some("报销单号")] {
         let r = rig();
         let first = r.engine.copy_text("识别结果").expect("复制");
-        let old = first.created.expect("新建");
+        let old = first.created.expect("新建").id;
         match name {
             None => drop(r.engine.pin(old, true).expect("收藏")),
             Some(n) => drop(r.engine.set_name(old, Some(n)).expect("命名")),
         }
         let next = recopy(&r, first, "排版后的识别结果").expect("写入");
-        let new = next.created.expect("新建");
+        let new = next.created.expect("新建").id;
         assert!(r.ids().contains(&old), "收藏 / 命名过的保留：{name:?}");
         assert!(r.ids().contains(&new));
         // 保留下来的那一条不再算作自动复制产生的：下一次跟随只替换新的这一条
@@ -1460,9 +1460,9 @@ fn recopy_never_deletes_what_it_just_wrote_or_what_the_user_copied_before() {
     let r = rig();
     // 排版结果与上一版相同（例如没有空行可去）：只 touch 自己那一条，不删，回执仍记着它
     let first = r.engine.copy_text("单独一行").expect("复制");
-    let own = first.created.expect("新建");
+    let own = first.created.expect("新建").id;
     let same = recopy(&r, first, "单独一行").expect("写入");
-    assert_eq!(same.created, Some(own));
+    assert_eq!(same.created.map(|c| c.id), Some(own));
     assert_eq!(r.ids(), vec![own]);
     // 新文本是用户早先复制过的内容：那一条被移到顶部，不是这次产生的；自动复制新建的那一条照常替换
     let user = r.copy_text(900, "用户自己复制的");
@@ -1480,7 +1480,7 @@ fn recopy_never_deletes_what_it_just_wrote_or_what_the_user_copied_before() {
 fn recopy_keeps_the_old_item_when_the_new_text_is_not_recorded() {
     let r = rig();
     let first = r.engine.copy_text("识别结果").expect("复制");
-    let old = first.created.expect("新建");
+    let old = first.created.expect("新建").id;
     // 期间暂停了记录：照常写剪贴板，但不能只删不增
     r.engine.set_paused(true);
     let next = recopy(&r, first, "排版后的识别结果").expect("写入");
@@ -1496,13 +1496,13 @@ fn recopy_keeps_the_old_item_when_the_new_text_is_not_recorded() {
     );
     assert_eq!(r.ids(), vec![old]);
     assert_eq!(
-        next.created,
+        next.created.map(|c| c.id),
         Some(old),
         "旧条目留在回执上，恢复记录后的下一次跟随再替换"
     );
     r.engine.set_paused(false);
     let last = recopy(&r, next, "再排一次").expect("写入");
-    assert_eq!(r.ids(), vec![last.created.expect("新建")]);
+    assert_eq!(r.ids(), vec![last.created.expect("新建").id]);
 }
 
 // ---------- 条目操作 ----------

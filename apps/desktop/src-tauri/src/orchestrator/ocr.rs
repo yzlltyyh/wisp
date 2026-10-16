@@ -986,6 +986,7 @@ impl Core {
                 capture_id: Some(crop.id.clone()),
             },
         );
+        crop.copy_begin(&id);
         self.set_run_request(run, &id);
         if self.advance(run, Event::Committed).is_none() {
             self.registry.remove(&id);
@@ -1367,29 +1368,33 @@ impl Core {
     /// 识别完成时的交付：请求以 Done 结束、识别出了文字时，算一次交付的文本（[`delivered_text`]），自动复制与识别历史
     /// 都用这一份——剪贴板、历史与视图显示的是同一版。
     /// - 自动复制（`ocr.auto_copy`；译文与直接翻译的截图不复制）：来源 Wisp，正常进入剪贴板历史；写入与回执在截图的
-    ///   复制锁里完成，切换排版后的跟随（[`Core::ocr_recopy`]）据回执核对剪贴板；
+    ///   写入锁里完成，切换排版后的跟随（[`Core::ocr_recopy`]）据回执核对剪贴板。不自动复制时（包括取消、失败、没有
+    ///   文字）当场作废这次识别的回执，等着它的跟随随即放弃；
     /// - 识别历史（`ocr.history`，请求没被取消时）：见 [`Core::record_ocr_history`]
     fn deliver(self: &Arc<Self>, job: &OcrJob, end: &PumpEnd) {
-        if !matches!(end, PumpEnd::Done { no_text: false, .. }) {
-            return;
-        }
+        let done = matches!(end, PumpEnd::Done { no_text: false, .. });
         let settings = self.env.settings();
-        let copy = settings.ocr.auto_copy && job.mode != OcrMode::Translate && !job.crop.direct;
-        let history = settings.ocr.history && !job.token.is_cancelled();
-        if !copy && !history {
-            return;
-        }
-        let Some(raw) = self.registry.text(&job.id).filter(|t| !t.trim().is_empty()) else {
+        let copy = done && settings.ocr.auto_copy && job.mode != OcrMode::Translate && !job.crop.direct;
+        let history = done && settings.ocr.history && !job.token.is_cancelled();
+        let text = (copy || history)
+            .then(|| self.registry.text(&job.id))
+            .flatten()
+            .filter(|t| !t.trim().is_empty())
+            .map(|raw| delivered_text(raw, job.mode, job.crop.direct, job.layout));
+        let Some(text) = text else {
+            job.crop.copy_skipped(&job.id);
             return;
         };
-        let text = delivered_text(raw, job.mode, job.crop.direct, job.layout);
         match (copy, history) {
             (true, true) => {
                 self.auto_copy(job, text.clone());
                 self.record_ocr_history(job, text);
             }
             (true, false) => self.auto_copy(job, text),
-            (false, _) => self.record_ocr_history(job, text),
+            (false, _) => {
+                job.crop.copy_skipped(&job.id);
+                self.record_ocr_history(job, text);
+            }
         }
     }
 
@@ -1398,8 +1403,9 @@ impl Core {
         let env = Arc::clone(&self.env);
         let crop = Arc::clone(&job.crop);
         let id = job.id.clone();
-        tauri::async_runtime::spawn_blocking(move || match crop.auto_copy(|| env.copy_text(&text)) {
-            Ok(()) => log::debug!("request {id}: OCR result copied"),
+        tauri::async_runtime::spawn_blocking(move || match crop.auto_copy(&id, || env.copy_text(&text)) {
+            Ok(true) => log::debug!("request {id}: OCR result copied"),
+            Ok(false) => log::debug!("request {id}: auto copy skipped, the capture is being recognised again"),
             Err(e) => log::warn!("request {id}: auto copy failed: {}", e.message),
         });
     }
@@ -1804,8 +1810,11 @@ impl Core {
                 capture_id: Some(crop.id.clone()),
             },
         );
+        // 视图从这里起显示的是这次识别：之前的回执作废，切换排版的跟随只认这一次的自动复制
+        crop.copy_begin(&id);
         match readiness {
             Err(nr) => {
+                crop.copy_skipped(&id);
                 self.registry.emit(&id, StreamEvent::Error(not_ready_error(&nr)));
             }
             Ok(target) => {
@@ -1816,6 +1825,8 @@ impl Core {
                     .then(|| crop.transcript_for(wanted.as_ref()))
                     .flatten();
                 if let Some(transcript) = cached {
+                    // 直接翻译的截图不自动复制
+                    crop.copy_skipped(&id);
                     let _ = self.registry.emit(&id, StreamEvent::Delta { text: transcript })
                         && self.registry.emit(
                             &id,
@@ -1870,16 +1881,21 @@ impl Core {
 
     /// 面板里切换排版后让剪贴板跟随（`ocr_recopy`）：以下条件都满足才写入，返回是否写入。
     /// - 自动复制开着，调用方是面板、截图仍归面板（固定窗口里切换排版不带动剪贴板），不是直接翻译的截图；
-    /// - 这张截图自动复制过，且系统剪贴板的 change_id 仍等于那次写入的回执——期间没有别的复制（包括用户在别处复制、
-    ///   Wisp 自己的粘贴）。
+    /// - `request_id` 是这张截图当前这次识别（视图正在显示的结果）：重新识别开始后，上一次结果的切换不再跟随；
+    /// - 这次识别自动复制过，且系统剪贴板的 change_id 仍等于那次写入的回执——期间没有别的复制（包括用户在别处复制、
+    ///   Wisp 自己的粘贴）。这次识别被取消、失败或自动复制没写成时没有回执，不写也不删。
     ///
-    /// 写入照常进入剪贴板历史，上一次自动复制新建、没有收藏的那一条随之删掉（剪贴板服务的 `recopy_text`），历史里只留
+    /// Done 先发给前端，自动复制随后才在阻塞线程上写入：切换来得比自动复制早时，在阻塞线程上等它交付完（有上限）再
+    /// 判断，不会先拿上一次的回执写入、再被自动复制盖回旧排版。
+    ///
+    /// 写入照常进入剪贴板历史，这次自动复制新建、没有收藏的那一条随之删掉（剪贴板服务的 `recopy_text`），历史里只留
     /// 一条。「用户没有编辑」由视图判断（编辑过的文字不会走到这里）。截图不存在或属于别的窗口时与条件不满足一样返回
     /// false
     pub async fn ocr_recopy(
         self: &Arc<Self>,
         caller: &RequestCaller,
         capture_id: &str,
+        request_id: &str,
         text: String,
     ) -> Result<bool, IpcError> {
         if *caller != RequestCaller::Panel || !self.env.settings().ocr.auto_copy {
@@ -1894,10 +1910,11 @@ impl Core {
             return Ok(false);
         };
         let env = Arc::clone(&self.env);
-        let copied = blocking(move || crop.recopy(|prev| env.recopy_text(prev, &text)))
+        let request = request_id.to_owned();
+        let copied = blocking(move || crop.recopy(&request, |prev| env.recopy_text(prev, &text)))
             .await
             .ok_or_else(|| IpcError::internal("recopy task failed"))??;
-        log::debug!("ocr_recopy {capture_id}: copied={copied}");
+        log::debug!("ocr_recopy {capture_id} request {request_id}: copied={copied}");
         Ok(copied)
     }
 }

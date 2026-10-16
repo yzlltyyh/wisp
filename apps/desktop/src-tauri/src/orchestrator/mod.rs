@@ -183,10 +183,16 @@ impl Orchestrator {
         self.core.capture_release(caller, capture_id);
     }
 
-    /// 面板里切换排版后让剪贴板跟随：自动复制开着、调用方是面板、不是直接翻译、系统剪贴板仍是这张截图上次自动复制的
-    /// 内容时写入 `text`（照常进入历史，并替换上次新建、没有收藏的那一条），返回是否写入
-    pub async fn ocr_recopy(&self, caller: &RequestCaller, capture_id: &str, text: String) -> Result<bool, IpcError> {
-        self.core.ocr_recopy(caller, capture_id, text).await
+    /// 面板里切换排版后让剪贴板跟随：自动复制开着、调用方是面板、不是直接翻译、`request_id` 是这张截图当前这次识别、
+    /// 系统剪贴板仍是这次识别自动复制的内容时写入 `text`（照常进入历史，并替换那次新建、没有收藏的那一条），返回是否写入
+    pub async fn ocr_recopy(
+        &self,
+        caller: &RequestCaller,
+        capture_id: &str,
+        request_id: &str,
+        text: String,
+    ) -> Result<bool, IpcError> {
+        self.core.ocr_recopy(caller, capture_id, request_id, text).await
     }
 
     /// Overlay 拉取本窗口当前会话的初始化数据：`label` 是调用方窗口（`overlay-<n>`），经
