@@ -661,8 +661,10 @@ export function Section({
         }
         if (!cur.grow || typeof cur.height !== 'number') return
         // 区自己的高度真的到了目标（这次完成的可能只是同一批里的淡入）、内容也没再长：先让区里的流式框接手（钉住现在的
-        // 高度），再回到 auto
-        if (Math.abs((ref.current?.offsetHeight ?? 0) - cur.height) >= 1) return
+        // 高度），再回到 auto。比较 Motion 写上的高度而不是 offsetHeight：内容比卡片剩余空间高时区会被 flex 压矮，
+        // offsetHeight 永远到不了目标，区就一直停在 data-sizing（内层不收缩、被区裁住），长译文的下半截既看不到也滚不动
+        const animated = parseFloat(ref.current?.style.height ?? '')
+        if (!(Math.abs(animated - cur.height) < 1)) return
         if (!inner.current || Math.abs(naturalHeight(inner.current) - cur.height) >= 1) return
         ref.current?.dispatchEvent(new Event(SECTION_SIZED))
         setSizing(false)

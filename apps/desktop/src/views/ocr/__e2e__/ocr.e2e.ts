@@ -296,6 +296,24 @@ test.describe('长文本（卡片已到上限）：两区之间的重新分配�
   }
 })
 
+test('长译文（卡片已到上限）：展开结束后译文在框内滚动，区底状态行不被裁掉', async ({ page }) => {
+  await open(page, 'ocr.long-text-translate')
+  const section = page.getByTestId('ocr-translation')
+  // 展开过渡结束后区要撤掉 data-sizing：撤不掉时内层按自然高度排版、被区裁住，下半截既看不到也滚不动
+  await expect.poll(() => section.evaluate((el) => el.hasAttribute('data-sizing'))).toBe(false)
+  const box = section.locator('.ocr-box')
+  expect(await box.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(100)
+  const clipped = await section.evaluate((el) => {
+    const foot = el.querySelector('[data-testid="ocr-translation-foot"]')
+    return foot ? foot.getBoundingClientRect().bottom - el.getBoundingClientRect().bottom : null
+  })
+  expect(clipped).not.toBeNull()
+  expect(clipped ?? 1).toBeLessThanOrEqual(0.5)
+  await box.hover()
+  await page.mouse.wheel(0, 400)
+  await expect.poll(() => box.evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
+})
+
 test('识别菜单换页：同一个浮层，不重播进入动效，锚定的底边不动', async ({ page }) => {
   await open(page, 'ocr.done')
   await page.getByTestId('ocr-recognize-menu').click()

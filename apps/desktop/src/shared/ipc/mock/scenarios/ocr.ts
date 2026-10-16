@@ -58,6 +58,13 @@ const LONG_TEXT = Array.from({ length: 48 }, (_, i) => {
   return `${n}      |  let first = frames.first(); frames.push(next) // 截图帧缓存`
 }).join('\n')
 
+const LONG_TRANSLATION = Array.from({ length: 48 }, (_, i) => {
+  const n = String(i + 1).padStart(2, '0')
+  if (i % 3 === 0) return `${n}  错误[E0502]：无法以可变方式借用 \`frames\`，因为它也被不可变地借用`
+  if (i % 3 === 1) return `${n}     --> crates/wisp-capture/src/macos.rs:214:9`
+  return `${n}      |  let first = frames.first(); frames.push(next) // 截图帧缓存`
+}).join('\n')
+
 const QWEN = { provider_id: 'qwen', model_id: 'qwen3-vl-plus', model_label: 'qwen3-vl-plus' }
 
 function model(id: string, vision: ModelEntry['vision'], label: string | null = null): ModelEntry {
@@ -745,6 +752,33 @@ export const scenarios: readonly Scenario[] = [
       ctx.motionMid()
       await until(phase('done'))
       await pause(400)
+    },
+  }),
+  scenario({
+    id: 'long-text-translate',
+    label: 'OCR · 长文本 + 长译文（卡片已到上限，两区都在框内滚动）',
+    async run(ctx) {
+      // 原文取 30 行：不超过长文本阈值（3000 字），点翻译直接开始
+      const text = LONG_TEXT.split('\n').slice(0, 30).join('\n')
+      ctx.stream('r-ocr', ctx.textStream(text, { chunkChars: 40, intervalMs: 8, model: QWEN }))
+      show(
+        ctx,
+        await ocrPayload(ctx, {
+          size: [1720, 1180],
+          thumbLines: LONG_TEXT.split('\n').slice(0, 14),
+        }),
+      )
+      await until(phase('done'))
+      ctx.nextStream(
+        ctx.textStream(LONG_TRANSLATION, {
+          chunkChars: 40,
+          intervalMs: 8,
+          meta: { detected_source_lang: 'en', target_lang: 'zh-CN' },
+        }),
+      )
+      click('[data-testid="ocr-translate-toggle"]')
+      await until(() => $('[data-testid="ocr-translation-body"][data-phase="done"]') !== null)
+      await pause(800)
     },
   }),
   scenario({
