@@ -7,6 +7,7 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
+use wisp_text::lines::split_lines;
 use wisp_text::script::is_east_asian;
 use wisp_types::{ClipKind, TransformId};
 
@@ -81,7 +82,7 @@ fn is_prose(kind: ClipKind) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// 行与空白
+// 行与空白（「行」按 wisp-text 的断行：`\n`、`\r\n`、单独的 `\r` 都是换行，见 [`split_lines`]）
 
 struct JoinLines;
 
@@ -89,8 +90,12 @@ impl Transform for JoinLines {
     fn id(&self) -> TransformId {
         TransformId::JoinLines
     }
+    /// 至少有两个非空行（只用单独的 `\r` 换行的文字也算）；遇到第二个非空行就停
     fn applies(&self, _: ClipKind, text: &str) -> bool {
-        text.trim().contains('\n')
+        split_lines(text)
+            .filter(|(content, _)| !content.trim().is_empty())
+            .nth(1)
+            .is_some()
     }
     /// 每行去掉首尾空白、跳过空行后合并，跨行处的规则与 OCR 的段落拼装相同（[`wisp_text::lines::join_all`]）：
     /// 中日文断行直接相连、韩文与西文补空格、行尾断词还原、中英之间按全文惯例
@@ -129,21 +134,34 @@ impl Transform for Trim {
     }
 }
 
-/// 与 `trim_lines(text) != text` 等价、但不分配也不必扫完全文：有行带首尾空白（含 `\r`），或开头 / 结尾是空行。
-/// 检视时每移动一次光标都可能判断一次，长文本不应每次都复制一份
+/// 与 `trim_lines(text) != text` 等价、但不分配也不必扫完全文：全文以空白（含换行）开头或结尾，或者有行带首尾空白。
+/// 换行符本身不是行尾空白：没有多余空白的 `\r\n` 文字不出现这一项。检视时每移动一次光标都可能判断一次，长文本不应
+/// 每次都复制一份
 fn needs_trim(text: &str) -> bool {
-    text.starts_with('\n') || text.ends_with('\n') || text.split('\n').any(|l| l.trim() != l)
+    text.starts_with(char::is_whitespace)
+        || text.ends_with(char::is_whitespace)
+        || split_lines(text).any(|(content, _)| content.trim() != content)
 }
 
-/// 每行去掉首尾空白（含全角空格），去掉开头与结尾的空行；行之间的空行保留
+/// 每行去掉首尾空白（含全角空格），去掉开头与结尾的空行与末尾的换行；行之间的空行保留，换行符原样（`\r\n` 不改成
+/// `\n`）
 fn trim_lines(text: &str) -> String {
-    let lines: Vec<&str> = text
-        .lines()
-        .map(|l| l.trim_matches(|c: char| c.is_whitespace()))
-        .collect();
-    let first = lines.iter().position(|l| !l.is_empty()).unwrap_or(lines.len());
-    let last = lines.iter().rposition(|l| !l.is_empty()).map_or(first, |i| i + 1);
-    lines[first..last].join("\n")
+    let lines: Vec<(&str, &str)> = split_lines(text).collect();
+    let Some(first) = lines.iter().position(|(content, _)| !content.trim().is_empty()) else {
+        return String::new();
+    };
+    let last = lines
+        .iter()
+        .rposition(|(content, _)| !content.trim().is_empty())
+        .unwrap_or(first);
+    let mut out = String::with_capacity(text.len());
+    for (i, (content, line)) in lines.iter().enumerate().take(last + 1).skip(first) {
+        out.push_str(content.trim());
+        if i < last {
+            out.push_str(&line[content.len()..]);
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -738,6 +756,14 @@ mod tests {
         }
         not_applicable(TransformId::JoinLines, ClipKind::Text, "single line");
         not_applicable(TransformId::JoinLines, ClipKind::Text, "  trailing newline\n");
+        not_applicable(
+            TransformId::JoinLines,
+            ClipKind::Text,
+            "\r\n  only one line \r\n\u{3000}\r",
+        );
+        // 只用单独的 \r 换行的文字（老式 Mac）同样是多行
+        assert_eq!(run(TransformId::JoinLines, "old\rmac\rtext"), "old mac text");
+        assert_eq!(run(TransformId::JoinLines, "a\r\r b \r"), "a b");
     }
 
     #[test]
@@ -768,6 +794,12 @@ mod tests {
     fn trim() {
         assert_eq!(run(TransformId::Trim, "\n\n  a  \n\u{3000}b\t\n\n  c\n\n"), "a\nb\n\nc");
         not_applicable(TransformId::Trim, ClipKind::Text, "a\nb");
+        // 换行符不是行尾空白：没有多余空白的 \r\n 与单独 \r 换行的文字不提供；提供时换行符原样保留
+        not_applicable(TransformId::Trim, ClipKind::Text, "a\r\nb\r\n\r\nc");
+        not_applicable(TransformId::Trim, ClipKind::Text, "a\rb");
+        assert_eq!(run(TransformId::Trim, "\r\n a \r\n\r\n\tb\r\n"), "a\r\n\r\nb");
+        assert_eq!(run(TransformId::Trim, " a\r b \r\r"), "a\rb");
+        assert_eq!(run(TransformId::Trim, " \r\n\u{3000}"), "");
     }
 
     #[test]
@@ -896,6 +928,12 @@ mod tests {
             "a\n\nb",
             "\u{3000}全角",
             "",
+            "a\rb",
+            "a\r\nb\r\n",
+            " a\r b \r\r",
+            "\r\n \r\n",
+            "line one is long enough\nline two",
+            "Short\nlines",
             "Hello World",
             "hello",
             "Don't Stop",
@@ -907,6 +945,10 @@ mod tests {
         ] {
             assert_eq!(needs_trim(text), trim_lines(text) != text, "trim {text:?}");
             assert_eq!(title_differs(text), title_case(text) != text, "title {text:?}");
+            // 「合并为一行」：至少两个非空行时提供，提供时结果与原文不同
+            if JoinLines.applies(ClipKind::Text, text) {
+                assert_ne!(wisp_text::lines::join_all(text), text, "join {text:?}");
+            }
         }
     }
 

@@ -29,11 +29,12 @@ pub fn squeeze_blanks(text: &str) -> String {
 }
 
 /// 按 `\n`、`\r\n`、单独的 `\r` 断开的物理行：`(内容, 连同换行符的整行)`，最后一行可能没有换行符。
-/// 末尾的换行符不算再起一个空行（与 [`str::lines`] 相同），所以 `"a\n"` 只有一行。
+/// 末尾的换行符不算再起一个空行（与 [`str::lines`] 相同），所以 `"a\n"` 只有一行；整行依次拼起来就是原文。
 ///
-/// 本模块按行处理的操作都经这里断行，三种换行符处处含义相同（流式版本的规则也一样）。不用 [`str::lines`]：
+/// 本模块按行处理的操作都经这里断行，三种换行符处处含义相同（流式版本的规则也一样）；别处按行判断或处理文字时
+/// （例如剪贴板变换「是否有多行」「去掉首尾空白」）也用它，「行」的含义才处处一致。不用 [`str::lines`]：
 /// 它不把单独的 `\r` 当换行，同一段老式 Mac 换行的文字在「合成一行」里会留下 `\r`，在其他操作里却被断开
-fn lines_with_breaks(text: &str) -> impl Iterator<Item = (&str, &str)> {
+pub fn split_lines(text: &str) -> impl Iterator<Item = (&str, &str)> {
     let mut rest = text;
     std::iter::from_fn(move || {
         if rest.is_empty() {
@@ -50,9 +51,9 @@ fn lines_with_breaks(text: &str) -> impl Iterator<Item = (&str, &str)> {
     })
 }
 
-/// 各行的内容（不含换行符），断行同 [`lines_with_breaks`]
+/// 各行的内容（不含换行符），断行同 [`split_lines`]
 fn line_contents(text: &str) -> impl Iterator<Item = &str> {
-    lines_with_breaks(text).map(|(content, _)| content)
+    split_lines(text).map(|(content, _)| content)
 }
 
 /// 只含空白（含全角空格、不换行空格）或什么都没有的行
@@ -73,7 +74,7 @@ pub fn has_blank_lines(text: &str) -> bool {
 /// 幂等；只删整行，不改动留下的任何一行。
 pub fn remove_blank_lines(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    for (_, line) in lines_with_breaks(text).filter(|(content, _)| !is_blank(content)) {
+    for (_, line) in split_lines(text).filter(|(content, _)| !is_blank(content)) {
         out.push_str(line);
     }
     out
@@ -300,8 +301,8 @@ mod tests {
         #[test]
         fn remove_blank_lines_keeps_other_lines_verbatim(s in spacey_text()) {
             let out = remove_blank_lines(&s);
-            let kept: Vec<&str> = lines_with_breaks(&s).filter(|(c, _)| !is_blank(c)).map(|(_, l)| l).collect();
-            let got: Vec<&str> = lines_with_breaks(&out).map(|(_, l)| l).collect();
+            let kept: Vec<&str> = split_lines(&s).filter(|(c, _)| !is_blank(c)).map(|(_, l)| l).collect();
+            let got: Vec<&str> = split_lines(&out).map(|(_, l)| l).collect();
             prop_assert_eq!(got, kept);
         }
 
@@ -314,15 +315,15 @@ mod tests {
 
         /// 内部的断行与参照实现（按 \r\n、\r、\n 断开）一致，整行拼回去与原文相同
         #[test]
-        fn lines_with_breaks_matches_reference(s in spacey_text()) {
-            let contents: Vec<&str> = lines_with_breaks(&s).map(|(c, _)| c).collect();
+        fn split_lines_matches_reference(s in spacey_text()) {
+            let contents: Vec<&str> = split_lines(&s).map(|(c, _)| c).collect();
             let mut want = physical_lines(&s);
             // 末尾的换行符不再起一个空行（与 str::lines 相同）
             if want.last() == Some(&"") {
                 want.pop();
             }
             prop_assert_eq!(contents, want);
-            prop_assert_eq!(lines_with_breaks(&s).map(|(_, l)| l).collect::<String>(), s);
+            prop_assert_eq!(split_lines(&s).map(|(_, l)| l).collect::<String>(), s);
         }
 
         /// 三种换行符（\n、\r\n、单独的 \r）在各个操作里含义相同：换成统一的 \n 不改变结果

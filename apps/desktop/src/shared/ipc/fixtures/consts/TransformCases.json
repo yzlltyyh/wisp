@@ -65,7 +65,7 @@
     "transforms": {
       "join_lines": "a b",
       "remove_blank_lines": "a\r\nb\r\n",
-      "trim": "a\n\nb",
+      "trim": "a\r\n\r\nb",
       "upper": "A\r\n\r\nB\r\n",
       "title": "A\r\n\r\nB\r\n"
     }
