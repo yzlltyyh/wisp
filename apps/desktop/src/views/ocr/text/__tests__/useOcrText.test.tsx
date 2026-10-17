@@ -198,6 +198,35 @@ describe('useOcrText', () => {
     expect(result.current.recent).toBe('remove_blank_lines')
   })
 
+  it('最近用过的在段落模式下不可用：左半按 OCR_LAYOUTS 的顺序换成第一个可用且适用的整理方式；都不适用时取第一个可用的（按钮置灰）', async () => {
+    const LINES = '第一段\n第二段'
+    const { result, rerender } = mount('keep')
+    act(() => result.current.choose('reflow'))
+    await answer(0, '第一段第二段')
+    expect(result.current.recent).toBe('reflow')
+    rerender({ run: runOf(2, LINES), mode: 'paragraphs' })
+    // 检视结果还没到：都当作适用
+    expect(result.current.recent).toBe('remove_blank_lines')
+    // 没有空行：去掉空行不适用，合并为一行可用
+    act(() => result.current.inspected(LINES, ['join_lines']))
+    expect(result.current.recent).toBe('join_lines')
+    // 会话排版与最近用过的仍是合并段内换行（回到逐行时还是它）
+    expect(result.current.session).toBe('reflow')
+    act(() => result.current.inspected(LINES, []))
+    expect(result.current.recent).toBe('remove_blank_lines')
+    expect(result.current.can(result.current.recent)).toBe(false)
+    act(() => result.current.toggle())
+    expect(pending).toHaveLength(1)
+    act(() => result.current.inspected(LINES, ['join_lines']))
+    act(() => result.current.toggle())
+    expect(pending.map((p) => [p.text, p.transform])).toEqual([
+      [RAW, 'reflow'],
+      [LINES, 'join_lines'],
+    ])
+    rerender({ run: runOf(3, RAW), mode: 'lines' })
+    expect(result.current.recent).toBe('join_lines')
+  })
+
   it('排队的跟随在等排版结果期间用户开始编辑：不再跟随，也不播报', async () => {
     const { result, follow } = mount('keep')
     act(() => result.current.choose('join_lines'))

@@ -902,8 +902,9 @@ describe('排版', () => {
     expect(callsOf('text_transform')).toHaveLength(before)
     const toggle = screen.getByTestId('ocr-layout-toggle')
     expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    // 左半换成这个模式下可用的整理方式
-    expect(toggle).toHaveAccessibleName('去掉空行')
+    // 左半换成这个模式下可用、且对这段文字适用的整理方式：没有空行，跳过去掉空行
+    expect(toggle).toHaveAccessibleName('合并为一行')
+    expect(toggle).not.toHaveAttribute('aria-disabled')
     fireEvent.click(screen.getByTestId('ocr-layout-caret'))
     const menu = await screen.findByTestId('ocr-layout-menu')
     expect(
@@ -911,6 +912,34 @@ describe('排版', () => {
         .getAllByRole('menuitemradio')
         .map((el) => el.getAttribute('aria-checked')),
     ).toEqual(['true', 'false', 'false'])
+    fireEvent.keyDown(menu, { key: 'Escape', code: 'Escape' })
+    act(() => mod('KeyL'))
+    await settle()
+    expect(callsOf('text_transform').at(-1)?.[1]).toEqual({
+      text: WRAPPED,
+      transform: 'join_lines',
+    })
+    expect(box().value).toBe('被硬换行断开的句子')
+  })
+
+  it('段落模式下哪种整理方式都不适用：左半退回去掉空行并置灰，⌘L 不切换', async () => {
+    view()
+    await recognize('r-ocr', '被硬换行\n断开的句子')
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    fireEvent.click(await screen.findByTestId('ocr-layout-menu-item-reflow'))
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-recognize-menu'))
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /段落/ }))
+    await recognize('r-1', '只有一行')
+    await settle()
+    const toggle = screen.getByTestId('ocr-layout-toggle')
+    expect(toggle).toHaveAccessibleName('去掉空行')
+    expect(toggle).toHaveAttribute('aria-disabled', 'true')
+    const before = callsOf('text_transform').length
+    act(() => mod('KeyL'))
+    await settle()
+    expect(callsOf('text_transform')).toHaveLength(before)
   })
 
   it('设置默认去掉空行：一开始就是按下状态，识别完成后显示排版结果（Rust 已按它复制，不再复制）；菜单是单选', async () => {

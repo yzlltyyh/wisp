@@ -12,6 +12,7 @@
  */
 import {
   layoutAvailableIn,
+  OCR_LAYOUTS,
   type OcrLayout,
   type OcrMode,
   type TransformId,
@@ -87,6 +88,18 @@ function at(s: OcrTextState, key: number): OcrTextState {
 /** 某个模式下实际选中的排版：会话排版在这个模式下可用就是它，否则是原样（按钮的按下态、菜单的勾选与交付都按它） */
 export const selectedIn = (layout: OcrLayout, mode: OcrMode): OcrLayout =>
   layoutAvailableIn(layout, mode) ? layout : 'keep'
+
+/**
+ * 左半按钮在某个模式下的切换目标：最近用过的整理方式在这个模式下可用就是它（对这段文字不适用时按钮置灰、写明原因）；
+ * 不可用时（段落模式里的合并段内换行）按 OCR_LAYOUTS 的顺序换成第一个在这个模式下可用、且对这段文字适用的——固定退回
+ * 某一种的话，它恰好不适用时左半与 ⌘L 什么也不做，别的整理方式却明明可用。都不适用时取第一个可用的，按钮照常置灰。
+ * 只决定按钮切到哪种，不改写最近用过的（回到逐行模式还是它）
+ */
+export function recentIn(recent: Tidy, mode: OcrMode, can: (layout: Tidy) => boolean): Tidy {
+  if (layoutAvailableIn(recent, mode)) return recent
+  const usable = OCR_LAYOUTS.filter((l): l is Tidy => l !== 'keep' && layoutAvailableIn(l, mode))
+  return usable.find(can) ?? usable[0] ?? recent
+}
 
 export interface TextView {
   /** 实际作用的排版（不作用时为 keep） */

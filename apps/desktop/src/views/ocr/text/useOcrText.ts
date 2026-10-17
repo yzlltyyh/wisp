@@ -21,6 +21,7 @@ import { isSettled, warnCode } from '../useRun'
 import {
   canApply,
   initialText,
+  recentIn,
   reduceText,
   selectedIn,
   viewOf,
@@ -51,7 +52,10 @@ export interface OcrText extends TextView {
    * 不闪成原样
    */
   selected: OcrLayout
-  /** 左半按钮的切换目标：最近用过的整理方式；它在当前模式下不可用时（段落模式里的合并段内换行）换成去掉空行 */
+  /**
+   * 左半按钮的切换目标：最近用过的整理方式；它在当前模式下不可用时（段落模式里的合并段内换行）换成第一个可用且适用的
+   * 整理方式（见 `recentIn`）
+   */
   recent: Tidy
   /** 排版此刻能不能切换：识别已结束、排版作用、没有编辑 */
   switchable: boolean
@@ -85,9 +89,7 @@ export function useOcrText(run: RunView, opts: OcrTextOptions): OcrText {
   const view = viewOf(state, input)
   const switchable = input.applies && !view.edited
   const selected = selectedIn(state.layout, opts.mode)
-  const recent: Tidy = layoutAvailableIn(state.recent, opts.mode)
-    ? state.recent
-    : 'remove_blank_lines'
+  const recent = recentIn(state.recent, opts.mode, (layout) => canApply(state, key, layout))
 
   const now = { ...opts, key, switchable }
   const latest = useRef(now)
