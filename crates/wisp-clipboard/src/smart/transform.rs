@@ -35,6 +35,7 @@ pub trait Transform: Sync {
 /// 全部变换（与 `TransformId::ALL` 一一对应，顺序即菜单顺序）
 pub static TRANSFORMS: &[&dyn Transform] = &[
     &JoinLines,
+    &Reflow,
     &RemoveBlankLines,
     &Trim,
     &Upper,
@@ -101,6 +102,23 @@ impl Transform for JoinLines {
     /// 中日文断行直接相连、韩文与西文补空格、行尾断词还原、中英之间按全文惯例
     fn apply(&self, text: &str) -> Result<String, TransformError> {
         Ok(wisp_text::lines::join_all(text))
+    }
+}
+
+struct Reflow;
+
+impl Transform for Reflow {
+    fn id(&self) -> TransformId {
+        TransformId::Reflow
+    }
+    /// 只对文字内容、且有能合并的段内换行时出现：代码、链接等条目的换行有含义；判断不分配，遇到第一处就停
+    fn applies(&self, kind: ClipKind, text: &str) -> bool {
+        is_prose(kind) && wisp_text::lines::can_reflow(text)
+    }
+    /// 以空行为段界，段内被硬换行断开的行连成一行，列表、代码、对齐的列、标签与很短的行保持原样
+    /// （[`wisp_text::lines::reflow`]）；跨行处的规则与「合并为一行」相同
+    fn apply(&self, text: &str) -> Result<String, TransformError> {
+        Ok(wisp_text::lines::reflow(text))
     }
 }
 
@@ -767,6 +785,49 @@ mod tests {
     }
 
     #[test]
+    fn reflow() {
+        for (input, want) in [
+            // 段内的硬换行连成一行，行尾断词还原；空行（段界）保留
+            (
+                "Wisp stays in the background and wakes up only\nwhen you press a hot-\nkey.\n\nSecond paragraph.",
+                "Wisp stays in the background and wakes up only when you press a hotkey.\n\nSecond paragraph.",
+            ),
+            // 中文直接相连；中英之间按全文惯例
+            (
+                "这是一段从网页上截图识别出来的中文，每一行的末尾\n都有换行，需要连成一段。",
+                "这是一段从网页上截图识别出来的中文，每一行的末尾都有换行，需要连成一段。",
+            ),
+            (
+                "Wisp 是常驻后台的轻量桌面工具：划词翻译、截图\nOCR、剪贴板历史都在这里。",
+                "Wisp 是常驻后台的轻量桌面工具：划词翻译、截图 OCR、剪贴板历史都在这里。",
+            ),
+            // 列表项各自一行，换行符原样
+            (
+                "Make sure that the following tools are installed\r\non your machine:\r\n- Rust\r\n- Node.js\r\n",
+                "Make sure that the following tools are installed on your machine:\r\n- Rust\r\n- Node.js\r\n",
+            ),
+        ] {
+            assert_eq!(run(TransformId::Reflow, input), want, "{input:?}");
+        }
+        // 没有能合并的换行：单行、短行、列表、表格、代码
+        for text in [
+            "single line",
+            "Open Recent File\nSave As Template",
+            "- one\n- two",
+            "名称\t数量\n苹果\t3",
+            "fn main() {\n    run();\n}",
+            "Paragraph one is long enough to be wrapped.\n\nParagraph two.",
+        ] {
+            not_applicable(TransformId::Reflow, ClipKind::Text, text);
+        }
+        // 只对文字内容提供：代码、链接里的换行有含义
+        let wrapped = "const message = \"the quick brown fox\"\nconsole.log(message)";
+        assert!(applicable(ClipKind::Text, wrapped).contains(&TransformId::Reflow));
+        assert!(applicable(ClipKind::RichText, wrapped).contains(&TransformId::Reflow));
+        not_applicable(TransformId::Reflow, ClipKind::Code, wrapped);
+    }
+
+    #[test]
     fn remove_blank_lines() {
         assert_eq!(
             run(
@@ -945,6 +1006,11 @@ mod tests {
         ] {
             assert_eq!(needs_trim(text), trim_lines(text) != text, "trim {text:?}");
             assert_eq!(title_differs(text), title_case(text) != text, "title {text:?}");
+            assert_eq!(
+                wisp_text::lines::can_reflow(text),
+                wisp_text::lines::reflow(text) != text,
+                "reflow {text:?}"
+            );
             // 「合并为一行」：至少两个非空行时提供，提供时结果与原文不同
             if JoinLines.applies(ClipKind::Text, text) {
                 assert_ne!(wisp_text::lines::join_all(text), text, "join {text:?}");
@@ -974,5 +1040,14 @@ mod tests {
             ]
         );
         assert_eq!(applicable(ClipKind::Code, "{\"a\":1}"), [TransformId::JsonPretty]);
+        // 合并段内换行排在「合并为一行」与「去掉空行」之间
+        assert_eq!(
+            applicable(ClipKind::Text, "这一行足够长被硬换行断开了后面\n还有\n\n第二段"),
+            [
+                TransformId::JoinLines,
+                TransformId::Reflow,
+                TransformId::RemoveBlankLines,
+            ]
+        );
     }
 }

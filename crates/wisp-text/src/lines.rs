@@ -1,6 +1,7 @@
 //! 整段文字按行处理的操作。
 
-use crate::join::{MixedSpacing, join_break};
+use crate::join::{MixedSpacing, join_break, starts_list_item};
+use crate::script::is_east_asian;
 
 /// 识别结果的默认整理（整段版本），只动空白、不丢信息：
 ///
@@ -91,6 +92,221 @@ pub fn join_all(text: &str) -> String {
         join_break(&mut out, line, spacing);
     }
     out
+}
+
+/// 合并段内换行：以空行为段界，段内被硬换行断开的行按 [`join_break`] 连成一行（断词还原、东亚文字直接相连、中英之间
+/// 按全文惯例，与 [`join_all`] 相同）。用于从 PDF、网页或截图里得到的、每行末尾都有换行的段落。
+///
+/// 只动被合并的换行：空行（段界）与没有合并的行连同各自的换行符逐字保留；被合并的行去掉接缝处的空白（上一行的行尾
+/// 空白），一串合并的行里第一行的缩进保留。宁可少合并，也不误合并代码与表格，下面这些行保持原样：
+///
+/// - **不与上下行相连**：以列表项开头（[`starts_list_item`]）；含制表符，或行内有连续两个以上的空白（按空格对齐的列；
+///   句末 `.` `!` `?` 后正好两个半角空格除外，那是英文打字的句间空格）；以 `;` `{` `}` `\` `|` 结尾（代码、续行的
+///   命令、表格）；以 `>`（引用、提示符）、`$ ` 或 `❯`（命令提示符）、`#` 加空格（标题、注释）、`//`（注释）、`|` 或
+///   制表线字符（表格、目录树）开头；整行只有一个不含东亚文字的词、且含 `/`、`\` 或 `@`（链接、路径、邮箱的清单）；
+///   没有任何字母、数字或文字（分隔线）；
+/// - **不接到上一行后面**：有缩进（行首有空白：首行缩进的新段落、代码块）；以「标签：」开头（`Name: …`、`error: …`、
+///   `电话：…`）；
+/// - **不接下一行**：很短的独立行（不足 20 个半角宽、自己也没有接到上一行后面：标题、称呼、菜单项、命令）；有缩进的
+///   行，除非它是段落开头（段内第一行，或上一行以句末标点结束、是很短的独立行）且下一行没有缩进——首行缩进的段落
+///   照常合并，缩进的代码不会接上后面的行。
+///
+/// 已知的局限（要保留原来的换行时不用这个变换）：
+///
+/// - 段落之间既没有空行、也没有首行缩进时，段尾的短行与段中的行分不开，下一段会接到上一段末尾；
+/// - 诗歌、歌词以空行分节时，节内长短相近的诗行会合成一行（很短的诗行除外）；
+/// - 列表项折行后的续行、整段都有缩进的文字不合并；
+/// - 没有缩进、分号与花括号这些特征的代码（例如不写分号的脚本）可能被合并。
+///
+/// 幂等；除被还原的断词连字符与软连字符外，不增删任何非空白字符；三种换行符（`\n`、`\r\n`、单独的 `\r`）含义相同。
+pub fn reflow(text: &str) -> String {
+    let spacing = MixedSpacing::infer(line_contents(text));
+    let mut out = String::with_capacity(text.len());
+    let mut plan = Reflow::default();
+    // 上一行的换行符与行尾空白的长度：下一行接上来时丢掉，否则原样写出
+    let mut pending = "";
+    let mut trailing = 0;
+    for (content, line) in split_lines(text) {
+        if plan.joins(content) {
+            // 接上来的行没有缩进（有缩进的行不接到上一行后面），接缝两侧都不是空白
+            out.truncate(out.len() - trailing);
+            join_break(&mut out, content, spacing);
+        } else {
+            out.push_str(pending);
+            out.push_str(content);
+        }
+        pending = &line[content.len()..];
+        trailing = content.len() - content.trim_end().len();
+    }
+    out.push_str(pending);
+    out
+}
+
+/// 是否有可以合并的段内换行。与 `reflow(text) != text` 等价（每合并一处就少一个换行），但不分配、遇到第一处就停：
+/// 「粘贴为…」检视时每移动一次光标都要判断一次
+pub fn can_reflow(text: &str) -> bool {
+    let mut plan = Reflow::default();
+    line_contents(text).any(|content| plan.joins(content))
+}
+
+/// 「很短」的界线（半角宽，东亚文字记 2）：约 10 个汉字或 20 个字母。比它窄的独立行多半是标题、称呼、菜单项或命令，
+/// 不是被版面宽度折断的长句
+const SHORT_LINE: usize = 20;
+
+/// [`reflow`] 的逐行决定：每一行是否接到上一行后面。
+///
+/// 只看每一行自己的开头、结尾与内容，以及上一行的这些特征，所以对合并的结果再做一次，每处断开的理由都还在（幂等）：
+/// 合并只改动行与行之间的接缝；一串合并的行的开头是第一行的开头，结尾是最后一行的结尾；保持独立的行从不参与合并；
+/// 第一行至少 [`SHORT_LINE`] 宽才会接下一行，合并出来的行因此不会变成「很短」
+#[derive(Default)]
+struct Reflow {
+    /// 段内的上一行；None 表示段落开头（文首或刚过空行）
+    prev: Option<Prev>,
+}
+
+struct Prev {
+    shape: Shape,
+    /// 自己没有接到上一行后面（一串合并的行里的第一行）
+    head: bool,
+    /// 是段落开头：段内第一行，或上一行以句末标点结束、是很短的独立行。只对有缩进的行有用（首行缩进的段落）
+    opens: bool,
+}
+
+impl Reflow {
+    /// 下一行（不含换行符）是否接到上一行后面
+    fn joins(&mut self, content: &str) -> bool {
+        if is_blank(content) {
+            self.prev = None;
+            return false;
+        }
+        let shape = Shape::of(content);
+        let (joins, opens) = match &self.prev {
+            None => (false, true),
+            Some(prev) => {
+                let standalone_short = prev.head && prev.shape.short;
+                let joins = !(prev.shape.fixed
+                    || shape.fixed
+                    || shape.starts_new
+                    || standalone_short
+                    || (prev.shape.indented && !prev.opens));
+                (joins, prev.shape.ends_sentence || standalone_short)
+            }
+        };
+        self.prev = Some(Prev {
+            shape,
+            head: !joins,
+            opens,
+        });
+        joins
+    }
+}
+
+/// 一行的特征（见 [`reflow`] 的说明）
+#[derive(Debug, Clone, Copy)]
+struct Shape {
+    /// 行首有空白
+    indented: bool,
+    /// 不接到上一行后面：有缩进，或以「标签：」开头
+    starts_new: bool,
+    /// 不与上下行相连
+    fixed: bool,
+    /// 窄于 [`SHORT_LINE`]
+    short: bool,
+    /// 以句末标点结束（后面可以跟着引号、括号）
+    ends_sentence: bool,
+}
+
+impl Shape {
+    fn of(content: &str) -> Self {
+        let body = content.trim();
+        let indented = content.starts_with(char::is_whitespace);
+        Self {
+            indented,
+            starts_new: indented || starts_with_label(body),
+            fixed: is_fixed(body),
+            short: is_short(body),
+            ends_sentence: ends_sentence(body),
+        }
+    }
+}
+
+/// 保持独立、不与上下行相连的行（`body` 已去掉首尾空白）
+fn is_fixed(body: &str) -> bool {
+    starts_list_item(body)
+        || has_columns(body)
+        || body.ends_with([';', '{', '}', '\\', '|'])
+        || starts_with_marker(body)
+        || is_address(body)
+        || !body.chars().any(char::is_alphanumeric)
+}
+
+/// 含制表符，或行内有连续两个以上的空白（含全角空格）：按制表符或空格对齐的列。句末 `.` `!` `?` 后正好两个半角空格
+/// 不算：英文打字的句间空格，按这种习惯折行的纯文本（邮件、提交说明、编辑器自动折行的文字）正是要合并的对象
+fn has_columns(body: &str) -> bool {
+    if body.contains('\t') {
+        return true;
+    }
+    let (mut run, mut spaces_only, mut before) = (0usize, true, None);
+    for c in body.chars() {
+        if c.is_whitespace() {
+            run += 1;
+            spaces_only &= c == ' ';
+            continue;
+        }
+        if run >= 2 && !(run == 2 && spaces_only && matches!(before, Some('.' | '!' | '?'))) {
+            return true;
+        }
+        (run, spaces_only, before) = (0, true, Some(c));
+    }
+    false
+}
+
+/// 以引用或提示符（`>`）、命令提示符（`$ `、`❯`）、Markdown 标题或注释（`#` 加空格）、注释（`//`）、表格与目录树的
+/// 标记（`|`、制表线字符）开头
+fn starts_with_marker(body: &str) -> bool {
+    body.starts_with(['>', '|', '❯'])
+        || body.starts_with(|c: char| matches!(c, '\u{2500}'..='\u{257F}'))
+        || body.starts_with("$ ")
+        || body.starts_with("//")
+        || (body.starts_with('#') && body.trim_start_matches('#').starts_with(' '))
+}
+
+/// 整行只有一个不含东亚文字的词、且含 `/`、`\` 或 `@`：链接、路径、邮箱的清单逐行列出，接起来也只是用空格隔开。
+/// 中文句子同样不含空格，含斜杠的（`单价五元/斤`）不算
+fn is_address(body: &str) -> bool {
+    !body.contains(char::is_whitespace) && body.contains(['/', '\\', '@']) && !body.chars().any(is_east_asian)
+}
+
+/// 以「标签：」开头：一个含字母、不含空白的词（最多 24 个字符）后跟半角冒号与空白，或者最多 8 个字母、数字或汉字后跟
+/// 全角冒号；冒号后面都还有内容。单独以冒号结尾的词多半是句子的末尾（`as follows:`、`如下：`），不算
+fn starts_with_label(body: &str) -> bool {
+    let half = body.split_once(char::is_whitespace).is_some_and(|(token, _)| {
+        token.strip_suffix(':').is_some_and(|name| {
+            name.chars().count() <= 24 && name.chars().any(char::is_alphabetic) && !name.contains(':')
+        })
+    });
+    let full = body.split_once('：').is_some_and(|(name, rest)| {
+        !rest.is_empty() && (1..=8).contains(&name.chars().count()) && name.chars().all(char::is_alphanumeric)
+    });
+    half || full
+}
+
+/// 窄于 [`SHORT_LINE`]（东亚文字与全角空格记 2，其余记 1；数到界线就停，长行不必数完）
+fn is_short(body: &str) -> bool {
+    let mut width = 0;
+    for c in body.chars() {
+        width += if is_east_asian(c) || c == '\u{3000}' { 2 } else { 1 };
+        if width >= SHORT_LINE {
+            return false;
+        }
+    }
+    true
+}
+
+/// 以句末标点结束，后面可以跟着引号或括号（`他说：“走吧。”`、`(see above.)`）
+fn ends_sentence(body: &str) -> bool {
+    body.trim_end_matches(['"', '\'', '”', '’', '」', '』', '）', ')', ']', '】', '》'])
+        .ends_with(['.', '!', '?', '。', '．', '｡', '！', '？', '…'])
 }
 
 #[cfg(test)]
@@ -211,6 +427,179 @@ mod tests {
         }
     }
 
+    /// 合并段内换行的样例：`(说明, 输入, 结果)`。结果与输入相同的是「保持原样」的情形
+    const REFLOW_CASES: &[(&str, &str, &str)] = &[
+        (
+            "PDF 里的英文：段内连成一行、行尾断词还原，空行（段界）保留",
+            "Wisp is a lightweight desktop tool that stays in the back-\nground. It translates selected text, recognizes text in screen-\nshots and keeps a clipboard history.\n\nAll AI features run through the model service you configure.",
+            "Wisp is a lightweight desktop tool that stays in the background. It translates selected text, recognizes text in screenshots and keeps a clipboard history.\n\nAll AI features run through the model service you configure.",
+        ),
+        (
+            "编号与复合词里的连字符保留",
+            "The study covers the period 2020-\n2021 and the COVID-\n19 pandemic in detail.",
+            "The study covers the period 2020-2021 and the COVID-19 pandemic in detail.",
+        ),
+        (
+            "中文硬换行直接相连",
+            "这是一段从网页上截图识别出来的中文，每一行的末尾\n都有换行，但句子其实还没有结束，需要连成一段。\n\n第二段只有一行。",
+            "这是一段从网页上截图识别出来的中文，每一行的末尾都有换行，但句子其实还没有结束，需要连成一段。\n\n第二段只有一行。",
+        ),
+        (
+            "中英混排：全文习惯在中英之间加空格时断行处补上",
+            "Wisp 是常驻后台的轻量桌面工具：划词翻译、截图\nOCR、剪贴板历史，都可以经你自己的 WebDAV 在多台\n设备之间端到端加密同步。",
+            "Wisp 是常驻后台的轻量桌面工具：划词翻译、截图 OCR、剪贴板历史，都可以经你自己的 WebDAV 在多台设备之间端到端加密同步。",
+        ),
+        (
+            "中英混排：全文中英之间不加空格时直接相连",
+            "使用Wisp时，可以把识别出来的文字直接粘贴回\nWord或者其他编辑器里继续修改。",
+            "使用Wisp时，可以把识别出来的文字直接粘贴回Word或者其他编辑器里继续修改。",
+        ),
+        (
+            "列表项各自一行，列表前被折断的句子照常合并",
+            "Before you start, make sure that the following tools are\ninstalled on your machine:\n- Rust 1.80 or later\n- Node.js 22 with pnpm\n1. Clone the repository\n2. Run pnpm install",
+            "Before you start, make sure that the following tools are installed on your machine:\n- Rust 1.80 or later\n- Node.js 22 with pnpm\n1. Clone the repository\n2. Run pnpm install",
+        ),
+        (
+            "中文列表：句末单独的「人员：」不是标签，接回上一行",
+            "需要准备下面这些材料，到窗口办理时一并交给工作\n人员：\n1、身份证原件\n2、户口本\n（三）两张一寸照片",
+            "需要准备下面这些材料，到窗口办理时一并交给工作人员：\n1、身份证原件\n2、户口本\n（三）两张一寸照片",
+        ),
+        (
+            "代码：缩进、分号与花括号的行保持原样",
+            "fn main() {\n    let name = \"Wisp\";\n    println!(\"hello {name}\");\n}",
+            "fn main() {\n    let name = \"Wisp\";\n    println!(\"hello {name}\");\n}",
+        ),
+        (
+            "代码：缩进的块不接上后面没有缩进的行",
+            "for item in items_to_process:\n    handle(item)\nprint(\"all items were processed\")\n\ndef greet(name):\n    return f\"Hello, {name}\"",
+            "for item in items_to_process:\n    handle(item)\nprint(\"all items were processed\")\n\ndef greet(name):\n    return f\"Hello, {name}\"",
+        ),
+        (
+            "说明文字里的缩进命令：前面的句子合并，命令与后面的行保持原样",
+            "Run the following command to install the\ndependencies:\n    pnpm install --frozen-lockfile\nThen start the development server.",
+            "Run the following command to install the dependencies:\n    pnpm install --frozen-lockfile\nThen start the development server.",
+        ),
+        (
+            "终端输出：提示符、缩进与对齐的列",
+            "$ cargo build --release\n   Compiling wisp v0.1.0\n    Finished `release` profile [optimized] target(s) in 42.0s\n$ ls target/release\nwisp  wisp.d",
+            "$ cargo build --release\n   Compiling wisp v0.1.0\n    Finished `release` profile [optimized] target(s) in 42.0s\n$ ls target/release\nwisp  wisp.d",
+        ),
+        (
+            "编译器报错：标签开头、缩进与对齐",
+            "error[E0425]: cannot find value `naem` in this scope\n --> src/main.rs:3:20\n  |\n3 |     println!(\"{naem}\");\n  |                ^^^^ help: a local variable with a similar name exists",
+            "error[E0425]: cannot find value `naem` in this scope\n --> src/main.rs:3:20\n  |\n3 |     println!(\"{naem}\");\n  |                ^^^^ help: a local variable with a similar name exists",
+        ),
+        (
+            "日志：以标签开头的行各自一行",
+            "INFO: server listening on port 8080 and ready\nWARN: certificate expires in 3 days, renew soon\nERROR: failed to connect to the database",
+            "INFO: server listening on port 8080 and ready\nWARN: certificate expires in 3 days, renew soon\nERROR: failed to connect to the database",
+        ),
+        (
+            "续行的命令：行尾的反斜杠不能接上下一行",
+            "docker run --rm -p 8080:80 nginx:latest \\\n--name web-server-for-testing",
+            "docker run --rm -p 8080:80 nginx:latest \\\n--name web-server-for-testing",
+        ),
+        (
+            "TSV：制表符分隔的列",
+            "名称\t数量\t单价\n苹果\t3\t5.00\n梨\t10\t2.50",
+            "名称\t数量\t单价\n苹果\t3\t5.00\n梨\t10\t2.50",
+        ),
+        (
+            "空格对齐的表格与 Markdown 表格",
+            "Name        Age   City\nAlice       30    Paris\nBob         25    Berlin\n\n| Name | Age |\n| ---- | --- |\n| Alice | 30 |",
+            "Name        Age   City\nAlice       30    Paris\nBob         25    Berlin\n\n| Name | Age |\n| ---- | --- |\n| Alice | 30 |",
+        ),
+        (
+            "两个空格隔开的金额是对齐的列；句末两个空格是句间空格，照常合并",
+            "Total amount due  1,234.00\nTax included  123.40\n\nThis sentence ends here.  The next one begins and\nwraps onto the following line.",
+            "Total amount due  1,234.00\nTax included  123.40\n\nThis sentence ends here.  The next one begins and wraps onto the following line.",
+        ),
+        (
+            "诗歌：以空行分节时，节内长短相近的诗行合成一行（预期如此）",
+            "白日依山尽，黄河入海流。\n欲穷千里目，更上一层楼。\n\nThe river runs beneath the bridge tonight\nAnd every lantern carries someone's light\n\nWe walk until the morning finds the shore",
+            "白日依山尽，黄河入海流。欲穷千里目，更上一层楼。\n\nThe river runs beneath the bridge tonight And every lantern carries someone's light\n\nWe walk until the morning finds the shore",
+        ),
+        (
+            "诗歌：很短的诗行保持原样",
+            "床前明月光，\n疑是地上霜。\n举头望明月，\n低头思故乡。",
+            "床前明月光，\n疑是地上霜。\n举头望明月，\n低头思故乡。",
+        ),
+        (
+            "首行缩进的段落：段内合并，下一段的缩进行另起",
+            "\u{3000}\u{3000}第一段的第一行，前面空了两格，后面的文字被硬换\n行了，这一段到这里结束。\n\u{3000}\u{3000}第二段同样首行缩进，也被硬换行断开，需要\n连成一行。",
+            "\u{3000}\u{3000}第一段的第一行，前面空了两格，后面的文字被硬换行了，这一段到这里结束。\n\u{3000}\u{3000}第二段同样首行缩进，也被硬换行断开，需要连成一行。",
+        ),
+        (
+            "首行缩进（半角空格，识别结果里的相对缩进）",
+            "    The first paragraph is indented and its lines are\nwrapped by the layout of the page.\n    The second paragraph starts here and also wraps\nacross two lines.",
+            "    The first paragraph is indented and its lines are wrapped by the layout of the page.\n    The second paragraph starts here and also wraps across two lines.",
+        ),
+        (
+            "标题之后的首行缩进段落",
+            "第一章\u{3000}总则\n\u{3000}\u{3000}第一条\u{3000}为了规范剪贴板历史的同步，根据有关\n规定，制定本办法。",
+            "第一章\u{3000}总则\n\u{3000}\u{3000}第一条\u{3000}为了规范剪贴板历史的同步，根据有关规定，制定本办法。",
+        ),
+        (
+            "表单：以「标签：」开头的行各自一行",
+            "姓名：张三，男，一九九零年出生，现居北京市海淀区\n电话：13800138000\n地址：北京市海淀区中关村大街一号院",
+            "姓名：张三，男，一九九零年出生，现居北京市海淀区\n电话：13800138000\n地址：北京市海淀区中关村大街一号院",
+        ),
+        (
+            "标签开头的段落可以接下一行",
+            "Note: the configuration file is read once at startup, so\nchanges only take effect after a restart.",
+            "Note: the configuration file is read once at startup, so changes only take effect after a restart.",
+        ),
+        (
+            "Markdown：标题与引用各自一行",
+            "# Getting started\nWisp stays in the background and wakes up only when\nyou press a hotkey.\n> Tip: hold Shift to keep the panel open\n> after the result appears.",
+            "# Getting started\nWisp stays in the background and wakes up only when you press a hotkey.\n> Tip: hold Shift to keep the panel open\n> after the result appears.",
+        ),
+        (
+            "分隔线、路径与链接的清单",
+            "Chapter One: The Beginning of It All\n==============\nIt was a quiet morning when the first message arrived.\n\napps/desktop/src-tauri/src/main.rs\nhttps://example.com/docs/getting-started\nsupport@example.com",
+            "Chapter One: The Beginning of It All\n==============\nIt was a quiet morning when the first message arrived.\n\napps/desktop/src-tauri/src/main.rs\nhttps://example.com/docs/getting-started\nsupport@example.com",
+        ),
+        (
+            "很短的独立行：菜单项、称呼",
+            "Open Recent File\nSave As Template\nExport to PDF\n\nDear Alice,\nThank you for the detailed report on the new release.",
+            "Open Recent File\nSave As Template\nExport to PDF\n\nDear Alice,\nThank you for the detailed report on the new release.",
+        ),
+        (
+            "换行符原样保留；接缝处的行尾空白去掉，最后一行的行尾空白不动",
+            "first line that is long enough to join   \r\nthe second line  \r\n\r\nnext paragraph\r\n",
+            "first line that is long enough to join the second line  \r\n\r\nnext paragraph\r\n",
+        ),
+        (
+            "单独的 \\r 也是换行",
+            "a first line that is long enough\rand its continuation\r",
+            "a first line that is long enough and its continuation\r",
+        ),
+        ("空文本", "", ""),
+        ("只有一行", "single line", "single line"),
+        ("只有空行", "\n \n\u{3000}\n", "\n \n\u{3000}\n"),
+    ];
+
+    #[test]
+    fn reflow_cases() {
+        for &(name, input, want) in REFLOW_CASES {
+            let out = reflow(input);
+            assert_eq!(out, want, "{name}");
+            assert_eq!(can_reflow(input), want != input, "{name}：是否适用与结果是否不同一致");
+            assert_eq!(reflow(&out), out, "{name}：幂等");
+        }
+    }
+
+    #[test]
+    fn reflow_stays_linear_on_long_lines() {
+        // 每行的特征只扫一遍；接缝只回看上一行末尾的有限几个字符
+        let line = "word ".repeat(40);
+        let text = format!("{line}\n").repeat(5_000);
+        let out = reflow(&text);
+        assert_eq!(out.matches('\n').count(), 1);
+        let cjk = "中文".repeat(20_000);
+        assert_eq!(reflow(&format!("{cjk}\n{cjk}")), format!("{cjk}{cjk}"));
+    }
+
     /// 生成文字用的字符：覆盖各条拼接规则涉及的字符类别
     const ALPHABET: &[char] = &[
         'a', 'b', 'Z', 'é', 'ж', '1', '2', '中', '文', 'あ', 'カ', '한', '글', '-', '\u{2010}', '\u{AD}', '—', '…',
@@ -243,6 +632,35 @@ mod tests {
             'a', 'Z', '中', '1', '-', '|', ' ', ' ', '\t', '\u{3000}', '\u{A0}', '\u{2028}', '\n', '\n', '\n', '\r',
         ];
         proptest::collection::vec(proptest::sample::select(CHARS), 0..60).prop_map(|v| v.into_iter().collect())
+    }
+
+    /// 由词语拼成的多行文字：多数是普通的词，行足够长、常有可以合并的换行；夹着的特殊片段让「缩进」「标签」「列表项」、
+    /// 对齐的列、代码与提示符这些规则都有机会生效
+    fn paragraphs() -> impl Strategy<Value = String> {
+        // 每个词都写得很短：数组里有长元素时 rustfmt 会把整个数组拆成一行一个
+        const WORDS: &[&str] = &[
+            "the ", "Wisp ", "inter-", "face ", "COVID-", "19 ", "中文", "被硬", "换行", "，", "。", ". ", "! ", "“",
+            "。”", "x", "Ab ", "한글 ", "支持", "OpenAI ", "and ", "text",
+        ];
+        const SPECIAL: &[&str] = &[
+            "- ", "1. ", "• ", "  ", "\t", " ", "\u{3000}", "# ", "> ", "$ ", "//", "|", ";", "{", "}", "\\", "Note: ",
+            "电：", "下：", "a.co/x", "a@b.c", "src/", "——", "……", "\u{AD}", "===",
+        ];
+        const BREAKS: &[&str] = &["\n", "\n", "\n", "\r\n", "\r", "\n\n", "\n \n"];
+        let token = prop_oneof![
+            4 => proptest::sample::select(WORDS),
+            1 => proptest::sample::select(SPECIAL),
+        ];
+        let line = move || proptest::collection::vec(token.clone(), 0..14).prop_map(|v| v.concat());
+        (
+            proptest::collection::vec((line(), proptest::sample::select(BREAKS)), 0..8),
+            line(),
+        )
+            .prop_map(|(lines, last)| {
+                let mut out: String = lines.into_iter().flat_map(|(l, b)| [l, b.to_owned()]).collect();
+                out.push_str(&last);
+                out
+            })
     }
 
     /// 按 \r\n、\r、\n 断开的物理行
@@ -357,6 +775,48 @@ mod tests {
                 out == direct || out == space || dropped.as_ref() == Some(&out),
                 "{:?} + {:?} -> {:?}", a, b, out
             );
+        }
+
+        #[test]
+        fn reflow_is_idempotent(s in paragraphs(), t in text()) {
+            for x in [s, t] {
+                let once = reflow(&x);
+                prop_assert_eq!(reflow(&once), once.clone(), "{:?}", x);
+                prop_assert!(!can_reflow(&once));
+            }
+        }
+
+        #[test]
+        fn reflow_keeps_visible_characters(s in paragraphs(), t in text()) {
+            for x in [s, t] {
+                let out = reflow(&x);
+                prop_assert!(same_except_dropped_hyphens(&x, &out), "{:?} -> {:?}", x, out);
+            }
+        }
+
+        /// 「是否适用」与「结果是否不同」一致
+        #[test]
+        fn can_reflow_agrees_with_reflow(s in paragraphs()) {
+            prop_assert_eq!(can_reflow(&s), reflow(&s) != s);
+        }
+
+        /// 只合并段内的行：空行（段界）连同换行符逐字保留，行数只少不多
+        #[test]
+        fn reflow_keeps_blank_lines(s in paragraphs()) {
+            let out = reflow(&s);
+            let blanks = |x: &str| -> Vec<String> {
+                split_lines(x).filter(|(c, _)| is_blank(c)).map(|(_, l)| l.to_owned()).collect()
+            };
+            prop_assert_eq!(blanks(&out), blanks(&s));
+            prop_assert!(split_lines(&out).count() <= split_lines(&s).count());
+        }
+
+        /// 三种换行符含义相同：换成统一的 \n 不改变合并的结果
+        #[test]
+        fn reflow_treats_line_break_styles_alike(s in paragraphs()) {
+            let unify = |x: &str| x.replace("\r\n", "\n").replace('\r', "\n");
+            prop_assert_eq!(unify(&reflow(&s)), reflow(&unify(&s)));
+            prop_assert_eq!(can_reflow(&s), can_reflow(&unify(&s)));
         }
     }
 }

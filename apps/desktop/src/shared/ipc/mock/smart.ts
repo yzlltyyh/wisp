@@ -106,6 +106,7 @@ function transforms(kind: ClipKind, text: string): TransformId[] {
   if (row) return Object.keys(row) as TransformId[]
   const out: TransformId[] = []
   if (/\n/.test(text.trim())) out.push('join_lines')
+  if (CASED.has(kind) && /\S\n\S/.test(text)) out.push('reflow')
   if (text !== '' && /^[^\S\n]*$/m.test(text.replace(/\n$/, ''))) out.push('remove_blank_lines')
   if (text !== text.trim()) out.push('trim')
   if (CASED.has(kind) && /[a-z]/i.test(text)) out.push('upper', 'lower', 'title')

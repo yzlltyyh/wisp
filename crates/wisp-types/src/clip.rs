@@ -246,6 +246,8 @@ str_enum! {
     pub enum TransformId {
         /// 合并为一行
         JoinLines = "join_lines",
+        /// 合并段内换行：以空行为段界，段内被硬换行断开的行连成一行，列表、代码、对齐的列保持原样
+        Reflow = "reflow",
         /// 去掉空行（只含空白的行），其余各行原样保留
         RemoveBlankLines = "remove_blank_lines",
         /// 去掉首尾空白

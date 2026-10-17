@@ -19,6 +19,30 @@
     }
   },
   {
+    "text": "Wisp 是常驻后台的轻量桌面工具，划词翻译、截图\nOCR、剪贴板历史都在这里，用完就收起。\n\n第二段。",
+    "transforms": {
+      "join_lines": "Wisp 是常驻后台的轻量桌面工具，划词翻译、截图 OCR、剪贴板历史都在这里，用完就收起。第二段。",
+      "reflow": "Wisp 是常驻后台的轻量桌面工具，划词翻译、截图 OCR、剪贴板历史都在这里，用完就收起。\n\n第二段。",
+      "remove_blank_lines": "Wisp 是常驻后台的轻量桌面工具，划词翻译、截图\nOCR、剪贴板历史都在这里，用完就收起。\n第二段。",
+      "upper": "WISP 是常驻后台的轻量桌面工具，划词翻译、截图\nOCR、剪贴板历史都在这里，用完就收起。\n\n第二段。",
+      "lower": "wisp 是常驻后台的轻量桌面工具，划词翻译、截图\nocr、剪贴板历史都在这里，用完就收起。\n\n第二段。",
+      "title": "Wisp 是常驻后台的轻量桌面工具，划词翻译、截图\nOcr、剪贴板历史都在这里，用完就收起。\n\n第二段。",
+      "half_width": "Wisp 是常驻后台的轻量桌面工具,划词翻译、截图\nOCR、剪贴板历史都在这里,用完就收起。\n\n第二段。",
+      "full_width": "Ｗｉｓｐ　是常驻后台的轻量桌面工具，划词翻译、截图\nＯＣＲ、剪贴板历史都在这里，用完就收起。\n\n第二段。"
+    }
+  },
+  {
+    "text": "Wisp stays in the background and wakes up only\nwhen you press a hotkey. Recognized text keeps\nits line breaks.\n\n- Lists stay as they are",
+    "transforms": {
+      "join_lines": "Wisp stays in the background and wakes up only when you press a hotkey. Recognized text keeps its line breaks. - Lists stay as they are",
+      "reflow": "Wisp stays in the background and wakes up only when you press a hotkey. Recognized text keeps its line breaks.\n\n- Lists stay as they are",
+      "remove_blank_lines": "Wisp stays in the background and wakes up only\nwhen you press a hotkey. Recognized text keeps\nits line breaks.\n- Lists stay as they are",
+      "upper": "WISP STAYS IN THE BACKGROUND AND WAKES UP ONLY\nWHEN YOU PRESS A HOTKEY. RECOGNIZED TEXT KEEPS\nITS LINE BREAKS.\n\n- LISTS STAY AS THEY ARE",
+      "lower": "wisp stays in the background and wakes up only\nwhen you press a hotkey. recognized text keeps\nits line breaks.\n\n- lists stay as they are",
+      "title": "Wisp Stays In The Background And Wakes Up Only\nWhen You Press A Hotkey. Recognized Text Keeps\nIts Line Breaks.\n\n- Lists Stay As They Are"
+    }
+  },
+  {
     "text": "第一行\n第二行\n第三行",
     "transforms": {
       "join_lines": "第一行第二行第三行"

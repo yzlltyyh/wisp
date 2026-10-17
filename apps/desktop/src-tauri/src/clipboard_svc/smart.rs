@@ -304,6 +304,8 @@ mod tests {
     const CASE_INPUTS: &[&str] = &[
         "第一段，被\n硬换行的中文。\n\n第二段。",
         "Wisp 是常驻后台的轻量桌面工具。\n\n划词翻译、截图 OCR、剪贴板历史。",
+        "Wisp 是常驻后台的轻量桌面工具，划词翻译、截图\nOCR、剪贴板历史都在这里，用完就收起。\n\n第二段。",
+        "Wisp stays in the background and wakes up only\nwhen you press a hotkey. Recognized text keeps\nits line breaks.\n\n- Lists stay as they are",
         "第一行\n第二行\n第三行",
         "first line\n  second line  \n\nthird",
         "클립보드에\n복사합니다.",

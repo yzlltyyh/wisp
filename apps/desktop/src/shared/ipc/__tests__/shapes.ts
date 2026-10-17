@@ -253,6 +253,7 @@ const EntityKind = enumOf<T.EntityKind>()('EntityKind', {
 })
 const TransformId = enumOf<T.TransformId>()('TransformId', {
   join_lines: 1,
+  reflow: 1,
   remove_blank_lines: 1,
   trim: 1,
   upper: 1,

@@ -22,6 +22,7 @@ import {
   Network,
   Package,
   Phone,
+  Pilcrow,
   Receipt,
   Scissors,
   Shrink,
@@ -63,26 +64,27 @@ export const ENTITY_SPECS = {
 export interface TransformSpec {
   readonly icon: LucideIcon
   readonly label: MessageKey
-  /** 子页里的顺序：结构（合并行 / 去空行 / 去空白）→ 大小写 → 全半角 → JSON → 链接 */
+  /** 子页里的顺序：结构（合并为一行 / 合并段内换行 / 去空行 / 去空白）→ 大小写 → 全半角 → JSON → 链接 */
   readonly order: number
 }
 
 export const TRANSFORM_SPECS = {
   join_lines: { icon: WrapText, label: 'smart.transform.join_lines', order: 0 },
+  reflow: { icon: Pilcrow, label: 'smart.transform.reflow', order: 1 },
   remove_blank_lines: {
     icon: FoldVertical,
     label: 'smart.transform.remove_blank_lines',
-    order: 1,
+    order: 2,
   },
-  trim: { icon: Scissors, label: 'smart.transform.trim', order: 2 },
-  upper: { icon: CaseUpper, label: 'smart.transform.upper', order: 3 },
-  lower: { icon: CaseLower, label: 'smart.transform.lower', order: 4 },
-  title: { icon: CaseSensitive, label: 'smart.transform.title', order: 5 },
-  half_width: { icon: Shrink, label: 'smart.transform.half_width', order: 6 },
-  full_width: { icon: Expand, label: 'smart.transform.full_width', order: 7 },
-  json_pretty: { icon: Braces, label: 'smart.transform.json_pretty', order: 8 },
-  json_minify: { icon: Minimize2, label: 'smart.transform.json_minify', order: 9 },
-  strip_tracking: { icon: Unlink, label: 'smart.transform.strip_tracking', order: 10 },
+  trim: { icon: Scissors, label: 'smart.transform.trim', order: 3 },
+  upper: { icon: CaseUpper, label: 'smart.transform.upper', order: 4 },
+  lower: { icon: CaseLower, label: 'smart.transform.lower', order: 5 },
+  title: { icon: CaseSensitive, label: 'smart.transform.title', order: 6 },
+  half_width: { icon: Shrink, label: 'smart.transform.half_width', order: 7 },
+  full_width: { icon: Expand, label: 'smart.transform.full_width', order: 8 },
+  json_pretty: { icon: Braces, label: 'smart.transform.json_pretty', order: 9 },
+  json_minify: { icon: Minimize2, label: 'smart.transform.json_minify', order: 10 },
+  strip_tracking: { icon: Unlink, label: 'smart.transform.strip_tracking', order: 11 },
 } as const satisfies Record<TransformId, TransformSpec>
 
 /**

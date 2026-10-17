@@ -489,6 +489,7 @@ export interface Entity {
 /** 「粘贴为…」的文本变换（实现在 Rust） */
 export type TransformId =
   | 'join_lines'
+  | 'reflow'
   | 'remove_blank_lines'
   | 'trim'
   | 'upper'

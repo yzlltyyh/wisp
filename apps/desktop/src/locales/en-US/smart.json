@@ -14,6 +14,7 @@
   },
   "transform": {
     "join_lines": "Join lines",
+    "reflow": "Join lines within paragraphs",
     "remove_blank_lines": "Remove blank lines",
     "trim": "Trim whitespace",
     "upper": "Uppercase",

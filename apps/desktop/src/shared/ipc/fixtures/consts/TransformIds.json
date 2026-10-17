@@ -1,5 +1,6 @@
 [
   "join_lines",
+  "reflow",
   "remove_blank_lines",
   "trim",
   "upper",
