@@ -432,8 +432,10 @@ fn title_level(title: &str) -> usize {
     (numbering.matches('.').count() + 1).min(5)
 }
 
+/// 折成几行的标题合成一行，规则与「合并为一行」相同（[`wisp_text::lines::join_all`]）：断词还原，`2020-2021`、
+/// `COVID-19` 这类本来就有的连字符保留；东亚文字之间直接相连，中英之间按标题里已有的写法
 fn collapse_newlines(s: &str) -> String {
-    s.replace("-\n", "").replace('\n', " ").trim().to_owned()
+    wisp_text::lines::join_all(s)
 }
 
 /// 模型用 `\( \)` / `\[ \]` 写公式时换成 `$ … $` / `$$ … $$`（PaddleX 的同名处理）；公式编号去掉 `$`
@@ -849,6 +851,36 @@ mod tests {
         assert_eq!(title_level("2 Methods"), 1);
         assert_eq!(title_level("2.1 Data"), 2);
         assert_eq!(title_level("2.1.3. Details"), 3);
+    }
+
+    #[test]
+    fn wrapped_titles_are_joined_like_join_lines() {
+        let md = PipelineOptions::for_mode(OcrMode::Markdown);
+        let title = |label: &str, raw: &str| format_region(label, PROMPT_OCR, raw, &md);
+        // 本来就有的连字符保留，断词还原
+        assert_eq!(
+            title("doc_title", "Annual Report 2020-\n2021"),
+            "# Annual Report 2020-2021"
+        );
+        assert_eq!(title("doc_title", "Life after COVID-\n19"), "# Life after COVID-19");
+        assert_eq!(title("doc_title", "Inter-\nnational Trade\n"), "# International Trade");
+        // 东亚文字之间不加空格，西文之间补一个空格
+        assert_eq!(title("paragraph_title", "第一章\n概述"), "## 第一章概述");
+        assert_eq!(
+            title("paragraph_title", "2.1 Results and\nDiscussion"),
+            "### 2.1 Results and Discussion"
+        );
+        // 中英之间按这一行里已有的写法
+        assert_eq!(
+            title("doc_title", "使用 Wisp 识别\nPDF 文档"),
+            "# 使用 Wisp 识别 PDF 文档"
+        );
+        // 只有 markdown 模式加标题标记、合成一行
+        let lines = PipelineOptions::for_mode(OcrMode::Lines);
+        assert_eq!(
+            format_region("doc_title", PROMPT_OCR, "2020-\n2021", &lines),
+            "2020-\n2021"
+        );
     }
 
     #[test]
