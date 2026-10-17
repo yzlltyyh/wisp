@@ -1,0 +1,190 @@
+<!doctype html>
+<!--
+  O3-formula-markdown / O3-formula-translate：英文教材里的一段数学。行内公式与三个行间公式（求根公式、
+  巴塞尔级数、高斯积分），分式、根号、求和、积分与上下标都用纯 HTML / CSS 与内联 SVG 画出，不依赖数学字体或网络。
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>formula</title>
+    <link rel="stylesheet" href="base.css" />
+    <style>
+      #shot {
+        width: 600px;
+        background: #fff;
+        padding: 28px 34px 26px;
+        font-family: var(--serif);
+        font-size: 17px;
+        line-height: 1.55;
+        color: #111;
+      }
+      p + p,
+      .display + p {
+        margin-top: 4px;
+      }
+      i {
+        font-style: italic;
+      }
+      sup,
+      sub {
+        font-size: 0.7em;
+        line-height: 0;
+      }
+      /* 行间公式用行内排版（不用 flex）：flex 会把 <sup> 变成块，指数就掉回基线上了 */
+      .display {
+        margin: 16px 0;
+        text-align: center;
+        font-size: 19px;
+        line-height: 1.3;
+        white-space: nowrap;
+      }
+      .frac {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        vertical-align: middle;
+        margin: 0 0.15em;
+        line-height: 1.25;
+      }
+      .frac > .num {
+        padding: 0 0.25em 0.12em;
+        border-bottom: 1.2px solid currentColor;
+      }
+      .frac > .den {
+        padding: 0.12em 0.25em 0;
+      }
+      .sqrt {
+        position: relative;
+        display: inline-block;
+        padding-left: 0.85em;
+      }
+      .sqrt > svg {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 0.85em;
+        height: 100%;
+        overflow: visible;
+      }
+      .sqrt > .radicand {
+        display: inline-block;
+        border-top: 1.2px solid currentColor;
+        padding: 0.08em 0.12em 0 0.08em;
+        line-height: 1.2;
+      }
+      .bigop {
+        display: inline-flex;
+        flex-direction: column;
+        align-items: center;
+        vertical-align: middle;
+        line-height: 1;
+        margin: 0 0.1em;
+      }
+      .bigop > .lim {
+        font-size: 0.68em;
+      }
+      /* 用 Times 的大写希腊字母 Σ 当求和号：U+2211 在多数正文字体里没有字形，回退字体里的符号偏小、位置偏低 */
+      .bigop > .sym {
+        font-size: 2.5em;
+        line-height: 0.8;
+        margin: 0.06em 0 0;
+      }
+      .integral {
+        display: inline-flex;
+        align-items: center;
+        vertical-align: middle;
+        margin-right: 0.1em;
+      }
+      .integral > .sym {
+        font-size: 2.1em;
+        line-height: 1;
+      }
+      .integral > .lims {
+        display: inline-flex;
+        flex-direction: column;
+        justify-content: space-between;
+        align-self: stretch;
+        font-size: 0.68em;
+        line-height: 1;
+        margin-left: 0.05em;
+        padding: 0.1em 0 0.2em;
+      }
+      .integral > .lims > :first-child {
+        margin-left: 0.5em;
+      }
+      .words {
+        margin: 0 1.2em;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="shot">
+      <p>
+        <b>Example 2.3.</b> Let <i>a</i>, <i>b</i>, <i>c</i> be real numbers with <i>a</i> ≠ 0. The
+        roots of the quadratic equation <i>ax</i><sup>2</sup> + <i>bx</i> + <i>c</i> = 0 are given
+        by
+      </p>
+      <div class="display">
+        <i>x</i> =
+        <span class="frac">
+          <span class="num"
+            >−<i>b</i> ±
+            <span class="sqrt"
+              ><svg viewBox="0 0 10 24" preserveAspectRatio="none" aria-hidden="true">
+                <path
+                  d="M0.5 14 L2.6 12.6 L5.2 23 L9.6 0.6 L10.2 0.6"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.2"
+                  vector-effect="non-scaling-stroke"
+                /></svg
+              ><span class="radicand"><i>b</i><sup>2</sup> − 4<i>ac</i></span></span
+            ></span
+          >
+          <span class="den">2<i>a</i></span> </span
+        >.
+      </div>
+      <p>
+        The quantity <i>b</i><sup>2</sup> − 4<i>ac</i> is called the discriminant: the equation has
+        two distinct real roots when it is positive. Two further classical results are
+      </p>
+      <div class="display">
+        <span class="bigop">
+          <span class="lim">∞</span>
+          <span class="sym">Σ</span>
+          <span class="lim"><i>n</i>=1</span>
+        </span>
+        <span class="frac"
+          ><span class="num">1</span><span class="den"><i>n</i><sup>2</sup></span></span
+        >
+        =
+        <span class="frac"
+          ><span class="num"><i>π</i><sup>2</sup></span
+          ><span class="den">6</span></span
+        >
+        <span class="words">and</span>
+        <span class="integral">
+          <span class="sym">∫</span>
+          <span class="lims"><span>+∞</span><span>−∞</span></span>
+        </span>
+        <i>e</i><sup>−<i>x</i><sup>2</sup></sup
+        >&thinsp;d<i>x</i> =
+        <span class="sqrt"
+          ><svg viewBox="0 0 10 24" preserveAspectRatio="none" aria-hidden="true">
+            <path
+              d="M0.5 14 L2.6 12.6 L5.2 23 L9.6 0.6 L10.2 0.6"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.2"
+              vector-effect="non-scaling-stroke"
+            /></svg
+          ><span class="radicand"><i>π</i></span></span
+        >.
+      </div>
+      <p>
+        Both identities are used in Section 4 to bound the error of the numerical scheme by
+        <i>O</i>(<i>h</i><sup>2</sup>) for step size <i>h</i> → 0.
+      </p>
+    </main>
+  </body>
+</html>

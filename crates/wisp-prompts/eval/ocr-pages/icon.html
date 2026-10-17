@@ -1,0 +1,74 @@
+<!doctype html>
+<!--
+  O4-icon-lines / O4-icon-translate：一排工具栏图标（齿轮、云、心形、铃铛、房子），没有任何文字，
+  也避开了容易被认成字母的形状（放大镜像 Q、圆环像 O），模型应判为「未检测到文字」。
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>icon</title>
+    <link rel="stylesheet" href="base.css" />
+    <style>
+      #shot {
+        display: inline-flex;
+        gap: 14px;
+        background: #f6f6f8;
+        padding: 18px 20px;
+      }
+      .tile {
+        width: 56px;
+        height: 56px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.12);
+      }
+      .tile svg {
+        width: 30px;
+        height: 30px;
+        fill: none;
+        stroke: #fff;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="shot">
+      <div class="tile" style="background: #8e8e93">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M10.3 2.6h3.4l.5 2.6 2 .9 2.2-1.5 2.4 2.4-1.5 2.2.9 2 2.6.5v3.4l-2.6.5-.9 2 1.5 2.2-2.4 2.4-2.2-1.5-2 .9-.5 2.6h-3.4l-.5-2.6-2-.9-2.2 1.5-2.4-2.4 1.5-2.2-.9-2-2.6-.5v-3.4l2.6-.5.9-2-1.5-2.2 2.4-2.4 2.2 1.5 2-.9z"
+          />
+          <circle cx="12" cy="12" r="3.2" />
+        </svg>
+      </div>
+      <div class="tile" style="background: #0a84ff">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M7 18.5h10.5a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.6 9.2 4.7 4.7 0 0 0 7 18.5z" />
+        </svg>
+      </div>
+      <div class="tile" style="background: #ff375f">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path
+            d="M12 20s-7.5-4.6-7.5-10.1A4.2 4.2 0 0 1 12 7.4a4.2 4.2 0 0 1 7.5 2.5C19.5 15.4 12 20 12 20z"
+          />
+        </svg>
+      </div>
+      <div class="tile" style="background: #ff9f0a">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z" />
+          <path d="M10 20.5a2.2 2.2 0 0 0 4 0" />
+        </svg>
+      </div>
+      <div class="tile" style="background: #30d158">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 11.2 12 4.5l8 6.7" />
+          <path d="M6.2 9.6v9.9h11.6V9.6" />
+          <path d="M10.2 19.5v-5.2h3.6v5.2" />
+        </svg>
+      </div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<!--
+  O5-chat-paragraphs：群聊截图。居中的时间、气泡上方的昵称、一条在气泡里折成多行的长消息、几条很短的消息，
+  头像是不带文字的剪影，另有一个表情贴图（不该被描述出来）。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>chat</title>
+    <link rel="stylesheet" href="base.css" />
+    <style>
+      #shot {
+        width: 440px;
+        background: #f2f2f2;
+        padding: 14px 16px 18px;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      .time {
+        text-align: center;
+        font-size: 12px;
+        color: #a3a3a3;
+        margin: 6px 0 12px;
+      }
+      .msg {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .msg.me {
+        flex-direction: row-reverse;
+      }
+      .avatar {
+        flex: none;
+        width: 36px;
+        height: 36px;
+        border-radius: 6px;
+      }
+      .body {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+        min-width: 0;
+      }
+      .me .body {
+        align-items: flex-end;
+      }
+      .name {
+        font-size: 12px;
+        color: #8c8c8c;
+        line-height: 1;
+        margin-top: 1px;
+      }
+      .bubble {
+        max-width: 268px;
+        background: #fff;
+        border-radius: 6px;
+        padding: 8px 11px;
+        color: #191919;
+      }
+      .me .bubble {
+        background: #95ec69;
+      }
+      .sticker {
+        width: 76px;
+        height: 76px;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="shot">
+      <div class="time">上午 10:24</div>
+      <div class="msg">
+        <svg class="avatar" viewBox="0 0 36 36" aria-hidden="true">
+          <rect width="36" height="36" rx="6" fill="#7aa7d9" />
+          <circle cx="18" cy="14" r="6.5" fill="#fff" fill-opacity="0.9" />
+          <path d="M6 33c1.5-7 6.5-10.5 12-10.5S28.5 26 30 33z" fill="#fff" fill-opacity="0.9" />
+        </svg>
+        <div class="body">
+          <div class="name">周航</div>
+          <div class="bubble">早</div>
+          <div class="bubble">今天下午的评审会还是三点吗？</div>
+        </div>
+      </div>
+      <div class="msg">
+        <svg class="avatar" viewBox="0 0 36 36" aria-hidden="true">
+          <rect width="36" height="36" rx="6" fill="#e3a26f" />
+          <circle cx="18" cy="14" r="6.5" fill="#fff" fill-opacity="0.9" />
+          <path d="M6 33c1.5-7 6.5-10.5 12-10.5S28.5 26 30 33z" fill="#fff" fill-opacity="0.9" />
+        </svg>
+        <div class="body">
+          <div class="name">林晓</div>
+          <div class="bubble">
+            还是三点，不过会议室换到了三楼东侧的小会议室，原来那间临时被市场部借走了。大家记得提前十分钟把各自负责模块的演示环境准备好，尤其是同步那块，上次网络一卡就等了快五分钟，这次最好先在本地录一段视频备用。
+          </div>
+        </div>
+      </div>
+      <div class="msg me">
+        <svg class="avatar" viewBox="0 0 36 36" aria-hidden="true">
+          <rect width="36" height="36" rx="6" fill="#8fbf8a" />
+          <circle cx="18" cy="14" r="6.5" fill="#fff" fill-opacity="0.9" />
+          <path d="M6 33c1.5-7 6.5-10.5 12-10.5S28.5 26 30 33z" fill="#fff" fill-opacity="0.9" />
+        </svg>
+        <div class="body">
+          <div class="bubble">收到</div>
+          <div class="bubble">我两点半先过去调投影</div>
+        </div>
+      </div>
+      <div class="time">上午 10:31</div>
+      <div class="msg">
+        <svg class="avatar" viewBox="0 0 36 36" aria-hidden="true">
+          <rect width="36" height="36" rx="6" fill="#b391d6" />
+          <circle cx="18" cy="14" r="6.5" fill="#fff" fill-opacity="0.9" />
+          <path d="M6 33c1.5-7 6.5-10.5 12-10.5S28.5 26 30 33z" fill="#fff" fill-opacity="0.9" />
+        </svg>
+        <div class="body">
+          <div class="name">陈一鸣</div>
+          <svg class="sticker" viewBox="0 0 76 76" aria-hidden="true">
+            <circle cx="38" cy="38" r="34" fill="#ffd34d" stroke="#e9a91c" stroke-width="2" />
+            <ellipse cx="27" cy="31" rx="4" ry="6" fill="#5a3b12" />
+            <ellipse cx="49" cy="31" rx="4" ry="6" fill="#5a3b12" />
+            <path
+              d="M22 45c4 9 11 13 16 13s12-4 16-13"
+              fill="none"
+              stroke="#5a3b12"
+              stroke-width="4"
+              stroke-linecap="round"
+            />
+          </svg>
+          <div class="bubble">好的</div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

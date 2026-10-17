@@ -1,0 +1,167 @@
+<!doctype html>
+<!--
+  O7-list-paragraphs：设置页。页面标题与一行说明，一个分组标题下的三行设置项（名称、一行说明、开关），
+  第二个分组标题下的项目符号列表（第二项会折行），底部两个按钮。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>list</title>
+    <link rel="stylesheet" href="base.css" />
+    <style>
+      #shot {
+        width: 540px;
+        background: #f5f5f7;
+        padding: 26px 28px 22px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      h1 {
+        font-size: 22px;
+        font-weight: 600;
+        line-height: 1.2;
+      }
+      .lead {
+        margin-top: 6px;
+        color: #6e6e73;
+      }
+      h2 {
+        margin: 22px 0 7px 12px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #6e6e73;
+      }
+      .group {
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.1);
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 10px 14px;
+      }
+      .row + .row {
+        border-top: 1px solid #ececee;
+      }
+      .row .text {
+        flex: 1;
+      }
+      .row .label {
+        font-size: 13px;
+        color: #1d1d1f;
+      }
+      .row .hint {
+        font-size: 12px;
+        color: #86868b;
+        margin-top: 1px;
+      }
+      .switch {
+        flex: none;
+        width: 38px;
+        height: 22px;
+        border-radius: 11px;
+        background: #e3e3e6;
+        position: relative;
+      }
+      .switch::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+      }
+      .switch.on {
+        background: #34c759;
+      }
+      .switch.on::after {
+        left: 18px;
+      }
+      ul {
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 0 0 0.5px rgb(0 0 0 / 0.1);
+        padding: 10px 16px 10px 32px;
+        color: #1d1d1f;
+      }
+      li + li {
+        margin-top: 5px;
+      }
+      li::marker {
+        color: #6e6e73;
+      }
+      .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+      }
+      button {
+        font: inherit;
+        font-size: 13px;
+        padding: 4px 16px;
+        border-radius: 6px;
+        border: none;
+        background: #fff;
+        color: #1d1d1f;
+        box-shadow:
+          0 0 0 0.5px rgb(0 0 0 / 0.16),
+          0 1px 1px rgb(0 0 0 / 0.08);
+      }
+      button.primary {
+        background: #0a84ff;
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="shot">
+      <h1>通知</h1>
+      <p class="lead">选择应用在什么时候提醒你，以及用什么方式提醒。</p>
+
+      <h2>提醒方式</h2>
+      <div class="group">
+        <div class="row">
+          <div class="text">
+            <div class="label">显示横幅</div>
+            <div class="hint">识别完成后在屏幕右上角停留几秒钟</div>
+          </div>
+          <div class="switch on"></div>
+        </div>
+        <div class="row">
+          <div class="text">
+            <div class="label">播放提示音</div>
+            <div class="hint">只在应用位于后台时播放</div>
+          </div>
+          <div class="switch"></div>
+        </div>
+        <div class="row">
+          <div class="text">
+            <div class="label">在菜单栏显示数字角标</div>
+            <div class="hint">有尚未处理的同步冲突时显示</div>
+          </div>
+          <div class="switch on"></div>
+        </div>
+      </div>
+
+      <h2>注意事项</h2>
+      <ul>
+        <li>系统的专注模式会暂停所有横幅。</li>
+        <li>
+          如果同一个账号在多台设备上登录，只有最近使用的那台会播放提示音，其余设备上的提醒会合并到通知中心，直到你再次打开它们。
+        </li>
+        <li>提示音的音量跟随系统设置。</li>
+      </ul>
+
+      <div class="actions">
+        <button>恢复默认</button>
+        <button class="primary">完成</button>
+      </div>
+    </main>
+  </body>
+</html>

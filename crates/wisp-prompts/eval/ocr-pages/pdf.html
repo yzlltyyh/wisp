@@ -1,0 +1,88 @@
+<!doctype html>
+<!--
+  O6-pdf-paragraphs：英文论文 PDF 的一页正文。手工断行，行尾有四处断词连字符（work-/station、inter-/face、
+  expo-/nential、con-/flict），一处在本来就带连字符的词上折行（Wi-/Fi，合并时连字符要保留），
+  行中还有 COVID-19、back-off 这类本来就带连字符的词。
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>pdf</title>
+    <link rel="stylesheet" href="base.css" />
+    <style>
+      #shot {
+        display: inline-block;
+        background: #fff;
+        padding: 44px 56px 48px;
+        font-family: var(--serif);
+        font-size: 15.5px;
+        line-height: 1.42;
+        color: #111;
+      }
+      h2 {
+        font-size: 16px;
+        font-weight: bold;
+        margin-bottom: 10px;
+      }
+      h2 span {
+        margin-right: 14px;
+      }
+      .p + .p {
+        margin-top: 9px;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="shot" class="fit">
+      <h2><span>3.2</span>Replicated Clipboard History</h2>
+      <div class="p">
+        <div class="l">
+          Modern desktop assistants rarely live on a single machine. A user may copy
+        </div>
+        <div class="l">
+          a code snippet on a laptop at home and expect to paste it on an office work-
+        </div>
+        <div class="l">
+          station only a few minutes later. We therefore treat the clipboard history as a
+        </div>
+        <div class="l">
+          replicated log rather than a local cache: each new entry is encrypted on the
+        </div>
+        <div class="l">
+          device that has produced it, uploaded to a storage endpoint the user controls,
+        </div>
+        <div class="l">
+          and then merged by every other device through a deliberately narrow inter-
+        </div>
+        <div class="l">face that exposes nothing but opaque blobs and version vectors.</div>
+      </div>
+      <div class="p">
+        <div class="l">
+          This choice was shaped by the conditions under which the first prototype
+        </div>
+        <div class="l">was evaluated. During the COVID-19 lockdowns most participants worked</div>
+        <div class="l">from home, where several family members often shared one congested Wi-</div>
+        <div class="l">
+          Fi connection, and uploads would stall for seconds at a time. To keep the user
+        </div>
+        <div class="l">
+          interface responsive, synchronization runs in a background task with expo-
+        </div>
+        <div class="l">
+          nential back-off, while the visible history is updated optimistically; a con-
+        </div>
+        <div class="l">
+          flict is surfaced only when two devices modify the same entry concurrently,
+        </div>
+        <div class="l">which in our logs happened in fewer than 0.3% of all recorded sessions.</div>
+      </div>
+      <div class="p">
+        <div class="l">
+          Section 4 describes the merge procedure in more detail, and Section 5 reports
+        </div>
+        <div class="l">measurements collected over six weeks on 41 laptops and desktops.</div>
+      </div>
+    </main>
+    <script src="fit.js"></script>
+  </body>
+</html>

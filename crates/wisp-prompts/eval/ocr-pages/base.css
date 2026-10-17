@@ -1,0 +1,55 @@
+/*
+ * OCR 评测截图页面的公共样式。页面只用系统字体、不引任何外部资源，换一台机器渲染出来的截图只在字形上有差别；
+ * scripts/eval-ocr.mjs 只截 #shot 这个元素，body 的底色与留白不会进截图。
+ */
+:root {
+  --ui:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Noto Sans CJK SC', 'Source Han Sans SC', sans-serif;
+  --serif: 'Times New Roman', Times, 'Liberation Serif', 'Nimbus Roman', serif;
+  --mono: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Liberation Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: #d9d9de;
+  padding: 32px;
+  font-family: var(--ui);
+  color: #1d1d1f;
+}
+
+#shot {
+  overflow: hidden;
+}
+
+/*
+ * 手工断行的段落（pdf、mixed）：每一行是一个块。fit.js 先按最宽一行的自然宽度定下栏宽，再让除段尾以外的行两端对齐，
+ * 所以断行位置永远与页面源码一致，不会因为某台机器的字体略宽而在行尾再折一次
+ */
+.fit .l {
+  white-space: nowrap;
+  text-align: justify;
+  text-align-last: justify;
+}
+
+.fit .l:last-child {
+  text-align-last: start;
+}
+
+.fit.measuring {
+  width: max-content !important;
+}
+
+.fit.measuring .l {
+  text-align-last: start;
+}

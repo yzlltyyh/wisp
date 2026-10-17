@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  O8-mixed-paragraphs：窄栏里两段中英混排的正文。第一段汉字与英文、数字之间有空格，第二段没有（合并后两段要各自与原文一致）；
+  断行都落在两个汉字或标点之间，不落在汉字与英文的交界处（那里原文有没有空格从图上看不出来），只有一处折在网址的「/」之后。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>mixed</title>
+    <link rel="stylesheet" href="base.css" />
+    <style>
+      #shot {
+        display: inline-block;
+        background: #fff;
+        padding: 22px 24px 24px;
+        font-size: 15px;
+        line-height: 1.8;
+        color: #222;
+      }
+      .p + .p {
+        margin-top: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="shot" class="fit">
+      <div class="p">
+        <div class="l">升级到 macOS 15.4 之后，有用户反馈 Wi-Fi 在睡</div>
+        <div class="l">眠唤醒后要等上十几秒才能重新连上。排查下来，</div>
+        <div class="l">问题出在网络扩展所调用的某一个系统 API 上：它</div>
+        <div class="l">在 2.3.1 版本里改成了异步返回，而旧代码仍然按</div>
+        <div class="l">同步方式等待结果，于是第一次请求总会超时。</div>
+      </div>
+      <div class="p">
+        <div class="l">临时的解决办法是先在设置里关闭“自动加入”，或</div>
+        <div class="l">者把路由器的DHCP租期从24小时改成2小时。开</div>
+        <div class="l">发者已经在v2.4.0-beta2中修复了这个问题，完整</div>
+        <div class="l">的排查记录和补丁请见https://example.com/notes/</div>
+        <div class="l">wifi-wake-delay，正式版预计下周推送。</div>
+      </div>
+    </main>
+    <script src="fit.js"></script>
+  </body>
+</html>

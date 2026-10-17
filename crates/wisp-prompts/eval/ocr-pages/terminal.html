@@ -1,0 +1,51 @@
+<!doctype html>
+<!--
+  O1-terminal-lines：终端里的 Python 报错。缩进与指向出错位置的 ^ 都要原样保留；
+  recieve、timout 是代码里本来的拼写，识别时不应被「纠正」。
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>terminal</title>
+    <link rel="stylesheet" href="base.css" />
+    <style>
+      #shot {
+        display: inline-block;
+        background: #1e1e1e;
+        padding: 14px 18px 16px;
+      }
+      pre {
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1.5;
+        color: #d4d4d4;
+      }
+      .prompt {
+        color: #6ad08d;
+      }
+      .err {
+        color: #f48771;
+      }
+      .cursor {
+        display: inline-block;
+        width: 0.6em;
+        height: 1.15em;
+        vertical-align: -0.2em;
+        background: #d4d4d4;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="shot">
+      <pre><span class="prompt">~/tools $</span> python3 sync_check.py --remote https://dav.example.com/backup --timeout 30
+Traceback (most recent call last):
+  File "/opt/tools/sync_check.py", line 58, in &lt;module&gt;
+    main()
+  File "/opt/tools/sync_check.py", line 51, in main
+    recieve_buffer = fetch_manifest(args.remote, timeout=args.timout)
+                                                         ^^^^^^^^^^^
+<span class="err">AttributeError: 'Namespace' object has no attribute 'timout'. Did you mean: 'timeout'?</span>
+<span class="prompt">~/tools $</span> <span class="cursor"></span></pre>
+    </main>
+  </body>
+</html>
