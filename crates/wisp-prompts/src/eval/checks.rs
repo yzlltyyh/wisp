@@ -6,6 +6,9 @@
 //!
 //! 作用域：S1 只对词典式风格断言首行以 `**token**` 开头，literal 改为「≤2 行且不含 `**`」；
 //! S10 / S16（以及 S8 的单行检查）对 learn 只检查 `**词汇**` 之前的部分；S14 只用于编辑动作。
+//!
+//! OCR 截图样本的断言在 `mod.rs` 的 `evaluate_ocr`；段落模式的版面断言（列表项、短行之间不空行，断词还原）在
+//! [`evaluate_ocr_paragraphs`]，其中「模型原始输出没有连续空行」看的是后处理之前的输出。
 
 use std::sync::LazyLock;
 
@@ -75,6 +78,96 @@ static CJK_LATIN_TOUCH: LazyLock<Regex> =
 /// 全角括号包住的纯拉丁括注（应为半角，S9）
 static FULLWIDTH_LATIN_PAREN: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"（[A-Za-z][A-Za-z0-9 \-]*）").expect("regex"));
+
+/// 被拆开的断词留下了连字符和空格（`inter- face`）。`pre- and post-processing` 这类悬空连字符也会命中，所以只做辅助检查
+static SPLIT_HYPHENATION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\p{Ll}- \p{Ll}").expect("regex"));
+/// 两个汉字之间夹着空格（中英混排时空格只该出现在汉字与字母数字之间）
+static SPACE_BETWEEN_HANZI: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\x{4E00}-\x{9FFF}] +[\x{4E00}-\x{9FFF}]").expect("regex"));
+
+/// 「很短的行」的界线（半角宽，东亚文字记 2）：约 10 个汉字或 20 个字母，与「合并段内换行」认定独立短行的界线相同。
+/// 比它窄的多半是昵称、时间、按钮、菜单项或设置项的标签
+const SHORT_LINE: usize = 20;
+
+fn display_width(line: &str) -> usize {
+    line.trim()
+        .chars()
+        .map(|c| if wisp_text::script::is_east_asian(c) { 2 } else { 1 })
+        .sum()
+}
+
+/// 有没有一处空行，上下两行都满足 `pred`（多个连续空行算一处）
+fn blank_line_between(text: &str, pred: impl Fn(&str) -> bool) -> bool {
+    let mut prev: Option<&str> = None;
+    let mut blank = false;
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            blank = prev.is_some();
+            continue;
+        }
+        if blank && prev.is_some_and(&pred) && pred(line) {
+            return true;
+        }
+        prev = Some(line);
+        blank = false;
+    }
+    false
+}
+
+/// 两个列表项之间空了一行（段落模式要求连续的列表项一项一行）
+pub fn blank_line_between_list_items(text: &str) -> bool {
+    blank_line_between(text, wisp_text::join::starts_list_item)
+}
+
+/// 两个很短的行之间空了一行（昵称、时间、按钮、标签这类短的界面元素之间不该空行；标题后面紧跟短句时也会命中，
+/// 所以只做辅助检查）
+pub fn blank_line_between_short_lines(text: &str) -> bool {
+    blank_line_between(text, |l| display_width(l) < SHORT_LINE)
+}
+
+/// 有一行以「字母 + 连字符」结尾：段落模式会把段内的行合起来，行尾还留着连字符说明断词没有接上
+pub fn dangling_hyphen(text: &str) -> bool {
+    text.lines().any(|line| {
+        let mut rev = line.trim_end().chars().rev();
+        matches!(rev.next(), Some('-' | '\u{2010}'))
+            && rev
+                .next()
+                .is_some_and(|c| c.is_alphabetic() && !wisp_text::script::is_east_asian(c))
+    })
+}
+
+/// 有连续两个以上的空行（只含空白的行也算空行）
+pub fn consecutive_blank_lines(text: &str) -> bool {
+    let mut run = 0;
+    text.lines().any(|line| {
+        run = if line.trim().is_empty() { run + 1 } else { 0 };
+        run >= 2
+    })
+}
+
+/// OCR 段落模式的版面断言。`output` 为后处理之后的文本，`raw` 为模型原始输出（看模型自己有没有照提示词排版：
+/// 默认整理会把连续空行压成一个，后处理之后就看不出来了）
+pub fn evaluate_ocr_paragraphs(sample_id: &str, output: &str, raw: &str) -> Vec<Check> {
+    let out = output.trim();
+    let mut c = Checks(Vec::new());
+    c.auto("连续的列表项之间没有空行", !blank_line_between_list_items(out));
+    c.aux("模型原始输出没有连续空行", !consecutive_blank_lines(raw));
+    match sample_id {
+        "O5-chat-paragraphs" | "O7-list-paragraphs" => {
+            c.aux("很短的行之间没有空行", !blank_line_between_short_lines(out));
+        }
+        "O6-pdf-paragraphs" => {
+            c.auto("行尾没有断词连字符（段内的行已合并）", !dangling_hyphen(out));
+            c.aux("没有「inter- face」式的断词残留", !SPLIT_HYPHENATION.is_match(out));
+            c.aux("多段之间有空行", out.contains("\n\n"));
+        }
+        "O8-mixed-paragraphs" => {
+            c.aux("汉字之间没有多余的空格", !SPACE_BETWEEN_HANZI.is_match(out));
+        }
+        _ => {}
+    }
+    c.0
+}
 
 /// learn 风格只取 `**词汇**` 之前的译文部分
 pub fn translation_part<'a>(style_id: &str, output: &'a str) -> &'a str {
@@ -354,6 +447,80 @@ mod tests {
             !auto_ok(&evaluate("S4", "x", style("natural"), "译文：说实话 💀", true)),
             "残留前缀"
         );
+    }
+
+    fn passed(checks: &[Check], name: &str) -> Option<bool> {
+        checks.iter().find(|c| c.name.contains(name)).and_then(|c| c.passed)
+    }
+
+    #[test]
+    fn list_items_and_short_lines_between_blank_lines() {
+        let tight = "Settings\n\n- Wi-Fi\n- Bluetooth\n1. First\n2) Second\n\nBody text after the list.";
+        assert!(!blank_line_between_list_items(tight));
+        let loose = "- Wi-Fi\n\n\n- Bluetooth";
+        assert!(blank_line_between_list_items(loose), "多个空行也算一处");
+        // 列表项与正文之间的空行不算
+        assert!(!blank_line_between_list_items("- item\n\nA paragraph."));
+        assert!(!blank_line_between_list_items("\n\n- item"), "文首的空行不算");
+
+        assert!(blank_line_between_short_lines("Alice\n\n10:24"));
+        assert!(blank_line_between_short_lines("通用\n\n快捷键"));
+        assert!(!blank_line_between_short_lines(
+            "Alice\n10:24\n明天下午三点在会议室见，记得带上电脑"
+        ));
+        assert!(!blank_line_between_short_lines(
+            "通用\n\n这一段说明写得很长，超过了十个汉字的宽度"
+        ));
+    }
+
+    #[test]
+    fn consecutive_blank_lines_ignore_whitespace() {
+        assert!(consecutive_blank_lines("a\n\n\nb"));
+        assert!(consecutive_blank_lines("a\r\n \r\n\t\r\nb"), "只含空白的行也是空行");
+        assert!(!consecutive_blank_lines("a\n\nb\n\nc"));
+    }
+
+    #[test]
+    fn dangling_and_split_hyphenation() {
+        assert!(dangling_hyphen("The protocol negotiates a shared inter-\nface."));
+        assert!(dangling_hyphen("ends with a word hyphen‐"));
+        assert!(!dangling_hyphen("COVID-19 and Wi-Fi stay intact."));
+        assert!(!dangling_hyphen("Range 3 -\nnext"), "前面不是字母");
+        assert!(!dangling_hyphen("中文——"), "破折号不是断词");
+        assert!(!dangling_hyphen("2020-"), "数字后的连字符不是断词");
+    }
+
+    #[test]
+    fn ocr_paragraph_checks() {
+        let good = "Release notes\n\nThe protocol negotiates a shared interface before any data is sent.\n\n- Wi-Fi\n- Bluetooth";
+        let checks = evaluate_ocr_paragraphs("O6-pdf-paragraphs", good, good);
+        assert!(auto_ok(&checks));
+        assert_eq!(passed(&checks, "断词残留"), Some(true));
+        assert_eq!(passed(&checks, "多段之间有空行"), Some(true));
+
+        let bad = "The protocol negotiates a shared inter-\nface before any data is sent.\n\n- Wi-Fi\n\n- Bluetooth";
+        let checks = evaluate_ocr_paragraphs("O6-pdf-paragraphs", bad, bad);
+        assert_eq!(passed(&checks, "列表项之间没有空行"), Some(false));
+        assert_eq!(passed(&checks, "行尾没有断词连字符"), Some(false));
+        assert_eq!(
+            passed(
+                &evaluate_ocr_paragraphs("O6-pdf-paragraphs", "an inter- face", ""),
+                "断词残留"
+            ),
+            Some(false)
+        );
+
+        // 原始输出里的连续空行在后处理之后已经压掉了，只能看原始输出
+        let checks = evaluate_ocr_paragraphs("O5-chat-paragraphs", "Alice\n10:24", "Alice\n\n\n10:24");
+        assert_eq!(passed(&checks, "原始输出没有连续空行"), Some(false));
+        assert_eq!(passed(&checks, "很短的行之间没有空行"), Some(true));
+        let checks = evaluate_ocr_paragraphs("O7-list-paragraphs", "通用\n\n快捷键", "通用\n\n快捷键");
+        assert_eq!(passed(&checks, "很短的行之间没有空行"), Some(false));
+
+        let checks = evaluate_ocr_paragraphs("O8-mixed-paragraphs", "使用 Wisp 时 面板会弹出", "");
+        assert_eq!(passed(&checks, "汉字之间"), Some(false));
+        let checks = evaluate_ocr_paragraphs("O8-mixed-paragraphs", "使用 Wisp 时，面板会弹出", "");
+        assert_eq!(passed(&checks, "汉字之间"), Some(true));
     }
 
     #[test]

@@ -134,8 +134,9 @@ pub struct OcrSample {
     pub expect: &'static str,
 }
 
-/// 4 张截图 × 需要验证的模式：lines / markdown / translate / `<NO_TEXT>`
-pub const OCR_SAMPLES: [OcrSample; 6] = [
+/// 8 张截图 × 需要验证的模式：lines / markdown / translate / `<NO_TEXT>`，以及段落模式的四类常见截图（聊天、带断词的
+/// 英文 PDF 正文、带列表的设置页或网页、中英混排正文）
+pub const OCR_SAMPLES: [OcrSample; 10] = [
     OcrSample {
         id: "O1-terminal-lines",
         file: "terminal.png",
@@ -172,6 +173,30 @@ pub const OCR_SAMPLES: [OcrSample; 6] = [
         mode: OcrMode::Translate,
         expect: "纯图标无文字：判为「未检测到文字」",
     },
+    OcrSample {
+        id: "O5-chat-paragraphs",
+        file: "chat.png",
+        mode: OcrMode::Paragraphs,
+        expect: "聊天截图（几条消息，夹着昵称与时间，有的消息在气泡里折了行）：折行的消息合成一行；连续的短消息、昵称与时间各占一行，彼此之间不空行；不描述头像与表情",
+    },
+    OcrSample {
+        id: "O6-pdf-paragraphs",
+        file: "pdf.png",
+        mode: OcrMode::Paragraphs,
+        expect: "英文 PDF 正文（两段以上，行尾有断词连字符，也有 COVID-19、Wi-Fi 这类本来就带连字符的词）：段内的行合成一行，断词还原（inter-face → interface），本来的连字符保留；段与段之间空一行",
+    },
+    OcrSample {
+        id: "O7-list-paragraphs",
+        file: "list.png",
+        mode: OcrMode::Paragraphs,
+        expect: "带列表的设置页或网页（标题、说明文字、一组列表项或设置项标签、按钮）：标题与说明文字之间空一行；连续的列表项、设置项标签与按钮各占一行，彼此之间不空行，这一组的前后各空一行；列表符号与编号保留",
+    },
+    OcrSample {
+        id: "O8-mixed-paragraphs",
+        file: "mixed.png",
+        mode: OcrMode::Paragraphs,
+        expect: "中英混排的多行正文：段内的行合成一行；汉字之间不加空格，汉字与英文、数字之间有没有空格与原文一致；英文单词与 URL 不被拆开",
+    },
 ];
 
 #[cfg(test)]
@@ -187,5 +212,28 @@ mod tests {
         assert_eq!(sample_by_id("S16").and_then(|s| s.forced_target), Some(Lang::ZhCn));
         assert!(sample_by_id("S17").is_none());
         assert_eq!(SAMPLES.iter().filter(|s| s.edit_only).count(), 1);
+    }
+
+    #[test]
+    fn ocr_samples_cover_every_mode_with_unique_ids() {
+        for mode in [
+            OcrMode::Lines,
+            OcrMode::Paragraphs,
+            OcrMode::Markdown,
+            OcrMode::Translate,
+        ] {
+            assert!(OCR_SAMPLES.iter().any(|o| o.mode == mode), "{mode:?} 没有样本");
+        }
+        let mut ids: Vec<&str> = OCR_SAMPLES.iter().map(|o| o.id).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), OCR_SAMPLES.len());
+        // 段落模式的四类截图各一张
+        let paragraphs: Vec<&str> = OCR_SAMPLES
+            .iter()
+            .filter(|o| o.mode == OcrMode::Paragraphs)
+            .map(|o| o.file)
+            .collect();
+        assert_eq!(paragraphs, ["chat.png", "pdf.png", "list.png", "mixed.png"]);
     }
 }

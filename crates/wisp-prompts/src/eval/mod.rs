@@ -371,8 +371,8 @@ fn ocr_mode_name(mode: OcrMode) -> &'static str {
     }
 }
 
-/// OCR 样本的断言
-fn evaluate_ocr(sample: &OcrSample, output: &str, no_text: bool) -> Vec<Check> {
+/// OCR 样本的断言（`raw` 为模型原始输出，段落模式用来检查模型自己的排版）
+fn evaluate_ocr(sample: &OcrSample, output: &str, raw: &str, no_text: bool) -> Vec<Check> {
     let check = |name: &str, kind: CheckKind, passed: Option<bool>| Check {
         name: name.to_owned(),
         kind,
@@ -399,6 +399,9 @@ fn evaluate_ocr(sample: &OcrSample, output: &str, no_text: bool) -> Vec<Check> {
             Some(out.chars().any(|c| ('\u{4E00}'..='\u{9FFF}').contains(&c))),
         )),
         _ => {}
+    }
+    if sample.mode == OcrMode::Paragraphs {
+        v.extend(checks::evaluate_ocr_paragraphs(sample.id, out, raw));
     }
     v.push(check(sample.expect, CheckKind::Manual, None));
     v
@@ -676,7 +679,7 @@ async fn run_case(
         OCR_SAMPLES
             .iter()
             .find(|o| o.id == case.sample_id)
-            .map_or_else(Vec::new, |o| evaluate_ocr(o, &output, finish.no_text))
+            .map_or_else(Vec::new, |o| evaluate_ocr(o, &output, &raw, finish.no_text))
     };
     Outcome {
         elapsed_ms: started.elapsed().as_millis(),
@@ -1108,6 +1111,34 @@ mod tests {
         let mut cut = png(10, 10);
         cut.truncate(20);
         assert!(prepare_ocr_png(cut).is_err());
+    }
+
+    #[test]
+    fn paragraph_ocr_samples_get_layout_checks() {
+        let sample = OCR_SAMPLES
+            .iter()
+            .find(|o| o.id == "O7-list-paragraphs")
+            .expect("sample");
+        let raw = "Wi-Fi\n\n\nBluetooth";
+        let checks = evaluate_ocr(sample, "General\n\n- Wi-Fi\n\n- Bluetooth", raw, false);
+        let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"连续的列表项之间没有空行"), "{names:?}");
+        assert!(names.contains(&sample.expect), "期望要点留给人工评审");
+        let list = checks
+            .iter()
+            .find(|c| c.name == "连续的列表项之间没有空行")
+            .expect("check");
+        assert_eq!(list.passed, Some(false));
+        // 其他模式不做段落版面检查
+        let lines = OCR_SAMPLES
+            .iter()
+            .find(|o| o.id == "O1-terminal-lines")
+            .expect("sample");
+        assert!(
+            !evaluate_ocr(lines, "a\n\n- b\n\n- c", "", false)
+                .iter()
+                .any(|c| c.name.contains("列表项"))
+        );
     }
 
     #[test]

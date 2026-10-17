@@ -229,7 +229,7 @@ pgrep -fl 'llama-server|wisp-worker|wisp-guard'
 - **视觉稿**：`panel.html?scenario=design.<视图>`（如 `design.translate-done`、`design.ocr-done`、`design.clipboard-list`）与 `design.settings-models`、`design.onboarding-permissions` 是各视图、设置与引导窗口的静态视觉基准，实现改动后可以对照。源码在 `apps/desktop/src/panel/shell/design/`。
 - **窗口层实验台**：先 `pnpm -C apps/desktop build`，再以 `WISP_WINDOW_LAB=1 WISP_WINDOW_LAB_EXIT=1` 运行带 `tauri/custom-protocol` 的 debug 构建（`target/debug/wisp-desktop`）。它不经业务流程，直接用真实的窗口层走一遍面板、固定窗口、覆盖层、设置窗口与面板回收等路径，每一步输出一行 `window_lab step=… ok|fail` 日志，并检查窗口泄漏；配置与数据放在隔离的临时目录。另有只做测量的模式（内存、冷唤出、延迟等），全部开关见 `apps/desktop/src-tauri/src/windows/window_lab.rs` 的模块注释。
 - **帧模式实验台**：`WISP_FRAME_LAB=native|native-css-fill|css` 让面板反复进入、流式增长、收缩、退出，用于录屏核对与逐帧耗时度量，参数见 `apps/desktop/src-tauri/src/windows/frame_lab.rs` 的模块注释。
-- **提示词评测**：`cargo run -p wisp-prompts --features eval --bin wisp-eval -- --provider-json <文件> --styles all` 用指定的服务把内置样本按各风格翻译一遍，结果写到 `target/eval-runs/`（`--out` 可改），自动断言汇总通过率，其余项留给人工检查；Key 从 `WISP_EVAL_KEY_<ID>` 读取（ID 为服务 id 的大写，非字母数字替换为 `_`）。用法见 `crates/wisp-prompts/src/eval/mod.rs` 的模块注释。
+- **提示词评测**：`cargo run -p wisp-prompts --features eval --bin wisp-eval -- --provider-json <文件> --styles all` 用指定的服务把内置样本按各风格翻译一遍，结果写到 `target/eval-runs/`（`--out` 可改），自动断言汇总通过率，其余项留给人工检查；Key 从 `WISP_EVAL_KEY_<ID>` 读取（ID 为服务 id 的大写，非字母数字替换为 `_`）。用法见 `crates/wisp-prompts/src/eval/mod.rs` 的模块注释。支持图片的模型另跑 OCR 截图样本：截图（PNG）放在 `--ocr-dir`（默认 `<out>/ocr-samples/`），缺少的样本跳过，文件名与期望见同目录 `samples.rs` 的 `OCR_SAMPLES`；仓库里不放截图。段落模式要四张：`chat.png`（几条聊天消息，夹着昵称与时间）、`pdf.png`（两段以上的英文 PDF 正文，行尾有断词连字符）、`list.png`（带列表或一组设置项的设置页、网页）、`mixed.png`（中英混排的多行正文）。
 
 ## 目录约定
 
