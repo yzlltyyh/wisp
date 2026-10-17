@@ -23,6 +23,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "qa:shots": "node scripts/qa/screenshots.ts",
+    "eval:ocr": "node scripts/eval-ocr.mjs",
     "i18n:check": "node scripts/check-i18n.mjs",
     "check:contract": "node scripts/check-contract.mjs",
     "check:size": "node scripts/check-size.mjs",
