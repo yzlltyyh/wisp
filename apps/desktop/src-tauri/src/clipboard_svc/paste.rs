@@ -110,6 +110,16 @@ impl Recorded {
             Self::Existing { .. } => None,
         }
     }
+
+    /// 这次写入落在了 `old` 那一行上、而且不能确定内容变了：要么只是把它移到顶部，要么它被删掉后行号复用、新插入的正是
+    /// 同样的文字（行号与 hash 都和 `old` 一样），要么读不到 hash、无从核对。这一行都是刚写入的当前条目——这时删 `old`
+    /// 删掉的正是它（删除时核对 hash 也会通过）
+    fn continues(self, old: CopiedItem) -> bool {
+        match self {
+            Self::Created(item) => item == old,
+            Self::Existing { id, hash } => id == old.id && hash.is_none_or(|h| h == old.hash),
+        }
+    }
 }
 
 /// 一次自身写入之后的交接：新回执记下的新建条目，以及被这次写入取代、要删掉的上一条
@@ -121,15 +131,18 @@ pub(crate) struct Succession {
 
 /// 同一张截图又一次写剪贴板（重新识别的自动复制、切换排版的跟随）之后，上一次写入新建的那一条（`prev`）怎么处理。
 /// `replace`：剪贴板仍是上一次写入的内容（期间没有别的复制），可以取代它；`recorded`：这次写入在历史里的结果。
-/// - 内容相同只会把上一次新建的那一条移到顶部（行号与内容 hash 都对得上）：它仍是这张截图的复制新建的，继续记在新回执上，
-///   之后的写入还能替换它；
-/// - 可以取代、新文本也进了历史：删掉上一条（删除时还会核对 hash，收藏过的保留），历史里只留这一次的；
+/// - 这次写入落在上一条的那一行上（[`Recorded::continues`]）：内容相同只会把上一次新建的那一条移到顶部；行号没有
+///   AUTOINCREMENT，上一条若已被删掉（悬浮剪贴板里删、别的设备经同步删），重写相同的文字会新插入一行、拿回同一个行号与
+///   hash；读不到 hash 时也无从分辨。这一行都是刚写入的当前条目，不删（删了剪贴板里有、历史里却没有，删除还会经同步
+///   传播），继续记在新回执上，之后的写入还能替换它；
+/// - 可以取代、新文本也进了历史：删掉上一条（删除时还会核对 hash，收藏过的保留），历史里只留这一次的；同一行号上内容已经
+///   变了的（hash 读得到且不同），上一条早已不在，删除时核对 hash 不会误删这一行；
 /// - 可以取代、但新文本没能进入历史（暂停、被隐私规则跳过、记录失败）：不删——只删不增会让这次结果从历史里消失；旧条目
 ///   留在新回执上，下一次写入时再替换；
 /// - 期间有过别的复制：上一条已经成了普通的历史，不删，也不再记着它
 pub(crate) fn succession(prev: Option<CopiedItem>, replace: bool, recorded: Option<Recorded>) -> Succession {
     match (prev, recorded) {
-        (Some(old), Some(Recorded::Existing { id, hash })) if id == old.id && hash == Some(old.hash) => Succession {
+        (Some(old), Some(r)) if r.continues(old) => Succession {
             created: Some(old),
             discard: None,
         },

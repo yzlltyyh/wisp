@@ -541,7 +541,12 @@ fn succession_table() {
         id: 1,
         hash: Some([9; 32]),
     };
+    // 行号一样、读不到 hash：这一行就是这次写入刚落下（移到顶部）的当前条目，删上一条可能正好删掉它
     let unverified = Recorded::Existing { id: 1, hash: None };
+    // 上一条被删掉后行号复用，这次写入新插入的正是同样的文字：新行与旧回执记的完全一样
+    let recreated = Recorded::Created(old);
+    // 行号复用、内容不同：真正新建的另一条（删上一条时核对 hash，不会误删它）
+    let recreated_other = Recorded::Created(item(1, 3));
     let other = Recorded::Existing {
         id: 7,
         hash: Some([7; 32]),
@@ -549,6 +554,16 @@ fn succession_table() {
     let keep = |created| Succession { created, discard: None };
     for replace in [true, false] {
         assert_eq!(succession(Some(old), replace, Some(same)), keep(Some(old)), "{replace}");
+        assert_eq!(
+            succession(Some(old), replace, Some(recreated)),
+            keep(Some(old)),
+            "刚写入的这一条不能删：{replace}"
+        );
+        assert_eq!(
+            succession(Some(old), replace, Some(unverified)),
+            keep(Some(old)),
+            "核对不了的当前条目不删：{replace}"
+        );
         assert_eq!(succession(None, replace, Some(created)), keep(Some(item(2, 2))));
         assert_eq!(succession(None, replace, None), keep(None));
     }
@@ -559,9 +574,17 @@ fn succession_table() {
     assert_eq!(succession(Some(old), true, Some(created)), discard(Some(item(2, 2))));
     assert_eq!(succession(Some(old), true, Some(other)), discard(None));
     assert_eq!(succession(Some(old), true, Some(reused)), discard(None));
-    assert_eq!(succession(Some(old), true, Some(unverified)), discard(None));
+    assert_eq!(
+        succession(Some(old), true, Some(recreated_other)),
+        discard(Some(item(1, 3)))
+    );
+    assert_eq!(
+        succession(Some(old), false, Some(recreated_other)),
+        keep(Some(item(1, 3)))
+    );
     assert_eq!(succession(Some(old), true, None), keep(Some(old)), "不能只删不增");
     assert_eq!(succession(Some(old), false, Some(created)), keep(Some(item(2, 2))));
     assert_eq!(succession(Some(old), false, Some(other)), keep(None));
+    assert_eq!(succession(Some(old), false, Some(reused)), keep(None));
     assert_eq!(succession(Some(old), false, None), keep(None));
 }

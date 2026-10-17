@@ -1599,6 +1599,37 @@ fn re_recognising_the_same_text_continues_the_previous_item() {
     assert_eq!(r.ids().len(), 2);
 }
 
+/// 用户在历史里删掉了这张截图的条目（删除不改系统剪贴板），之后重新识别、切换排版写出相同的文字：行号没有
+/// AUTOINCREMENT，新插入的行拿回同一个行号、内容 hash 也相同，与旧回执记的完全一样——它是刚写入的当前条目，不能当作
+/// 被取代的旧条目删掉（删除还会经同步传播到所有设备）
+#[test]
+fn rewriting_the_same_text_after_the_entry_was_deleted_keeps_the_new_entry() {
+    for follow in [false, true] {
+        let r = rig();
+        let first = replace_copy(&r, None, "单独一行");
+        let own = first.created.expect("新建");
+        r.engine.delete(own.id, false).expect("用户删掉");
+        assert!(r.ids().is_empty());
+        r.events();
+        let again = if follow {
+            recopy(&r, first, "单独一行").expect("剪贴板没变：写入")
+        } else {
+            replace_copy(&r, Some(first), "单独一行")
+        };
+        let new = again.created.expect("重新插入了一条");
+        assert_eq!(new, own, "行号复用、内容相同（follow={follow}）");
+        assert_eq!(r.ids(), vec![new.id], "刚写入的这一条留在历史里（follow={follow}）");
+        let events = r.events();
+        assert!(
+            !events.contains(&ClipboardChanged::Removed { id: new.id }),
+            "{events:?}"
+        );
+        // 它仍记在回执上：之后切换排版照常替换它
+        let next = recopy(&r, again, "单独 一行").expect("写入");
+        assert_eq!(r.ids(), vec![next.created.expect("新建").id]);
+    }
+}
+
 #[test]
 fn re_recognition_never_claims_or_deletes_what_the_user_copied_before() {
     let r = rig();

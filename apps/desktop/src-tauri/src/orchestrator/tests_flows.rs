@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -109,10 +109,10 @@ struct FakeEnv {
     copies: Mutex<Vec<String>>,
     /// 假的系统剪贴板：当前的 change_id（每次 `copy_text` 加一；测试里直接加一表示别的程序复制了东西）
     clip_change: AtomicU64,
-    /// `copy_text` 新建的历史条目 id（1 起）；被取代而删掉的条目
-    clip_items: AtomicI64,
+    /// 被取代而删掉的条目
     clip_removed: Mutex<Vec<i64>>,
-    /// 假的剪贴板历史里还在的条目（id, 文本）：内容相同的再次复制只把那一条移到顶部（与存储层的去重一致）
+    /// 假的剪贴板历史里还在的条目（id, 文本）：内容相同的再次复制只把那一条移到顶部（与存储层的去重一致）；新条目的 id
+    /// 是现存最大的加一（1 起），与存储层的行号一样会复用被删掉的最大行号
     clip_live: Mutex<Vec<(i64, String)>>,
     /// 收藏过的条目：被取代时保留（命名即收藏）
     clip_pinned: Mutex<HashSet<i64>>,
@@ -203,7 +203,6 @@ impl FakeEnv {
             finished: Mutex::new(Vec::new()),
             copies: Mutex::new(Vec::new()),
             clip_change: AtomicU64::new(100),
-            clip_items: AtomicI64::new(0),
             clip_removed: Mutex::new(Vec::new()),
             clip_live: Mutex::new(Vec::new()),
             clip_pinned: Mutex::new(HashSet::new()),
@@ -664,25 +663,28 @@ impl FakeEnv {
         let recorded = match live.iter().find(|(_, t)| t == text) {
             Some(&(id, _)) => Recorded::Existing {
                 id,
-                hash: Some(fake_item(id).hash),
+                hash: Some(fake_item(id, text).hash),
             },
             None => {
-                let id = self.clip_items.fetch_add(1, Ordering::SeqCst) + 1;
+                let id = live.iter().map(|&(id, _)| id).max().unwrap_or(0) + 1;
                 live.push((id, text.to_owned()));
-                Recorded::Created(fake_item(id))
+                Recorded::Created(fake_item(id, text))
             }
         };
         Ok((change_id, recorded))
     }
 
-    /// 按剪贴板服务的规则交接，删掉被取代、没有收藏的那一条
+    /// 按剪贴板服务的规则交接，删掉被取代、没有收藏的那一条（与存储层一样，只在这一行的内容 hash 仍对得上时删）
     fn fake_succeed(&self, prev: Option<CopiedItem>, replace: bool, change_id: u64, recorded: Recorded) -> CopyReceipt {
         let next = succession(prev, replace, Some(recorded));
         if let Some(old) = next.discard
             && !self.clip_pinned.lock().contains(&old.id)
         {
             let mut live = self.clip_live.lock();
-            if let Some(i) = live.iter().position(|(id, _)| *id == old.id) {
+            if let Some(i) = live
+                .iter()
+                .position(|(id, text)| *id == old.id && fake_item(*id, text) == old)
+            {
                 live.remove(i);
                 self.clip_removed.lock().push(old.id);
             }
@@ -699,10 +701,12 @@ impl FakeEnv {
     }
 }
 
-/// 假剪贴板历史里第 `id` 条（内容 hash 只需各条不同）
-fn fake_item(id: i64) -> CopiedItem {
+/// 假剪贴板历史里行号为 `id`、内容为 `text` 的条目（内容 hash 只取决于文字，同样的文字 hash 相同）
+fn fake_item(id: i64, text: &str) -> CopiedItem {
+    let mut hasher = std::hash::DefaultHasher::new();
+    std::hash::Hash::hash(text, &mut hasher);
     let mut hash = [0; 32];
-    hash[..8].copy_from_slice(&id.to_le_bytes());
+    hash[..8].copy_from_slice(&std::hash::Hasher::finish(&hasher).to_le_bytes());
     CopiedItem { id, hash }
 }
 
@@ -3495,7 +3499,7 @@ async fn ocr_recopy_follows_only_while_the_clipboard_still_holds_the_auto_copy()
     let crop = core.captures.crop(&cap).expect("crop");
     until("auto copy", WAIT, || crop.copied().is_some()).await;
     let first = crop.copied().expect("receipt");
-    assert_eq!(first.created, Some(fake_item(1)));
+    assert_eq!(first.created, Some(fake_item(1, "第一段\n\n第二段")));
     let rid = payload.request_id.clone().expect("request");
     let recopy = |text: &str| core.ocr_recopy(&RequestCaller::Panel, &cap, &rid, text.to_owned());
 
@@ -3504,7 +3508,7 @@ async fn ocr_recopy_follows_only_while_the_clipboard_still_holds_the_auto_copy()
     assert_eq!(env.copies.lock().last().map(String::as_str), Some("第一段\n第二段"));
     assert_eq!(*env.clip_removed.lock(), [1]);
     let second = crop.copied().expect("receipt");
-    assert_eq!(second.created, Some(fake_item(2)));
+    assert_eq!(second.created, Some(fake_item(2, "第一段\n第二段")));
     assert_ne!(second.change_id, first.change_id);
     // 切回原样：替换的是第 2 条，历史里始终只留一条
     assert!(recopy("第一段\n\n第二段").await.expect("recopy"));
@@ -3797,7 +3801,7 @@ async fn re_recognising_replaces_the_previous_auto_copy_in_the_history() {
     let again = re_recognise_and_copy(&env, &core, session, &cap, "第三段").await;
     assert_eq!(*env.clip_removed.lock(), [1], "剪贴板仍是上一次的自动复制：取代它");
     assert_eq!(env.clip_ids(), [2]);
-    assert_eq!(crop.copied().and_then(|r| r.created), Some(fake_item(2)));
+    assert_eq!(crop.copied().and_then(|r| r.created), Some(fake_item(2, "第三段")));
     // 切换排版的跟随替换这次的条目；之后再重新识别，取代的是跟随写入的那一条
     assert!(
         core.ocr_recopy(&RequestCaller::Panel, &cap, &again, "第三段。".to_owned())
@@ -3825,7 +3829,7 @@ async fn re_recognising_keeps_a_favorited_entry() {
     re_recognise_and_copy(&env, &core, session, &cap, "第二段").await;
     assert!(env.clip_removed.lock().is_empty(), "收藏过的保留");
     assert_eq!(env.clip_ids(), [1, 2]);
-    assert_eq!(crop.copied().and_then(|r| r.created), Some(fake_item(2)));
+    assert_eq!(crop.copied().and_then(|r| r.created), Some(fake_item(2, "第二段")));
     re_recognise_and_copy(&env, &core, session, &cap, "第三段").await;
     assert_eq!(*env.clip_removed.lock(), [2]);
     assert_eq!(env.clip_ids(), [1, 3]);
@@ -3865,7 +3869,11 @@ async fn re_recognising_the_same_text_keeps_the_entry_for_the_next_layout_switch
 
     let again = re_recognise_and_copy(&env, &core, session, &cap, "第一段\n\n第二段").await;
     let receipt = crop.copied().expect("receipt");
-    assert_eq!(receipt.created, Some(fake_item(1)), "接续上一次新建的那一条");
+    assert_eq!(
+        receipt.created,
+        Some(fake_item(1, "第一段\n\n第二段")),
+        "接续上一次新建的那一条"
+    );
     assert_ne!(receipt.change_id, first.change_id);
     assert!(env.clip_removed.lock().is_empty());
     assert_eq!(env.clip_ids(), [1]);
@@ -3875,6 +3883,34 @@ async fn re_recognising_the_same_text_keeps_the_entry_for_the_next_layout_switch
             .expect("recopy")
     );
     assert_eq!(*env.clip_removed.lock(), [1], "切换排版替换的是接续下来的那一条");
+    assert_eq!(env.clip_ids(), [2]);
+}
+
+/// 面板开着时用户在历史里删掉了这次识别的条目（悬浮剪贴板里删、或别的设备经同步删掉；删除不改系统剪贴板），再重新
+/// 识别出相同的文字：新插入的条目拿回同一个行号、内容 hash 也相同，与上一次的回执完全一样。它是刚写入的当前条目，
+/// 不能当作被取代的旧条目删掉——否则剪贴板里是这段文字、历史里却没有，删除还会同步到所有设备
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn re_recognising_the_same_text_after_the_entry_was_deleted_keeps_the_new_entry() {
+    let (env, core) = setup(configured());
+    env.llm_outputs.lock().insert("ocr", "第一段".to_owned());
+    let (payload, session, _) = capture_and_wait(&env, &core, HotkeyAction::Ocr).await;
+    let cap = payload.capture_id.clone();
+    let crop = core.captures.crop(&cap).expect("crop");
+    until("auto copy", WAIT, || crop.copied().is_some()).await;
+    assert_eq!(env.clip_ids(), [1]);
+    env.clip_live.lock().clear();
+
+    let again = re_recognise_and_copy(&env, &core, session, &cap, "第一段").await;
+    assert_eq!(crop.copied().and_then(|r| r.created), Some(fake_item(1, "第一段")));
+    assert!(env.clip_removed.lock().is_empty(), "刚写入的这一条不删");
+    assert_eq!(env.clip_ids(), [1]);
+    // 它仍记在回执上：之后切换排版照常替换它
+    assert!(
+        core.ocr_recopy(&RequestCaller::Panel, &cap, &again, "第一段。".to_owned())
+            .await
+            .expect("recopy")
+    );
+    assert_eq!(*env.clip_removed.lock(), [1]);
     assert_eq!(env.clip_ids(), [2]);
 }
 
