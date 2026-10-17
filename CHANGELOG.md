@@ -19,7 +19,7 @@ Each version ends with an English summary.
 - ⌘P 在剪贴板里改为打开悬浮剪贴板（也可以点头部的「悬浮」按钮），与翻译、OCR 面板里「固定」的按键一致：剪贴板变成一个默认置顶、可以一直开着的小窗口，可拖动、调整大小并记住位置；点一条就粘贴进正在使用的应用，不抢焦点。
 - 智能识别：条目里的电话、邮箱、链接、IP 地址、验证码、快递单号、订单号、金额与日期时间排成一行芯片，单击只粘贴这一段，⌥ 单击只复制，⌘E 用键盘选择；悬停预览、全文预览与 OCR 结果里同样可用。识别只在本机进行，可以在「设置 → 剪贴板 → 智能识别」里按种类关闭；身份证号与银行卡号的识别默认关闭，打开后显示时遮住中间几位。
 - 验证码 10 分钟后自动从剪贴板历史中删除（收藏的除外，可以在设置里关闭）。开启同步时，各台设备按同一到期时间各自删除，到期前在任意一台设备上收藏的会在各台设备上保留；「同步内容」新增「验证码」开关，关闭后验证码只留在本机。
-- 「粘贴为…」（⌥⇧↩ 或右键菜单）：合并为一行、去掉空行、去掉首尾空白、大小写转换、转为半角或全角、格式化或压缩 JSON、去掉链接里的跟踪参数，只列出对当前条目适用的几项。结果直接粘贴，不另记一条历史。
+- 「粘贴为…」（⌥⇧↩ 或右键菜单）：合并为一行、合并段内换行（把从 PDF 复制来的硬换行连成段落，列表与代码不动）、去掉空行、去掉首尾空白、大小写转换、转为半角或全角、格式化或压缩 JSON、去掉链接里的跟踪参数，只列出对当前条目适用的几项。结果直接粘贴，不另记一条历史。
 - 多选：⌘ 单击、⇧ 单击或 ⇧↑ / ⇧↓ 选择多条，按选择顺序编号；回车按顺序合并粘贴，也可以一起收藏、删除或拖出。
 - 连续粘贴：选好多条后按 ⌘↩，第一条立即粘贴，之后在任何应用里每按一次 ⌘V（Windows / Linux：Ctrl+V）就粘贴下一条。Wisp 只在连续粘贴进行期间临时接管粘贴键，粘贴完、按 Esc、锁屏或 10 分钟没有操作时立即恢复；Linux 的 Wayland 会话下不可用。
 - 剪贴板里的文字、链接与富文本可以直接拖进其他应用（多选时拖出合并后的文字）。
@@ -34,8 +34,9 @@ Each version ends with an English summary.
 - PaddleOCR 云端识别：在「模型与服务」里添加 PaddleOCR，填入 AI Studio 的访问令牌，就可以用 PP-OCRv6、PP-StructureV3 与 PaddleOCR-VL-1.6 识别截图；也可以填 AI Studio 上部署的服务或自托管的 PaddleX 服务。访问令牌与 API Key 一样只保存在系统凭据存储里；PP-StructureV3 较慢（每张几秒到几十秒，随服务负载变化），界面上会提示。
 - 结构化识别的结果里有表格或公式时，OCR 面板直接显示表格，公式可以单独复制；随时可以切回 Markdown 源码编辑。
 - 截图 OCR 的结果默认更干净：纯文本与段落模式去掉每行末尾的空格与制表符，连续的空行只留一行，开头和结尾不留空行；行首缩进与行内空格保持不变，也不会合并行；结构化与直接翻译的结果不受影响。
-- OCR 结果面板新增排版按钮（纯文本与段落模式）：在「原样」「去掉空行」「合并为一行」之间切换，识别文字本身不变，随时可以换回原样；⌘L（Windows / Linux：Ctrl+L）在原样与最近用过的一种之间切换。开着自动复制时剪贴板随之更新，回到原来的应用直接粘贴就是看到的版本，剪贴板历史里也只留一条（收藏过的不删）；改过文字后可以在排版菜单里放弃修改、恢复识别结果。
+- OCR 结果面板新增排版按钮（纯文本与段落模式）：在「原样」「去掉空行」「合并为一行」之间切换，纯文本模式另有「合并段内换行」，识别文字本身不变，随时可以换回原样；⌘L（Windows / Linux：Ctrl+L）在原样与最近用过的一种之间切换。开着自动复制时剪贴板随之更新，回到原来的应用直接粘贴就是看到的版本，剪贴板历史里也只留一条（收藏过的不删）；改过文字后可以在排版菜单里放弃修改、恢复识别结果。
 - 「设置 → OCR → 识别之后」新增「排版」，可以让识别结果默认去掉空行。
+- OCR 结果面板里按 ⌘↩（Windows / Linux：Ctrl+Enter）把当前的文字粘贴回截图前的应用并收起面板，改完文字不用再复制、关闭、粘贴三步；粘贴的与 ⌘C 复制的是同一段，固定窗口里改为复制。
 
 - macOS 版改用固定的自签名证书签名：以后更新版本时，已授予的辅助功能、屏幕录制与输入监控权限保持有效，不用再每次重新授权。从 0.1.1 更新到这一版时还需要最后一次重新授权（菜单栏会提示）。
 ### 修复
@@ -43,6 +44,9 @@ Each version ends with an English summary.
 - 用 Windows 记事本等编辑器保存、带 UTF-8 BOM 的 settings.json、styles.json、glossary.json 与 state.json 不再被当成损坏的文件而恢复默认。
 - 设置窗口里的模型服务与术语表改为逐条保存：手动修改配置文件或从其他设备同步来的改动，不会被设置窗口里打开着的旧内容整组覆盖。
 - Windows 在 100 %、125 %、150 %、250 %、300 % 等缩放下，托盘图标不再发虚：通知区域改用按它实际尺寸绘制的图标，更改缩放或换主显示器后自动换成对应的尺寸。
+- OCR 的段落模式里，连续的列表项、表格行与按钮、标签这类短的界面元素之间不再空一行，每项一行；段落之间与标题前后仍空一行。
+- 重新识别同一张截图（⌘R、换识别模式或模型）不再每次在剪贴板历史里多出一条：新结果替换上一次自动复制新建的那一条，识别出的文字没变时沿用原来那一条；期间复制过别的内容或收藏了那一条时不删。
+- 点 OCR 结果面板里的复制按钮、芯片或排版按钮后，键盘仍留在原来的应用里，回去直接 ⌘V 就能粘贴，不用先点回原应用；要在面板里用 ⌘C、⌘L 时先点一下文字或空白处。
 
 ### English summary
 
@@ -56,7 +60,7 @@ Each version ends with an English summary.
 - In the clipboard, ⌘P now opens the floating clipboard (or click Float in the header), matching the Pin key in the translation and OCR panels: a small window that stays on top, can be moved, resized, and left open, and remembers where you put it. Click an item to paste it into the app you're using without taking focus.
 - Smart detection: phone numbers, email addresses, links, IP addresses, verification codes, tracking and order numbers, amounts, and dates show up as a row of chips. Click a chip to paste just that part, ⌥-click to copy it, or press ⌘E to pick one with the keyboard; chips also appear in previews and OCR results. Detection runs on your device and each kind can be turned off in Settings → Clipboard → Smart detection; ID and bank card numbers are off by default and shown with the middle digits hidden.
 - Verification codes are removed from clipboard history 10 minutes after you copy them (favorites excepted; you can turn this off). With sync on, every device removes it at the same expiry time, and a code favorited on any device before it expires is kept everywhere; a new Verification codes switch under What to sync keeps codes on this device only.
-- Paste as (⌥⇧↩ or the right-click menu) joins lines, removes blank lines, trims whitespace, changes case, converts between half-width and full-width characters, formats or minifies JSON, and removes tracking parameters from links, listing only the options that apply. The result is pasted directly and isn't added to the history.
+- Paste as (⌥⇧↩ or the right-click menu) joins lines, joins lines within paragraphs (rejoining lines wrapped in a PDF while leaving lists and code alone), removes blank lines, trims whitespace, changes case, converts between half-width and full-width characters, formats or minifies JSON, and removes tracking parameters from links, listing only the options that apply. The result is pasted directly and isn't added to the history.
 - Multi-select: ⌘-click, ⇧-click, or ⇧↑ / ⇧↓ to select several items, numbered in the order you pick them. Press Return to paste them together in that order, or add them to favorites, delete, or drag them out at once.
 - Paste in sequence: select several items and press ⌘↩. The first one is pasted right away, and each ⌘V (Ctrl+V on Windows and Linux) in any app pastes the next. Wisp takes over the paste key only while a sequence is running and lets go as soon as it finishes, you press Esc, the screen locks, or 10 minutes pass; not available in Linux Wayland sessions.
 - Text, links, and rich text can be dragged from the clipboard straight into other apps (several selected items are dragged as one block of text).
@@ -72,10 +76,14 @@ Each version ends with an English summary.
 - PaddleOCR in the cloud: add PaddleOCR in Models & services and enter an AI Studio access token to recognize screenshots with PP-OCRv6, PP-StructureV3, and PaddleOCR-VL-1.6, or point it at a service deployed on AI Studio or a self-hosted PaddleX service. The access token is kept only in the system credential store, like an API key; PP-StructureV3 is slower (a few seconds to tens of seconds per image, depending on load), and the UI says so.
 - When a structured OCR result contains tables or formulas, the OCR panel shows the tables as real tables and lets you copy each formula; you can switch back to the Markdown source to edit it at any time.
 - OCR results are cleaner by default: in Plain text and Paragraphs mode, spaces and tabs at the end of each line are removed, runs of blank lines become one, and there are no blank lines at the start or end. Indentation and spaces within a line are kept and lines are never joined; Structured and direct translation results are unchanged.
-- The OCR result panel has a layout button in Plain text and Paragraphs mode: switch between As recognized, Remove blank lines, and Join lines without changing the recognized text, and switch back at any time. ⌘L (Ctrl+L on Windows and Linux) toggles between As recognized and the last one you used. With auto-copy on, the clipboard follows, so pasting in the app you came from gives you what you see, and clipboard history keeps a single entry (favorites are never removed). If you've edited the text, the layout menu can discard your edits and restore the recognized text.
+- The OCR result panel has a layout button in Plain text and Paragraphs mode: switch between As recognized, Remove blank lines, and Join lines (plus Join lines within paragraphs in Plain text mode) without changing the recognized text, and switch back at any time. ⌘L (Ctrl+L on Windows and Linux) toggles between As recognized and the last one you used. With auto-copy on, the clipboard follows, so pasting in the app you came from gives you what you see, and clipboard history keeps a single entry (favorites are never removed). If you've edited the text, the layout menu can discard your edits and restore the recognized text.
 - Settings → OCR → After recognition has a new Layout option to remove blank lines from results by default.
+- In the OCR result panel, ⌘↩ (Ctrl+Enter on Windows and Linux) pastes the current text into the app you took the screenshot from and closes the panel, so after editing you no longer need to copy, close, and paste. It pastes the same text ⌘C would copy; in a pinned window it copies instead.
 - Fixes: configuration files saved with a UTF-8 BOM (for example by Windows Notepad) are no longer treated as corrupt and reset; providers and glossary entries in Settings are now saved one at a time, so changes made in the files or synced from another device aren't overwritten by stale values in an open Settings window.
 - Windows: the tray icon is no longer blurry at 100%, 125%, 150%, 250%, 300%, and similar display scaling. The notification area now gets an icon drawn for its actual size, and Wisp switches to the matching size when you change the scaling or the primary display.
+- OCR Paragraphs mode no longer puts a blank line between consecutive list items, table rows, or short interface elements such as buttons and labels; they go one per line, and paragraphs and headings are still separated by a blank line.
+- Recognizing the same screenshot again (⌘R, or another mode or model) no longer adds a clipboard history entry every time: the new result replaces the entry the previous automatic copy created, or keeps it when the text is unchanged. Nothing is removed if you copied something else in between or added that entry to favorites.
+- Clicking a copy button, a chip, or the layout button in the OCR result panel leaves the keyboard in the app you were using, so ⌘V pastes there right away without clicking back first. To use ⌘C or ⌘L in the panel, click the text or an empty area first.
 
 ## 0.1.1（2026-10-14）
 
