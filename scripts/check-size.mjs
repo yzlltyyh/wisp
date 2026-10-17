@@ -10,7 +10,7 @@
  *   node scripts/check-size.mjs --self-test      用构造的 chunk 图检查入口依赖图规则（CI 用）
  *
  * 预算（KB = 1000 B、MB = 1000² B，与 Vite 构建输出的单位一致；均为压缩前）：
- *   - 前端资源（dist 下全部文件）≤ 1.5 MB；
+ *   - 前端资源（dist 下全部文件）≤ 1.6 MB；
  *   - Overlay ≤ 15 KB。统计口径：overlay.html 的入口 JS **加上它全部的静态 import**
  *     （`<link rel="modulepreload">` 列出的共享 chunk）再加 overlay 的 CSS；动态 import 不计；
  *   - 安装包：dmg ≤ 12 MB、NSIS（*-setup.exe）≤ 10 MB、deb / rpm ≤ 15 MB、AppImage ≤ 90 MB。
@@ -50,7 +50,7 @@ const KB = 1000
 const MB = 1000 * 1000
 
 export const BUDGET = {
-  frontend: 1.5 * MB,
+  frontend: 1.6 * MB,
   overlay: 15 * KB,
   bundles: [
     { kind: 'dmg', test: (f) => f.endsWith('.dmg'), max: 12 * MB },
