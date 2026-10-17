@@ -600,7 +600,11 @@ fn ocr_parameters() {
             .system
             .contains("Each list item also goes on a single line, even if it wraps")
     );
-    assert!(paragraphs.system.contains("In a table row, separate the cells with a tab."));
+    assert!(
+        paragraphs
+            .system
+            .contains("In a table row, separate the cells with a tab.")
+    );
 }
 
 #[test]
