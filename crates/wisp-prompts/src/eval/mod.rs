@@ -4,7 +4,20 @@
 //!
 //! 每个模型 × 每个风格 × S1–S16（S14 只跑 polish / proofread，S16 强制目标为 zh），视觉模型另跑 OCR 截图样本；
 //! 输出（模型、风格、方向、原始输出、后处理后的输出、耗时、断言）写到 `<out>/<日期>-<provider>-<model>.{md,jsonl}`，
-//! 自动断言汇总通过率，其余列为「待人工」勾选项。
+//! 自动断言汇总通过率，其余列为「待人工」勾选项。跑完在标准输出打印一份按样本汇总的结果（模型、耗时、自动断言的
+//! 通过与失败项、报告路径），进度与警告写到标准错误，便于脚本只转发汇总。
+//!
+//! OCR 截图样本（`samples.rs` 的 `OCR_SAMPLES`）只发给视觉能力不是 `no` 的模型，图片从 `--ocr-dir`
+//! （默认 `<out>/ocr-samples/`）读取，缺少的样本跳过并在报告里注明：
+//! - `--ocr-samples O5,O6-pdf-paragraphs`：只跑列出的 OCR 样本（大小写不敏感；`O5` 这种写法匹配 id 中第一个 `-`
+//!   之前的部分，所以 `O3` 同时选中 `O3-formula-markdown` 与 `O3-formula-translate`）。不给时跑全部；
+//!   传了 `--samples` 时默认不跑 OCR 样本，除非同时给出 `--ocr-samples`；
+//! - `--ocr-only`：只跑 OCR 样本，不跑翻译样本（忽略 `--styles`，不能与 `--samples` 同时使用）。此时选中的样本
+//!   一张截图都没有、或者没有一个模型能收图片，直接以非零退出，避免什么都没跑却显示成功。
+//!   仓库根目录的 `pnpm eval:ocr` 会先生成段落模式的截图再以这个模式调用本工具（见 docs/development.md）。
+//!
+//! `--dry-run` 只装配提示词：在标准输出列出每个模型的计划（同样按上面两个参数过滤），并写出 `.dry-run.jsonl`，
+//! 不发请求、不读 Key。Key 与请求头不进汇总、报告与日志。
 //!
 //! `--provider-json` 文件可以是：
 //! - 一个 `Provider` 对象（与 settings.json 中 `providers[i]` 同形）：评测其中 `enabled` 的模型；
@@ -48,10 +61,41 @@ pub struct EvalArgs {
     pub concurrency: usize,
     /// 只装配提示词并写出 `.dry-run.jsonl`，不发请求、不需要 Key
     pub dry_run: bool,
+    /// 只跑 OCR 截图样本，不跑翻译样本
+    pub ocr_only: bool,
+    /// 只跑这些 OCR 截图样本（解析时已换成 `OCR_SAMPLES` 里的完整 id，按样本表的顺序；空 = 全部）
+    pub ocr_samples: Vec<&'static str>,
+}
+
+impl EvalArgs {
+    /// 视觉模型是否跑 OCR 样本：只给 `--samples` 时专注翻译样本（沿用原来的行为），
+    /// 明确要了 OCR（`--ocr-only` 或 `--ocr-samples`）时总是跑
+    fn runs_ocr(&self) -> bool {
+        self.ocr_only || !self.ocr_samples.is_empty() || self.samples.is_empty()
+    }
 }
 
 const USAGE: &str = "usage: wisp-eval --provider-json <file> [--styles all|natural,technical,…] [--out <dir>] \
-[--samples all|S1,S4,…] [--ocr-dir <dir>] [--concurrency <n>] [--dry-run]";
+[--samples all|S1,S4,…] [--ocr-only] [--ocr-samples all|O5,O6-pdf-paragraphs,…] [--ocr-dir <dir>] \
+[--concurrency <n>] [--dry-run]";
+
+/// `--help` 的完整说明：参数出错时只附 USAGE，免得错误信息被淹没
+pub const HELP: &str = "usage: wisp-eval --provider-json <file> [options]
+
+  --provider-json <file>   provider to evaluate (a settings.json provider object, {\"provider\", \"models\"}, or a list)
+  --styles <list>          all (default) or comma-separated style ids; ignored with --ocr-only
+  --samples <list>         all (default) or translation samples such as S1,S4; skips OCR samples unless
+                           --ocr-samples is also given
+  --ocr-only               run only the OCR screenshot samples (cannot be combined with --samples)
+  --ocr-samples <list>     all (default) or OCR sample ids, case-insensitive; a prefix such as O5 selects
+                           every id whose part before the first '-' matches
+  --ocr-dir <dir>          screenshot directory (default <out>/ocr-samples)
+  --out <dir>              report directory (default target/eval-runs)
+  --concurrency <n>        parallel requests, 1-32 (default 4)
+  --dry-run                list the plan and write the assembled prompts; no requests, no key
+
+The API key is read from WISP_EVAL_KEY_<ID> (provider id upper-cased, other characters replaced with _).
+A per-sample summary is printed to stdout; progress goes to stderr.";
 
 /// 单个请求的硬上限（模型自身的超时由 wisp-llm 按 Provider 配置处理）
 const CASE_TIMEOUT: Duration = Duration::from_secs(180);
@@ -65,6 +109,10 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<EvalArgs, St
     let mut ocr_dir = None;
     let mut concurrency = 4usize;
     let mut dry_run = false;
+    // 记下是否显式给过 --samples：`--samples all` 解析后也是空列表，但同样不能与 --ocr-only 并用
+    let mut samples_given = false;
+    let mut ocr_only = false;
+    let mut ocr_samples = Vec::new();
 
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -82,7 +130,12 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<EvalArgs, St
             "--provider-json" => provider_json = Some(PathBuf::from(value("--provider-json")?)),
             "--styles" => styles = split_list(&value("--styles")?),
             "--out" => out = PathBuf::from(value("--out")?),
-            "--samples" => samples = split_list(&value("--samples")?),
+            "--samples" => {
+                samples = split_list(&value("--samples")?);
+                samples_given = true;
+            }
+            "--ocr-only" => ocr_only = true,
+            "--ocr-samples" => ocr_samples = resolve_ocr_samples(&split_list(&value("--ocr-samples")?))?,
             "--ocr-dir" => ocr_dir = Some(PathBuf::from(value("--ocr-dir")?)),
             "--concurrency" => {
                 let v = value("--concurrency")?;
@@ -93,13 +146,19 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<EvalArgs, St
                     .ok_or_else(|| format!("--concurrency must be an integer between 1 and 32, got {v:?}"))?;
             }
             "--dry-run" => dry_run = true,
-            "-h" | "--help" => return Err(USAGE.to_owned()),
+            "-h" | "--help" => return Err(HELP.to_owned()),
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
     }
     let provider_json = provider_json.ok_or_else(|| format!("--provider-json is required\n{USAGE}"))?;
     if styles.is_empty() {
         return Err(format!("--styles must not be empty\n{USAGE}"));
+    }
+    if ocr_only && samples_given {
+        return Err(format!(
+            "--ocr-only runs no translation samples, so it cannot be combined with --samples; \
+             use --ocr-samples to pick screenshots\n{USAGE}"
+        ));
     }
     if samples.iter().any(|s| s.eq_ignore_ascii_case("all")) {
         samples.clear();
@@ -112,7 +171,39 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<EvalArgs, St
         ocr_dir,
         concurrency,
         dry_run,
+        ocr_only,
+        ocr_samples,
     })
+}
+
+/// 把 `--ocr-samples` 的列表换成样本表里的完整 id（按样本表顺序、去重）。在解析阶段就核对，
+/// 拼错的 id 立刻报错并列出可用的 id，而不是等读完配置、跑完翻译样本才发现
+fn resolve_ocr_samples(tokens: &[String]) -> Result<Vec<&'static str>, String> {
+    if tokens.is_empty() {
+        // 空列表若当成「全部」，脚本里变量为空时会悄悄跑满所有截图
+        return Err(format!("--ocr-samples must not be empty\n{USAGE}"));
+    }
+    if tokens.iter().any(|t| t.eq_ignore_ascii_case("all")) {
+        return Ok(Vec::new());
+    }
+    let unknown: Vec<String> = tokens
+        .iter()
+        .filter(|t| !OCR_SAMPLES.iter().any(|o| samples::ocr_sample_matches(o, t)))
+        .map(|t| format!("{t:?}"))
+        .collect();
+    if !unknown.is_empty() {
+        let available: Vec<&str> = OCR_SAMPLES.iter().map(|o| o.id).collect();
+        return Err(format!(
+            "unknown OCR sample {}; available: {} (a prefix such as O5 also works)",
+            unknown.join(", "),
+            available.join(", ")
+        ));
+    }
+    Ok(OCR_SAMPLES
+        .iter()
+        .filter(|o| tokens.iter().any(|t| samples::ocr_sample_matches(o, t)))
+        .map(|o| o.id)
+        .collect())
 }
 
 fn split_list(s: &str) -> Vec<String> {
@@ -324,42 +415,61 @@ fn prepare_ocr_png(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// 按 `EvalArgs::ocr_samples`（完整 id，空 = 全部）取样本，保持样本表的顺序
+fn select_ocr_samples(ids: &[&str]) -> Vec<OcrSample> {
+    OCR_SAMPLES
+        .iter()
+        .filter(|o| ids.is_empty() || ids.contains(&o.id))
+        .copied()
+        .collect()
+}
+
+/// 视觉能力不是 `no` 的模型才收截图：未知的模型照样试，由服务端的回应说明它能不能看图
+fn accepts_images(model: &ModelEntry) -> bool {
+    model.vision != Vision::No
+}
+
 /// OCR 用例：缺少的截图记入 missing（报告里注明跳过）；不是 PNG 或无法解码时报错（退出码非零）
-fn plan_ocr_cases(dir: &Path) -> Result<(Vec<Case>, Vec<String>), String> {
+fn plan_ocr_cases(dir: &Path, selected: &[OcrSample]) -> Result<(Vec<Case>, Vec<String>), String> {
     let mut cases = Vec::new();
     let mut missing = Vec::new();
-    let detection = Detection {
-        lang: Lang::Other,
-        low_confidence: true,
-    };
-    for o in OCR_SAMPLES {
+    for o in selected {
         let path = dir.join(o.file);
         let Ok(bytes) = std::fs::read(&path) else {
             missing.push(format!("{} ({})", o.id, path.display()));
             continue;
         };
         let bytes = prepare_ocr_png(bytes).map_err(|e| format!("OCR sample {}: {e}", path.display()))?;
-        let target = Lang::ZhCn;
-        let ctx = PromptCtx {
-            text: "",
-            source: detection,
-            target,
-            glossary: &[],
-            reasoning_model: false,
-        };
-        cases.push(Case {
-            sample_id: o.id,
-            expect: o.expect,
-            source: String::new(),
-            task: format!("ocr:{}", ocr_mode_name(o.mode)),
-            dict: false,
-            detection,
-            target,
-            prompt: build(&PromptTask::Ocr { mode: o.mode }, &ctx),
-            image: Some(Arc::new(bytes)),
-        });
+        cases.push(ocr_case(o, Arc::new(bytes)));
     }
     Ok((cases, missing))
+}
+
+/// 一个 OCR 用例：截图与提示词都和模型无关，所有视觉模型共用
+fn ocr_case(o: &OcrSample, image: Arc<Vec<u8>>) -> Case {
+    let detection = Detection {
+        lang: Lang::Other,
+        low_confidence: true,
+    };
+    let target = Lang::ZhCn;
+    let ctx = PromptCtx {
+        text: "",
+        source: detection,
+        target,
+        glossary: &[],
+        reasoning_model: false,
+    };
+    Case {
+        sample_id: o.id,
+        expect: o.expect,
+        source: String::new(),
+        task: format!("ocr:{}", ocr_mode_name(o.mode)),
+        dict: false,
+        detection,
+        target,
+        prompt: build(&PromptTask::Ocr { mode: o.mode }, &ctx),
+        image: Some(image),
+    }
 }
 
 fn ocr_mode_name(mode: OcrMode) -> &'static str {
@@ -423,10 +533,38 @@ struct Outcome {
 /// 运行评测：逐样本 × 风格请求模型，执行自动断言，结果写入 out 目录
 pub async fn run(args: EvalArgs) -> Result<(), String> {
     let specs = load_providers(&args.provider_json)?;
-    let styles = select_styles(&args.styles)?;
-    let samples = select_samples(&args.samples)?;
+    // --ocr-only 不跑翻译样本，风格与翻译样本都用不上，也就不核对
+    let (styles, samples) = if args.ocr_only {
+        (Vec::new(), Vec::new())
+    } else {
+        (select_styles(&args.styles)?, select_samples(&args.samples)?)
+    };
+    let runs_ocr = args.runs_ocr();
+    let any_vision = specs.iter().flat_map(|s| &s.models).any(accepts_images);
+    if args.ocr_only && !any_vision {
+        return Err(
+            "--ocr-only: none of the selected models accepts images (all have \"vision\": \"no\"); \
+             nothing to run"
+                .to_owned(),
+        );
+    }
     std::fs::create_dir_all(&args.out).map_err(|e| format!("create {}: {e}", args.out.display()))?;
     let ocr_dir = args.ocr_dir.clone().unwrap_or_else(|| args.out.join("ocr-samples"));
+    // 截图与 OCR 提示词和模型无关：只读一次，所有视觉模型共用；没有视觉模型时不读，坏图也不会让纯文本评测失败
+    let (ocr_cases, missing_ocr) = if runs_ocr && any_vision {
+        plan_ocr_cases(&ocr_dir, &select_ocr_samples(&args.ocr_samples))?
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    if args.ocr_only && ocr_cases.is_empty() {
+        return Err(no_screenshots_error(&ocr_dir, &select_ocr_samples(&args.ocr_samples)));
+    }
+    if !missing_ocr.is_empty() {
+        log_line(&format!(
+            "skipping OCR samples without screenshots: {}",
+            missing_ocr.join(", ")
+        ));
+    }
     let date = today();
     let client = LlmClient::new(ClientConfig {
         user_agent: format!("wisp-eval/{}", env!("CARGO_PKG_VERSION")),
@@ -434,13 +572,15 @@ pub async fn run(args: EvalArgs) -> Result<(), String> {
     });
 
     let (mut failed_auto, mut errors) = (0usize, 0usize);
+    let mut report = String::new();
     for spec in &specs {
-        let key = if args.dry_run {
+        let runnable = spec.models.iter().any(|m| !args.ocr_only || accepts_images(m));
+        let key = if args.dry_run || !runnable {
             None
         } else {
             std::env::var(key_env_name(&spec.provider.id)).ok()
         };
-        if !args.dry_run && key.is_none() {
+        if !args.dry_run && runnable && key.is_none() {
             log_line(&format!(
                 "warning: {} is not set; sending requests without a key (only works for keyless local endpoints)",
                 key_env_name(&spec.provider.id)
@@ -448,59 +588,57 @@ pub async fn run(args: EvalArgs) -> Result<(), String> {
         }
         let key = key.map(|k| Arc::new(Secret::new(k)));
         for model in &spec.models {
-            let mut cases = plan_text_cases(&styles, &samples, model.reasoning);
-            let mut missing_ocr = Vec::new();
-            if model.vision != Vision::No && args.samples.is_empty() {
-                let (ocr, missing) = plan_ocr_cases(&ocr_dir)?;
-                cases.extend(ocr);
-                missing_ocr = missing;
+            let label = format!("{} / {}", spec.provider.id, model.id);
+            if args.ocr_only && !accepts_images(model) {
+                log_line(&format!("{label}: skipped, the model does not accept images"));
+                let _ = writeln!(report, "{label}  →  skipped (\"vision\": \"no\")");
+                continue;
             }
+            let ocr_for_model = runs_ocr && accepts_images(model);
+            let mut cases = if args.ocr_only {
+                Vec::new()
+            } else {
+                plan_text_cases(&styles, &samples, model.reasoning)
+            };
+            if ocr_for_model {
+                cases.extend(ocr_cases.iter().cloned());
+            }
+            let missing_for_model: &[String] = if ocr_for_model { &missing_ocr } else { &[] };
             let stem = format!("{date}-{}-{}", slug(&spec.provider.id), slug(&model.id));
-            if !missing_ocr.is_empty() {
-                log_line(&format!(
-                    "skipping OCR samples without screenshots: {}",
-                    missing_ocr.join(", ")
-                ));
-            }
             if args.dry_run {
                 let path = args.out.join(format!("{stem}.dry-run.jsonl"));
                 write_dry_run(&path, &spec.provider, model, &cases)?;
-                log_line(&format!("dry run: {} cases → {}", cases.len(), path.display()));
+                report.push_str(&format_plan(&label, &path, &cases, missing_for_model));
                 continue;
             }
-            log_line(&format!("{} / {}: {} cases", spec.provider.id, model.id, cases.len()));
+            log_line(&format!("{label}: {} cases", cases.len()));
             let outcomes = execute(&client, &spec.provider, model, key.clone(), cases, args.concurrency).await;
             let summary = Summary::of(&outcomes);
             failed_auto += summary.auto_total - summary.auto_passed;
             errors += summary.errors;
+            let md_path = args.out.join(format!("{stem}.md"));
             write_jsonl(
                 &args.out.join(format!("{stem}.jsonl")),
                 &spec.provider,
                 model,
                 &outcomes,
             )?;
-            write_markdown(
-                &args.out.join(format!("{stem}.md")),
-                &date,
-                &spec.provider,
-                model,
-                &outcomes,
-                &missing_ocr,
-            )?;
+            write_markdown(&md_path, &date, &spec.provider, model, &outcomes, missing_for_model)?;
             log_line(&format!(
-                "{} / {}: auto {}/{} passed, aux {}/{}, {} errors, {} manual items → {}",
-                spec.provider.id,
-                model.id,
+                "{label}: auto {}/{} passed, aux {}/{}, {} errors, {} manual items → {}",
                 summary.auto_passed,
                 summary.auto_total,
                 summary.aux_passed,
                 summary.aux_total,
                 summary.errors,
                 summary.manual,
-                args.out.join(format!("{stem}.md")).display()
+                md_path.display()
             ));
+            report.push_str(&format_model_summary(&label, &md_path, &outcomes, missing_for_model));
         }
     }
+    // 汇总走标准输出：断言失败、退出码非零时也照样打印，一眼看到哪个样本、哪条断言没过
+    print_report(if args.dry_run { "plan" } else { "summary" }, &report);
     match (failed_auto, errors) {
         (0, 0) => Ok(()),
         (f, e) => Err(format!(
@@ -509,9 +647,150 @@ pub async fn run(args: EvalArgs) -> Result<(), String> {
     }
 }
 
+/// --ocr-only 时一张截图都没找到：给出目录与期望的文件名，方便放图或改 --ocr-dir
+fn no_screenshots_error(dir: &Path, selected: &[OcrSample]) -> String {
+    let mut files: Vec<&str> = Vec::new();
+    for o in selected {
+        if !files.contains(&o.file) {
+            files.push(o.file);
+        }
+    }
+    format!(
+        "--ocr-only: no screenshot found for the selected OCR samples in {}; expected {} \
+         (generate them with `pnpm eval:ocr`, or point --ocr-dir at your own PNGs)",
+        dir.display(),
+        files.join(", ")
+    )
+}
+
 #[allow(clippy::print_stderr)] // 命令行工具：进度输出到 stderr
 fn log_line(s: &str) {
     eprintln!("wisp-eval: {s}");
+}
+
+#[allow(clippy::print_stdout)] // 命令行工具：计划与汇总是结果本身，写到 stdout 便于脚本转发或重定向
+fn print_report(title: &str, body: &str) {
+    if body.is_empty() {
+        return;
+    }
+    println!("\nwisp-eval {title}\n\n{}", body.trim_end());
+}
+
+/// 按样本 id 分组，保持首次出现的顺序：同一样本的多个风格合成一组
+fn group_by_sample<T>(items: &[T], id: impl Fn(&T) -> &'static str) -> Vec<(&'static str, Vec<&T>)> {
+    let mut groups: Vec<(&'static str, Vec<&T>)> = Vec::new();
+    for item in items {
+        let key = id(item);
+        match groups.iter_mut().find(|(k, _)| *k == key) {
+            Some((_, list)) => list.push(item),
+            None => groups.push((key, vec![item])),
+        }
+    }
+    groups
+}
+
+/// 缺图跳过的 OCR 样本也写进计划与汇总：脚本只转发标准输出时同样看得到少跑了哪些
+fn push_skipped(out: &mut String, missing: &[String]) {
+    if !missing.is_empty() {
+        let _ = writeln!(out, "  skipped (no screenshot): {}", missing.join(", "));
+    }
+}
+
+/// dry run 时列出一个模型的计划：同一样本的多个风格并成一行，OCR 样本注明截图文件
+fn format_plan(label: &str, path: &Path, cases: &[Case], missing: &[String]) -> String {
+    let groups = group_by_sample(cases, |c| c.sample_id);
+    let width = groups.iter().map(|(id, _)| id.len()).max().unwrap_or(0);
+    let mut out = format!("{label}: {} case(s)  →  {}\n", cases.len(), path.display());
+    for (id, list) in &groups {
+        let tasks: Vec<String> = list
+            .iter()
+            .map(|c| match OCR_SAMPLES.iter().find(|o| o.id == c.sample_id) {
+                Some(o) if c.image.is_some() => format!("{} ({})", c.task, o.file),
+                _ => c.task.clone(),
+            })
+            .collect();
+        let _ = writeln!(out, "  {id:<width$}  {}", tasks.join(", "));
+    }
+    push_skipped(&mut out, missing);
+    out.push('\n');
+    out
+}
+
+/// 跑完后一个模型的汇总：每个样本一行（同一样本的多个风格合并），列出任务、请求耗时之和、自动断言的通过数与
+/// 失败的断言名、请求错误；只用断言名与模型 id，不涉及 Key、请求头与输出内容
+fn format_model_summary(label: &str, report: &Path, outcomes: &[Outcome], missing: &[String]) -> String {
+    let groups = group_by_sample(outcomes, |o| o.case.sample_id);
+    let rows: Vec<[String; 4]> = groups.iter().map(|(id, list)| summary_row(id, list)).collect();
+    let w0 = rows.iter().map(|r| r[0].len()).max().unwrap_or(0);
+    let w1 = rows.iter().map(|r| r[1].len()).max().unwrap_or(0);
+    let w2 = rows.iter().map(|r| r[2].len()).max().unwrap_or(0);
+    let mut out = format!("{label}  →  {}\n", report.display());
+    for [id, task, time, result] in &rows {
+        let _ = writeln!(out, "  {id:<w0$}  {task:<w1$}  {time:>w2$}  {result}");
+    }
+    push_skipped(&mut out, missing);
+    let s = Summary::of(outcomes);
+    let _ = writeln!(
+        out,
+        "  total: auto {}/{} passed, aux {}/{}, {} error(s), {} manual item(s)\n",
+        s.auto_passed, s.auto_total, s.aux_passed, s.aux_total, s.errors, s.manual
+    );
+    out
+}
+
+fn summary_row(id: &str, list: &[&Outcome]) -> [String; 4] {
+    // 同一样本跑了多个风格时，失败项前面带上风格，才知道是哪一次没过
+    let multi = list.len() > 1;
+    let (mut passed, mut total) = (0usize, 0usize);
+    let (mut failed, mut errors) = (Vec::new(), Vec::new());
+    let mut elapsed_ms = 0u128;
+    for o in list {
+        let tag = |s: &str| {
+            if multi {
+                format!("{} · {s}", o.case.task)
+            } else {
+                s.to_owned()
+            }
+        };
+        elapsed_ms += o.elapsed_ms;
+        if let Some(e) = &o.error {
+            errors.push(tag(&e.replace(['\r', '\n'], " ")));
+        }
+        for c in o.checks.iter().filter(|c| c.kind == CheckKind::Auto) {
+            total += 1;
+            if c.passed == Some(true) {
+                passed += 1;
+            } else {
+                failed.push(tag(&c.name));
+            }
+        }
+    }
+    let status = if !errors.is_empty() {
+        "ERROR"
+    } else if !failed.is_empty() {
+        "FAIL"
+    } else if total == 0 {
+        "n/a"
+    } else {
+        "pass"
+    };
+    let mut result = format!("{status:<5} auto {passed}/{total}");
+    if !failed.is_empty() {
+        let _ = write!(result, "  failed: {}", failed.join("; "));
+    }
+    if !errors.is_empty() {
+        let _ = write!(result, "  error: {}", errors.join("; "));
+    }
+    let task = match list {
+        [one] => one.case.task.clone(),
+        _ => format!("{} tasks", list.len()),
+    };
+    [id.to_owned(), task, format_secs(elapsed_ms), result]
+}
+
+/// 毫秒 → `12.3s`（整数运算，免得浮点转换）
+fn format_secs(ms: u128) -> String {
+    format!("{}.{}s", ms / 1000, ms % 1000 / 100)
 }
 
 async fn execute(
@@ -977,6 +1256,7 @@ mod tests {
         assert_eq!(a.styles, vec!["all"]);
         assert_eq!(a.out, PathBuf::from("target/eval-runs"));
         assert!(a.samples.is_empty() && !a.dry_run && a.ocr_dir.is_none());
+        assert!(!a.ocr_only && a.ocr_samples.is_empty() && a.runs_ocr());
         assert_eq!(a.concurrency, 4);
 
         let a = args(&[
@@ -1009,7 +1289,349 @@ mod tests {
         assert!(args(&["--provider-json"]).is_err());
         assert!(args(&["--provider-json", "p", "--concurrency", "0"]).is_err());
         assert!(args(&["--provider-json", "p", "--bogus"]).is_err());
-        assert!(args(&["--help"]).is_err());
+        // bin 靠「错误文本等于 HELP」区分主动要帮助（退出码 0）与参数出错（退出码 2）
+        assert_eq!(args(&["--help"]).expect_err("help"), HELP);
+        assert_eq!(args(&["--provider-json", "p", "-h"]).expect_err("help"), HELP);
+        assert_ne!(args(&[]).expect_err("missing"), HELP);
+    }
+
+    #[test]
+    fn parse_ocr_arguments() {
+        let ids = |list: &[&str]| args(list).map(|a| a.ocr_samples);
+
+        let a = args(&["--provider-json", "p", "--ocr-only"]).expect("ocr-only");
+        assert!(a.ocr_only && a.ocr_samples.is_empty() && a.runs_ocr());
+        assert_eq!(a.styles, vec!["all"], "--styles 可以省略");
+        assert!(args(&["--provider-json", "p", "--ocr-only", "--styles", "natural"]).is_ok());
+
+        // 完整 id 与前缀写法都大小写不敏感；结果按样本表的顺序去重
+        assert_eq!(
+            ids(&["--provider-json", "p", "--ocr-samples", "O5,o6-PDF-paragraphs"]).expect("ids"),
+            ["O5-chat-paragraphs", "O6-pdf-paragraphs"]
+        );
+        assert_eq!(
+            ids(&["--provider-json", "p", "--ocr-samples=o8, O5,O5-chat-paragraphs"]).expect("ids"),
+            ["O5-chat-paragraphs", "O8-mixed-paragraphs"]
+        );
+        assert_eq!(
+            ids(&["--provider-json", "p", "--ocr-samples", "o3"]).expect("ids"),
+            ["O3-formula-markdown", "O3-formula-translate"],
+            "前缀匹配同一张截图的两种模式"
+        );
+        assert!(
+            ids(&["--provider-json", "p", "--ocr-samples", "all"])
+                .expect("all")
+                .is_empty()
+        );
+
+        // 未知 id：报错并列出可用的 id；前缀只认第一个 '-' 之前的部分
+        let err = args(&["--provider-json", "p", "--ocr-samples", "O5,O9"]).expect_err("unknown");
+        assert!(err.contains("\"O9\"") && !err.contains("\"O5\""), "{err}");
+        assert!(OCR_SAMPLES.iter().all(|o| err.contains(o.id)), "{err}");
+        assert!(args(&["--provider-json", "p", "--ocr-samples", "O5-chat"]).is_err());
+        assert!(args(&["--provider-json", "p", "--ocr-samples", "O"]).is_err());
+        assert!(args(&["--provider-json", "p", "--ocr-samples", " , "]).is_err());
+        assert!(args(&["--provider-json", "p", "--ocr-samples"]).is_err());
+
+        // --ocr-only 与 --samples 冲突（包括 --samples all），顺序无关
+        for list in [
+            ["--ocr-only", "--samples", "S1"],
+            ["--samples", "S1", "--ocr-only"],
+            ["--samples", "all", "--ocr-only"],
+        ] {
+            let mut full = vec!["--provider-json", "p"];
+            full.extend(list);
+            let err = args(&full).expect_err("conflict");
+            assert!(err.contains("--ocr-only") && err.contains("--samples"), "{err}");
+        }
+
+        // 只给 --samples 时不跑 OCR（与原来一致），再给 --ocr-samples 时跑
+        assert!(
+            !args(&["--provider-json", "p", "--samples", "S1"])
+                .expect("a")
+                .runs_ocr()
+        );
+        assert!(
+            args(&["--provider-json", "p", "--samples", "S1", "--ocr-samples", "O5"])
+                .expect("a")
+                .runs_ocr()
+        );
+
+        let help = args(&["--help"]).expect_err("help");
+        assert!(help.contains("--ocr-only") && help.contains("--ocr-samples"), "{help}");
+    }
+
+    #[test]
+    fn ocr_plan_follows_selection() {
+        assert_eq!(select_ocr_samples(&[]).len(), OCR_SAMPLES.len());
+        let dir = std::env::temp_dir().join(format!("wisp-eval-ocr-plan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        std::fs::write(dir.join("chat.png"), png(40, 20)).expect("write");
+        std::fs::write(dir.join("pdf.png"), png(40, 20)).expect("write");
+        let selected = select_ocr_samples(&["O5-chat-paragraphs", "O6-pdf-paragraphs", "O7-list-paragraphs"]);
+        let (cases, missing) = plan_ocr_cases(&dir, &selected).expect("plan");
+        assert_eq!(
+            cases.iter().map(|c| c.sample_id).collect::<Vec<_>>(),
+            ["O5-chat-paragraphs", "O6-pdf-paragraphs"]
+        );
+        assert!(cases.iter().all(|c| c.task == "ocr:paragraphs" && c.image.is_some()));
+        assert_eq!(missing.len(), 1);
+        assert!(missing[0].starts_with("O7-list-paragraphs"), "{missing:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// dry run 的临时目录：写好 provider 文件与截图，返回目录
+    fn dry_run_dir(name: &str, models: Value, screenshots: &[&str]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wisp-eval-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("shots")).expect("dir");
+        let provider = json!({
+            "id": "vl",
+            "protocol": "openai_chat",
+            "base_url": "http://127.0.0.1:9/v1",
+            "headers": {"X-Secret": "header-value-must-not-leak"},
+            "models": models
+        });
+        std::fs::write(dir.join("p.json"), provider.to_string()).expect("write");
+        for file in screenshots {
+            std::fs::write(dir.join("shots").join(file), png(40, 20)).expect("write");
+        }
+        dir
+    }
+
+    fn dry_run_args(dir: &Path, extra: &[&str]) -> EvalArgs {
+        let mut list = vec![
+            "--provider-json".to_owned(),
+            dir.join("p.json").display().to_string(),
+            "--out".to_owned(),
+            dir.join("out").display().to_string(),
+            "--ocr-dir".to_owned(),
+            dir.join("shots").display().to_string(),
+            "--dry-run".to_owned(),
+        ];
+        list.extend(extra.iter().map(|s| (*s).to_owned()));
+        parse_args(list).expect("args")
+    }
+
+    /// 每个 `.dry-run.jsonl` 的（文件名，各行的 sample · task）
+    fn dry_run_plans(dir: &Path) -> Vec<(String, Vec<String>)> {
+        let mut plans: Vec<(String, Vec<String>)> = std::fs::read_dir(dir.join("out"))
+            .expect("out")
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.to_string_lossy().ends_with(".dry-run.jsonl"))
+            .map(|p| {
+                let text = std::fs::read_to_string(&p).expect("read");
+                assert!(
+                    !text.contains("header-value-must-not-leak"),
+                    "请求头的值不进 dry run 文件"
+                );
+                let rows = text
+                    .lines()
+                    .map(|l| {
+                        let v: Value = serde_json::from_str(l).expect("json");
+                        format!(
+                            "{} · {}",
+                            v["sample"].as_str().unwrap_or(""),
+                            v["task"].as_str().unwrap_or("")
+                        )
+                    })
+                    .collect();
+                let name = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (name, rows)
+            })
+            .collect();
+        plans.sort();
+        plans
+    }
+
+    #[tokio::test]
+    async fn ocr_only_dry_run_plans_selected_screenshots() {
+        let models = json!([{"id": "text-only", "vision": "no"}, {"id": "vl-max", "vision": "yes"}]);
+        let dir = dry_run_dir("ocr-only", models, &["chat.png", "list.png"]);
+        run(dry_run_args(&dir, &["--ocr-only", "--ocr-samples", "O5,O6,o7"]))
+            .await
+            .expect("dry run");
+        let plans = dry_run_plans(&dir);
+        // 不收图片的模型整个跳过；缺图的 O6 跳过；没有翻译样本
+        assert_eq!(plans.len(), 1, "{plans:?}");
+        assert!(plans[0].0.ends_with("-vl-vl-max.dry-run.jsonl"), "{plans:?}");
+        assert_eq!(
+            plans[0].1,
+            [
+                "O5-chat-paragraphs · ocr:paragraphs",
+                "O7-list-paragraphs · ocr:paragraphs"
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn ocr_only_without_screenshots_or_vision_fails() {
+        // 选中的样本一张截图都没有：非零退出并给出图片目录与期望的文件名
+        let dir = dry_run_dir("ocr-none", json!([{"id": "vl-max"}]), &["table.png"]);
+        let err = run(dry_run_args(&dir, &["--ocr-only", "--ocr-samples", "O5,O6"]))
+            .await
+            .expect_err("no screenshots");
+        assert!(err.contains(&dir.join("shots").display().to_string()), "{err}");
+        assert!(err.contains("chat.png, pdf.png"), "{err}");
+        assert!(dry_run_plans(&dir).is_empty(), "什么都不写");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        // 没有一个模型能收图片
+        let dir = dry_run_dir(
+            "ocr-novision",
+            json!([{"id": "text-only", "vision": "no"}]),
+            &["chat.png"],
+        );
+        let err = run(dry_run_args(&dir, &["--ocr-only"])).await.expect_err("no vision");
+        assert!(err.contains("accepts images"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn default_plan_is_unchanged_without_new_flags() {
+        let dir = dry_run_dir("ocr-default", json!([{"id": "vl-max"}]), &["chat.png", "pdf.png"]);
+        let styles = builtin_styles().len();
+
+        // 只给 --samples：照旧不跑 OCR 样本
+        run(dry_run_args(&dir, &["--samples", "S1"])).await.expect("dry run");
+        assert_eq!(dry_run_plans(&dir)[0].1.len(), styles);
+
+        // 再给 --ocr-samples：翻译样本之后加上选中的、有截图的 OCR 样本
+        run(dry_run_args(&dir, &["--samples", "S1", "--ocr-samples", "O5,O7"]))
+            .await
+            .expect("dry run");
+        let rows = &dry_run_plans(&dir)[0].1;
+        assert_eq!(rows.len(), styles + 1);
+        assert_eq!(
+            rows.last().map(String::as_str),
+            Some("O5-chat-paragraphs · ocr:paragraphs")
+        );
+
+        // 什么都不给：全部翻译样本 + 有截图的全部 OCR 样本，缺图的跳过而不报错
+        run(dry_run_args(&dir, &[])).await.expect("dry run");
+        let rows = &dry_run_plans(&dir)[0].1;
+        assert_eq!(rows.len(), 15 * styles + 2 + 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn check(name: &str, kind: CheckKind, passed: Option<bool>) -> Check {
+        Check {
+            name: name.to_owned(),
+            kind,
+            passed,
+        }
+    }
+
+    fn outcome(case: Case, elapsed_ms: u128, error: Option<&str>, checks: Vec<Check>) -> Outcome {
+        Outcome {
+            case,
+            raw: "model output".to_owned(),
+            output: "model output".to_owned(),
+            no_text: false,
+            elapsed_ms,
+            truncated: false,
+            error: error.map(str::to_owned),
+            checks,
+        }
+    }
+
+    #[test]
+    fn summary_lists_each_sample() {
+        let ocr = |id: &str| {
+            let sample = OCR_SAMPLES.iter().find(|o| o.id == id).expect("sample");
+            ocr_case(sample, Arc::new(Vec::new()))
+        };
+        let styles: Vec<Style> = builtin_styles()
+            .into_iter()
+            .filter(|s| s.id == "natural" || s.id == "technical")
+            .collect();
+        let s1 = plan_text_cases(&styles, &SAMPLES[..1], false);
+        let outcomes = vec![
+            outcome(
+                ocr("O5-chat-paragraphs"),
+                8_234,
+                None,
+                vec![
+                    check("有文字", CheckKind::Auto, Some(true)),
+                    check("消息不空行", CheckKind::Auto, Some(true)),
+                    check("期望", CheckKind::Manual, None),
+                ],
+            ),
+            outcome(
+                ocr("O6-pdf-paragraphs"),
+                12_050,
+                None,
+                vec![
+                    check("有文字", CheckKind::Auto, Some(true)),
+                    check("断词还原", CheckKind::Auto, Some(false)),
+                    check("辅助", CheckKind::Aux, Some(false)),
+                ],
+            ),
+            outcome(ocr("O7-list-paragraphs"), 0, Some("Timeout: timed\nout"), Vec::new()),
+            outcome(
+                s1[0].clone(),
+                1_000,
+                None,
+                vec![check("A", CheckKind::Auto, Some(true))],
+            ),
+            outcome(
+                s1[1].clone(),
+                1_500,
+                None,
+                vec![check("B", CheckKind::Auto, Some(false))],
+            ),
+        ];
+        let missing = vec!["O8-mixed-paragraphs (shots/mixed.png)".to_owned()];
+        let text = format_model_summary("vl / vl-max", Path::new("out/r.md"), &outcomes, &missing);
+        let want = [
+            "vl / vl-max  →  out/r.md",
+            "  O5-chat-paragraphs  ocr:paragraphs   8.2s  pass  auto 2/2",
+            "  O6-pdf-paragraphs   ocr:paragraphs  12.0s  FAIL  auto 1/2  failed: 断词还原",
+            "  O7-list-paragraphs  ocr:paragraphs   0.0s  ERROR auto 0/0  error: Timeout: timed out",
+            "  S1                  2 tasks          2.5s  FAIL  auto 1/2  failed: technical · B",
+            "  skipped (no screenshot): O8-mixed-paragraphs (shots/mixed.png)",
+            "  total: auto 4/6 passed, aux 0/1, 1 error(s), 1 manual item(s)",
+            "",
+        ];
+        assert_eq!(text.lines().collect::<Vec<_>>(), want, "{text}");
+        assert!(!text.contains("model output"), "汇总不贴模型输出");
+
+        // 没有自动断言的样本标 n/a
+        let only_manual = outcome(
+            ocr("O8-mixed-paragraphs"),
+            99,
+            None,
+            vec![check("期望", CheckKind::Manual, None)],
+        );
+        assert!(format_model_summary("m", Path::new("r.md"), &[only_manual], &[]).contains("0.0s  n/a   auto 0/0"));
+    }
+
+    #[test]
+    fn plan_lists_tasks_per_sample() {
+        let styles: Vec<Style> = builtin_styles().into_iter().filter(|s| s.id == "natural").collect();
+        let mut cases = plan_text_cases(&styles, &SAMPLES[13..14], false);
+        let o5 = OCR_SAMPLES
+            .iter()
+            .find(|o| o.id == "O5-chat-paragraphs")
+            .expect("sample");
+        cases.push(ocr_case(o5, Arc::new(Vec::new())));
+        let missing = ["O6-pdf-paragraphs (shots/pdf.png)".to_owned()];
+        let text = format_plan("vl / vl-max", Path::new("out/p.dry-run.jsonl"), &cases, &missing);
+        assert_eq!(
+            text.lines().collect::<Vec<_>>(),
+            [
+                "vl / vl-max: 3 case(s)  →  out/p.dry-run.jsonl",
+                "  S14                 polish, proofread",
+                "  O5-chat-paragraphs  ocr:paragraphs (chat.png)",
+                "  skipped (no screenshot): O6-pdf-paragraphs (shots/pdf.png)",
+                "",
+            ]
+        );
     }
 
     #[test]

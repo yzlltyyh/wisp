@@ -124,7 +124,7 @@ pub fn sample_by_id(id: &str) -> Option<Sample> {
     SAMPLES.iter().find(|s| s.id.eq_ignore_ascii_case(id)).copied()
 }
 
-/// OCR 截图样本：图片由使用者放到 `--ocr-dir` 下（默认 `<out>/ocr-samples/`）
+/// OCR 截图样本：图片放到 `--ocr-dir` 下（默认 `<out>/ocr-samples/`）；段落模式的四张可以用 `pnpm eval:ocr` 生成
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OcrSample {
     pub id: &'static str,
@@ -132,6 +132,16 @@ pub struct OcrSample {
     pub file: &'static str,
     pub mode: OcrMode,
     pub expect: &'static str,
+}
+
+/// `--ocr-samples` 的一项是否选中这个样本（大小写不敏感）：完整 id，或 id 中第一个 `-` 之前的部分。
+/// 后者让 `O5` 这种短写法可用，`O3` 也就同时选中同一张截图的两种模式
+pub fn ocr_sample_matches(sample: &OcrSample, token: &str) -> bool {
+    sample.id.eq_ignore_ascii_case(token)
+        || sample
+            .id
+            .split_once('-')
+            .is_some_and(|(prefix, _)| prefix.eq_ignore_ascii_case(token))
 }
 
 /// 8 张截图 × 需要验证的模式：lines / markdown / translate / `<NO_TEXT>`，以及段落模式的四类常见截图（聊天、带断词的
