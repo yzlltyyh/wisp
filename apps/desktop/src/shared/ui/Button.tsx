@@ -85,6 +85,8 @@ export interface IconButtonProps extends Omit<
   tone?: 'default' | 'danger'
   /** 不显示 tooltip（例如已经有可见文字说明） */
   noTooltip?: boolean
+  /** tooltip 的内容（默认是 label）：要多说一句时传入，这时快捷键由内容自己排，`shortcut` 不再显示 */
+  tooltip?: ReactNode
   tooltipSide?: 'top' | 'bottom'
   ref?: Ref<HTMLButtonElement>
   'data-testid'?: string
@@ -101,6 +103,7 @@ export function IconButton({
   size = 'md',
   tone = 'default',
   noTooltip = false,
+  tooltip,
   tooltipSide = 'top',
   className,
   glyph,
@@ -121,7 +124,12 @@ export function IconButton({
   )
   if (noTooltip) return button
   return (
-    <Tooltip content={label} shortcut={shortcut} side={tooltipSide} disabled={rest.disabled}>
+    <Tooltip
+      content={tooltip ?? label}
+      shortcut={tooltip === undefined ? shortcut : null}
+      side={tooltipSide}
+      disabled={rest.disabled}
+    >
       {button}
     </Tooltip>
   )

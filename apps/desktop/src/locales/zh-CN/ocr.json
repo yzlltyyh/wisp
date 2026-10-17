@@ -47,7 +47,8 @@
     "source": "原文",
     "switch_model": "切换模型",
     "switch_mode": "切换模式",
-    "raise_limit": "调高上限"
+    "raise_limit": "调高上限",
+    "paste_back": "粘贴到原应用"
   },
   "empty": {
     "no_text": "未检测到文字",

@@ -24,7 +24,8 @@
  * 卡片已到上限时展开区的展开 / 收起用高度弹簧（正文区逐帧让出 / 拿回）；没到上限时卡片 / 窗口的高度跟随负责长高，
  * 内容变矮时下方的块贴着卡片底边一起移动（parts.tsx 的 FlipBox）。
  *
- * 键盘：⌘C 先复制选区，没有选区时译文区存在就复制译文、否则复制 OCR 文本；⌘R 作用于最近一次
+ * 键盘：⌘C 先复制选区，没有选区时译文区存在就复制译文、否则复制 OCR 文本；⌘↩（Windows / Linux：Ctrl+Enter）把同一段
+ * 文字粘贴回截图前的应用（面板随之收起；固定窗口里退回复制）；⌘R 作用于最近一次
  * 交互的区域（OCR 文本 → 重新识别；译文 → 重新翻译）；编辑后再 ⌘R 先确认（会覆盖修改，再按一次 ⌘R 即确认）；
  * ⌘P 固定整个面板；有文字时 ⌘1–9 按该风格翻译（译文区收起时展开它）；⌘L 在「原样」与最近用过的整理方式之间切换排版。
  * Esc 先收起放大的截图与菜单，其余由外壳处理。
@@ -701,29 +702,48 @@ export function OcrView(props: OcrViewProps) {
     })
   }
 
-  // ---- 复制 / 固定 / 设置 ----
+  // ---- 复制 / 粘贴 / 固定 / 设置 ----
+
+  /** 复制并在底栏提示 */
+  function copyAndFlash(text: string): void {
+    void copyText(text).then(flashCopied)
+  }
 
   /**
-   * 芯片：单击把片段粘贴到原来的应用（与剪贴板的芯片同一条粘贴管线，片段不进历史）；⌥ 单击只复制、在底栏提示。
-   * 粘贴不成时（例如没有可以粘贴的目标）退回复制
+   * 把一段文字粘贴回截图前的应用：与剪贴板的芯片同一条片段粘贴管线（不进历史），面板随之收起。固定窗口不能粘贴，
+   * 粘贴不成（例如没有可以粘贴的目标）也一样，都退回复制并在底栏提示；conflict（面板已经不在显示这个视图）静默
    */
-  function pasteFragment(entity: Entity, how: ChipMode): void {
-    const copy = () => void copyText(entity.value).then(flashCopied)
-    if (how === 'copy_only') {
-      copy()
-      return
-    }
-    api.clipboardPasteText(entity.value, null, 'normal').catch((error: unknown) => {
-      if (WispIpcError.from('clipboard_paste_text', error).code !== 'conflict') copy()
+  function pasteBack(text: string): void {
+    if (host !== 'panel') return copyAndFlash(text)
+    api.clipboardPasteText(text, null, 'normal').catch((error: unknown) => {
+      if (WispIpcError.from('clipboard_paste_text', error).code !== 'conflict') copyAndFlash(text)
     })
   }
 
-  function copyByKey(): boolean {
+  /** 芯片：单击把片段粘贴到原来的应用；⌥ 单击只复制、在底栏提示 */
+  function pasteFragment(entity: Entity, how: ChipMode): void {
+    if (how === 'copy_only') copyAndFlash(entity.value)
+    else pasteBack(entity.value)
+  }
+
+  /** ⌘C / ⌘↩ 作用的文字：选区 > 已展开且有内容的译文 > 正文显示的文字（直接翻译时正文就是译文） */
+  function keyText(): string {
     const translation = direct ? main.text() : trOpen && tr.state.hasText ? tr.text() : null
-    const text = copyTarget(selectedText(), translation, direct ? main.text() : ocrText)
+    return copyTarget(selectedText(), translation, direct ? main.text() : ocrText)
+  }
+
+  function copyByKey(): boolean {
+    const text = keyText()
     if (text.trim() === '') return false
-    void copyText(text).then(flashCopied)
+    copyAndFlash(text)
     return true
+  }
+
+  /** ⌘↩：把当前的文字粘贴回原应用。还在识别 / 翻译时不粘贴半截文字 */
+  function pasteByKey(): void {
+    if (live(main) || (trOpen && live(tr))) return
+    const text = keyText()
+    if (text.trim() !== '') pasteBack(text)
   }
 
   function pin(): void {
@@ -794,6 +814,14 @@ export function OcrView(props: OcrViewProps) {
   // ---- 键盘 ----
   const bindings: KeyBinding[] = [
     { combo: 'Mod+KeyC', allowInInput: true, run: () => copyByKey() },
+    // 文本框里同样生效，而且总是吃掉这次按键（没有可粘贴的文字时也是），不在文本框里插入换行；菜单打开时由菜单的模态
+    // 作用域挡住。译文区的长文本确认卡片在等确认时让给它（⌘↩ 是卡片上的「继续」）
+    {
+      combo: 'Mod+Enter',
+      allowInInput: true,
+      when: () => !(trOpen && tr.state.phase === 'confirm'),
+      run: pasteByKey,
+    },
     { combo: 'Mod+KeyR', allowInInput: true, run: () => regenerate() },
     { combo: 'Mod+KeyP', allowInInput: true, when: () => host === 'panel', run: pin },
     // 排版控件在底栏时：⌘L 等同点左半按钮（不能切换时什么也不做）
@@ -1388,6 +1416,7 @@ export function OcrView(props: OcrViewProps) {
   }
   const recognizeOpen = menu.open && menu.at === 'footer'
   const discarding = confirm !== null && 'discard' in confirm
+  const copyLabel = t(direct ? 'ocr.a11y.copy_translation' : 'ocr.a11y.copy_text')
   // 展开区：卡片已到上限（或马上会到）时展开 / 收起用高度过渡，正文区逐帧让出 / 拿回
   const sectionRoom = LAYOUT.section + LAYOUT.status + lh
   const willMax = atMax || (sizes.current?.view ?? 0) + sectionRoom > layout.viewMax
@@ -1530,8 +1559,19 @@ export function OcrView(props: OcrViewProps) {
               {noText ? null : (
                 <CopyButton
                   text={() => (direct ? main.text() : ocrText)}
-                  label={t(direct ? 'ocr.a11y.copy_translation' : 'ocr.a11y.copy_text')}
+                  label={copyLabel}
                   shortcut="Mod+KeyC"
+                  // 面板里 ⌘↩ 能把同一段文字直接粘贴回原应用：写在复制的 tooltip 里（不另加按钮）
+                  tooltip={
+                    host === 'panel' ? (
+                      <span className="ocr-tip">
+                        <span>{copyLabel}</span>
+                        <Kbd combo="Mod+KeyC" tone="inverted" />
+                        <span>{t('ocr.action.paste_back')}</span>
+                        <Kbd combo="Mod+Enter" tone="inverted" />
+                      </span>
+                    ) : undefined
+                  }
                   disabled={!hasText}
                   data-testid="ocr-copy"
                 />

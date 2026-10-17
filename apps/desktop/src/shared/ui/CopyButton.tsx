@@ -5,7 +5,7 @@
  */
 import { Check, CircleAlert, Copy } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { copyText } from '../hooks/useCopy'
 import { useT } from '../i18n/useT'
 import { usePreset } from '../motion/presets'
@@ -22,6 +22,8 @@ export interface CopyButtonProps {
   variant?: 'icon' | 'button'
   onCopied?: (ok: boolean) => void
   disabled?: boolean
+  /** 图标按钮 tooltip 的内容（默认是名称 + 快捷键），见 IconButton 的同名属性 */
+  tooltip?: ReactNode
   'data-testid'?: string
 }
 
@@ -32,6 +34,7 @@ export function CopyButton({
   variant = 'icon',
   onCopied,
   disabled,
+  tooltip,
   'data-testid': testId = 'copy-button',
 }: CopyButtonProps) {
   const t = useT()
@@ -103,6 +106,7 @@ export function CopyButton({
         glyph={glyph}
         label={name}
         shortcut={shortcut}
+        tooltip={tooltip}
         disabled={disabled}
         data-testid={testId}
         onClick={() => void copy()}

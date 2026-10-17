@@ -47,7 +47,8 @@
     "source": "Source",
     "switch_model": "Switch model",
     "switch_mode": "Switch mode",
-    "raise_limit": "Raise limit"
+    "raise_limit": "Raise limit",
+    "paste_back": "Paste into the original app"
   },
   "empty": {
     "no_text": "No text detected",

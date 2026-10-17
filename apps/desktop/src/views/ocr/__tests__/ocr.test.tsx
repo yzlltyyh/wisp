@@ -147,6 +147,8 @@ let inspectResult: ClipInspect | undefined | 'fail' | ((text: string) => ClipIns
 let recopyResult: boolean
 /** 不为 null 时 text_transform 等它 resolve 之后才返回（模拟排版结果还没到） */
 let transformHold: Promise<void> | null
+/** 不为 null 时 clipboard_paste_text 以这个错误码失败 */
+let pasteError: string | null
 
 /** text_transform 的替身（只为用例里的几段文字给出结果；真实规则在 Rust） */
 function fakeTransform(text: string, transform: string): string {
@@ -168,6 +170,9 @@ function fakeTransport(): Transport {
         return transformHold ? transformHold.then(() => out) : Promise.resolve(out)
       }
       if (cmd === 'ocr_recopy') return Promise.resolve(recopyResult as T)
+      if (cmd === 'clipboard_paste_text' && pasteError) {
+        return Promise.reject({ code: pasteError, message: 'paste failed', llm: null })
+      }
       // 识别完成后视图会检视文字（芯片）：默认没有片段，用例需要芯片时改 inspectResult
       if (cmd === 'text_inspect') {
         if (inspectResult === 'fail') {
@@ -334,6 +339,7 @@ beforeEach(() => {
   inspectResult = NO_ENTITIES
   recopyResult = true
   transformHold = null
+  pasteError = null
   setTransport(fakeTransport())
   resetSettingsSnapshot(snapshot())
   // 用例里的断言用中文文案
@@ -1204,6 +1210,17 @@ describe('翻译联动', () => {
     expect(callsOf('translate_start')[2]?.[1]).toMatchObject({ req: { confirm_long: true } })
   })
 
+  it('长文本确认卡片等确认时，⌘↩ 是卡片上的「继续」，不粘贴', async () => {
+    view()
+    await recognize('r-ocr', '字'.repeat(3200))
+    fireEvent.click(screen.getByTestId('ocr-translate-toggle'))
+    await screen.findByTestId('tv-long-text')
+    act(() => mod('Enter'))
+    await settle()
+    expect(callsOf('translate_start').at(-1)?.[1]).toMatchObject({ req: { confirm_long: true } })
+    expect(callsOf('clipboard_paste_text')).toHaveLength(0)
+  })
+
   it('译文 Done{truncated: max_tokens} 且没有文字：区底状态行提示思考耗尽', async () => {
     view()
     await recognize()
@@ -1275,6 +1292,127 @@ describe('键盘', () => {
     act(() => mod('KeyC'))
     await settle()
     expect(callsOf('clipboard_copy_text')).toEqual([['clipboard_copy_text', { text: '第一' }]])
+  })
+
+  describe('⌘↩ 把当前的文字粘贴回原应用', () => {
+    const pasted = () => callsOf('clipboard_paste_text').map(([, a]) => a)
+
+    it('与 ⌘C 同一优先级：没有选区时是正文显示的文字，译文区展开且有内容时是译文，有选区时是选区；片段粘贴、不进历史', async () => {
+      view()
+      await recognize()
+      await settle()
+      act(() => mod('Enter'))
+      expect(pasted()).toEqual([{ text: '第一行\n第二行', from: null, mode: 'normal' }])
+      fireEvent.click(screen.getByTestId('ocr-translate-toggle'))
+      await push('r-1', start('r-1'), delta('Line'), done())
+      act(() => mod('Enter'))
+      expect(pasted().at(-1)).toEqual({ text: 'Line', from: null, mode: 'normal' })
+      const el = screen.getByTestId('ocr-text') as HTMLTextAreaElement
+      el.focus()
+      el.setSelectionRange(0, 2)
+      act(() => mod('Enter'))
+      expect(pasted().at(-1)).toEqual({ text: '第一', from: null, mode: 'normal' })
+      // 粘贴成功：不复制、不提示
+      await settle()
+      expect(callsOf('clipboard_copy_text')).toHaveLength(0)
+    })
+
+    it('在文本框里按不插入换行；菜单打开时不触发；还在识别时不粘贴半截文字', async () => {
+      view()
+      await push('r-ocr', start('r-ocr'), delta('半截'))
+      act(() => mod('Enter'))
+      expect(pasted()).toHaveLength(0)
+      await push('r-ocr', delta('文字'), done())
+      await settle()
+      const el = screen.getByTestId('ocr-text') as HTMLTextAreaElement
+      el.focus()
+      let typed = true
+      act(() => {
+        typed = fireEvent.keyDown(el, {
+          code: 'Enter',
+          key: 'Enter',
+          ...(boot.os === 'macos' ? { metaKey: true } : { ctrlKey: true }),
+        })
+      })
+      // 键盘路由处理并 preventDefault：文本框不会插入换行
+      expect(typed).toBe(false)
+      expect(el.value).toBe('半截文字')
+      expect(pasted()).toEqual([{ text: '半截文字', from: null, mode: 'normal' }])
+      fireEvent.click(screen.getByTestId('ocr-recognize-menu'))
+      await screen.findByTestId('ocr-recognize-list')
+      act(() => mod('Enter'))
+      expect(pasted()).toHaveLength(1)
+    })
+
+    it('粘贴 conflict（面板已不在显示这个视图）静默；其他失败退回复制并提示', async () => {
+      view()
+      await recognize()
+      await settle()
+      pasteError = 'conflict'
+      act(() => mod('Enter'))
+      await settle()
+      expect(callsOf('clipboard_copy_text')).toHaveLength(0)
+      pasteError = 'invalid_argument'
+      act(() => mod('Enter'))
+      await settle()
+      expect(callsOf('clipboard_copy_text')).toEqual([
+        ['clipboard_copy_text', { text: '第一行\n第二行' }],
+      ])
+      expect(screen.getByTestId('inline-toast')).toHaveTextContent('已复制')
+    })
+
+    it('固定窗口里不能粘贴：退回复制并提示', async () => {
+      const pin: PinState = {
+        kind: 'ocr',
+        source_text: '第一行',
+        result_text: '',
+        task: 'translate',
+        style_id: 'natural',
+        target_lang: 'zh-CN',
+        detected_lang: null,
+        request_id: 'r-done',
+        capture_id: 'cap-1',
+        ocr_text: '第一行',
+        ocr_mode: 'lines',
+        show_source: false,
+        status_line: 'vl-plus · 1.2 s',
+        status: {
+          model_label: 'vl-plus',
+          elapsed_ms: 1200,
+          usage: null,
+          cached: false,
+          cancelled: false,
+          truncated: null,
+        },
+        model_ref: { provider_id: 'dashscope', model_id: 'qwen-vl-plus' },
+      }
+      view({ host: 'pinned', sessionId: 0, pin }, payload({ request_id: null }))
+      await settle()
+      act(() => mod('Enter'))
+      await settle()
+      expect(pasted()).toHaveLength(0)
+      expect(callsOf('clipboard_copy_text')).toEqual([['clipboard_copy_text', { text: '第一行' }]])
+      expect(screen.getByTestId('inline-toast')).toHaveTextContent('已复制')
+    })
+
+    it('复制按钮的 tooltip 写着 ⌘↩ 粘贴到原应用（面板里）', async () => {
+      view()
+      await recognize()
+      await settle()
+      vi.useFakeTimers()
+      try {
+        fireEvent.pointerEnter(screen.getByTestId('ocr-copy').parentElement as HTMLElement, {
+          pointerType: 'mouse',
+        })
+        act(() => vi.advanceTimersByTime(1000))
+      } finally {
+        vi.useRealTimers()
+      }
+      const tip = await screen.findByRole('tooltip')
+      expect(tip).toHaveTextContent('复制识别文字')
+      expect(tip).toHaveTextContent('粘贴到原应用')
+      expect(tip).toHaveTextContent('⌘↩')
+    })
   })
 
   it('⌘R 作用于最近一次交互的区域：译文区 → 重新翻译（绕过缓存）', async () => {
