@@ -1919,11 +1919,12 @@ impl Core {
     }
 }
 
-/// 识别完成时交付的文本：逐行 / 段落模式按会话的排版处理识别文本（注册表里流式结果的全文），结构化、直接翻译的截图
-/// （包括它的「查看原文」）原样交付。排版与视图切换排版时调用的 `text_transform` 是同一个函数，输入也相同（视图累积的
-/// 正是这些 Delta），所以自动复制的文本与视图显示的逐字一致
+/// 识别完成时交付的文本：会话的排版在这个模式下可用（`OcrLayout::available_in`：逐行 / 段落模式，合并段内换行只在
+/// 逐行模式）时按它处理识别文本（注册表里流式结果的全文），否则原样交付——结构化、直接翻译的截图（包括它的「查看
+/// 原文」），以及在逐行模式选了合并段内换行、再用段落模式重新识别的结果。排版与视图切换排版时调用的 `text_transform`
+/// 是同一个函数，输入也相同（视图累积的正是这些 Delta），所以自动复制的文本与视图显示的逐字一致
 pub(super) fn delivered_text(raw: String, mode: OcrMode, direct: bool, layout: OcrLayout) -> String {
-    if mode.has_layout() && !direct {
+    if layout.available_in(mode) && !direct {
         layout_text(raw, layout)
     } else {
         raw

@@ -10,8 +10,9 @@ import { Trash2 } from 'lucide-react'
 import { AnimatePresence, m } from 'motion/react'
 import { useEffect, useRef, useState } from 'react'
 import { useT } from '../../shared/i18n/useT'
+import { canBeDefaultLayout, type DefaultOcrLayout } from '../../shared/ipc/layouts'
 import type { SettingsAnchor } from '../../shared/ipc/sections'
-import type { ImageDetail, OcrLayout, OcrMode } from '../../shared/ipc/types'
+import type { ImageDetail, OcrMode } from '../../shared/ipc/types'
 import { usePreset } from '../../shared/motion/presets'
 import { duration, ms } from '../../shared/motion/tokens'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
@@ -90,8 +91,8 @@ export default function OcrPage() {
   )
   const markdownOk = engineSupports(engine, 'markdown')
   const shownMode = o.default_mode === 'translate' ? 'lines' : o.default_mode
-  // 「合并为一行」不能作为默认（Rust 读设置时会改回原样），这里只列出能作默认的两项
-  const layout = o.layout === 'join_lines' ? 'keep' : o.layout
+  // 「合并段内换行」「合并为一行」不能作为默认（Rust 读设置时会改回原样），这里只列出能作默认的两项
+  const layout = canBeDefaultLayout(o.layout) ? o.layout : 'keep'
   const edge = String(o.max_edge_px)
   const edgeOptions = (EDGES as readonly string[]).includes(edge) ? EDGES : [...EDGES, edge]
 
@@ -176,7 +177,7 @@ export default function OcrPage() {
           ariaLabel={t('settings.ocr.auto_copy')}
           data-testid="ocr-auto-copy"
         />
-        <SegmentRow<Exclude<OcrLayout, 'join_lines'>>
+        <SegmentRow<DefaultOcrLayout>
           label={t('settings.ocr.layout')}
           description={t(`settings.ocr.layout_desc.${layout}`)}
           message={t('settings.ocr.layout_note')}

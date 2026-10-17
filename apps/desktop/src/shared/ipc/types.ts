@@ -352,10 +352,10 @@ export interface GlossaryFile {
 }
 export type OcrMode = 'lines' | 'paragraphs' | 'markdown' | 'translate'
 /**
- * OCR 结果的排版（只在 lines / paragraphs 下生效）：除 keep 外取值与对应的 TransformId 相同，
- * 显示文本经 `text_transform` 由 Rust 计算。join_lines 不能设为默认
+ * OCR 结果的排版（只在 lines / paragraphs 下生效；reflow 只在 lines，见 `layouts.ts` 的 `layoutAvailableIn`）：
+ * 除 keep 外取值与对应的 TransformId 相同，显示文本经 `text_transform` 由 Rust 计算。reflow 与 join_lines 不能设为默认
  */
-export type OcrLayout = 'keep' | 'remove_blank_lines' | 'join_lines'
+export type OcrLayout = 'keep' | 'remove_blank_lines' | 'reflow' | 'join_lines'
 export type TaskKind = 'translate' | 'polish' | 'proofread' | 'refine'
 export type DictMode = 'auto' | 'dictionary' | 'prose'
 export interface PromptPreview {

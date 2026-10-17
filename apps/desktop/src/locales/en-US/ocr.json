@@ -65,10 +65,12 @@
     "hint": {
       "keep": "Keep line breaks and blank lines as recognized",
       "remove_blank_lines": "No blank lines between paragraphs",
+      "reflow": "Rejoins wrapped lines; lists and code stay as they are",
       "join_lines": "For search boxes and subtitles"
     },
     "unavailable": {
       "remove_blank_lines": "The text has no blank lines",
+      "reflow": "No wrapped lines to join within paragraphs",
       "join_lines": "The text is a single line"
     },
     "menu": "Layout options",

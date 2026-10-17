@@ -178,6 +178,7 @@ const OcrMode = enumOf<T.OcrMode>()('OcrMode', {
 const OcrLayout = enumOf<T.OcrLayout>()('OcrLayout', {
   keep: 1,
   remove_blank_lines: 1,
+  reflow: 1,
   join_lines: 1,
 })
 const TaskKind = enumOf<T.TaskKind>()('TaskKind', {

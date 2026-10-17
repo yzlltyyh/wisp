@@ -159,7 +159,7 @@ pub struct OcrPayload {
     pub target_lang: Lang,
     pub not_ready: Option<NotReady>,
     /// 本次会话排版的初值（设置里的默认排版；直接翻译的截图恒为 keep）。这次识别完成时，自动复制与识别历史用的就是
-    /// 按它处理过的文本（只在逐行 / 段落模式下处理，见 `OcrMode::has_layout`）；视图切换排版后，重新识别时经
+    /// 按它处理过的文本（只在这种排版可用的模式下处理，见 `OcrLayout::available_in`）；视图切换排版后，重新识别时经
     /// `OcrReq.layout` 带回
     #[serde(default)]
     pub layout: OcrLayout,

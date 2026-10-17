@@ -3334,7 +3334,8 @@ async fn translating_again_in_the_panel_checks_the_second_step_first() {
     assert_eq!(env.engine_count(), 2);
 }
 
-/// 交付文本只在逐行 / 段落模式、不是直接翻译的截图时排版；结构化、直接翻译（包括它的「查看原文」）原样交付
+/// 交付文本只在逐行 / 段落模式、不是直接翻译的截图时排版；结构化、直接翻译（包括它的「查看原文」）原样交付。
+/// 合并段内换行只在逐行模式：段落模式重新识别时会话排版仍是它，交付的是原样
 #[test]
 fn delivered_text_lays_out_only_lines_and_paragraphs_outside_direct_translation() {
     let raw = "第一段\n\n第二段";
@@ -3348,6 +3349,19 @@ fn delivered_text_lays_out_only_lines_and_paragraphs_outside_direct_translation(
         "第一段第二段"
     );
     assert_eq!(deliver(OcrMode::Lines, false, OcrLayout::Keep), raw);
+    let wrapped = "Wisp stays in the background and wakes up only\nwhen you press a hotkey.\n\nSecond paragraph.";
+    let reflowed = "Wisp stays in the background and wakes up only when you press a hotkey.\n\nSecond paragraph.";
+    assert_eq!(
+        delivered_text(wrapped.to_owned(), OcrMode::Lines, false, OcrLayout::Reflow),
+        reflowed
+    );
+    for mode in [OcrMode::Paragraphs, OcrMode::Markdown] {
+        assert_eq!(
+            delivered_text(wrapped.to_owned(), mode, false, OcrLayout::Reflow),
+            wrapped,
+            "{mode:?} 下合并段内换行不可用"
+        );
+    }
     for layout in OcrLayout::ALL {
         assert_eq!(deliver(OcrMode::Markdown, false, layout), raw, "{layout:?}");
         assert_eq!(deliver(OcrMode::Translate, true, layout), raw, "{layout:?}");

@@ -65,10 +65,12 @@
     "hint": {
       "keep": "保留识别出的换行与空行",
       "remove_blank_lines": "段落之间不再空行",
+      "reflow": "把硬换行连成段落，列表与代码保持原样",
       "join_lines": "适合搜索框与字幕"
     },
     "unavailable": {
       "remove_blank_lines": "文字里没有空行",
+      "reflow": "段落里没有可以合并的换行",
       "join_lines": "文字只有一行"
     },
     "menu": "排版方式",

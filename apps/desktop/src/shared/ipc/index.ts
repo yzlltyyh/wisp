@@ -32,6 +32,12 @@ export {
 export { getTransport, setTransport, whenReady } from './runtime'
 export { WispIpcError, type Transport, type Unlisten, type WindowFacade } from './transport'
 export { isSettingsSection, SETTINGS_SECTIONS, type SettingsSection } from './sections'
+export {
+  canBeDefaultLayout,
+  layoutAvailableIn,
+  OCR_LAYOUTS,
+  type DefaultOcrLayout,
+} from './layouts'
 export { fetchRgbaBitmap, resolveAssetUrl, wispUrl } from './url'
 export type * from './types'
 

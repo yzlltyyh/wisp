@@ -1,0 +1,31 @@
+{
+  "keep": {
+    "can_be_default": true,
+    "available_in": [
+      "lines",
+      "paragraphs",
+      "markdown",
+      "translate"
+    ]
+  },
+  "remove_blank_lines": {
+    "can_be_default": true,
+    "available_in": [
+      "lines",
+      "paragraphs"
+    ]
+  },
+  "reflow": {
+    "can_be_default": false,
+    "available_in": [
+      "lines"
+    ]
+  },
+  "join_lines": {
+    "can_be_default": false,
+    "available_in": [
+      "lines",
+      "paragraphs"
+    ]
+  }
+}

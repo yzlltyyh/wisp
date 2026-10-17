@@ -193,9 +193,10 @@ impl OcrMode {
 }
 
 str_enum! {
-    /// OCR 结果的排版：在识别文本上做的一次纯文本处理，只在逐行 / 段落模式下生效（[`OcrMode::has_layout`]）。
-    /// 每个选项都作用在识别文本本身，不叠加在上一次的排版结果上。除「原样」外，每个选项都是「粘贴为…」里的一种变换
-    /// （[`OcrLayout::transform`]），规则只有剪贴板变换注册表那一份
+    /// OCR 结果的排版：在识别文本上做的一次纯文本处理，只在逐行 / 段落模式下生效（[`OcrMode::has_layout`]），
+    /// 各选项在哪些模式下可用见 [`OcrLayout::available_in`]。每个选项都作用在识别文本本身，不叠加在上一次的排版结果上。
+    /// 除「原样」外，每个选项都是「粘贴为…」里的一种变换（[`OcrLayout::transform`]），规则只有剪贴板变换注册表那一份。
+    /// 声明顺序从改动少到改动多
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize)]
     pub enum OcrLayout {
         /// 原样：保留识别出的换行与空行
@@ -203,6 +204,9 @@ str_enum! {
         Keep = "keep",
         /// 去掉空行，其余各行原样保留
         RemoveBlankLines = "remove_blank_lines",
+        /// 合并段内换行：以空行为段界，段内被硬换行断开的行连成一行。段落模式的结果本来就按段合并过，所以只在逐行模式
+        /// 提供；会改动行的结构，不能设为默认
+        Reflow = "reflow",
         /// 合并为一行：会丢掉分段，只能在结果面板里按需切换，不能设为默认
         JoinLines = "join_lines",
     }
@@ -214,13 +218,28 @@ impl OcrLayout {
         match self {
             Self::Keep => None,
             Self::RemoveBlankLines => Some(TransformId::RemoveBlankLines),
+            Self::Reflow => Some(TransformId::Reflow),
             Self::JoinLines => Some(TransformId::JoinLines),
         }
     }
 
-    /// 能否作为设置里的默认排版。合并为一行会丢掉全部分段，每次识别都自动这样做容易误伤，所以只能按需切换
+    /// 能否作为设置里的默认排版：只有不改动行结构的原样与去掉空行。合并段内换行、合并为一行每次识别都自动做容易误伤
+    /// （代码、表格、诗句），所以只能按需切换
     pub const fn can_be_default(self) -> bool {
-        !matches!(self, Self::JoinLines)
+        matches!(self, Self::Keep | Self::RemoveBlankLines)
+    }
+
+    /// 这种排版在某个识别模式下是否可用：原样总是可用（就是不处理）；去掉空行与合并为一行只在逐行与段落模式
+    /// （[`OcrMode::has_layout`]）；合并段内换行只在逐行模式，段落模式的结果已经按段合并过。
+    ///
+    /// 视图据此列出可选的排版；编排器交付时会话排版在当前模式下不可用（例如在逐行模式选了合并段内换行，再用段落模式
+    /// 重新识别），就按原样交付，会话排版保留到下一次可用的识别
+    pub const fn available_in(self, mode: OcrMode) -> bool {
+        match self {
+            Self::Keep => true,
+            Self::RemoveBlankLines | Self::JoinLines => mode.has_layout(),
+            Self::Reflow => matches!(mode, OcrMode::Lines),
+        }
     }
 }
 
@@ -262,6 +281,24 @@ mod tests {
         }
         let defaults: Vec<OcrLayout> = OcrLayout::ALL.into_iter().filter(|l| l.can_be_default()).collect();
         assert_eq!(defaults, [OcrLayout::Keep, OcrLayout::RemoveBlankLines]);
+    }
+
+    /// 原样处处可用；合并段内换行只在逐行模式；其余排版只在能切换排版的逐行 / 段落模式
+    #[test]
+    fn layouts_are_available_only_in_modes_that_need_them() {
+        use OcrMode::{Lines, Markdown, Paragraphs, Translate};
+        let modes = [Lines, Paragraphs, Markdown, Translate];
+        let available = |l: OcrLayout| -> Vec<OcrMode> { modes.into_iter().filter(|&m| l.available_in(m)).collect() };
+        assert_eq!(available(OcrLayout::Keep), modes);
+        assert_eq!(available(OcrLayout::RemoveBlankLines), [Lines, Paragraphs]);
+        assert_eq!(available(OcrLayout::JoinLines), [Lines, Paragraphs]);
+        assert_eq!(available(OcrLayout::Reflow), [Lines]);
+        // 能切换排版的模式之外，只有原样可用
+        for l in OcrLayout::ALL {
+            for m in modes.into_iter().filter(|m| !m.has_layout()) {
+                assert_eq!(l.available_in(m), l == OcrLayout::Keep, "{l:?} 在 {m:?}");
+            }
+        }
     }
 
     #[test]

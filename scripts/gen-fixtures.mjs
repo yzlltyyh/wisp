@@ -16,6 +16,8 @@
  * - `consts/HotkeyDefaults.json`：三端默认快捷键（首选 / 备选，wisp-types `tests/consts.rs`）——设置页显示「Rust 尝试的组合」；
  * - `consts/EntityKinds.json` / `consts/TransformIds.json`：识别种类与「粘贴为…」变换的全部取值（wisp-types
  *   `tests/consts.rs`，取自 `EntityKind::ALL` / `TransformId::ALL`）——前端测试拿它比对类型联合与展示注册表；
+ * - `consts/OcrLayouts.json`：OCR 结果每种排版能否作为默认、在哪些识别模式下可用（wisp-types `tests/consts.rs`）——
+ *   前端测试拿它比对 `shared/ipc/layouts.ts`；
  * - `consts/BuiltinStyles.json`：6 个内置风格（wisp-prompts `tests/fixtures_consts.rs`）——浏览器 mock 的 `styles()`；
  * - `consts/SettingsSections.json` / `consts/SettingsAnchors.json`：设置分组与分组内锚点（wisp-desktop `app::sections`）；
  * - `consts/TransformCases.json`：若干代表性文字 × 适用的每种「粘贴为…」变换的结果（wisp-desktop `clipboard_svc::smart`，
@@ -40,13 +42,14 @@ export const GENERATORS = [
     outputs: [`${FIXTURES}/*.json`, `${FIXTURES}/index.ts`],
   },
   {
-    name: '默认快捷键、识别种类与变换清单',
+    name: '默认快捷键、识别种类、变换清单与排版规则',
     source: 'crates/wisp-types/tests/consts.rs',
     cargo: ['-p', 'wisp-types', '--test', 'consts'],
     outputs: [
       `${FIXTURES}/consts/HotkeyDefaults.json`,
       `${FIXTURES}/consts/EntityKinds.json`,
       `${FIXTURES}/consts/TransformIds.json`,
+      `${FIXTURES}/consts/OcrLayouts.json`,
     ],
   },
   {

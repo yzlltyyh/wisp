@@ -522,7 +522,7 @@ pub fn default_ocr_mode(settings: &Settings) -> OcrMode {
     }
 }
 
-/// 设置里的默认排版（只允许 keep / remove_blank_lines；设置服务的校验已经拦下合并为一行，这里再兜一次底）
+/// 设置里的默认排版（只允许 keep / remove_blank_lines；设置服务的校验已经拦下合并段内换行与合并为一行，这里再兜一次底）
 pub fn default_ocr_layout(settings: &Settings) -> OcrLayout {
     let layout = settings.ocr.layout;
     if layout.can_be_default() {
@@ -957,7 +957,8 @@ pub(crate) mod tests {
     }
 
     /// 会话排版：直接翻译的截图无论视图带回什么都是原样（重新识别、「查看原文」与 commit 一致）；其余优先视图带回的
-    /// 排版，没有时取设置，设置里不允许的合并为一行退回原样
+    /// 排版（包括在当前模式下不可用的合并段内换行：交付时才按模式决定，会话里保留），没有时取设置，设置里不允许的合并为
+    /// 一行、合并段内换行退回原样
     #[test]
     fn session_layout_is_keep_for_direct_translation_on_every_path() {
         let mut s = configured();
@@ -974,8 +975,14 @@ pub(crate) mod tests {
             session_ocr_layout(&s, false, Some(OcrLayout::JoinLines)),
             OcrLayout::JoinLines
         );
-        s.ocr.layout = OcrLayout::JoinLines;
-        assert_eq!(session_ocr_layout(&s, false, None), OcrLayout::Keep);
+        assert_eq!(
+            session_ocr_layout(&s, false, Some(OcrLayout::Reflow)),
+            OcrLayout::Reflow
+        );
+        for layout in [OcrLayout::JoinLines, OcrLayout::Reflow] {
+            s.ocr.layout = layout;
+            assert_eq!(session_ocr_layout(&s, false, None), OcrLayout::Keep, "{layout:?}");
+        }
     }
 
     #[test]

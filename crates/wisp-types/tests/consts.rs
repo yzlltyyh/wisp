@@ -7,6 +7,9 @@
 //! - `EntityKinds.json` / `TransformIds.json`：`EntityKind::ALL` / `TransformId::ALL` 的字符串（声明顺序）。前端的
 //!   类型联合与展示注册表（图标、文案）各写了一份取值，编译期只能保证它们彼此一致；Rust 新增一种识别或变换时，
 //!   前端测试拿这份清单比对，漏补的取值在测试里就会失败，而不是到运行时才因为找不到图标与文案出错。
+//! - `OcrLayouts.json`：OCR 结果的每种排版（`OcrLayout::ALL` 的顺序）能否作为默认、在哪些识别模式下可用
+//!   （`OcrLayout::can_be_default` / `available_in`）：`{ "<layout>": { "can_be_default": bool, "available_in": ["<mode>"] } }`。
+//!   前端的 `shared/ipc/layouts.ts` 写了同样的规则（设置页只列可作默认的、结果面板只列当前模式可用的），测试拿它比对。
 //!
 //! 默认比对文件内容，不一致即失败；`UPDATE_GOLDEN=1 cargo test -p wisp-types --test consts` 重写
 //! （或 `node scripts/gen-fixtures.mjs` 一次重写全部由 Rust 生成的样例）。
@@ -15,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde::ser::{Serialize, Serializer};
 use wisp_types::defaults::hotkey_table;
-use wisp_types::{EntityKind, HotkeyAction, OsKind, TransformId};
+use wisp_types::{EntityKind, HotkeyAction, OcrLayout, OcrMode, OsKind, TransformId};
 
 /// 按给定顺序序列化成 JSON 对象（serde_json 的 Map 默认按键排序，这里要保留平台 / 动作的固定顺序）
 struct Ordered<K, V>(Vec<(K, V)>);
@@ -112,6 +115,50 @@ fn golden_transform_ids() {
     sync(
         "TransformIds.json",
         &id_list(TransformId::ALL.map(TransformId::as_str)),
+        "UPDATE_GOLDEN=1 cargo test -p wisp-types --test consts",
+    );
+}
+
+#[derive(serde::Serialize)]
+struct LayoutRule {
+    can_be_default: bool,
+    available_in: Vec<OcrMode>,
+}
+
+/// 全部识别模式（声明顺序）。新增模式时这里的 match 编译失败，提醒把它加进清单
+fn all_modes() -> [OcrMode; 4] {
+    let modes = [
+        OcrMode::Lines,
+        OcrMode::Paragraphs,
+        OcrMode::Markdown,
+        OcrMode::Translate,
+    ];
+    for m in modes {
+        match m {
+            OcrMode::Lines | OcrMode::Paragraphs | OcrMode::Markdown | OcrMode::Translate => {}
+        }
+    }
+    modes
+}
+
+#[test]
+fn golden_ocr_layouts() {
+    let rules = Ordered(
+        OcrLayout::ALL
+            .into_iter()
+            .map(|layout| {
+                let rule = LayoutRule {
+                    can_be_default: layout.can_be_default(),
+                    available_in: all_modes().into_iter().filter(|&m| layout.available_in(m)).collect(),
+                };
+                (layout, rule)
+            })
+            .collect(),
+    );
+    let expected = format!("{}\n", serde_json::to_string_pretty(&rules).expect("序列化失败"));
+    sync(
+        "OcrLayouts.json",
+        &expected,
         "UPDATE_GOLDEN=1 cargo test -p wisp-types --test consts",
     );
 }

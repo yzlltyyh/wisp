@@ -240,7 +240,7 @@ fn check_ocr(s: &mut Settings, fixes: &mut Vec<Fix>) {
         fixes.push(Fix::new("ocr.default_mode", FixKind::Reset));
     }
     if !o.layout.can_be_default() {
-        // 默认排版只允许原样 / 去掉空行：合并为一行会丢掉分段，只能在结果面板里按需切换
+        // 默认排版只允许原样 / 去掉空行：合并段内换行与合并为一行会改动行的结构，只能在结果面板里按需切换
         o.layout = OcrLayout::Keep;
         fixes.push(Fix::new("ocr.layout", FixKind::Reset));
     }
@@ -607,6 +607,12 @@ mod tests {
         assert_eq!(s.ocr.layout, OcrLayout::Keep, "合并为一行不能作为默认排版");
         assert!(fixes.iter().any(|f| f.path == "ocr.layout"));
         assert!(fixes.iter().all(Fix::is_lossy));
+        // 合并段内换行同样只能按需切换
+        let mut s = Settings::default();
+        s.ocr.layout = OcrLayout::Reflow;
+        let fixes = check(&mut s);
+        assert_eq!(s.ocr.layout, OcrLayout::Keep, "合并段内换行不能作为默认排版");
+        assert!(fixes.iter().any(|f| f.path == "ocr.layout"));
         // 去掉空行可以设为默认
         let mut s = Settings::default();
         s.ocr.layout = OcrLayout::RemoveBlankLines;
