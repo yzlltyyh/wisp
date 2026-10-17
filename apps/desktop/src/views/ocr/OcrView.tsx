@@ -379,10 +379,10 @@ export function OcrView(props: OcrViewProps) {
     confirm_long: confirmLong,
   })
   /**
-   * 用户已经确认过的长原文：同一段文字之后换风格 / 改目标 /
-   * ⌘R 不再确认；文字改了（编辑、重新识别）就要重新确认
+   * 用户已经确认过的长原文，按（识别结果、编辑）记：同一次结果之后换风格 / 改目标 / ⌘R / 切换排版不再确认（排版只改
+   * 换行，长短几乎不变，不该让人再确认一次）；编辑或重新识别之后要重新确认
    */
-  const confirmedLong = useRef<string | null>(null)
+  const confirmedLong = useRef<{ key: number; edit: string | null } | null>(null)
 
   // 进入后只启动一次（不以 phase 为依赖；StrictMode 的重复挂载由 started 挡住）
   const started = useRef(false)
@@ -506,11 +506,13 @@ export function OcrView(props: OcrViewProps) {
     if (text.trim() === '') return
     const style = opts.style ?? effStyle
     const tl = opts.target !== undefined ? opts.target : target
-    if (opts.confirm) confirmedLong.current = text
+    const source = { key: main.state.key, edit: editKey }
+    if (opts.confirm) confirmedLong.current = source
     setTrGhost(tr.state.phase === 'idle' || tr.state.phase === 'confirm' ? null : tr.text() || null)
     basis.current = { raw: main.text(), edit: editKey, style, target: tl }
     area.current = 'translation'
-    const confirmLong = confirmedLong.current === text
+    const confirmed = confirmedLong.current
+    const confirmLong = confirmed?.key === source.key && confirmed.edit === source.edit
     tr.begin((cb) =>
       api.translateStart(trReq(text, style, tl, opts.bypass ?? false, confirmLong), cb),
     )

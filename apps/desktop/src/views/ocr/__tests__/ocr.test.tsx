@@ -1233,6 +1233,32 @@ describe('翻译联动', () => {
     expect(callsOf('translate_start')[2]?.[1]).toMatchObject({ req: { confirm_long: true } })
   })
 
+  it('长 OCR 文本确认过之后切换排版：换风格仍不再确认（排版只改换行）；编辑之后要重新确认', async () => {
+    view()
+    const half = '字'.repeat(1600)
+    await recognize('r-ocr', `${half}\n\n${half}`)
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-translate-toggle'))
+    await settle()
+    const card = await screen.findByTestId('tv-long-text')
+    fireEvent.click(within(card).getByRole('button', { name: /继续/ }))
+    await settle()
+    await push('r-1', start('r-1'), delta('译文'), done())
+    fireEvent.click(screen.getByTestId('ocr-layout-toggle'))
+    await settle()
+    const text = screen.getByTestId('ocr-text') as HTMLTextAreaElement
+    expect(text.value).toBe(`${half}\n${half}`)
+    act(() => mod('Digit2'))
+    await settle()
+    expect(callsOf('translate_start').at(-1)?.[1]).toMatchObject({
+      req: { text: `${half}\n${half}`, confirm_long: true },
+    })
+    fireEvent.change(text, { target: { value: `${half}改` } })
+    act(() => mod('Digit3'))
+    await settle()
+    expect(callsOf('translate_start').at(-1)?.[1]).toMatchObject({ req: { confirm_long: false } })
+  })
+
   it('长文本确认卡片等确认时，⌘↩ 是卡片上的「继续」，不粘贴', async () => {
     view()
     await recognize('r-ocr', '字'.repeat(3200))
