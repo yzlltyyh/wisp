@@ -593,6 +593,14 @@ fn ocr_parameters() {
             .system
             .contains("list items, table rows and distinct UI elements with one blank line")
     );
+    // 折行的列表项同样合成一行，不然续行看起来像另一项；表格行内的单元格用制表符隔开，与离线引擎逐行模式的分栏、
+    // TSV 的习惯一致，粘贴进表格软件时各占一格
+    assert!(
+        paragraphs
+            .system
+            .contains("Each list item also goes on a single line, even if it wraps")
+    );
+    assert!(paragraphs.system.contains("In a table row, separate the cells with a tab."));
 }
 
 #[test]
