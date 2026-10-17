@@ -828,7 +828,7 @@ export function OcrView(props: OcrViewProps) {
   const bindings: KeyBinding[] = [
     { combo: 'Mod+KeyC', allowInInput: true, run: () => copyByKey() },
     // 文本框里同样生效，而且总是吃掉这次按键（没有可粘贴的文字时也是），不在文本框里插入换行；菜单打开时由菜单的模态
-    // 作用域挡住。译文区的长文本确认卡片在等确认时让给它（⌘↩ 是卡片上的「继续」）
+    // 作用域挡住（菜单也不把它当作 Enter）。译文区的长文本确认卡片在等确认时让给它（⌘↩ 是卡片上的「继续」）
     {
       combo: 'Mod+Enter',
       allowInInput: true,

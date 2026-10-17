@@ -258,6 +258,9 @@ export function Menu({
       case 'Enter':
       case ' ':
         e.preventDefault()
+        // 带 ⌘ / Ctrl 的是视图的快捷键（例如 OCR 的 ⌘↩ 粘贴回原应用）：菜单打开时它被模态作用域挡下、送到这里，
+        // 不能顺带当作 Enter 选中高亮项——高亮的可能是「重新识别」一类会发请求的项。照样吃掉，只是不选择
+        if (e.metaKey || e.ctrlKey) return
         if (active >= 0) select(active)
         return
       case 'Tab':

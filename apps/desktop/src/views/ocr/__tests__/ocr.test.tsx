@@ -1388,9 +1388,20 @@ describe('键盘', () => {
       expect(el.value).toBe('半截文字')
       expect(pasted()).toEqual([{ text: '半截文字', from: null, mode: 'normal' }])
       fireEvent.click(screen.getByTestId('ocr-recognize-menu'))
-      await screen.findByTestId('ocr-recognize-list')
+      const list = await screen.findByTestId('ocr-recognize-list')
       act(() => mod('Enter'))
       expect(pasted()).toHaveLength(1)
+      // 焦点在菜单里（高亮着当前模式）：菜单也不把 ⌘↩ 当作 Enter 选中高亮项，不会重新识别
+      const starts = callsOf('ocr_start').length
+      fireEvent.keyDown(list, {
+        code: 'Enter',
+        key: 'Enter',
+        ...(boot.os === 'macos' ? { metaKey: true } : { ctrlKey: true }),
+      })
+      await settle()
+      expect(callsOf('ocr_start')).toHaveLength(starts)
+      expect(pasted()).toHaveLength(1)
+      expect(screen.getByTestId('ocr-recognize-list')).toBeInTheDocument()
     })
 
     it('粘贴 conflict（面板已不在显示这个视图）静默；其他失败退回复制并提示', async () => {

@@ -21,6 +21,7 @@ import {
   InlineConfirm,
   NotReadyBanner,
   NotReadyCard,
+  PagedMenu,
   TextArea,
   Thumbnail,
   Tooltip,
@@ -28,6 +29,7 @@ import {
   VirtualList,
   type InlineToastControl,
   type MenuEntry,
+  type MenuPage,
 } from '..'
 import { WispIpcError } from '../../ipc'
 import { copyText } from '../../hooks/useCopy'
@@ -106,6 +108,25 @@ describe('DropdownMenu', () => {
     cleanup()
   })
 
+  it('带 ⌘ / Ctrl 的 Enter、空格不选择高亮项（视图的 ⌘↩ 等快捷键被菜单挡住时，不会顺带选中一项）', async () => {
+    const { picked, cleanup } = setup()
+    const trigger = screen.getByRole('button', { name: '自然' })
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    const menu = await screen.findByRole('menu')
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/-0$/)
+    // 菜单照样吃掉这些键（不交给别处），只是不选择
+    expect(fireEvent.keyDown(menu, { key: 'Enter', metaKey: true })).toBe(false)
+    expect(fireEvent.keyDown(menu, { key: 'Enter', ctrlKey: true })).toBe(false)
+    expect(fireEvent.keyDown(menu, { key: ' ', metaKey: true })).toBe(false)
+    expect(fireEvent.keyDown(menu, { key: ' ', ctrlKey: true })).toBe(false)
+    expect(picked).not.toHaveBeenCalled()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    // 不带修饰键的 Enter 照常选择
+    fireEvent.keyDown(menu, { key: 'Enter' })
+    expect(picked).toHaveBeenCalledWith('natural')
+    cleanup()
+  })
+
   it('悬停只认真实的指针移动：坐标不变的合成 mousemove 不抢键盘高亮', async () => {
     const { cleanup } = setup()
     fireEvent.keyDown(screen.getByRole('button', { name: '自然' }), { key: 'ArrowDown' })
@@ -165,6 +186,43 @@ describe('DropdownMenu', () => {
     expect(closePanel).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: '自然' }).getAttribute('aria-expanded')).toBe('false')
     cleanup()
+  })
+})
+
+describe('PagedMenu', () => {
+  it('带 ⌘ / Ctrl 的 Enter、空格不选择高亮项；不带修饰键时照常选择', () => {
+    const picked = vi.fn<(id: string) => void>()
+    const onClose = vi.fn<() => void>()
+    const page: MenuPage = {
+      key: 'root',
+      label: '识别',
+      'data-testid': 'paged',
+      items: [
+        { id: 'lines', label: '逐行', checked: true, onSelect: () => picked('lines') },
+        { id: 'paragraphs', label: '段落', checked: false, onSelect: () => picked('paragraphs') },
+      ],
+    }
+    wrap(
+      <PagedMenu
+        open
+        onClose={onClose}
+        anchor={{ left: 10, top: 10, width: 0, height: 0 }}
+        page={page}
+        direction={1}
+      />,
+    )
+    const menu = screen.getByTestId('paged')
+    // 键盘打开：高亮勾选项
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/-0$/)
+    expect(fireEvent.keyDown(menu, { key: 'Enter', metaKey: true })).toBe(false)
+    expect(fireEvent.keyDown(menu, { key: 'Enter', ctrlKey: true })).toBe(false)
+    expect(fireEvent.keyDown(menu, { key: ' ', metaKey: true })).toBe(false)
+    expect(fireEvent.keyDown(menu, { key: ' ', ctrlKey: true })).toBe(false)
+    expect(picked).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+    fireEvent.keyDown(menu, { key: 'Enter' })
+    expect(picked).toHaveBeenCalledWith('lines')
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })
 

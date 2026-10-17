@@ -306,6 +306,8 @@ export function PagedMenu({
       case 'Enter':
       case ' ':
         e.preventDefault()
+        // 带 ⌘ / Ctrl 的是被模态作用域挡下的视图快捷键，不当作 Enter 选择（与 Menu 相同）
+        if (e.metaKey || e.ctrlKey) return
         if (active >= BACK) select(active)
         return
       case 'ArrowRight': {
