@@ -221,7 +221,7 @@ pgrep -fl 'llama-server|wisp-worker|wisp-guard'
 | `WISP_WINDOW_LAB=1`、`WISP_FRAME_LAB=<模式>` | 窗口层实验台与面板帧模式实验台（见下文） |
 | `WISP_MODELS_DIR=<目录>` | 离线模型与推理组件改放到这个目录（默认是数据目录下的 `models/`）；只在 debug 构建或冒烟模式下生效 |
 | `WISP_E2E_PORT=<端口>` | 浏览器级用例 preview 的端口，默认 1479 |
-| `WISP_EVAL_KEY_<ID>` | 提示词评测运行器使用的 API Key（见下文） |
+| `WISP_EVAL_KEY_<ID>`、`WISP_EVAL_KEY` | 提示词评测运行器使用的 API Key；后者只由 `pnpm eval:ocr` 读取，转交给它选中的服务（见下文） |
 
 ### 开发者工具
 
@@ -229,7 +229,8 @@ pgrep -fl 'llama-server|wisp-worker|wisp-guard'
 - **视觉稿**：`panel.html?scenario=design.<视图>`（如 `design.translate-done`、`design.ocr-done`、`design.clipboard-list`）与 `design.settings-models`、`design.onboarding-permissions` 是各视图、设置与引导窗口的静态视觉基准，实现改动后可以对照。源码在 `apps/desktop/src/panel/shell/design/`。
 - **窗口层实验台**：先 `pnpm -C apps/desktop build`，再以 `WISP_WINDOW_LAB=1 WISP_WINDOW_LAB_EXIT=1` 运行带 `tauri/custom-protocol` 的 debug 构建（`target/debug/wisp-desktop`）。它不经业务流程，直接用真实的窗口层走一遍面板、固定窗口、覆盖层、设置窗口与面板回收等路径，每一步输出一行 `window_lab step=… ok|fail` 日志，并检查窗口泄漏；配置与数据放在隔离的临时目录。另有只做测量的模式（内存、冷唤出、延迟等），全部开关见 `apps/desktop/src-tauri/src/windows/window_lab.rs` 的模块注释。
 - **帧模式实验台**：`WISP_FRAME_LAB=native|native-css-fill|css` 让面板反复进入、流式增长、收缩、退出，用于录屏核对与逐帧耗时度量，参数见 `apps/desktop/src-tauri/src/windows/frame_lab.rs` 的模块注释。
-- **提示词评测**：`cargo run -p wisp-prompts --features eval --bin wisp-eval -- --provider-json <文件> --styles all` 用指定的服务把内置样本按各风格翻译一遍，结果写到 `target/eval-runs/`（`--out` 可改），自动断言汇总通过率，其余项留给人工检查；Key 从 `WISP_EVAL_KEY_<ID>` 读取（ID 为服务 id 的大写，非字母数字替换为 `_`）。用法见 `crates/wisp-prompts/src/eval/mod.rs` 的模块注释。支持图片的模型另跑 OCR 截图样本：截图（PNG）放在 `--ocr-dir`（默认 `<out>/ocr-samples/`），缺少的样本跳过，文件名与期望见同目录 `samples.rs` 的 `OCR_SAMPLES`；仓库里不放截图。段落模式要四张：`chat.png`（几条聊天消息，夹着昵称与时间）、`pdf.png`（两段以上的英文 PDF 正文，行尾有断词连字符）、`list.png`（带列表或一组设置项的设置页、网页）、`mixed.png`（中英混排的多行正文）。
+- **提示词评测**：`cargo run -p wisp-prompts --features eval --bin wisp-eval -- --provider-json <文件> --styles all` 用指定的服务把内置样本按各风格翻译一遍，结果写到 `target/eval-runs/`（`--out` 可改），自动断言汇总通过率，其余项留给人工检查；Key 从 `WISP_EVAL_KEY_<ID>` 读取（ID 为服务 id 的大写，非字母数字替换为 `_`）。用法见 `crates/wisp-prompts/src/eval/mod.rs` 的模块注释。支持图片的模型另跑 OCR 截图样本：截图（PNG）从 `--ocr-dir`（默认 `<out>/ocr-samples/`）读取，缺少的样本跳过，文件名与期望见同目录 `samples.rs` 的 `OCR_SAMPLES`。仓库里不放截图，只放生成截图的页面：`crates/wisp-prompts/eval/ocr-pages/`（每张截图一个 HTML 页面，只用系统字体、不联网，与样本的对应见该目录的 README）。
+- **一条命令跑 OCR 评测**：`pnpm eval:ocr` 先用 Playwright 把上面的页面渲染成截图（第一次使用先 `pnpm -C apps/desktop exec playwright install chromium`），再从 Wisp 自己的 `settings.json`（只读）取 OCR 默认模型，调用评测器只跑段落模式的四个样本（O5–O8），按样本的汇总打印在终端，报告写到 `target/eval-runs/`。OCR 默认模型是离线模型或 PaddleOCR 云端时，改用第一个启用的、支持图片的模型，并打印实际用的是哪一个。常用选项：`--model <服务 id>/<模型 id>` 指定模型；`--all` 跑全部 OCR 样本，`--samples O5,O6` 只跑这几个；`--dry-run` 只渲染截图、装配提示词并列出计划，不取 Key、不发请求；`--render-only` 只生成截图；`--settings <文件>` 改读别的设置文件；`--` 之后的参数原样交给 `wisp-eval`。Key 依次取自：环境变量 `WISP_EVAL_KEY_<ID>` 或 `WISP_EVAL_KEY`（前者优先）；系统钥匙串里 Wisp 保存的 Key（macOS 经 `security` 读取，**可能弹出钥匙串授权框，点「允许」即可**；Linux 经 `secret-tool`；Windows 跳过）；都没有时在终端里隐藏输入。Key 只经环境变量交给评测器，不打印、不落盘。
 
 ## 目录约定
 
