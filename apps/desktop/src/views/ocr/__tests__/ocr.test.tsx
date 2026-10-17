@@ -1404,6 +1404,34 @@ describe('键盘', () => {
       expect(screen.getByTestId('ocr-recognize-list')).toBeInTheDocument()
     })
 
+    it('按住不放：重复的按键照样吃掉（文本框里不插入换行），但不再粘贴', async () => {
+      view()
+      await recognize()
+      await settle()
+      const el = screen.getByTestId('ocr-text') as HTMLTextAreaElement
+      el.focus()
+      const held = {
+        code: 'Enter',
+        key: 'Enter',
+        ...(boot.os === 'macos' ? { metaKey: true } : { ctrlKey: true }),
+      }
+      let typed = true
+      act(() => {
+        typed = fireEvent.keyDown(el, held)
+      })
+      expect(typed).toBe(false)
+      expect(pasted()).toHaveLength(1)
+      act(() => {
+        typed = fireEvent.keyDown(el, { ...held, repeat: true })
+      })
+      expect(typed).toBe(false)
+      act(() => {
+        typed = fireEvent.keyDown(el, { ...held, repeat: true })
+      })
+      expect(typed).toBe(false)
+      expect(pasted()).toHaveLength(1)
+    })
+
     it('粘贴 conflict（面板已不在显示这个视图）静默；其他失败退回复制并提示', async () => {
       view()
       await recognize()
