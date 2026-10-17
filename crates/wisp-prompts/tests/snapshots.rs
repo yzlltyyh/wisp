@@ -576,6 +576,23 @@ fn ocr_parameters() {
         build(&PromptTask::Ocr { mode: OcrMode::Lines }, &ctx).user_text,
         "Transcribe all text in this image line by line."
     );
+    // 段落模式只在段落、标题之间空行；连续的列表项、表格行与短的界面元素一项一行，彼此之间不空行
+    let paragraphs = build(
+        &PromptTask::Ocr {
+            mode: OcrMode::Paragraphs,
+        },
+        &ctx,
+    );
+    assert!(
+        paragraphs
+            .system
+            .contains("one per line, with no blank lines between them")
+    );
+    assert!(
+        !paragraphs
+            .system
+            .contains("list items, table rows and distinct UI elements with one blank line")
+    );
 }
 
 #[test]
