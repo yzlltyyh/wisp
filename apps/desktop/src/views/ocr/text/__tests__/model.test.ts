@@ -3,11 +3,12 @@
  * 排版结果；迟到的结果按 key 丢弃；换了一次结果，编辑与缓存作废、会话排版保留。
  */
 import { describe, expect, it } from 'vitest'
-import type { OcrLayout } from '../../../../shared/ipc/types'
+import type { OcrLayout, OcrMode } from '../../../../shared/ipc/types'
 import {
   canApply,
   initialText,
   reduceText,
+  selectedIn,
   viewOf,
   type TextAction,
   type TextInput,
@@ -17,7 +18,13 @@ import {
 const RAW = '第一段\n\n第二段'
 const TIGHT = '第一段\n第二段'
 const ONE = '第一段第二段'
-const at = (key = 1, applies = true, raw = RAW): TextInput => ({ key, raw, applies })
+const WRAPPED = '被硬换行\n断开的句子'
+const at = (key = 1, applies = true, raw = RAW, mode: OcrMode = 'lines'): TextInput => ({
+  key,
+  raw,
+  applies,
+  mode,
+})
 
 type Row = [
   name: string,
@@ -123,6 +130,23 @@ const ROWS: Row[] = [
     { display: 'X', pending: false },
   ],
   [
+    '逐行模式的合并段内换行：显示排版结果',
+    'keep',
+    [
+      { type: 'layout', layout: 'reflow', input: at(1, true, WRAPPED) },
+      { type: 'laid', key: 1, layout: 'reflow', text: '被硬换行断开的句子' },
+    ],
+    at(1, true, WRAPPED),
+    { layout: 'reflow', display: '被硬换行断开的句子', pending: false },
+  ],
+  [
+    '会话排版在这个模式下不可用（段落模式里的合并段内换行）：显示识别文本，不等结果——与交付一致',
+    'keep',
+    [{ type: 'layout', layout: 'reflow', input: at(1, true, WRAPPED) }],
+    at(2, true, WRAPPED, 'paragraphs'),
+    { layout: 'keep', display: WRAPPED, pending: false },
+  ],
+  [
     '从固定交接还原、没有编辑：交接的文字就是排版结果，首帧不用再等',
     'keep',
     [{ type: 'restore', key: 3, layout: 'remove_blank_lines', edit: null, laid: TIGHT }],
@@ -152,6 +176,14 @@ function run(initial: OcrLayout, actions: TextAction[]) {
 describe('三层文字的状态表', () => {
   it.each(ROWS)('%s', (_name, initial, actions, input, expected) => {
     expect(viewOf(run(initial, actions), input)).toMatchObject(expected)
+  })
+
+  it('选中的排版：会话排版在这个模式下可用就是它，否则是原样', () => {
+    expect(selectedIn('reflow', 'lines')).toBe('reflow')
+    expect(selectedIn('reflow', 'paragraphs')).toBe('keep')
+    expect(selectedIn('remove_blank_lines', 'paragraphs')).toBe('remove_blank_lines')
+    expect(selectedIn('join_lines', 'markdown')).toBe('keep')
+    expect(selectedIn('keep', 'translate')).toBe('keep')
   })
 
   it('最近用过的整理方式：初值是去掉空行；设置默认不是原样时就是它；切到原样不改', () => {

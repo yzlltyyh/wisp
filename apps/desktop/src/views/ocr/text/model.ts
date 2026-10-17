@@ -4,11 +4,18 @@
  * - V：排版结果 = layout(R)，由 Rust 的 `text_transform` 求得（与识别完成时自动复制、写入识别历史的是同一个函数、
  *   同一份输入），按 (key, 排版) 缓存；
  * - E：用户编辑，从 V 开始。
- * 显示 E ?? V；「已编辑」是 E 不为空且与 V 不同。排版只在逐行 / 段落模式、识别已结束时作用（`applies`），其余时候
- * V = R。会话排版与左半按钮的切换目标跨识别保留，其余字段只属于某一个 key：key 变了（重新识别、从固定交接还原）就
+ * 显示 E ?? V；「已编辑」是 E 不为空且与 V 不同。排版只在逐行 / 段落模式、识别已结束时作用（`applies`），而且会话排版
+ * 要在当前模式下可用（`layoutAvailableIn`：合并段内换行只在逐行模式），其余时候 V = R——与编排器交付（自动复制、写入
+ * 识别历史）的规则相同，例如逐行模式选了合并段内换行、换到段落模式重新识别，显示的与复制的都是识别文本。
+ * 会话排版与左半按钮的切换目标跨识别保留，其余字段只属于某一个 key：key 变了（重新识别、从固定交接还原）就
  * 一起作废，不需要在识别开始时逐个清空。
  */
-import type { OcrLayout, TransformId } from '../../../shared/ipc'
+import {
+  layoutAvailableIn,
+  type OcrLayout,
+  type OcrMode,
+  type TransformId,
+} from '../../../shared/ipc'
 
 /** 可以切换到的整理方式（「原样」之外） */
 export type Tidy = Exclude<OcrLayout, 'keep'>
@@ -41,6 +48,8 @@ export interface TextInput {
   raw: string
   /** 排版是否作用：逐行 / 段落模式、非直接翻译、识别已结束 */
   applies: boolean
+  /** 当前识别模式：会话排版在这个模式下不可用时不作用（显示识别文本） */
+  mode: OcrMode
 }
 
 export type TextAction =
@@ -75,6 +84,10 @@ function at(s: OcrTextState, key: number): OcrTextState {
   return { ...initialText(s.layout), recent: s.recent, key }
 }
 
+/** 某个模式下实际选中的排版：会话排版在这个模式下可用就是它，否则是原样（按钮的按下态、菜单的勾选与交付都按它） */
+export const selectedIn = (layout: OcrLayout, mode: OcrMode): OcrLayout =>
+  layoutAvailableIn(layout, mode) ? layout : 'keep'
+
 export interface TextView {
   /** 实际作用的排版（不作用时为 keep） */
   layout: OcrLayout
@@ -92,7 +105,7 @@ export interface TextView {
 
 export function viewOf(s: OcrTextState, input: TextInput): TextView {
   const own = s.key === input.key ? s : at(s, input.key)
-  const layout = input.applies ? s.layout : 'keep'
+  const layout = input.applies ? selectedIn(s.layout, input.mode) : 'keep'
   const done = layout === 'keep' ? input.raw : own.laid[layout]
   const base = done ?? own.stale ?? input.raw
   const edit = own.edit

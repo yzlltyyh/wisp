@@ -5,7 +5,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setTransport, type Transport } from '../../../../shared/ipc'
-import type { OcrLayout, TransformId } from '../../../../shared/ipc/types'
+import type { OcrLayout, OcrMode, TransformId } from '../../../../shared/ipc/types'
 import type { RunView } from '../../pinState'
 import type { RunPhase, RunState } from '../../useRun'
 import { useOcrText } from '../useOcrText'
@@ -50,11 +50,13 @@ function mount(
   initial: OcrLayout,
   run = runOf(1, RAW),
   follow = vi.fn<(text: string, still: () => boolean) => Promise<boolean>>(async () => true),
+  mode: OcrMode = 'lines',
 ) {
   const hook = renderHook(
-    (p: { run: RunView }) => useOcrText(p.run, { initial, enabled: true, follow }),
+    (p: { run: RunView; mode: OcrMode }) =>
+      useOcrText(p.run, { initial, enabled: true, mode: p.mode, follow }),
     {
-      initialProps: { run },
+      initialProps: { run, mode },
     },
   )
   return { ...hook, follow }
@@ -79,9 +81,9 @@ describe('useOcrText', () => {
     expect(pending.map((p) => [p.text, p.transform])).toEqual([[RAW, 'remove_blank_lines']])
     expect(result.current.display).toBe(RAW)
     // 还在识别时不求
-    rerender({ run: runOf(2, 'X\n\nY', 'streaming') })
+    rerender({ run: runOf(2, 'X\n\nY', 'streaming'), mode: 'lines' })
     expect(pending).toHaveLength(1)
-    rerender({ run: runOf(2, 'X\n\nY') })
+    rerender({ run: runOf(2, 'X\n\nY'), mode: 'lines' })
     expect(pending).toHaveLength(2)
     await answer(1, 'X\nY')
     expect(result.current.display).toBe('X\nY')
@@ -165,6 +167,37 @@ describe('useOcrText', () => {
     expect(result.current).toMatchObject({ display: ONE, pending: false })
   })
 
+  it('逐行选了合并段内换行、换到段落模式：显示识别文本、按下态与勾选回到原样（会话排版保留）；左半换成去掉空行', async () => {
+    const { result, rerender, follow } = mount('keep')
+    act(() => result.current.choose('reflow'))
+    await answer(0, '第一段 第二段')
+    expect(result.current).toMatchObject({ selected: 'reflow', recent: 'reflow' })
+    rerender({ run: runOf(2, RAW), mode: 'paragraphs' })
+    expect(result.current).toMatchObject({
+      session: 'reflow',
+      selected: 'keep',
+      layout: 'keep',
+      display: RAW,
+      pending: false,
+      recent: 'remove_blank_lines',
+    })
+    expect(pending).toHaveLength(1)
+    // 菜单里勾着原样：再选原样什么也不变；左半切到去掉空行
+    await act(async () => {})
+    follow.mockClear()
+    act(() => result.current.choose('keep'))
+    expect(follow).not.toHaveBeenCalled()
+    act(() => result.current.choose('reflow'))
+    expect(pending).toHaveLength(1)
+    act(() => result.current.toggle())
+    expect(pending.map((p) => p.transform)).toEqual(['reflow', 'remove_blank_lines'])
+    await answer(1, TIGHT)
+    expect(result.current).toMatchObject({ selected: 'remove_blank_lines', display: TIGHT })
+    // 回到逐行：最近用过的已是去掉空行
+    rerender({ run: runOf(3, RAW), mode: 'lines' })
+    expect(result.current.recent).toBe('remove_blank_lines')
+  })
+
   it('排队的跟随在等排版结果期间用户开始编辑：不再跟随，也不播报', async () => {
     const { result, follow } = mount('keep')
     act(() => result.current.choose('join_lines'))
@@ -178,7 +211,7 @@ describe('useOcrText', () => {
   it('排队的跟随在等排版结果期间开始重新识别：不把上一次结果的排版写进剪贴板', async () => {
     const { result, rerender, follow } = mount('keep')
     act(() => result.current.choose('join_lines'))
-    rerender({ run: runOf(2, '', 'streaming') })
+    rerender({ run: runOf(2, '', 'streaming'), mode: 'lines' })
     await answer(0, ONE)
     await act(async () => {})
     expect(follow).not.toHaveBeenCalled()

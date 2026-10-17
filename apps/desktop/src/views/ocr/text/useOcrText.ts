@@ -8,13 +8,21 @@
  * - 适用性不在前端判断：识别文本的可用变换来自芯片条已经在做的检视（`inspected`）。
  */
 import { useEffect, useLayoutEffect, useReducer, useRef } from 'react'
-import { api, type OcrLayers, type OcrLayout, type TransformId } from '../../../shared/ipc'
+import {
+  api,
+  layoutAvailableIn,
+  type OcrLayers,
+  type OcrLayout,
+  type OcrMode,
+  type TransformId,
+} from '../../../shared/ipc'
 import type { RunView } from '../pinState'
 import { isSettled, warnCode } from '../useRun'
 import {
   canApply,
   initialText,
   reduceText,
+  selectedIn,
   viewOf,
   type TextInput,
   type TextView,
@@ -26,6 +34,8 @@ export interface OcrTextOptions {
   initial: OcrLayout
   /** 当前模式下排版是否作用（逐行 / 段落、非直接翻译） */
   enabled: boolean
+  /** 当前识别模式：会话排版在这个模式下不可用时显示识别文本（与编排器交付一致），左半按钮换一种可用的整理方式 */
+  mode: OcrMode
   /**
    * 用户切换排版、新的文字就绪之后：让剪贴板跟上，返回是否已复制。`still` 报告这次切换是否仍然作数（写入期间用户编辑、
    * 重新识别或又切换了就不再作数，不提示「已复制」）
@@ -34,8 +44,14 @@ export interface OcrTextOptions {
 }
 
 export interface OcrText extends TextView {
-  /** 会话排版（结构化等不作用时也保留） */
+  /** 会话排版（结构化等不作用、在当前模式下不可用时也保留） */
   session: OcrLayout
+  /**
+   * 按钮的按下态与菜单的勾选：会话排版在当前模式下可用就是它，否则是原样（显示的也是识别文本）。重新识别期间也按它，
+   * 不闪成原样
+   */
+  selected: OcrLayout
+  /** 左半按钮的切换目标：最近用过的整理方式；它在当前模式下不可用时（段落模式里的合并段内换行）换成去掉空行 */
   recent: Tidy
   /** 排版此刻能不能切换：识别已结束、排版作用、没有编辑 */
   switchable: boolean
@@ -64,9 +80,14 @@ export function useOcrText(run: RunView, opts: OcrTextOptions): OcrText {
     key,
     raw,
     applies: opts.enabled && isSettled(run.state) && raw.trim() !== '',
+    mode: opts.mode,
   }
   const view = viewOf(state, input)
   const switchable = input.applies && !view.edited
+  const selected = selectedIn(state.layout, opts.mode)
+  const recent: Tidy = layoutAvailableIn(state.recent, opts.mode)
+    ? state.recent
+    : 'remove_blank_lines'
 
   const now = { ...opts, key, switchable }
   const latest = useRef(now)
@@ -107,7 +128,9 @@ export function useOcrText(run: RunView, opts: OcrTextOptions): OcrText {
   }, [key, view.layout, view.pending, input.applies])
 
   const choose = (next: OcrLayout) => {
-    if (!switchable || next === state.layout || !canApply(state, key, next)) return
+    // 与眼前选中的比（不是会话排版）：会话排版在这个模式下不可用时眼前是原样，选原样什么也不变
+    const usable = layoutAvailableIn(next, opts.mode) && canApply(state, key, next)
+    if (!switchable || next === selected || !usable) return
     dispatch({ type: 'layout', layout: next, input })
     const mine = ++turn.current
     const k = key
@@ -130,11 +153,12 @@ export function useOcrText(run: RunView, opts: OcrTextOptions): OcrText {
   return {
     ...view,
     session: state.layout,
-    recent: state.recent,
+    selected,
+    recent,
     switchable,
     can: (layout) => canApply(state, key, layout),
     choose,
-    toggle: () => choose(state.layout === 'keep' ? state.recent : 'keep'),
+    toggle: () => choose(selected === 'keep' ? recent : 'keep'),
     setEdit: (text) => dispatch({ type: 'edit', key, text }),
     discard: () => dispatch({ type: 'discard', key }),
     inspected: (text, transforms) => {

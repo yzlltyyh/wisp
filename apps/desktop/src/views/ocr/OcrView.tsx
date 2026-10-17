@@ -67,6 +67,8 @@ import { keepQuoted } from '../../shared/i18n/keepQuoted'
 import { useT, useTKey } from '../../shared/i18n/useT'
 import {
   api,
+  layoutAvailableIn,
+  OCR_LAYOUTS,
   WispIpcError,
   type Entity,
   type Lang,
@@ -262,12 +264,14 @@ export function OcrView(props: OcrViewProps) {
   const [mode, setMode] = useState<OcrMode>(pinned?.ocr_mode ?? payload.mode)
   const [model, setModel] = useState<ModelRef | null>(null)
   /**
-   * 正文的三层（识别文本 → 排版 → 编辑，见 text/model.ts）：排版只在逐行 / 段落模式下作用，结构化与直接翻译不出现
+   * 正文的三层（识别文本 → 排版 → 编辑，见 text/model.ts）：排版只在有整理方式可用的模式（逐行 / 段落）下作用，结构化
+   * 与直接翻译不出现；会话排版在当前模式下不可用时显示识别文本（useOcrText 按模式判断）
    */
-  const layoutOn = !direct && (mode === 'lines' || mode === 'paragraphs')
+  const layoutOn = !direct && OCR_LAYOUTS.some((l) => l !== 'keep' && layoutAvailableIn(l, mode))
   const content = useOcrText(main, {
     initial: payload.layout,
     enabled: layoutOn,
+    mode,
     follow: followClipboard,
   })
   const [confirm, setConfirm] = useState<Confirm | null>(null)
@@ -1518,6 +1522,7 @@ export function OcrView(props: OcrViewProps) {
               ) : layoutShown ? (
                 <LayoutSplit
                   text={content}
+                  mode={mode}
                   disabled={!hasText}
                   onDiscard={() => setConfirm({ discard: true })}
                 />

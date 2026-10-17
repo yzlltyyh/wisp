@@ -152,6 +152,8 @@ let transformHold: Promise<void> | null
 function fakeTransform(text: string, transform: string): string {
   if (transform === 'remove_blank_lines') return text.replace(/\n{2,}/g, '\n')
   if (transform === 'join_lines') return text.replace(/\n+/g, '')
+  // 合并段内换行：段内的单个换行连起来，空行（段界）保留
+  if (transform === 'reflow') return text.replace(/([^\n])\n(?=[^\n])/g, '$1')
   return text
 }
 
@@ -177,7 +179,7 @@ function fakeTransport(): Transport {
         // 默认没有片段；可用的排版按替身的结果列出（与 Rust 一样：列出的恰好是会改变文字的那些）
         if (inspectResult === NO_ENTITIES) {
           const text = args?.text as string
-          const transforms = (['join_lines', 'remove_blank_lines'] as const).filter(
+          const transforms = (['join_lines', 'reflow', 'remove_blank_lines'] as const).filter(
             (id) => fakeTransform(text, id) !== text,
           )
           return Promise.resolve({ entities: [], transforms } as T)
@@ -808,6 +810,78 @@ describe('排版', () => {
     })
     expect(screen.getByTestId('inline-toast')).toHaveTextContent('已复制')
     expect(screen.getByTestId('ocr-announce')).toHaveTextContent('已切换为「原样」，已复制')
+  })
+
+  it('「合并段内换行」只在逐行模式的菜单里出现；选中后段内换行连起来，左半随之换成它', async () => {
+    const WRAPPED = '被硬换行\n断开的句子\n\n第二段'
+    const first = view()
+    await recognize('r-ocr', WRAPPED)
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    const menu = await screen.findByTestId('ocr-layout-menu')
+    expect(within(menu).getAllByRole('menuitemradio')).toHaveLength(4)
+    const reflow = screen.getByTestId('ocr-layout-menu-item-reflow')
+    expect(reflow).toHaveTextContent('合并段内换行')
+    expect(reflow).toHaveTextContent('把 PDF 里的硬换行连成段落')
+    fireEvent.click(reflow)
+    await settle()
+    expect(box().value).toBe('被硬换行断开的句子\n\n第二段')
+    expect(callsOf('text_transform').at(-1)?.[1]).toEqual({ text: WRAPPED, transform: 'reflow' })
+    expect(screen.getByTestId('ocr-layout-toggle')).toHaveAccessibleName('合并段内换行')
+    expect(screen.getByTestId('ocr-layout-toggle')).toHaveAttribute('aria-pressed', 'true')
+    first.unmount()
+
+    view({}, payload({ mode: 'paragraphs' }))
+    await recognize('r-ocr', WRAPPED)
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    await screen.findByTestId('ocr-layout-menu')
+    expect(screen.queryByTestId('ocr-layout-menu-item-reflow')).toBeNull()
+    expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
+  })
+
+  it('没有可合并的段内换行时置灰并写明原因', async () => {
+    inspectResult = { entities: [], transforms: ['join_lines', 'remove_blank_lines'] }
+    view()
+    await recognize('r-ocr', PARAS)
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    const reflow = await screen.findByTestId('ocr-layout-menu-item-reflow')
+    expect(reflow).toHaveAttribute('aria-disabled', 'true')
+    expect(reflow).toHaveTextContent('没有可以合并的段内换行')
+  })
+
+  it('会话排版在当前模式下不可用：逐行选了合并段内换行、换到段落模式重新识别后显示识别文本，按钮与勾选回到原样（与交付一致）', async () => {
+    const WRAPPED = '被硬换行\n断开的句子'
+    view()
+    await recognize('r-ocr', WRAPPED)
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    fireEvent.click(await screen.findByTestId('ocr-layout-menu-item-reflow'))
+    await settle()
+    expect(box().value).toBe('被硬换行断开的句子')
+    fireEvent.click(screen.getByTestId('ocr-recognize-menu'))
+    fireEvent.click(await screen.findByRole('menuitemcheckbox', { name: /段落/ }))
+    // 请求照样带上会话排版：Rust 按同一条规则判断，在段落模式下原样交付
+    expect(callsOf('ocr_start').at(-1)?.[1]).toMatchObject({
+      req: { mode: 'paragraphs', layout: 'reflow' },
+    })
+    const before = callsOf('text_transform').length
+    await recognize('r-1', WRAPPED)
+    await settle()
+    expect(box().value).toBe(WRAPPED)
+    expect(callsOf('text_transform')).toHaveLength(before)
+    const toggle = screen.getByTestId('ocr-layout-toggle')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    // 左半换成这个模式下可用的整理方式
+    expect(toggle).toHaveAccessibleName('去掉空行')
+    fireEvent.click(screen.getByTestId('ocr-layout-caret'))
+    const menu = await screen.findByTestId('ocr-layout-menu')
+    expect(
+      within(menu)
+        .getAllByRole('menuitemradio')
+        .map((el) => el.getAttribute('aria-checked')),
+    ).toEqual(['true', 'false', 'false'])
   })
 
   it('设置默认去掉空行：一开始就是按下状态，识别完成后显示排版结果（Rust 已按它复制，不再复制）；菜单是单选', async () => {

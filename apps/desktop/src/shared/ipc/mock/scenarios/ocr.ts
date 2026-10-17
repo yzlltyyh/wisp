@@ -334,9 +334,18 @@ const LAYOUT_TEXT = {
 } as const
 type LayoutMode = keyof typeof LAYOUT_TEXT
 
+/**
+ * 逐行识别出像 PDF 那样被硬换行断开的段落（同样取自样例表）：排版菜单里有「合并段内换行」，选中后看到的是真实结果
+ */
+const WRAPPED_TEXT =
+  'Wisp stays in the background and wakes up only\nwhen you press a hotkey. Recognized text keeps\nits line breaks.\n\n- Lists stay as they are'
+
 /** 窄面板（360 px）上识别完成 */
-async function layoutPanel(ctx: MockContext, mode: LayoutMode): Promise<void> {
-  const text = LAYOUT_TEXT[mode]
+async function layoutPanel(
+  ctx: MockContext,
+  mode: LayoutMode,
+  text: string = LAYOUT_TEXT[mode],
+): Promise<void> {
   ctx.stream('r-ocr', ocrStream(ctx, text))
   show(ctx, await ocrPayload(ctx, { mode, thumbLines: text.split('\n').slice(0, 6) }), {
     width: 360,
@@ -742,6 +751,14 @@ export const scenarios: readonly Scenario[] = [
     label: 'OCR · 窄面板（360 px）的排版按钮（?mode=lines / paragraphs / markdown）',
     async run(ctx) {
       await layoutPanel(ctx, layoutMode())
+      await pause(300)
+    },
+  }),
+  scenario({
+    id: 'layout-wrapped',
+    label: 'OCR · 逐行识别出被硬换行断开的段落（排版菜单里有「合并段内换行」）',
+    async run(ctx) {
+      await layoutPanel(ctx, 'lines', WRAPPED_TEXT)
       await pause(300)
     },
   }),
