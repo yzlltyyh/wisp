@@ -277,6 +277,7 @@ jobs:
           node scripts/bump.mjs --self-test
           node scripts/check-size.mjs --self-test
           node scripts/gen-fixtures.mjs --self-test
+          node scripts/eval-ocr.mjs --self-test
           node scripts/ci/e2e-summary.mjs --self-test
           node scripts/release/self-test.mjs
           node scripts/release/updater-rehearsal.mjs --self-test
