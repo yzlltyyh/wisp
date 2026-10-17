@@ -7,7 +7,7 @@ import { PanelApp } from '../../../panel/shell/PanelApp'
 import { usePanelStore } from '../../../panel/shell/panelStore'
 import * as api from '../commands'
 import { getTransport, whenReady } from '../runtime'
-import type { StreamEvent } from '../types'
+import type { OcrLayout, StreamEvent } from '../types'
 import { MockStreams, streamRate, textStream } from '../mock/streams'
 import { mergePatch } from '../mock/defaults'
 
@@ -103,6 +103,45 @@ describe('mock 默认命令', () => {
     await expect(api.ocrRecopy('cap-1', 'r-1', '第一段\n第二段')).resolves.toBe(true)
     await api.settingsPatch({ ocr: { auto_copy: false } })
     await expect(api.ocrRecopy('cap-1', 'r-1', '第一段\n第二段')).resolves.toBe(false)
+    await api.settingsPatch({ ocr: { auto_copy: true } })
+  })
+
+  it('ocr_start 按会话排版交付（排版在这个模式下不可用时原样）；ocr_recopy 只跟随这张截图当前这次识别', async () => {
+    const h = handle()
+    const RAW = '第一段，被\n硬换行的中文。\n\n第二段。'
+    const start = async (mode: 'lines' | 'paragraphs' | 'markdown', layout: OcrLayout) => {
+      h.streams.enqueue(textStream(RAW, { firstTokenMs: 0, intervalMs: 0 }))
+      const ack = await api.ocrStart(
+        {
+          session_id: 1,
+          capture_id: 'cap-9',
+          mode,
+          model_ref: null,
+          target_lang: null,
+          layout,
+        },
+        () => {},
+      )
+      return { id: ack.request_id, copied: h.state.ocrCopies.get('cap-9')?.text }
+    }
+    expect((await start('paragraphs', 'remove_blank_lines')).copied).toBe(
+      '第一段，被\n硬换行的中文。\n第二段。',
+    )
+    expect((await start('markdown', 'remove_blank_lines')).copied).toBe(RAW)
+    expect((await start('paragraphs', 'reflow')).copied).toBe(RAW)
+    const old = await start('lines', 'keep')
+    expect(old.copied).toBe(RAW)
+    const current = await start('lines', 'join_lines')
+    expect(current.copied).toBe('第一段，被硬换行的中文。第二段。')
+    // 发起过更新的识别：旧的那次不再跟随
+    await expect(api.ocrRecopy('cap-9', old.id, '旧')).resolves.toBe(false)
+    await expect(api.ocrRecopy('cap-9', current.id, '新')).resolves.toBe(true)
+    expect(h.state.ocrCopies.get('cap-9')?.text).toBe('新')
+    // 自动复制关着：不交付，也不跟随
+    await api.settingsPatch({ ocr: { auto_copy: false } })
+    const off = await start('lines', 'keep')
+    expect(off.copied).toBeUndefined()
+    await expect(api.ocrRecopy('cap-9', off.id, '新')).resolves.toBe(false)
     await api.settingsPatch({ ocr: { auto_copy: true } })
   })
 

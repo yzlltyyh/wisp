@@ -6,6 +6,7 @@ import { longTextAck, longTextGate } from './longText'
 import type { Boot } from '../boot'
 import { windowKindOf } from '../boot'
 import { tKey } from '../../i18n/i18n'
+import { layoutAvailableIn } from '../layouts'
 import type {
   ClipItemMeta,
   ConflictReport,
@@ -57,6 +58,11 @@ export interface MockState {
   sync: MockSync
   /** 离线模型：设置页的快照与下载进度（localModels.ts） */
   offline: MockOffline
+  /**
+   * 每张截图（capture_id）最近一次识别的自动复制：请求 id 与写入的文字（按会话排版交付）。mock 没有系统剪贴板，只记在
+   * 这里：ocr_recopy 据此只跟随当前这次识别。场景预置的识别（载荷里的请求，不经 ocr_start）没有记录
+   */
+  ocrCopies: Map<string, { requestId: string; text: string }>
 }
 
 export function createState(f: MockFixtures): MockState {
@@ -74,6 +80,7 @@ export function createState(f: MockFixtures): MockState {
     onboardingDone: false,
     sync: createSyncState(f),
     offline: createOfflineState(f.os),
+    ocrCopies: new Map(),
   }
 }
 
@@ -180,17 +187,42 @@ export function installDefaults(d: DefaultsDeps): void {
   })
   r.handle('ocr_start', ({ req }, call) => {
     const id = streams.newRequestId()
-    const text = req.mode === 'translate' ? SAMPLE.ocrTranslation : SAMPLE.ocr
-    streams.start(id, streams.takeQueued() ?? textStream(text, { chunkChars: 3 }))
+    const direct = req.mode === 'translate'
+    const script =
+      streams.takeQueued() ??
+      textStream(direct ? SAMPLE.ocrTranslation : SAMPLE.ocr, { chunkChars: 3 })
+    streams.start(id, script)
     if (call.onEvent) streams.attach(id, call.onEvent)
+    // 与 Rust 的交付一致：自动复制开着、不是直接翻译时，按会话排版写入（排版在这个模式下不可用时原样写入）；新的一次
+    // 识别取代这张截图上一次的记录
+    state.ocrCopies.delete(req.capture_id)
+    if (!direct && state.settings.ocr.auto_copy) {
+      const raw = script.flatMap((step) =>
+        'type' in step && step.type === 'delta' ? [step.text] : [],
+      )
+      const layout = req.layout ?? 'keep'
+      const text = raw.join('')
+      state.ocrCopies.set(req.capture_id, {
+        requestId: id,
+        text:
+          layout !== 'keep' && layoutAvailableIn(layout, req.mode)
+            ? mockTransform(text, layout)
+            : text,
+      })
+    }
     return { request_id: id, width: null }
   })
   r.handle('capture_release', () => undefined)
-  // 与 Rust 一致的前提：自动复制开着、调用方是面板（固定窗口里切换排版不带动剪贴板）。mock 没有系统剪贴板，
-  // 视为期间没有别的复制；不记进剪贴板历史（mock 的历史只是界面数据）
-  r.handle('ocr_recopy', ({ text }) => {
+  // 与 Rust 一致的前提：自动复制开着、调用方是面板（固定窗口里切换排版不带动剪贴板）、要跟随的是这张截图当前这次识别
+  // （经 ocr_start 发起过更新的识别时，旧的不再跟随）。mock 没有系统剪贴板，视为期间没有别的复制；不记进剪贴板历史
+  // （mock 的历史只是界面数据）
+  r.handle('ocr_recopy', ({ capture_id, request_id, text }) => {
     if (text.length > 1024 * 1024) throw mockError('invalid_argument', 'text exceeds 1048576 bytes')
-    return state.settings.ocr.auto_copy && windowKindOf(boot.label) === 'panel'
+    if (!state.settings.ocr.auto_copy || windowKindOf(boot.label) !== 'panel') return false
+    const last = state.ocrCopies.get(capture_id)
+    if (last && last.requestId !== request_id) return false
+    state.ocrCopies.set(capture_id, { requestId: request_id, text })
+    return true
   })
   r.handle('trigger_action', ({ action, text, origin }) => {
     if (text !== null && action !== 'translate_selection' && action !== 'translate_input') {
