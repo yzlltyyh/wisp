@@ -5,8 +5,8 @@
 //! - lines：每个视觉行一行，保留相对缩进（左边界与主体左边界之差折算成空格，最多 8 个）；行间有明显空白时空一行。
 //! - paragraphs：相邻视觉行在行距 ≤ 1.5 × 行高、左边界接近、上一行接近右边界时合并为一段，跨行处按
 //!   [`wisp_text::join::join_break`] 相连（断词还原、东亚文字直接相连、中英之间按全文惯例）；列表项另起一段。
-//!   段与段之间空一行；连续的列表项、连续的短行（一行就结束、明显比版面窄：界面标签、按钮、菜单项、表格的单元格）
-//!   之间只换行，一组短行与相邻的正文之间仍空一行（与视觉模型的 paragraphs 模式相同，判定见 `separator`）。
+//!   段与段之间空一行；连续的列表项、连续的短行（一行就结束、明显比所在这一栏窄：界面标签、按钮、菜单项、表格的
+//!   单元格）之间只换行，一组短行与相邻的正文之间仍空一行（与视觉模型的 paragraphs 模式相同，判定见 `separator`）。
 //! - 置信度低于 [`MIN_SCORE`] 的行丢弃。没有文字时输出 [`NO_TEXT`]（编排器的无文字判定照常生效）。
 //!
 //! 这里只管几何（分行、分栏、缩进、段落边界）；只看文字本身的规则（是否加空格、断词还原、列表项）在 [`wisp_text::join`]。
@@ -42,9 +42,14 @@ const FIRST_LINE_INDENT: f32 = 4.0;
 const PARAGRAPH_MIN_WIDTH: f32 = 8.0;
 /// paragraphs 模式：估计一栏的右边界时，只看上下这么多倍行高以内、左边界相近的行
 const COLUMN_WINDOW: f32 = 15.0;
-/// paragraphs 模式：一行就结束、宽度不超过全部文字所占宽度这个比例的段算「短行」（界面标签、按钮、菜单项、表格的
-/// 单元格、聊天里的短消息）。写到六成以上宽度的单行段多半是恰好一行写完的正文，照常与相邻的段空一行
+/// paragraphs 模式：一行就结束、宽度不超过所在这一栏行长这个比例的段算「短行」（界面标签、按钮、菜单项、表格的
+/// 单元格、聊天里的短消息）。写到六成以上的单行段多半是恰好一行写完的正文，照常与相邻的段空一行。栏的行长见
+/// [`column_measure`]
 const SHORT_PARAGRAPH: f32 = 0.6;
+/// paragraphs 模式：折了行的段至少这么多倍的行高宽，才拿它的宽度当这一栏的行长（约 40 个字母或 20 个汉字）。界面截图
+/// 里上下紧挨着的两行控件也会被拼成「折了行的段」（机票上的两行字段、窄面板里的两行指标），在真实截图的样例里只有
+/// 9–15 个行高宽；拿它们当行长，同一组的短行会被当成正文、彼此空行。常见的双栏正文一栏都比这宽
+const MIN_COLUMN_MEASURE: f32 = 16.0;
 
 /// 按模式拼装（markdown 与 translate 退回 paragraphs：PP-OCR 不识别版面）
 pub fn assemble(lines: &[TextLine], mode: OcrMode) -> String {
@@ -126,20 +131,46 @@ pub fn to_paragraphs(lines: &[TextLine]) -> String {
         // 没被这一行接上的段落就此结束：段落只能由紧接着的下一行延续
         open = continued;
     }
+    let compact: Vec<bool> = paragraphs
+        .iter()
+        .map(|p| p.compact(|| column_measure(p, &paragraphs, h).unwrap_or(text_width)))
+        .collect();
     let mut out = String::new();
-    let mut prev: Option<&Paragraph> = None;
-    for p in &paragraphs {
-        if let Some(prev) = prev {
-            out.push_str(separator(prev, p, text_width, h));
+    for (i, p) in paragraphs.iter().enumerate() {
+        if i > 0 {
+            out.push_str(separator(&paragraphs[i - 1], p, compact[i - 1] && compact[i], h));
         }
         out.push_str(&p.text);
-        prev = Some(p);
     }
     out
 }
 
-/// paragraphs 模式两段之间的分隔：前后两段都是列表项或短行（[`Paragraph::compact`]），且两段之间的竖向空白不超过
-/// lines 模式插空行的阈值（[`BLANK_LINE_GAP`] 个行高，行高取全图的中位数）时只换行，否则照旧空一行。
+/// paragraphs 模式：段所在这一栏的行长，用来判断单行段是不是短行。取同一栏里折了行的段：左边界与本段首行相差不超过
+/// [`PARAGRAPH_LEFT`] 个行高、竖向相距不超过 [`COLUMN_WINDOW`] 个行高、至少 [`MIN_COLUMN_MEASURE`] 个行高宽的多行段里，
+/// 最靠右的右边界到本段左边界的距离。
+///
+/// 只看折了行的段：它们写满了一栏，宽度才是这一栏的行长。双栏文档、带侧栏的页面里一栏不到全图的六成，按全部文字的
+/// 宽度算，恰好一行写完的正文也成了短行；反过来，若把附近所有左边界相近的行都算进来，侧栏里一列菜单项的「行长」就是
+/// 最长的那一项，菜单项彼此之间反而要空行。附近没有够宽的折行段（侧栏的菜单、表格、只有短消息的聊天、窄面板）时为
+/// None，由调用方退回全部文字的宽度，与这些版面原来的分组一致：窄面板里的一组指标、标签仍算短行
+fn column_measure(p: &Paragraph, paragraphs: &[Paragraph], h: f32) -> Option<f32> {
+    let left = p.first.x0;
+    paragraphs
+        .iter()
+        .filter(|q| {
+            let q_left = q.first.x0.min(q.last.x0);
+            q.lines > 1
+                && q.right - q_left >= MIN_COLUMN_MEASURE * h
+                && (q_left - left).abs() <= PARAGRAPH_LEFT * h
+                && (q.first.y0 - p.first.y1).max(p.first.y0 - q.last.y1) <= COLUMN_WINDOW * h
+        })
+        .map(|q| q.right)
+        .reduce(f32::max)
+        .map(|right| right - left)
+}
+
+/// paragraphs 模式两段之间的分隔：前后两段都是列表项或短行（`both_compact`，见 [`Paragraph::compact`]），且两段之间的
+/// 竖向空白不超过 lines 模式插空行的阈值（[`BLANK_LINE_GAP`] 个行高，行高取全图的中位数）时只换行，否则照旧空一行。
 ///
 /// 宁可多空一行：竖向空白大说明版面上隔开了，多半是另一组（剪贴板历史里相邻的两条、设置页里的两节、标题与下面的
 /// 列表），即使都是短行也照常空行；lines 模式在同样的地方也会空一行，两种模式的分组因此一致。不按框的高度区分标题：
@@ -148,13 +179,9 @@ pub fn to_paragraphs(lines: &[TextLine]) -> String {
 ///
 /// 段落按首行的位置排序，多栏的版面里前后两段可能分属两栏；只要满足上面的条件，同一视觉行上的两个单元格、
 /// 相邻两行的标签之间同样只换行
-fn separator(prev: &Paragraph, next: &Paragraph, text_width: f32, h: f32) -> &'static str {
+fn separator(prev: &Paragraph, next: &Paragraph, both_compact: bool, h: f32) -> &'static str {
     let close = next.first.y0 - prev.last.y1 <= BLANK_LINE_GAP * h;
-    if close && prev.compact(text_width) && next.compact(text_width) {
-        "\n"
-    } else {
-        "\n\n"
-    }
+    if close && both_compact { "\n" } else { "\n\n" }
 }
 
 /// 一个片段：一个或几个间距较小的文本框拼成的文字，带外接矩形
@@ -364,10 +391,10 @@ impl Paragraph {
         !starts_list_item(&seg.text)
     }
 
-    /// 可以与相邻的同类段落只隔一个换行：列表项（不论折成几行），或一行就结束、宽度不超过全部文字所占宽度
-    /// [`SHORT_PARAGRAPH`] 的短行。`text_width` 是全部文字的外接宽度
-    fn compact(&self, text_width: f32) -> bool {
-        self.item || (self.lines == 1 && self.first.x1 - self.first.x0 <= SHORT_PARAGRAPH * text_width)
+    /// 可以与相邻的同类段落只隔一个换行：列表项（不论折成几行），或一行就结束、宽度不超过所在这一栏行长
+    /// [`SHORT_PARAGRAPH`] 的短行。`measure` 给出这一栏的行长，只在单行、不是列表项的段上才算
+    fn compact(&self, measure: impl FnOnce() -> f32) -> bool {
+        self.item || (self.lines == 1 && self.first.x1 - self.first.x0 <= SHORT_PARAGRAPH * measure())
     }
 
     fn push(&mut self, seg: Segment, spacing: MixedSpacing) {
@@ -605,6 +632,73 @@ mod tests {
         );
         // lines 模式不受影响
         assert_eq!(to_lines(&input[2..5]), "General\nShortcuts\nModels");
+    }
+
+    #[test]
+    fn short_lines_are_measured_against_their_own_column() {
+        // 双栏文档：左栏 10–350、右栏 400–740。左栏里两段各一行写完、写到这一栏八成的正文，按全部文字的宽度（730）
+        // 算不到六成，按这一栏的行长（由左栏折了行的段估计）才看得出是正文，照常空一行
+        let input = [
+            line(
+                "Wisp keeps every tool one shortcut away, so it can stay",
+                10.0,
+                10.0,
+                350.0,
+                30.0,
+            ),
+            line(
+                "The right column has its own paragraph that also runs on",
+                400.0,
+                10.0,
+                740.0,
+                30.0,
+            ),
+            line("out of the way.", 10.0, 34.0, 150.0, 54.0),
+            line("to a second line.", 400.0, 34.0, 600.0, 54.0),
+            line(
+                "A single sentence that fills most of the column.",
+                10.0,
+                70.0,
+                290.0,
+                90.0,
+            ),
+            line("Another one that also fills most of it.", 10.0, 98.0, 280.0, 118.0),
+        ];
+        assert_eq!(
+            to_paragraphs(&input),
+            "Wisp keeps every tool one shortcut away, so it can stay out of the way.\n\nThe right column has its own paragraph that also runs on to a second line.\n\nA single sentence that fills most of the column.\n\nAnother one that also fills most of it."
+        );
+        // 侧栏的菜单项：这一栏没有折了行的段，退回按全部文字的宽度算，仍是短行，彼此之间只换行
+        let sidebar = [
+            line("General", 10.0, 10.0, 80.0, 30.0),
+            line(
+                "Wisp keeps every tool one shortcut away and stays",
+                200.0,
+                10.0,
+                600.0,
+                30.0,
+            ),
+            line("Shortcuts", 10.0, 38.0, 95.0, 58.0),
+            line("out of the way.", 200.0, 34.0, 320.0, 54.0),
+            line("Models", 10.0, 66.0, 70.0, 86.0),
+        ];
+        assert_eq!(
+            to_paragraphs(&sidebar),
+            "General\n\nWisp keeps every tool one shortcut away and stays out of the way.\n\nShortcuts\nModels"
+        );
+        // 窄面板：两行拼成的段只有 10 个行高宽，不拿它当行长；面板里的一组指标仍是短行，彼此之间只换行
+        let panel = [
+            line("Performance budget for the", 10.0, 10.0, 210.0, 30.0),
+            line("GPT-5.4 mini", 500.0, 10.0, 600.0, 30.0),
+            line("panel", 10.0, 34.0, 60.0, 54.0),
+            line("Panel show p95 ≤ 100 ms", 10.0, 70.0, 160.0, 90.0),
+            line("First token p95 ≤ 1.2 s", 10.0, 98.0, 160.0, 118.0),
+            line("Idle CPU ≈ 0%", 10.0, 126.0, 120.0, 146.0),
+        ];
+        assert_eq!(
+            to_paragraphs(&panel),
+            "Performance budget for the panel\n\nGPT-5.4 mini\n\nPanel show p95 ≤ 100 ms\nFirst token p95 ≤ 1.2 s\nIdle CPU ≈ 0%"
+        );
     }
 
     #[test]

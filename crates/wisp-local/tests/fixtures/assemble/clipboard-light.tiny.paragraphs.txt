@@ -3,10 +3,15 @@ Notes — design.md
 Wisp一设计笔记
 Q搜索剪贴板历史
 全部
+
 常驻后台的工具首先要安静：空闲时几乎不占
+
 点。Wisp stays out of your way: it idles at n
+
 收藏
+
 translation right next to your cursor
+
 T 收货地址：上海市徐汇区漕溪北路 88号 12 层...
 3天
 
