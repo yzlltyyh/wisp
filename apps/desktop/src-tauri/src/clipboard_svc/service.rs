@@ -409,10 +409,16 @@ impl ClipboardService {
         }
     }
 
-    /// OCR 自动复制、复制按钮兜底；会正常进入历史（来源记为 Wisp）。**会阻塞**（同步写系统剪贴板，Windows 最长约 1.5 s），
+    /// 复制按钮兜底；会正常进入历史（来源记为 Wisp）。**会阻塞**（同步写系统剪贴板，Windows 最长约 1.5 s），
     /// 在阻塞线程上调用。KDE Wayland 等写不了时原样返回平台错误（裸 key，前端 `useCopy` 据此退回 `navigator.clipboard`）
     pub fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError> {
         self.engine.copy_text(text)
+    }
+
+    /// OCR 自动复制：与 [`Self::copy_text`] 相同，另外在剪贴板仍是 `prev`（这张截图上一次写入）的内容时删掉它新建、没有
+    /// 收藏的那一条，重新识别不会在历史里多出一条。**会阻塞**，在阻塞线程上调用
+    pub fn copy_text_replacing(&self, prev: Option<CopyReceipt>, text: &str) -> Result<CopyReceipt, IpcError> {
+        self.engine.copy_text_replacing(prev, text)
     }
 
     /// OCR 切换排版后让剪贴板跟随：剪贴板仍是 `prev` 写入的内容时改写为 `text`、照常进入历史，并删掉 `prev` 新建、

@@ -1505,6 +1505,135 @@ fn recopy_keeps_the_old_item_when_the_new_text_is_not_recorded() {
     assert_eq!(r.ids(), vec![last.created.expect("新建").id]);
 }
 
+/// 重新识别的自动复制：`copy_text_replacing(上一次写入的回执, 新文本)`
+fn replace_copy(r: &Rig, prev: Option<CopyReceipt>, text: &str) -> CopyReceipt {
+    r.engine.copy_text_replacing(prev, text).expect("自动复制")
+}
+
+#[test]
+fn re_recognition_replaces_the_previous_auto_copy() {
+    let r = rig();
+    let first = replace_copy(&r, None, "第一次识别");
+    let old = first.created.expect("新建").id;
+    r.events();
+    let next = replace_copy(&r, Some(first), "第二次识别");
+    assert_eq!(next.change_id, r.port.clipboard.change_id());
+    let new = next.created.expect("新文本新建了一条").id;
+    assert_eq!(r.ids(), vec![new], "历史里只留最新的一条");
+    let events = r.events();
+    assert!(events.contains(&ClipboardChanged::Removed { id: old }), "{events:?}");
+    assert_eq!(
+        r.port
+            .paste
+            .writes
+            .lock()
+            .last()
+            .and_then(|p| p.text.clone())
+            .as_deref(),
+        Some("第二次识别")
+    );
+}
+
+#[test]
+fn re_recognition_keeps_favorites_and_named_items() {
+    for name in [None, Some("报销单号")] {
+        let r = rig();
+        let first = replace_copy(&r, None, "第一次识别");
+        let old = first.created.expect("新建").id;
+        match name {
+            None => drop(r.engine.pin(old, true).expect("收藏")),
+            Some(n) => drop(r.engine.set_name(old, Some(n)).expect("命名")),
+        }
+        let next = replace_copy(&r, Some(first), "第二次识别");
+        let new = next.created.expect("新建").id;
+        assert!(r.ids().contains(&old), "收藏 / 命名过的保留：{name:?}");
+        assert!(r.ids().contains(&new));
+        // 保留下来的那一条不再算作这张截图的复制：下一次只取代新的这一条
+        let last = replace_copy(&r, Some(next), "第三次识别");
+        assert!(r.ids().contains(&old));
+        assert!(!r.ids().contains(&new));
+        assert!(last.created.is_some());
+    }
+}
+
+#[test]
+fn re_recognition_keeps_the_previous_item_once_something_else_was_copied() {
+    let r = rig();
+    let first = replace_copy(&r, None, "第一次识别");
+    let old = first.created.expect("新建").id;
+    // 用户在别处复制了东西（监听方随后记下它）
+    let user = r.copy_text(
+        r.port.clipboard.change.fetch_add(1, Ordering::SeqCst) + 1,
+        "用户自己复制的",
+    );
+    let next = replace_copy(&r, Some(first), "第二次识别");
+    let new = next.created.expect("照常写入、进入历史").id;
+    let ids = r.ids();
+    assert!(ids.contains(&old), "期间别处复制过：上一次的条目成了普通的历史，不删");
+    assert!(ids.contains(&user.id));
+    assert!(ids.contains(&new));
+}
+
+#[test]
+fn re_recognising_the_same_text_continues_the_previous_item() {
+    let r = rig();
+    let first = replace_copy(&r, None, "单独一行");
+    let own = first.created.expect("新建");
+    let same = replace_copy(&r, Some(first), "单独一行");
+    assert_eq!(same.created, Some(own), "只是移到顶部：仍是这张截图的复制新建的那一条");
+    assert_ne!(same.change_id, first.change_id);
+    assert_eq!(r.ids(), vec![own.id]);
+    // 之后切换排版照常替换它
+    let next = recopy(&r, same, "单独 一行").expect("写入");
+    assert_eq!(r.ids(), vec![next.created.expect("新建").id]);
+    // 期间别处复制过、再识别出相同的文字：那一条仍是这张截图新建的，照样接续（只是不删别的）
+    let r = rig();
+    let first = replace_copy(&r, None, "单独一行");
+    let own = first.created.expect("新建");
+    r.copy_text(
+        r.port.clipboard.change.fetch_add(1, Ordering::SeqCst) + 1,
+        "用户自己复制的",
+    );
+    let same = replace_copy(&r, Some(first), "单独一行");
+    assert_eq!(same.created, Some(own));
+    assert_eq!(r.ids().len(), 2);
+}
+
+#[test]
+fn re_recognition_never_claims_or_deletes_what_the_user_copied_before() {
+    let r = rig();
+    let user = r.copy_text(500, "用户自己复制的");
+    let first = replace_copy(&r, None, "识别结果");
+    let old = first.created.expect("新建").id;
+    // 新文本是用户早先复制过的内容：那一条被移到顶部，不是这次产生的；这张截图上一次新建的那一条照常取代
+    let next = replace_copy(&r, Some(first), "用户自己复制的");
+    assert_eq!(next.created, None);
+    assert_eq!(r.ids(), vec![user.id]);
+    assert!(!r.ids().contains(&old));
+    // 之后再识别：没有可取代的条目，用户那一条不动
+    let after = replace_copy(&r, Some(next), "又一次识别");
+    assert!(r.ids().contains(&user.id));
+    assert!(after.created.is_some());
+}
+
+#[test]
+fn re_recognition_keeps_the_previous_item_when_the_new_text_is_not_recorded() {
+    let r = rig();
+    let first = replace_copy(&r, None, "识别结果");
+    let old = first.created.expect("新建").id;
+    r.engine.set_paused(true);
+    let next = replace_copy(&r, Some(first), "重新识别的结果");
+    assert_eq!(r.ids(), vec![old], "不能只删不增");
+    assert_eq!(
+        next.created.map(|c| c.id),
+        Some(old),
+        "旧条目留在回执上，恢复记录后的下一次写入再取代"
+    );
+    r.engine.set_paused(false);
+    let last = replace_copy(&r, Some(next), "再识别一次");
+    assert_eq!(r.ids(), vec![last.created.expect("新建").id]);
+}
+
 // ---------- 条目操作 ----------
 
 #[test]

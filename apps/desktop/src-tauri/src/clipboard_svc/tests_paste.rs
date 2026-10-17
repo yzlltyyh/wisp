@@ -13,7 +13,10 @@ use wisp_types::{ClipKind, CopiedReason, OsKind, PanelView, PasteMode, PasteOutc
 use crate::error::{IpcError, IpcErrorCode};
 use crate::windows::panel::PANEL_LABEL;
 
-use super::paste::{FLOAT_LABEL, PasteHost, PasteKind, PasteRequest, PasteSource, PasteStage};
+use super::paste::{
+    CopiedItem, FLOAT_LABEL, PasteHost, PasteKind, PasteRequest, PasteSource, PasteStage, Recorded, Succession,
+    succession,
+};
 use super::port::ClipView;
 use super::tests::{Call, ICON_64, Rig, app, panel_item, rig, rig_with};
 
@@ -521,4 +524,44 @@ fn every_host_shares_the_single_flight_gate() {
     // 悬浮窗的粘贴不占用面板会话：面板随后照常粘贴
     let out = r.paste(b.id, PasteMode::Normal, Some(app("t"))).expect("面板粘贴");
     assert_eq!(out, PasteOutcome::Pasted);
+}
+
+/// 同一张截图又一次写剪贴板之后的交接，逐格核对
+#[test]
+fn succession_table() {
+    let item = |id: i64, h: u8| CopiedItem { id, hash: [h; 32] };
+    let old = item(1, 1);
+    let created = Recorded::Created(item(2, 2));
+    let same = Recorded::Existing {
+        id: 1,
+        hash: Some([1; 32]),
+    };
+    // 行号一样、内容 hash 却变了（原条目被删、行号被别的内容占用后又被移到顶部）：不是上一次新建的那一条
+    let reused = Recorded::Existing {
+        id: 1,
+        hash: Some([9; 32]),
+    };
+    let unverified = Recorded::Existing { id: 1, hash: None };
+    let other = Recorded::Existing {
+        id: 7,
+        hash: Some([7; 32]),
+    };
+    let keep = |created| Succession { created, discard: None };
+    for replace in [true, false] {
+        assert_eq!(succession(Some(old), replace, Some(same)), keep(Some(old)), "{replace}");
+        assert_eq!(succession(None, replace, Some(created)), keep(Some(item(2, 2))));
+        assert_eq!(succession(None, replace, None), keep(None));
+    }
+    let discard = |created| Succession {
+        created,
+        discard: Some(old),
+    };
+    assert_eq!(succession(Some(old), true, Some(created)), discard(Some(item(2, 2))));
+    assert_eq!(succession(Some(old), true, Some(other)), discard(None));
+    assert_eq!(succession(Some(old), true, Some(reused)), discard(None));
+    assert_eq!(succession(Some(old), true, Some(unverified)), discard(None));
+    assert_eq!(succession(Some(old), true, None), keep(Some(old)), "不能只删不增");
+    assert_eq!(succession(Some(old), false, Some(created)), keep(Some(item(2, 2))));
+    assert_eq!(succession(Some(old), false, Some(other)), keep(None));
+    assert_eq!(succession(Some(old), false, None), keep(None));
 }

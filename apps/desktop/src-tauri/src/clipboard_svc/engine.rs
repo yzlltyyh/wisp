@@ -601,8 +601,8 @@ impl Engine {
         self.ingest_with(raw, false).map(|(outcome, _)| outcome)
     }
 
-    /// 与 [`Self::ingest`] 相同，另外返回新建条目的内容 hash（读不到时为 None）。hash 在插入的同一个串行区里读：出了
-    /// 串行区，这一行可能已被删掉、行号分给了别的条目。**会阻塞**
+    /// 与 [`Self::ingest`] 相同，另外返回新建或被移到顶部的那一条的内容 hash（读不到、被跳过时为 None）。hash 在写库的
+    /// 同一个串行区里读：出了串行区，这一行可能已被删掉、行号分给了别的条目。**会阻塞**
     pub(crate) fn ingest_identified(&self, raw: &RawClipboard) -> Result<(IngestOutcome, Option<[u8; 32]>), IpcError> {
         self.ingest_with(raw, true)
     }
@@ -616,7 +616,9 @@ impl Engine {
             let serial = self.serial();
             let outcome = store.ingest(raw, &policy, now).map_err(store_error)?;
             let hash = match &outcome {
-                IngestOutcome::Inserted(meta) if identify => sync_ident(&store, meta.id).map(|(hash, _)| hash),
+                IngestOutcome::Inserted(meta) | IngestOutcome::Touched(meta) if identify => {
+                    sync_ident(&store, meta.id).map(|(hash, _)| hash)
+                }
                 _ => None,
             };
             serial.cache().apply(&outcome);

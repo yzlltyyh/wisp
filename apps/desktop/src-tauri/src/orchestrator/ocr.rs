@@ -1368,8 +1368,10 @@ impl Core {
     /// 识别完成时的交付：请求以 Done 结束、识别出了文字时，算一次交付的文本（[`delivered_text`]），自动复制与识别历史
     /// 都用这一份——剪贴板、历史与视图显示的是同一版。
     /// - 自动复制（`ocr.auto_copy`；译文与直接翻译的截图不复制）：来源 Wisp，正常进入剪贴板历史；写入与回执在截图的
-    ///   写入锁里完成，切换排版后的跟随（[`Core::ocr_recopy`]）据回执核对剪贴板。不自动复制时（包括取消、失败、没有
-    ///   文字）当场作废这次识别的回执，等着它的跟随随即放弃；
+    ///   写入锁里完成，切换排版后的跟随（[`Core::ocr_recopy`]）据回执核对剪贴板。重新识别同一张截图时，这张截图上一次
+    ///   写剪贴板（之前那次识别的自动复制或之后的跟随）新建、没有收藏的历史条目被这次取代——只在剪贴板仍是那次写入的内容
+    ///   时（期间用户没有复制别的东西），历史里只留最新的一条；得到相同的文字时那一条只是移到顶部，继续记在这次的回执上。
+    ///   不自动复制时（包括取消、失败、没有文字）当场作废这次识别的回执，等着它的跟随随即放弃，上一次的条目不动；
     /// - 识别历史（`ocr.history`，请求没被取消时）：见 [`Core::record_ocr_history`]
     fn deliver(self: &Arc<Self>, job: &OcrJob, end: &PumpEnd) {
         let done = matches!(end, PumpEnd::Done { no_text: false, .. });
@@ -1403,7 +1405,7 @@ impl Core {
         let env = Arc::clone(&self.env);
         let crop = Arc::clone(&job.crop);
         let id = job.id.clone();
-        tauri::async_runtime::spawn_blocking(move || match crop.auto_copy(&id, || env.copy_text(&text)) {
+        tauri::async_runtime::spawn_blocking(move || match crop.auto_copy(&id, |prev| env.copy_text(prev, &text)) {
             Ok(true) => log::debug!("request {id}: OCR result copied"),
             Ok(false) => log::debug!("request {id}: auto copy skipped, the capture is being recognised again"),
             Err(e) => log::warn!("request {id}: auto copy failed: {}", e.message),

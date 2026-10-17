@@ -76,8 +76,9 @@ pub trait Env: Send + Sync + 'static {
     fn read_selection(&self, opts: &SelectionOpts) -> Result<Selection, SelectionError>;
     /// 交还焦点（**阻塞**）
     fn activate(&self, app: &AppRef);
-    /// 写剪贴板（会进入历史；**阻塞**）。回执是写入后的 change_id 与这次写入新建的历史条目
-    fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError>;
+    /// OCR 自动复制：写剪贴板（会进入历史；**阻塞**）。回执是写入后的 change_id 与这次写入新建的历史条目。`replaces` 是
+    /// 这张截图上一次写剪贴板的回执：剪贴板仍是那次写入的内容时，它新建、没有收藏的那一条随之删掉
+    fn copy_text(&self, replaces: Option<CopyReceipt>, text: &str) -> Result<CopyReceipt, IpcError>;
     /// 剪贴板仍是 `prev` 写入的内容时改写为 `text`（照常进入历史），并删掉 `prev` 新建、没有收藏的那一条；剪贴板已被
     /// 别的复制改写时什么都不做，返回 None（**阻塞**）
     fn recopy_text(&self, prev: CopyReceipt, text: &str) -> Result<Option<CopyReceipt>, IpcError>;
@@ -320,9 +321,9 @@ impl Env for TauriEnv {
         }
     }
 
-    fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError> {
+    fn copy_text(&self, replaces: Option<CopyReceipt>, text: &str) -> Result<CopyReceipt, IpcError> {
         match self.state() {
-            Some(state) => state.clipboard.copy_text(text),
+            Some(state) => state.clipboard.copy_text_replacing(replaces, text),
             None => Err(IpcError::internal("app state is not ready")),
         }
     }

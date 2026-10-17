@@ -147,6 +147,17 @@ fn copies_pins_deletes_and_clears_notify_the_sink() {
         vec![SinkCall::Content(added), SinkCall::Delete(replaced)],
         "先写新内容，再删被取代的那一条"
     );
+    // 重新识别的自动复制取代上一次写入新建的那一条：同样经正常的删除路径通知同步
+    let again = r
+        .engine
+        .copy_text_replacing(Some(next), "重新识别的结果")
+        .expect("自动复制");
+    let fresh = hash(&r, again.created.expect("新建").id);
+    assert_eq!(
+        sink.take(),
+        vec![SinkCall::Content(fresh), SinkCall::Delete(added)],
+        "先写新内容，再删被取代的那一条"
+    );
 
     r.engine.clear(true).expect("清空");
     assert_eq!(sink.take(), vec![SinkCall::Clear(true)]);

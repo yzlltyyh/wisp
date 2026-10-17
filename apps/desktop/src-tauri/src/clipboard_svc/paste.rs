@@ -1,4 +1,5 @@
-//! 粘贴流程与 `copy_text`（以及 OCR 切换排版后让剪贴板跟随的 `recopy_text`）。
+//! 粘贴流程与 `copy_text`（以及 OCR 重新识别时取代上一次自动复制的 `copy_text_replacing`、切换排版后让剪贴板跟随的
+//! `recopy_text`）。
 //!
 //! # 统一管线
 //! 所有粘贴都是一个 [`PasteRequest`]，经 [`Engine::paste`] 走同一个状态机，按两个维度分支：
@@ -94,20 +95,56 @@ pub struct CopiedItem {
 
 /// 一次自身写入在历史里的结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Recorded {
+pub(crate) enum Recorded {
     /// 新建了这一条
     Created(CopiedItem),
     /// 记进了历史、但不归这次写入：内容早已在历史里（这一条被移到顶部），或新建了却没读到它的 hash（无法核对身份的
-    /// 条目以后不删）
-    Existing(i64),
+    /// 条目以后不删）。`hash` 是这一行此刻的内容 hash（读不到时为 None）
+    Existing { id: i64, hash: Option<[u8; 32]> },
 }
 
 impl Recorded {
     fn created(self) -> Option<CopiedItem> {
         match self {
             Self::Created(item) => Some(item),
-            Self::Existing(_) => None,
+            Self::Existing { .. } => None,
         }
+    }
+}
+
+/// 一次自身写入之后的交接：新回执记下的新建条目，以及被这次写入取代、要删掉的上一条
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Succession {
+    pub created: Option<CopiedItem>,
+    pub discard: Option<CopiedItem>,
+}
+
+/// 同一张截图又一次写剪贴板（重新识别的自动复制、切换排版的跟随）之后，上一次写入新建的那一条（`prev`）怎么处理。
+/// `replace`：剪贴板仍是上一次写入的内容（期间没有别的复制），可以取代它；`recorded`：这次写入在历史里的结果。
+/// - 内容相同只会把上一次新建的那一条移到顶部（行号与内容 hash 都对得上）：它仍是这张截图的复制新建的，继续记在新回执上，
+///   之后的写入还能替换它；
+/// - 可以取代、新文本也进了历史：删掉上一条（删除时还会核对 hash，收藏过的保留），历史里只留这一次的；
+/// - 可以取代、但新文本没能进入历史（暂停、被隐私规则跳过、记录失败）：不删——只删不增会让这次结果从历史里消失；旧条目
+///   留在新回执上，下一次写入时再替换；
+/// - 期间有过别的复制：上一条已经成了普通的历史，不删，也不再记着它
+pub(crate) fn succession(prev: Option<CopiedItem>, replace: bool, recorded: Option<Recorded>) -> Succession {
+    match (prev, recorded) {
+        (Some(old), Some(Recorded::Existing { id, hash })) if id == old.id && hash == Some(old.hash) => Succession {
+            created: Some(old),
+            discard: None,
+        },
+        (Some(old), Some(r)) if replace => Succession {
+            created: r.created(),
+            discard: Some(old),
+        },
+        (Some(old), None) if replace => Succession {
+            created: Some(old),
+            discard: None,
+        },
+        (_, r) => Succession {
+            created: r.and_then(Recorded::created),
+            discard: None,
+        },
     }
 }
 
@@ -716,37 +753,52 @@ impl Engine {
         }
     }
 
-    /// 把文本写入系统剪贴板并照常进入历史（OCR 自动复制、复制按钮），返回这次写入的回执。**会阻塞**（Windows 写剪贴板
-    /// 最长约 1.5 s）
+    /// 把文本写入系统剪贴板并照常进入历史（复制按钮），返回这次写入的回执。**会阻塞**（Windows 写剪贴板最长约 1.5 s）
     pub(crate) fn copy_text(&self, text: &str) -> Result<CopyReceipt, IpcError> {
+        self.copy_text_replacing(None, text)
+    }
+
+    /// OCR 识别完成时的自动复制：照常写入并进入历史。`prev` 是这张截图上一次写剪贴板的回执（之前那次识别的自动复制，
+    /// 或之后切换排版的跟随）：系统剪贴板仍是那次写入的内容（`change_id` 没变，期间用户没有复制别的东西）时，它新建的那
+    /// 一条被这次取代，经正常的删除路径删掉（同步随之传播删除），重新识别不会每次在历史里多一条；收藏、命名过的保留。
+    /// 期间别处复制过时不删。重新识别得到相同的文字时只会把那一条移到顶部，它继续记在新回执上（规则见 [`succession`]）。
+    /// **会阻塞**
+    pub(crate) fn copy_text_replacing(&self, prev: Option<CopyReceipt>, text: &str) -> Result<CopyReceipt, IpcError> {
+        // 写入之前核对：写入本身就会改掉 change_id
+        let replace = prev.is_some_and(|p| self.port.clipboard().change_id() == p.change_id);
         let (change_id, recorded) = self.write_and_record(text)?;
-        Ok(CopyReceipt {
-            change_id,
-            created: recorded.and_then(Recorded::created),
-        })
+        Ok(self.hand_over(prev.and_then(|p| p.created), replace, change_id, recorded))
     }
 
     /// OCR 切换排版后的剪贴板跟随：系统剪贴板仍是 `prev` 那次写入的内容（`change_id` 没变，期间没有别的复制）时改写为
     /// `text`，照常进入历史；`prev` 新建的那一条随后经正常的删除路径删掉（同步随之传播删除），历史里只留现在这一版。
     /// 收藏过的不删（命名即收藏，存储层保证有名称的条目一定是收藏）。新文本没能进入历史（暂停、被隐私规则跳过、
-    /// 记录失败）时也不删：只删不增会让这次识别从历史里消失，旧条目留在回执上，下一次跟随时再替换。
-    /// 剪贴板已被别的复制改写时什么都不做，返回 None。**会阻塞**
+    /// 记录失败）时也不删：只删不增会让这次识别从历史里消失，旧条目留在回执上，下一次跟随时再替换（规则见
+    /// [`succession`]）。剪贴板已被别的复制改写时什么都不做，返回 None。**会阻塞**
     pub(crate) fn recopy_text(&self, prev: CopyReceipt, text: &str) -> Result<Option<CopyReceipt>, IpcError> {
         if self.port.clipboard().change_id() != prev.change_id {
             return Ok(None);
         }
         let (change_id, recorded) = self.write_and_record(text)?;
-        let created = match (prev.created, recorded) {
-            // 内容相同只会 touch 上一次新建的那一条：它仍是自动复制出来的，继续记在回执上
-            (Some(old), Some(Recorded::Existing(id))) if id == old.id => Some(old),
-            (Some(old), Some(r)) => {
-                self.discard_copied(old);
-                r.created()
-            }
-            (Some(old), None) => Some(old),
-            (None, r) => r.and_then(Recorded::created),
-        };
-        Ok(Some(CopyReceipt { change_id, created }))
+        Ok(Some(self.hand_over(prev.created, true, change_id, recorded)))
+    }
+
+    /// 按 [`succession`] 交接：删掉被这次写入取代的那一条，返回这次写入的回执
+    fn hand_over(
+        &self,
+        prev: Option<CopiedItem>,
+        replace: bool,
+        change_id: u64,
+        recorded: Option<Recorded>,
+    ) -> CopyReceipt {
+        let next = succession(prev, replace, recorded);
+        if let Some(old) = next.discard {
+            self.discard_copied(old);
+        }
+        CopyReceipt {
+            change_id,
+            created: next.created,
+        }
     }
 
     /// 写入剪贴板、抑制这次变更并记进历史；返回写入后的 change_id 与历史里记下的条目（没有在记录、被跳过或记录失败时为
@@ -774,7 +826,11 @@ impl Engine {
             Ok((IngestOutcome::Inserted(meta), Some(hash))) => {
                 Some(Recorded::Created(CopiedItem { id: meta.id, hash }))
             }
-            Ok((IngestOutcome::Inserted(meta) | IngestOutcome::Touched(meta), _)) => Some(Recorded::Existing(meta.id)),
+            Ok((IngestOutcome::Touched(meta), hash)) => Some(Recorded::Existing { id: meta.id, hash }),
+            Ok((IngestOutcome::Inserted(meta), None)) => Some(Recorded::Existing {
+                id: meta.id,
+                hash: None,
+            }),
             Ok((IngestOutcome::Skipped(_), _)) => None,
             Err(e) => {
                 log::info!("record copied text failed: {}", e.message);
