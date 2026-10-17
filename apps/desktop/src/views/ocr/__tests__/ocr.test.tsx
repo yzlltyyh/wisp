@@ -824,6 +824,23 @@ describe('排版', () => {
     expect(screen.getByTestId('ocr-announce')).toHaveTextContent('已切换为「原样」，已复制')
   })
 
+  it('读屏不重复：切换排版的播报已经带上「已复制」，底栏的「已复制」只显示不播报；⌘C 的「已复制」照常播报', async () => {
+    view()
+    await recognize('r-ocr', PARAS)
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-layout-toggle'))
+    await settle()
+    expect(screen.getByTestId('ocr-announce')).toHaveTextContent('已切换为「去掉空行」，已复制')
+    const toast = screen.getByTestId('inline-toast')
+    expect(toast).toHaveTextContent('已复制')
+    // 播报只有一处：底栏提示从无障碍树里隐去（它所在的 aria-live 区域不再念一遍）
+    expect(toast).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.queryByRole('status', { name: '已复制' })).toBeNull()
+    act(() => mod('KeyC'))
+    await settle()
+    expect(screen.getByTestId('inline-toast')).not.toHaveAttribute('aria-hidden')
+  })
+
   it('「合并段内换行」只在逐行模式的菜单里出现；选中后段内换行连起来，左半随之换成它', async () => {
     const WRAPPED = '被硬换行\n断开的句子\n\n第二段'
     const first = view()

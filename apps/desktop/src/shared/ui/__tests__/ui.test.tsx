@@ -777,6 +777,16 @@ describe('useInlineToast', () => {
     act(() => toast.hide())
     expect(probe).not.toHaveAttribute('data-visible')
   })
+
+  it('silent：只显示、不播报（从无障碍树里隐去）；下一次普通的 show 照常播报', () => {
+    let toast!: InlineToastControl
+    wrap(<Probe expose={(c) => (toast = c)} />)
+    act(() => toast.show('已复制', { silent: true }))
+    expect(screen.getByTestId('inline-toast')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('inline-toast')).toHaveTextContent('已复制')
+    act(() => toast.show('已复制'))
+    expect(screen.getByTestId('inline-toast')).not.toHaveAttribute('aria-hidden')
+  })
 })
 
 describe('copyText', () => {
