@@ -98,25 +98,28 @@ pub fn join_all(text: &str) -> String {
 /// 按全文惯例，与 [`join_all`] 相同）。用于从 PDF、网页或截图里得到的、每行末尾都有换行的段落。
 ///
 /// 只动被合并的换行：空行（段界）与没有合并的行连同各自的换行符逐字保留；被合并的行去掉接缝处的空白（上一行的行尾
-/// 空白），一串合并的行里第一行的缩进保留。宁可少合并，也不误合并代码与表格，下面这些行保持原样：
+/// 空白），一串合并的行里第一行的缩进保留。宁可少合并：只看文字认不出所有的代码、表格与终端输出，下面这些形态的行
+/// 保持原样，其余的行照常合并（见文末的局限）：
 ///
 /// - **不与上下行相连**：以列表项开头（[`starts_list_item`]）；含制表符，或行内有连续两个以上的空白（按空格对齐的列；
 ///   句末 `.` `!` `?` 后正好两个半角空格除外，那是英文打字的句间空格）；以 `;` `{` `}` `\` `|` 结尾（代码、续行的
-///   命令、表格）；以 `>`（引用、提示符）、`$ ` 或 `❯`（命令提示符）、`#` 加空格（标题、注释）、`//`（注释）、`|` 或
-///   制表线字符（表格、目录树）开头；整行只有一个不含东亚文字的词、且含 `/`、`\` 或 `@`（链接、路径、邮箱的清单）；
-///   没有任何字母、数字或文字（分隔线）；
+///   命令、表格）；以 `>`（引用、提示符）、`$ ` 或 `❯`（命令提示符）、`#` 加空格（标题、注释）、`//`（注释）、`-->`、
+///   `|` 或制表线字符（表格、目录树）开头；以时间戳（`10:24:03`、`2026-10-17 10:24`、字幕的 `00:00:01,000`）、
+///   提交号（`784705b`）或导入语句（`import …`、`from … import …`）开头（日志、字幕的时间轴、`git log`、代码）；
+///   整行只有一个不含东亚文字的词、且含 `/`、`\` 或 `@`（链接、路径、邮箱的清单）；没有任何字母、数字或文字（分隔线）；
 /// - **不接到上一行后面**：有缩进（行首有空白：首行缩进的新段落、代码块）；以「标签：」开头（`Name: …`、`error: …`、
-///   `电话：…`）；
+///   `Request URL: …`、`电话：…`）；
 /// - **不接下一行**：很短的独立行（不足 20 个半角宽、自己也没有接到上一行后面：标题、称呼、菜单项、命令）；有缩进的
-///   行，除非它是段落开头（段内第一行，或上一行以句末标点结束、是很短的独立行）且下一行没有缩进——首行缩进的段落
-///   照常合并，缩进的代码不会接上后面的行。
+///   行，除非它是段落开头（段内第一行，或上一行以句末标点结束、是很短的独立行，且上一行不以半角冒号结尾）且下一行
+///   没有缩进——首行缩进的段落照常合并，代码块头（`try:`、`if ready:`）下面缩进的块不会接上后面的行。
 ///
 /// 已知的局限（要保留原来的换行时不用这个变换）：
 ///
 /// - 段落之间既没有空行、也没有首行缩进时，段尾的短行与段中的行分不开，下一段会接到上一段末尾；
 /// - 诗歌、歌词以空行分节时，节内长短相近的诗行会合成一行（很短的诗行除外）；
-/// - 列表项折行后的续行、整段都有缩进的文字不合并；
-/// - 没有缩进、分号与花括号这些特征的代码（例如不写分号的脚本）可能被合并。
+/// - 列表项折行后的续行、整段都有缩进的文字不合并；以半角冒号结尾的行下面首行缩进的段落，第一行不接下一行；
+/// - 没有缩进、分号与花括号这些特征的代码（例如不写分号的脚本）可能被合并；
+/// - 终端输出、日志里没有提示符、缩进、时间戳或「标签：」的行（例如包管理器的输出）可能被合并。
 ///
 /// 幂等；除被还原的断词连字符与软连字符外，不增删任何非空白字符；三种换行符（`\n`、`\r\n`、单独的 `\r`）含义相同。
 pub fn reflow(text: &str) -> String {
@@ -157,7 +160,10 @@ const SHORT_LINE: usize = 20;
 ///
 /// 只看每一行自己的开头、结尾与内容，以及上一行的这些特征，所以对合并的结果再做一次，每处断开的理由都还在（幂等）：
 /// 合并只改动行与行之间的接缝；一串合并的行的开头是第一行的开头，结尾是最后一行的结尾；保持独立的行从不参与合并；
-/// 第一行至少 [`SHORT_LINE`] 宽才会接下一行，合并出来的行因此不会变成「很短」
+/// 第一行至少 [`SHORT_LINE`] 宽才会接下一行，合并出来的行因此不会变成「很短」。按开头判断的规则（标签、时间戳、
+/// 提交号、导入语句）可能对合并出来的行多认出一处（第一行以冒号结尾，接上下一行后成了「标签：」；第一行只有一个词、
+/// 接缝不加空格），那只会让这一行不与上一行相连、不被下一行接上：它本来就没有接到上一行后面，下一行也是因为自己的
+/// 特征才没有接上来，结果不变
 #[derive(Default)]
 struct Reflow {
     /// 段内的上一行；None 表示段落开头（文首或刚过空行）
@@ -168,7 +174,8 @@ struct Prev {
     shape: Shape,
     /// 自己没有接到上一行后面（一串合并的行里的第一行）
     head: bool,
-    /// 是段落开头：段内第一行，或上一行以句末标点结束、是很短的独立行。只对有缩进的行有用（首行缩进的段落）
+    /// 是段落开头：段内第一行，或上一行以句末标点结束、是很短的独立行，且上一行不以半角冒号结尾。只对有缩进的行
+    /// 有用（首行缩进的段落）
     opens: bool,
 }
 
@@ -189,7 +196,12 @@ impl Reflow {
                     || shape.starts_new
                     || standalone_short
                     || (prev.shape.indented && !prev.opens));
-                (joins, prev.shape.ends_sentence || standalone_short)
+                // 以半角冒号结尾的上一行多半是代码的块头（`try:`、`if ready:`）或 YAML 的键，下面缩进的是代码块，
+                // 不是首行缩进的新段落：块后面那一行没有缩进时不能接上来。只认半角冒号：中文书信的称呼（`尊敬的
+                // 张先生：`）下面正是首行缩进的正文。英文里以冒号结尾的标题下面跟着首行缩进的段落时，这一段的第一行
+                // 因此不接下一行，属于宁可少合并
+                let opens = !prev.shape.ends_colon && (prev.shape.ends_sentence || standalone_short);
+                (joins, opens)
             }
         };
         self.prev = Some(Prev {
@@ -214,6 +226,8 @@ struct Shape {
     short: bool,
     /// 以句末标点结束（后面可以跟着引号、括号）
     ends_sentence: bool,
+    /// 以半角冒号结尾
+    ends_colon: bool,
 }
 
 impl Shape {
@@ -226,6 +240,7 @@ impl Shape {
             fixed: is_fixed(body),
             short: is_short(body),
             ends_sentence: ends_sentence(body),
+            ends_colon: body.ends_with(':'),
         }
     }
 }
@@ -236,6 +251,9 @@ fn is_fixed(body: &str) -> bool {
         || has_columns(body)
         || body.ends_with([';', '{', '}', '\\', '|'])
         || starts_with_marker(body)
+        || starts_with_timestamp(body)
+        || starts_with_commit(body)
+        || starts_with_import(body)
         || is_address(body)
         || !body.chars().any(char::is_alphanumeric)
 }
@@ -261,13 +279,14 @@ fn has_columns(body: &str) -> bool {
     false
 }
 
-/// 以引用或提示符（`>`）、命令提示符（`$ `、`❯`）、Markdown 标题或注释（`#` 加空格）、注释（`//`）、表格与目录树的
-/// 标记（`|`、制表线字符）开头
+/// 以引用或提示符（`>`）、命令提示符（`$ `、`❯`）、Markdown 标题或注释（`#` 加空格）、注释（`//`）、箭头 `-->`
+/// （编译器报错里的位置、HTML 注释的结尾）、表格与目录树的标记（`|`、制表线字符）开头
 fn starts_with_marker(body: &str) -> bool {
     body.starts_with(['>', '|', '❯'])
         || body.starts_with(|c: char| matches!(c, '\u{2500}'..='\u{257F}'))
         || body.starts_with("$ ")
         || body.starts_with("//")
+        || body.starts_with("-->")
         || (body.starts_with('#') && body.trim_start_matches('#').starts_with(' '))
 }
 
@@ -277,18 +296,134 @@ fn is_address(body: &str) -> bool {
     !body.contains(char::is_whitespace) && body.contains(['/', '\\', '@']) && !body.chars().any(is_east_asian)
 }
 
-/// 以「标签：」开头：一个含字母、不含空白的词（最多 24 个字符）后跟半角冒号与空白，或者最多 8 个字母、数字或汉字后跟
-/// 全角冒号；冒号后面都还有内容。单独以冒号结尾的词多半是句子的末尾（`as follows:`、`如下：`），不算
+/// 以时间戳开头（前面可以有一个 `[` 或 `(`）：带秒的时刻（`10:24:03`、字幕的 `00:00:01,000`）、带小数的分秒（WebVTT
+/// 字幕的 `00:01.000`），或日期紧跟时刻（`2026-10-17 10:24`、`2026-10-17T10:24:01Z`、`10-17 10:24:00`）。日志与字幕的
+/// 时间轴逐行列出，接起来就分不清哪条是哪条。只有日期、或时刻不带秒的不算：句子折行后恰好以日期或 `10:30` 开头
+/// 并不少见
+fn starts_with_timestamp(body: &str) -> bool {
+    let s = body.strip_prefix(['[', '(']).unwrap_or(body);
+    match strip_date(s) {
+        Some(rest) => rest.strip_prefix([' ', 'T']).and_then(strip_clock).is_some(),
+        None => strip_clock(s).is_some_and(|(_, precise)| precise),
+    }
+}
+
+/// 去掉开头 `min`–`max` 位的 ASCII 数字
+fn strip_digits(s: &str, min: usize, max: usize) -> Option<&str> {
+    let n = s.bytes().take_while(u8::is_ascii_digit).count();
+    (min..=max).contains(&n).then(|| &s[n..])
+}
+
+/// 去掉开头的日期：年月日或月日，以 `-`、`/` 或 `.` 分隔（`2026-10-17`、`2026/10/17`、`10-17`）
+fn strip_date(s: &str) -> Option<&str> {
+    let rest = strip_digits(s, 1, 4)?;
+    let sep = rest.chars().next().filter(|c| matches!(c, '-' | '/' | '.'))?;
+    let rest = strip_digits(&rest[1..], 1, 2)?;
+    Some(
+        rest.strip_prefix(sep)
+            .and_then(|r| strip_digits(r, 1, 4))
+            .unwrap_or(rest),
+    )
+}
+
+/// 去掉开头的时刻 `时:分`，可以再带 `:秒` 与小数（`.123`、`,123`）。返回其后的部分，以及是否带秒或小数
+fn strip_clock(s: &str) -> Option<(&str, bool)> {
+    let rest = strip_digits(s, 1, 2)?.strip_prefix(':')?;
+    let mut rest = strip_digits(rest, 2, 2)?;
+    let mut precise = false;
+    if let Some(r) = rest.strip_prefix(':').and_then(|r| strip_digits(r, 2, 2)) {
+        (rest, precise) = (r, true);
+    }
+    if let Some(r) = rest.strip_prefix(['.', ',']).and_then(|r| strip_digits(r, 1, 9)) {
+        (rest, precise) = (r, true);
+    }
+    Some((rest, precise))
+}
+
+/// 以提交号开头：第一个词是 7–40 位小写十六进制，数字与字母都有（`git log --oneline`、`git reflog` 的输出）。全是
+/// 数字的多半是普通的数，全是字母的可能是 `defaced`、`deadbeef` 这样的单词，都不算
+fn starts_with_commit(body: &str) -> bool {
+    let word = body.split(char::is_whitespace).next().unwrap_or_default();
+    (7..=40).contains(&word.len())
+        && word.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        && word.bytes().any(|b| b.is_ascii_digit())
+        && word.bytes().any(|b| b.is_ascii_lowercase())
+}
+
+/// 以导入语句开头：`from 模块 import …`（Python）；或 `import` 后面紧跟 `{`、`*`、引号、括号，或者一个名字之后行就
+/// 结束、接着逗号、`{`、`as 别名`（其后行结束或接逗号）或 `from` 加引号（Python、JavaScript、TypeScript、Go、Swift）。
+/// 句子折行后以 import 开头并不少见（`import them on another device`），所以只看到 `import` 加一个词不算
+fn starts_with_import(body: &str) -> bool {
+    if let Some(rest) = body.strip_prefix("from ") {
+        return rest
+            .split_once(' ')
+            .is_some_and(|(module, tail)| strip_name(module) == Some("") && tail.starts_with("import "));
+    }
+    let Some(rest) = body.strip_prefix("import ") else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    if rest.starts_with(['{', '*', '"', '\'', '(']) {
+        return true;
+    }
+    let Some(tail) = strip_name(rest).map(str::trim_start) else {
+        return false;
+    };
+    let alias = tail
+        .strip_prefix("as ")
+        .and_then(|a| strip_name(a.trim_start()))
+        .is_some_and(|after| after.is_empty() || after.starts_with(','));
+    tail.is_empty()
+        || tail.starts_with([',', '{'])
+        || alias
+        || tail
+            .strip_prefix("from ")
+            .is_some_and(|src| src.starts_with(['"', '\'']))
+}
+
+/// 去掉开头的名字（ASCII 字母、数字、`_`、`.`、`$`：模块路径与标识符）；开头不是名字时为 None
+fn strip_name(s: &str) -> Option<&str> {
+    let n = s
+        .bytes()
+        .take_while(|&b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'$'))
+        .count();
+    (n > 0).then(|| &s[n..])
+}
+
+/// 以「标签：」开头，冒号后面还有内容：
+///
+/// - 半角冒号后跟空白：冒号前紧挨着的是一个含字母的词（最多 24 个字符：`Name: …`、`error[E0425]: …`），或者两三个
+///   都以大写字母或数字开头的词（最多 32 个字符：`Request URL: …`、`Status Code: …`）。多个词的要求每个词都大写开头：
+///   句子折行后，下一行常以 `as follows: …`、`you would think: …` 这种以冒号结束的短语开头，它们应当接回上一行；
+/// - 全角冒号：冒号前是最多 8 个字母、数字或汉字（`电话：…`）。
+///
+/// 单独以冒号结尾的词多半是句子的末尾（`as follows:`、`如下：`），不算
 fn starts_with_label(body: &str) -> bool {
-    let half = body.split_once(char::is_whitespace).is_some_and(|(token, _)| {
-        token.strip_suffix(':').is_some_and(|name| {
-            name.chars().count() <= 24 && name.chars().any(char::is_alphabetic) && !name.contains(':')
-        })
-    });
+    let half = body
+        .split_once(':')
+        .is_some_and(|(name, rest)| rest.starts_with(char::is_whitespace) && is_label_name(name));
     let full = body.split_once('：').is_some_and(|(name, rest)| {
         !rest.is_empty() && (1..=8).contains(&name.chars().count()) && name.chars().all(char::is_alphanumeric)
     });
     half || full
+}
+
+/// 半角冒号前的标签名（见 [`starts_with_label`]）。冒号要紧挨着最后一个词：`Nom : valeur` 这样冒号前有空格的不算
+fn is_label_name(name: &str) -> bool {
+    if name.ends_with(char::is_whitespace) || !name.chars().any(char::is_alphabetic) {
+        return false;
+    }
+    let count = name.chars().count();
+    match name.split_whitespace().count() {
+        1 => count <= 24,
+        2 | 3 => {
+            count <= 32
+                && name
+                    .split_whitespace()
+                    .all(|w| w.starts_with(|c: char| c.is_uppercase() || c.is_ascii_digit()))
+        }
+        _ => false,
+    }
 }
 
 /// 窄于 [`SHORT_LINE`]（东亚文字与全角空格记 2，其余记 1；数到界线就停，长行不必数完）
@@ -475,6 +610,26 @@ mod tests {
             "for item in items_to_process:\n    handle(item)\nprint(\"all items were processed\")\n\ndef greet(name):\n    return f\"Hello, {name}\"",
         ),
         (
+            "代码：很短的块头以冒号结尾时，缩进的块同样不接上后面的行",
+            "try:\n    result = fetch_remote_configuration(timeout=30)\nexcept Exception:\n    pass\n\nif ready:\n    start_the_background_worker_now()\nprint(\"done\")",
+            "try:\n    result = fetch_remote_configuration(timeout=30)\nexcept Exception:\n    pass\n\nif ready:\n    start_the_background_worker_now()\nprint(\"done\")",
+        ),
+        (
+            "代码：导入语句各自一行",
+            "from collections import OrderedDict, defaultdict\nfrom typing import Any, Callable, Iterable\nimport numpy as np\nimport React, { useState } from \"react\"\nimport type { Settings } from \"./settings\"",
+            "from collections import OrderedDict, defaultdict\nfrom typing import Any, Callable, Iterable\nimport numpy as np\nimport React, { useState } from \"react\"\nimport type { Settings } from \"./settings\"",
+        ),
+        (
+            "句中以 import 开头的折行照常合并",
+            "Settings can be exported to a file, and you can later\nimport them on another device from that same file.",
+            "Settings can be exported to a file, and you can later import them on another device from that same file.",
+        ),
+        (
+            "中文书信：称呼以全角冒号结尾，下面首行缩进的正文照常合并",
+            "尊敬的张先生：\n\u{3000}\u{3000}感谢您一直以来对我们工作的支持，现将有关事项\n通知如下，请您留意。",
+            "尊敬的张先生：\n\u{3000}\u{3000}感谢您一直以来对我们工作的支持，现将有关事项通知如下，请您留意。",
+        ),
+        (
             "说明文字里的缩进命令：前面的句子合并，命令与后面的行保持原样",
             "Run the following command to install the\ndependencies:\n    pnpm install --frozen-lockfile\nThen start the development server.",
             "Run the following command to install the dependencies:\n    pnpm install --frozen-lockfile\nThen start the development server.",
@@ -493,6 +648,26 @@ mod tests {
             "日志：以标签开头的行各自一行",
             "INFO: server listening on port 8080 and ready\nWARN: certificate expires in 3 days, renew soon\nERROR: failed to connect to the database",
             "INFO: server listening on port 8080 and ready\nWARN: certificate expires in 3 days, renew soon\nERROR: failed to connect to the database",
+        ),
+        (
+            "日志：以时间戳开头的行各自一行",
+            "2026-10-17 10:24:00.123 INFO server listening on port 8080\n2026-10-17T10:24:01Z WARN certificate expires in 3 days\n[2026-10-17 10:24:02] ERROR failed to connect to the database\n10:24:03 retrying the connection in five seconds",
+            "2026-10-17 10:24:00.123 INFO server listening on port 8080\n2026-10-17T10:24:01Z WARN certificate expires in 3 days\n[2026-10-17 10:24:02] ERROR failed to connect to the database\n10:24:03 retrying the connection in five seconds",
+        ),
+        (
+            "句中以日期或时刻开头的折行照常合并（只有日期、或时刻不带秒，不算时间戳）",
+            "The next release is planned for the morning of\n2026-10-20 and the store listing goes live at\n10:30 in the evening on the same day.",
+            "The next release is planned for the morning of 2026-10-20 and the store listing goes live at 10:30 in the evening on the same day.",
+        ),
+        (
+            "git log：以提交号开头的行各自一行",
+            "784705b docs: describe reflow and paste-back in the user guide\nd26674a test(mock): deliver OCR results with the session layout\n7b58262 fix(ocr): switching the layout no longer asks again\n\ncommit 3f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f\nAuthor: Alice Zhang <alice@example.com>\nDate:   Mon Oct 12 10:24:00 2026 +0800\n\n    Fix the layout of the OCR panel on small screens",
+            "784705b docs: describe reflow and paste-back in the user guide\nd26674a test(mock): deliver OCR results with the session layout\n7b58262 fix(ocr): switching the layout no longer asks again\n\ncommit 3f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f\nAuthor: Alice Zhang <alice@example.com>\nDate:   Mon Oct 12 10:24:00 2026 +0800\n\n    Fix the layout of the OCR panel on small screens",
+        ),
+        (
+            "字幕：序号与时间轴各自一行，同一条字幕折成的几行照常合并",
+            "1\n00:00:01,000 --> 00:00:04,000\nWelcome to the presentation about\nthe new features in Wisp.\n\n2\n00:00:04,500 --> 00:00:07,000\nLet's get started with the first one.",
+            "1\n00:00:01,000 --> 00:00:04,000\nWelcome to the presentation about the new features in Wisp.\n\n2\n00:00:04,500 --> 00:00:07,000\nLet's get started with the first one.",
         ),
         (
             "续行的命令：行尾的反斜杠不能接上下一行",
@@ -545,6 +720,16 @@ mod tests {
             "姓名：张三，男，一九九零年出生，现居北京市海淀区\n电话：13800138000\n地址：北京市海淀区中关村大街一号院",
         ),
         (
+            "多个词的标签：每个词都以大写字母或数字开头时同样另起一行",
+            "Request URL: https://example.com/api/v1/items?page=2\nRequest Method: GET\nStatus Code: 200 OK\nRemote Address: 93.184.216.34:443\nReferrer Policy: strict-origin-when-cross-origin",
+            "Request URL: https://example.com/api/v1/items?page=2\nRequest Method: GET\nStatus Code: 200 OK\nRemote Address: 93.184.216.34:443\nReferrer Policy: strict-origin-when-cross-origin",
+        ),
+        (
+            "句中的「as follows:」「you think:」不是标签，照常合并",
+            "These are the steps we took to fix the problem, listed\nas follows: first we measured, then we changed the cache.\nBoth of them mattered much more than\nyou would think: the first one alone saved an hour.",
+            "These are the steps we took to fix the problem, listed as follows: first we measured, then we changed the cache. Both of them mattered much more than you would think: the first one alone saved an hour.",
+        ),
+        (
             "标签开头的段落可以接下一行",
             "Note: the configuration file is read once at startup, so\nchanges only take effect after a restart.",
             "Note: the configuration file is read once at startup, so changes only take effect after a restart.",
@@ -558,6 +743,11 @@ mod tests {
             "分隔线、路径与链接的清单",
             "Chapter One: The Beginning of It All\n==============\nIt was a quiet morning when the first message arrived.\n\napps/desktop/src-tauri/src/main.rs\nhttps://example.com/docs/getting-started\nsupport@example.com",
             "Chapter One: The Beginning of It All\n==============\nIt was a quiet morning when the first message arrived.\n\napps/desktop/src-tauri/src/main.rs\nhttps://example.com/docs/getting-started\nsupport@example.com",
+        ),
+        (
+            "已知局限：没有提示符、缩进、时间戳与标签的终端输出和日志会被合并",
+            "npm warn deprecated inflight@1.0.6: This module is not supported\nadded 312 packages, and audited 313 packages in 4s",
+            "npm warn deprecated inflight@1.0.6: This module is not supported added 312 packages, and audited 313 packages in 4s",
         ),
         (
             "很短的独立行：菜单项、称呼",
@@ -581,12 +771,17 @@ mod tests {
 
     #[test]
     fn reflow_cases() {
+        // 收集全部不符的样例再一起报告：规则调整时一次看清所有受影响的情形
+        let mut wrong = Vec::new();
         for &(name, input, want) in REFLOW_CASES {
             let out = reflow(input);
-            assert_eq!(out, want, "{name}");
-            assert_eq!(can_reflow(input), want != input, "{name}：是否适用与结果是否不同一致");
+            if out != want {
+                wrong.push(format!("{name}\n  得到：{out:?}\n  预期：{want:?}"));
+            }
+            assert_eq!(can_reflow(input), out != input, "{name}：是否适用与结果是否不同一致");
             assert_eq!(reflow(&out), out, "{name}：幂等");
         }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 
     #[test]
@@ -635,7 +830,7 @@ mod tests {
     }
 
     /// 由词语拼成的多行文字：多数是普通的词，行足够长、常有可以合并的换行；夹着的特殊片段让「缩进」「标签」「列表项」、
-    /// 对齐的列、代码与提示符这些规则都有机会生效
+    /// 对齐的列、代码与提示符、以冒号结尾的块头、时间戳、提交号与导入语句这些规则都有机会生效
     fn paragraphs() -> impl Strategy<Value = String> {
         // 每个词都写得很短：数组里有长元素时 rustfmt 会把整个数组拆成一行一个
         const WORDS: &[&str] = &[
@@ -644,7 +839,8 @@ mod tests {
         ];
         const SPECIAL: &[&str] = &[
             "- ", "1. ", "• ", "  ", "\t", " ", "\u{3000}", "# ", "> ", "$ ", "//", "|", ";", "{", "}", "\\", "Note: ",
-            "电：", "下：", "a.co/x", "a@b.c", "src/", "——", "……", "\u{AD}", "===",
+            "电：", "下：", "a.co/x", "a@b.c", "src/", "——", "……", "\u{AD}", "===", "try:", "Ab Cd: ", "1:02:03 ",
+            "26-1-2 ", "6-1T1:02", "-->", "a1b2c3d ", "import ", "from ", "as ", "'",
         ];
         const BREAKS: &[&str] = &["\n", "\n", "\n", "\r\n", "\r", "\n\n", "\n \n"];
         let token = prop_oneof![
