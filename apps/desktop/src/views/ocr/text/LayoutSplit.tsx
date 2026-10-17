@@ -129,6 +129,8 @@ export function LayoutSplit({
               disabled={disabled}
               aria-disabled={blocked !== null || undefined}
               onClick={blocked === null ? text.toggle : undefined}
+              // 点一下就完成、不需要键盘：按下时面板不成为 key，键盘留在原应用，切换后回去直接粘贴（见 OcrView）
+              data-keep-focus=""
               data-testid="ocr-layout-toggle"
             />
           </Tooltip>

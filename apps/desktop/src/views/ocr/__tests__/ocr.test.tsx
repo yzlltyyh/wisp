@@ -149,6 +149,8 @@ let recopyResult: boolean
 let transformHold: Promise<void> | null
 /** 不为 null 时 clipboard_paste_text 以这个错误码失败 */
 let pasteError: string | null
+/** 不为 null 时 clipboard_copy_text 以 platform + 这个原因失败（例如要求改由 WebView 写入） */
+let copyRefusal: string | null
 
 /** text_transform 的替身（只为用例里的几段文字给出结果；真实规则在 Rust） */
 function fakeTransform(text: string, transform: string): string {
@@ -172,6 +174,9 @@ function fakeTransport(): Transport {
       if (cmd === 'ocr_recopy') return Promise.resolve(recopyResult as T)
       if (cmd === 'clipboard_paste_text' && pasteError) {
         return Promise.reject({ code: pasteError, message: 'paste failed', llm: null })
+      }
+      if (cmd === 'clipboard_copy_text' && copyRefusal) {
+        return Promise.reject({ code: 'platform', message: copyRefusal, llm: null })
       }
       // 识别完成后视图会检视文字（芯片）：默认没有片段，用例需要芯片时改 inspectResult
       if (cmd === 'text_inspect') {
@@ -340,6 +345,7 @@ beforeEach(() => {
   recopyResult = true
   transformHold = null
   pasteError = null
+  copyRefusal = null
   setTransport(fakeTransport())
   resetSettingsSnapshot(snapshot())
   // 用例里的断言用中文文案
@@ -1928,6 +1934,65 @@ describe('拖动', () => {
     const thumb = screen.getByTestId('ocr-thumbnail').closest('button')
     if (thumb) down(thumb)
     expect(callsOf('panel_drag_start')).toHaveLength(3)
+  })
+
+  it('点一下就完成的控件（复制、芯片、排版按钮左半）按下时不让面板成为 key；文本框、▾ 照旧激活', async () => {
+    inspectResult = (text) => ({
+      entities: [{ kind: 'email', value: 'a@b.co', start: 0, end: 6, sensitive: false }],
+      transforms: fakeTransform(text, 'remove_blank_lines') === text ? [] : ['remove_blank_lines'],
+    })
+    const { props } = view()
+    await recognize('r-ocr', 'a@b.co\n\n第二段')
+    await settle()
+    fireEvent.click(screen.getByTestId('ocr-translate-toggle'))
+    await push('r-1', start('r-1'), delta('Hi'), done())
+    const activate = props.activate as ReturnType<typeof vi.fn>
+    activate.mockClear()
+    for (const el of [
+      screen.getByTestId('ocr-copy'),
+      screen.getByTestId('ocr-translation-copy'),
+      screen.getByTestId('clip-chip'),
+      screen.getByTestId('ocr-layout-toggle'),
+    ]) {
+      down(el)
+      // 按在按钮里的图标上也一样
+      const icon = el.querySelector('svg')
+      if (icon) down(icon)
+    }
+    expect(activate).not.toHaveBeenCalled()
+    down(screen.getByTestId('ocr-text'))
+    expect(activate).toHaveBeenCalledTimes(1)
+    down(screen.getByTestId('ocr-layout-caret'))
+    down(screen.getByTestId('ocr-translate-menu'))
+    down(screen.getByTestId('ocr-style-chip'))
+    expect(activate).toHaveBeenCalledTimes(4)
+  })
+
+  it('复制按钮没有激活面板，而 Rust 要求改由 WebView 写剪贴板（Wayland）时：先让面板成为 key、等拿到焦点再写', async () => {
+    const write = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve())
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: write } })
+    const focused = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    try {
+      // 激活经 Rust 异步完成：窗口随后收到 focus 事件
+      const activate = vi.fn<() => void>(() => {
+        setTimeout(() => window.dispatchEvent(new Event('focus')), 0)
+      })
+      view({ activate })
+      await recognize()
+      await settle()
+      copyRefusal = 'errors.platform.wayland_clipboard'
+      down(screen.getByTestId('ocr-copy'))
+      expect(activate).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByTestId('ocr-copy'))
+      await waitFor(() => expect(write).toHaveBeenCalledWith('第一行\n第二行'))
+      expect(activate).toHaveBeenCalledTimes(1)
+      expect(activate.mock.invocationCallOrder[0]).toBeLessThan(
+        write.mock.invocationCallOrder[0] ?? 0,
+      )
+    } finally {
+      focused.mockRestore()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('固定窗口宿主：不发 panel_drag_start（由 PinnedApp 的头部拖动）', async () => {

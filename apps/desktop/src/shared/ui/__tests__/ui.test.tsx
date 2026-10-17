@@ -801,6 +801,50 @@ describe('copyText', () => {
     expect(write).toHaveBeenCalledTimes(1)
   })
 
+  it('focus：退回 WebView 写入时窗口没有焦点，先取回焦点、等到 focus 事件再写；已有焦点、或 Rust 写成了都不调用', async () => {
+    const write = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve())
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: write } })
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    try {
+      const focus = vi.fn<() => void>(() => {
+        // 焦点异步到达（激活经 Rust 投递到主线程）：到达之前不写
+        setTimeout(() => {
+          expect(write).not.toHaveBeenCalled()
+          window.dispatchEvent(new Event('focus'))
+        }, 0)
+      })
+      failing('platform', 'errors.platform.wayland_clipboard')
+      expect(await copyText('a', { focus })).toBe(true)
+      expect(focus).toHaveBeenCalledTimes(1)
+      expect(write).toHaveBeenCalledWith('a')
+      hasFocus.mockReturnValue(true)
+      expect(await copyText('b', { focus })).toBe(true)
+      expect(focus).toHaveBeenCalledTimes(1)
+      setTransport(transport())
+      expect(await copyText('c', { focus })).toBe(true)
+      expect(focus).toHaveBeenCalledTimes(1)
+      expect(write).toHaveBeenCalledTimes(2)
+    } finally {
+      hasFocus.mockRestore()
+    }
+  })
+
+  it('focus：焦点迟迟不到时最多等一小会儿，照样写', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const write = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve())
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: write } })
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    try {
+      failing('platform', 'errors.platform.wayland_clipboard')
+      const done = copyText('a', { focus: () => {} })
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(await done).toBe(true)
+      expect(write).toHaveBeenCalledWith('a')
+    } finally {
+      hasFocus.mockRestore()
+    }
+  })
+
   it('Rust 明确拒绝（invalid_argument：超过 1 MB）时不退回 navigator.clipboard', async () => {
     const write = vi.fn<(text: string) => Promise<void>>(() => Promise.resolve())
     vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: write } })

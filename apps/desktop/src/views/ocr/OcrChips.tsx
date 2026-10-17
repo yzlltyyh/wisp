@@ -92,6 +92,8 @@ export function OcrChips({
       className="clip-chips ocr-chips"
       role="toolbar"
       aria-label={t('smart.a11y.chips')}
+      // 单击芯片就把片段粘贴回原应用、不需要键盘：按下时面板不成为 key（见 OcrView）
+      data-keep-focus=""
       data-testid="ocr-chips"
     >
       {entities.map((e) => (

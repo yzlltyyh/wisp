@@ -24,6 +24,11 @@ export interface CopyButtonProps {
   disabled?: boolean
   /** 图标按钮 tooltip 的内容（默认是名称 + 快捷键），见 IconButton 的同名属性 */
   tooltip?: ReactNode
+  /**
+   * 点一下就完成、不需要键盘：按钮带上 `data-keep-focus`，面板视图据此在按下时不让面板成为 key（键盘留在原来的应用）。
+   * 复制要退回 WebView 写入时窗口必须有焦点，那时调用它取回焦点（copyText 的 `focus`）
+   */
+  keepFocus?: () => void
   'data-testid'?: string
 }
 
@@ -35,6 +40,7 @@ export function CopyButton({
   onCopied,
   disabled,
   tooltip,
+  keepFocus,
   'data-testid': testId = 'copy-button',
 }: CopyButtonProps) {
   const t = useT()
@@ -50,7 +56,7 @@ export function CopyButton({
     [],
   )
   const copy = async () => {
-    const ok = await copyText(typeof text === 'function' ? text() : text)
+    const ok = await copyText(typeof text === 'function' ? text() : text, { focus: keepFocus })
     onCopied?.(ok)
     setResult(ok ? 'copied' : 'failed')
     if (timer.current !== null) clearTimeout(timer.current)
@@ -88,6 +94,7 @@ export function CopyButton({
           variant="secondary"
           disabled={disabled}
           onClick={() => void copy()}
+          data-keep-focus={keepFocus ? '' : undefined}
           data-testid={testId}
         >
           <span className="ui-copy-label">
@@ -108,6 +115,7 @@ export function CopyButton({
         shortcut={shortcut}
         tooltip={tooltip}
         disabled={disabled}
+        data-keep-focus={keepFocus ? '' : undefined}
         data-testid={testId}
         onClick={() => void copy()}
       />

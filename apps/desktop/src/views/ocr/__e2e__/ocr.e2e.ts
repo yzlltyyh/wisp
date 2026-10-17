@@ -6,7 +6,8 @@
  * - 展开 / 收起译文区时逐帧采样：内容放得下时底栏不动；卡片已到上限时底栏只朝一个方向平滑移动、文本框与底栏之间
  *   没有空白、卡片高度不变；
  * - 窄面板没有「ResizeObserver loop」之类的页面错误；
- * - 排版按钮：360 px 宽、中英文、三种模式下底栏放得下、各控件点得到；切换排版后正文更新、剪贴板跟随。
+ * - 排版按钮：360 px 宽、中英文、三种模式下底栏放得下、各控件点得到；切换排版后正文更新、剪贴板跟随；
+ *   「合并段内换行」只在逐行模式；点排版按钮不让面板成为 key；⌘↩ 把当前的文字粘贴回原应用。
  * 运行方式见 apps/desktop/playwright.config.ts。
  */
 import { expect, test, type Page } from '@playwright/test'
@@ -495,4 +496,42 @@ test('逐行：没有空行时「去掉空行」置灰并写明原因，左半�
   await expect(remove).toContainText('文字里没有空行')
   await page.getByTestId('ocr-layout-menu-item-join_lines').click()
   await expect(text).toHaveValue('第一行第二行第三行')
+})
+
+test('逐行：菜单里的「合并段内换行」把段内换行连起来（列表保持原样），点排版按钮不让面板成为 key；⌘↩ 把当前的文字粘贴回原应用', async ({
+  page,
+}) => {
+  const calls = await open(page, 'ocr.layout-wrapped')
+  const count = (cmd: string) => calls.filter(([c]) => c === cmd).length
+  const text = page.getByTestId('ocr-text')
+  const toggle = page.getByTestId('ocr-layout-toggle')
+  const raw =
+    'Wisp stays in the background and wakes up only\nwhen you press a hotkey. Recognized text keeps\nits line breaks.\n\n- Lists stay as they are'
+  const joined =
+    'Wisp stays in the background and wakes up only when you press a hotkey. Recognized text keeps its line breaks.\n\n- Lists stay as they are'
+  await expect(text).toHaveValue(raw)
+  await page.getByTestId('ocr-layout-caret').click()
+  const reflow = page.getByTestId('ocr-layout-menu-item-reflow')
+  await expect(reflow).toContainText('把 PDF 里的硬换行连成段落')
+  await reflow.click()
+  await expect(text).toHaveValue(joined)
+  await expect(toggle).toHaveAccessibleName('合并段内换行')
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
+  // 左半与复制点一下就完成：按下时不发 panel_activate（文本框照旧发）
+  await expect.poll(() => count('ocr_recopy')).toBe(1)
+  const activations = count('panel_activate')
+  await toggle.click()
+  await expect(text).toHaveValue(raw)
+  await page.getByTestId('ocr-copy').click()
+  await expect.poll(() => count('clipboard_copy_text')).toBe(1)
+  expect(count('panel_activate')).toBe(activations)
+  await toggle.click()
+  await expect(text).toHaveValue(joined)
+  await text.click()
+  await expect.poll(() => count('panel_activate')).toBe(activations + 1)
+  // ⌘↩（焦点在文本框里）：片段粘贴当前显示的文字，不在文本框里插入换行（mock 与 Rust 一样随之收起面板）
+  await page.keyboard.press('Meta+Enter')
+  await expect
+    .poll(() => calls.findLast(([c]) => c === 'clipboard_paste_text')?.[1])
+    .toEqual({ text: joined, from: null, mode: 'normal' })
 })

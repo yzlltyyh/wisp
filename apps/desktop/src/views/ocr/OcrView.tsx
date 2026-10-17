@@ -31,6 +31,10 @@
  * Esc 先收起放大的截图与菜单，其余由外壳处理。
  * 面板里 Tab 在视图内循环（最后一个控件之后回到第一个）。
  *
+ * 焦点：面板默认不抢键盘。按下视图时让面板成为 key（`activate`），只有「点一下就完成、不需要键盘」的控件例外——复制、
+ * 芯片、排版按钮的左半带 `data-keep-focus`，按下时键盘留在原应用，回去就能直接粘贴；文本框、各个 ▾、菜单、语言条、
+ * 风格 chip 这些要打字或会打开菜单的照旧激活。
+ *
  * 自动复制：由编排器在识别完成时写入剪贴板（转录模式、非直接翻译、设置开启、有文字；commit 与重新识别
  * 都适用，按会话排版处理）；视图在同样的条件下于底栏显示「已复制」约 1.5 s，自己不再写一次。编辑只改视图里的文本，
  * 不会触发复制；文本一被编辑或开始重新识别，「已复制」立即收起（剪贴板里已不是眼前的内容）。切换排版后剪贴板跟随
@@ -231,6 +235,9 @@ const elapsedOf = (done: RunState['done']): number | null =>
   done && !done.cached ? done.elapsed_ms : null
 const isSourceFailure = (v: unknown): v is SourceFailure =>
   typeof v === 'object' && v !== null && 'kind' in v && !('code' in v)
+/** 按下的位置在「点一下就完成、不需要键盘」的控件里（带 data-keep-focus） */
+const keepsFocus = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest('[data-keep-focus]') !== null
 
 export function OcrView(props: OcrViewProps) {
   const { payload, sessionId, host, maxHeight, requestHide, activate } = props
@@ -704,9 +711,12 @@ export function OcrView(props: OcrViewProps) {
 
   // ---- 复制 / 粘贴 / 固定 / 设置 ----
 
-  /** 复制并在底栏提示 */
+  /**
+   * 复制并在底栏提示。复制按钮与芯片按下时没有激活面板（带 data-keep-focus），Rust 要求改由 WebView 写剪贴板时
+   * （Wayland）窗口却得有焦点：那时先让面板成为 key 再写（copyText 的 focus）。固定窗口是普通窗口，点一下就有焦点
+   */
   function copyAndFlash(text: string): void {
-    void copyText(text).then(flashCopied)
+    void copyText(text, host === 'panel' ? { focus: activate } : undefined).then(flashCopied)
   }
 
   /**
@@ -1417,6 +1427,8 @@ export function OcrView(props: OcrViewProps) {
   const recognizeOpen = menu.open && menu.at === 'footer'
   const discarding = confirm !== null && 'discard' in confirm
   const copyLabel = t(direct ? 'ocr.a11y.copy_translation' : 'ocr.a11y.copy_text')
+  /** 复制按钮按下时不激活面板（面板宿主）；要退回 WebView 写入时由它取回焦点 */
+  const keepFocus = host === 'panel' ? activate : undefined
   // 展开区：卡片已到上限（或马上会到）时展开 / 收起用高度过渡，正文区逐帧让出 / 拿回
   const sectionRoom = LAYOUT.section + LAYOUT.status + lh
   const willMax = atMax || (sizes.current?.view ?? 0) + sectionRoom > layout.viewMax
@@ -1441,7 +1453,8 @@ export function OcrView(props: OcrViewProps) {
       onPointerDown={
         host === 'panel'
           ? (e) => {
-              activate()
+              // 带 data-keep-focus 的控件点一下就完成、不需要键盘：不让面板成为 key（见文件头「焦点」）。拖动照旧
+              if (!keepsFocus(e.target)) activate()
               panelDrag?.onPointerDown(e)
             }
           : undefined
@@ -1572,6 +1585,7 @@ export function OcrView(props: OcrViewProps) {
                       </span>
                     ) : undefined
                   }
+                  keepFocus={keepFocus}
                   disabled={!hasText}
                   data-testid="ocr-copy"
                 />
@@ -1672,6 +1686,7 @@ export function OcrView(props: OcrViewProps) {
               <CopyButton
                 text={() => src.text()}
                 label={t('ocr.a11y.copy_source')}
+                keepFocus={keepFocus}
                 disabled={!src.state.hasText}
                 data-testid="ocr-source-copy"
               />
@@ -1719,6 +1734,7 @@ export function OcrView(props: OcrViewProps) {
               <CopyButton
                 text={() => tr.text()}
                 label={t('ocr.a11y.copy_translation')}
+                keepFocus={keepFocus}
                 disabled={!ts.hasText}
                 data-testid="ocr-translation-copy"
               />

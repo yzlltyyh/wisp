@@ -5,7 +5,8 @@
  * WebKitGTK 上 `navigator.clipboard` 不可靠）。只有**传输层不可用**（浏览器里直接打开页面：`not_implemented`）或
  * Rust 内部错误（`internal`）时才退回 `navigator.clipboard.writeText`；另外，平台层明确要求改由 WebView 写入时
  * （KDE Wayland 不接受后台 X11 写剪贴板、没有 XWayland：`platform` + `errors.platform.wayland_clipboard*`）
- * 也退回——此时面板仍有焦点，WebView 的写入有效。Rust 明确拒绝的其他情况（超过
+ * 也退回。WebView 的写入只在窗口有键盘焦点时有效：有的控件按下时有意不让面板成为 key（键盘留在原来的应用），这时由
+ * 调用方给出 `focus`，退回之前先取回焦点（见 CopyOptions）。Rust 明确拒绝的其他情况（超过
  * 1 MB 的 `invalid_argument`、其他平台错误……）直接返回 false，不绕过 Rust 的上限与抑制规则，也不把失败伪装成成功。
  * 返回是否成功；界面反馈（对勾 / InlineToast / 失败提示）由调用方负责，见 CopyButton。
  */
@@ -29,13 +30,39 @@ function canFallBack(error: unknown): boolean {
   return error.code === 'platform' && WEBVIEW_COPY_REASONS.has(error.message)
 }
 
-export async function copyText(text: string): Promise<boolean> {
+export interface CopyOptions {
+  /**
+   * 退回 WebView 写入时窗口还没有键盘焦点：先调用它取回焦点（例如让不抢焦点的面板成为 key），再等窗口拿到焦点，最多等
+   * FOCUS_WAIT_MS——激活经 Rust 投递到主线程、异步完成，命令返回时焦点不一定已经到了；等不到也照样写，成败由 writeText 报告
+   */
+  focus?: () => void
+}
+
+/** 退回 WebView 写入前等窗口拿到焦点的上限（激活通常几十毫秒内完成） */
+const FOCUS_WAIT_MS = 250
+
+function untilFocused(focus: () => void): Promise<void> {
+  if (document.hasFocus()) return Promise.resolve()
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer)
+      window.removeEventListener('focus', done)
+      resolve()
+    }
+    const timer = setTimeout(done, FOCUS_WAIT_MS)
+    window.addEventListener('focus', done)
+    focus()
+  })
+}
+
+export async function copyText(text: string, options: CopyOptions = {}): Promise<boolean> {
   try {
     await clipboardCopyText(text)
     return true
   } catch (error) {
     if (!canFallBack(error)) return false
     try {
+      if (options.focus) await untilFocused(options.focus)
       await navigator.clipboard.writeText(text)
       return true
     } catch {
