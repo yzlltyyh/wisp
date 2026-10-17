@@ -119,10 +119,33 @@ pub fn blank_line_between_list_items(text: &str) -> bool {
     blank_line_between(text, wisp_text::join::starts_list_item)
 }
 
-/// 两个很短的行之间空了一行（昵称、时间、按钮、标签这类短的界面元素之间不该空行；标题后面紧跟短句时也会命中，
-/// 所以只做辅助检查）
-pub fn blank_line_between_short_lines(text: &str) -> bool {
-    blank_line_between(text, |l| display_width(l) < SHORT_LINE)
+/// 连续三个以上的段落都只有一个很短的行：昵称、时间、短消息、按钮这类短的界面元素被一个个拆成段落，满屏空行正是
+/// 段落模式要避免的。按段落数而不是按行数：小标题本身是单独一行的段落，但它前后一组组短项（一项一行、组内不空行）
+/// 是多行的段落，「一组短项、小标题、一组短项」这种合规的版面不会被算进来
+pub fn spaced_short_lines(text: &str) -> bool {
+    let mut run = 0;
+    let mut lines_in_para = 0;
+    let mut short_para = false;
+    // 每读完一段就结算：只有一行、且这一行很短的段落让计数加一，其余段落清零
+    let settle = |lines: usize, short: bool, run: &mut usize| {
+        if lines == 0 {
+            return false;
+        }
+        *run = if lines == 1 && short { *run + 1 } else { 0 };
+        *run >= 3
+    };
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            if settle(lines_in_para, short_para, &mut run) {
+                return true;
+            }
+            lines_in_para = 0;
+            continue;
+        }
+        lines_in_para += 1;
+        short_para = display_width(line) < SHORT_LINE;
+    }
+    settle(lines_in_para, short_para, &mut run)
 }
 
 /// 有一行以「字母 + 连字符」结尾：段落模式会把段内的行合起来，行尾还留着连字符说明断词没有接上
@@ -154,7 +177,7 @@ pub fn evaluate_ocr_paragraphs(sample_id: &str, output: &str, raw: &str) -> Vec<
     c.aux("模型原始输出没有连续空行", !consecutive_blank_lines(raw));
     match sample_id {
         "O5-chat-paragraphs" | "O7-list-paragraphs" => {
-            c.aux("很短的行之间没有空行", !blank_line_between_short_lines(out));
+            c.auto("短行没有被一个个空行隔开", !spaced_short_lines(out));
         }
         "O6-pdf-paragraphs" => {
             c.auto("行尾没有断词连字符（段内的行已合并）", !dangling_hyphen(out));
@@ -463,14 +486,27 @@ mod tests {
         assert!(!blank_line_between_list_items("- item\n\nA paragraph."));
         assert!(!blank_line_between_list_items("\n\n- item"), "文首的空行不算");
 
-        assert!(blank_line_between_short_lines("Alice\n\n10:24"));
-        assert!(blank_line_between_short_lines("通用\n\n快捷键"));
-        assert!(!blank_line_between_short_lines(
+        // 聊天里昵称、时间、短消息一个个隔着空行
+        assert!(spaced_short_lines("10:24\n\nAlice\n\n早"));
+        assert!(spaced_short_lines("通用\n\n快捷键\n\n\n外观"), "多个空行也算一处");
+        // 小标题后空一行再接一组短项，组内不空行：合规
+        assert!(!spaced_short_lines(
+            "提醒方式\n\n显示横幅\n播放提示音\n\n注意事项\n\n恢复默认\n完成"
+        ));
+        assert!(!spaced_short_lines(
             "Alice\n10:24\n明天下午三点在会议室见，记得带上电脑"
         ));
-        assert!(!blank_line_between_short_lines(
-            "通用\n\n这一段说明写得很长，超过了十个汉字的宽度"
+        // 中间夹着长行就断开计数
+        assert!(!spaced_short_lines(
+            "通用\n\n快捷键\n\n这一段说明写得很长，超过了十个汉字的宽度\n\n外观"
         ));
+        // 真实模型输出：聊天截图里昵称、时间、短消息都隔着空行（应判失败）；设置页按组排、组前后空行（应判通过）
+        let chat = "上午 10:24\n\n周航\n\n早\n\n今天下午的评审会还是三点吗?\n\n林晓\n\n还是三点，不过会议室换到了三楼东侧的小会议室。\n\n收到";
+        assert!(spaced_short_lines(chat));
+        let settings = "通知\n\n选择应用在什么时候提醒你，以及用什么方式提醒。\n\n提醒方式\n\n显示横幅\n\
+                        识别完成后在屏幕右上角停留几秒钟\n播放提示音\n只在应用位于后台时播放\n\n注意事项\n\n\
+                        • 系统的专注模式会暂停所有横幅。\n• 提示音的音量跟随系统设置。\n\n恢复默认\n完成";
+        assert!(!spaced_short_lines(settings));
     }
 
     #[test]
@@ -513,9 +549,14 @@ mod tests {
         // 原始输出里的连续空行在后处理之后已经压掉了，只能看原始输出
         let checks = evaluate_ocr_paragraphs("O5-chat-paragraphs", "Alice\n10:24", "Alice\n\n\n10:24");
         assert_eq!(passed(&checks, "原始输出没有连续空行"), Some(false));
-        assert_eq!(passed(&checks, "很短的行之间没有空行"), Some(true));
-        let checks = evaluate_ocr_paragraphs("O7-list-paragraphs", "通用\n\n快捷键", "通用\n\n快捷键");
-        assert_eq!(passed(&checks, "很短的行之间没有空行"), Some(false));
+        assert_eq!(passed(&checks, "短行没有被一个个空行隔开"), Some(true));
+        let spaced = "通用\n\n快捷键\n\n外观";
+        let checks = evaluate_ocr_paragraphs("O7-list-paragraphs", spaced, spaced);
+        assert_eq!(passed(&checks, "短行没有被一个个空行隔开"), Some(false));
+        // 小标题与紧跟的一组短项之间的空行是提示词要求的，不算
+        let grouped = "提醒方式\n\n显示横幅\n播放提示音\n\n恢复默认\n完成";
+        let checks = evaluate_ocr_paragraphs("O7-list-paragraphs", grouped, grouped);
+        assert_eq!(passed(&checks, "短行没有被一个个空行隔开"), Some(true));
 
         let checks = evaluate_ocr_paragraphs("O8-mixed-paragraphs", "使用 Wisp 时 面板会弹出", "");
         assert_eq!(passed(&checks, "汉字之间"), Some(false));
