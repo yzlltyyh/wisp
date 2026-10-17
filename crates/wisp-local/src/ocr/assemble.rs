@@ -5,7 +5,8 @@
 //! - lines：每个视觉行一行，保留相对缩进（左边界与主体左边界之差折算成空格，最多 8 个）；行间有明显空白时空一行。
 //! - paragraphs：相邻视觉行在行距 ≤ 1.5 × 行高、左边界接近、上一行接近右边界时合并为一段，跨行处按
 //!   [`wisp_text::join::join_break`] 相连（断词还原、东亚文字直接相连、中英之间按全文惯例）；列表项另起一段。
-//!   段与段之间空一行（与视觉模型的 paragraphs 模式相同）。
+//!   段与段之间空一行；连续的列表项、连续的短行（一行就结束、明显比版面窄：界面标签、按钮、菜单项、表格的单元格）
+//!   之间只换行，一组短行与相邻的正文之间仍空一行（与视觉模型的 paragraphs 模式相同，判定见 [`separator`]）。
 //! - 置信度低于 [`MIN_SCORE`] 的行丢弃。没有文字时输出 [`NO_TEXT`]（编排器的无文字判定照常生效）。
 //!
 //! 这里只管几何（分行、分栏、缩进、段落边界）；只看文字本身的规则（是否加空格、断词还原、列表项）在 [`wisp_text::join`]。
@@ -41,6 +42,9 @@ const FIRST_LINE_INDENT: f32 = 4.0;
 const PARAGRAPH_MIN_WIDTH: f32 = 8.0;
 /// paragraphs 模式：估计一栏的右边界时，只看上下这么多倍行高以内、左边界相近的行
 const COLUMN_WINDOW: f32 = 15.0;
+/// paragraphs 模式：一行就结束、宽度不超过全部文字所占宽度这个比例的段算「短行」（界面标签、按钮、菜单项、表格的
+/// 单元格、聊天里的短消息）。写到六成以上宽度的单行段多半是恰好一行写完的正文，照常与相邻的段空一行
+const SHORT_PARAGRAPH: f32 = 0.6;
 
 /// 按模式拼装（markdown 与 translate 退回 paragraphs：PP-OCR 不识别版面）
 pub fn assemble(lines: &[TextLine], mode: OcrMode) -> String {
@@ -91,9 +95,12 @@ pub fn to_paragraphs(lines: &[TextLine]) -> String {
     if rows.is_empty() {
         return NO_TEXT.to_owned();
     }
+    let h = median(rows.iter().map(Row::height));
     let all: Vec<Segment> = rows.iter().flat_map(|r| r.segments.iter().cloned()).collect();
     // 中英之间的断行补不补空格，看同一截图里其他地方怎么写
     let spacing = MixedSpacing::infer(all.iter().map(|s| s.text.as_str()));
+    let text_width = all.iter().map(|s| s.x1).fold(f32::NEG_INFINITY, f32::max)
+        - all.iter().map(|s| s.x0).fold(f32::INFINITY, f32::min);
     let mut paragraphs: Vec<Paragraph> = Vec::new();
     // 仍可能接上下一行的段落（每一栏最多一个）
     let mut open: Vec<usize> = Vec::new();
@@ -119,11 +126,35 @@ pub fn to_paragraphs(lines: &[TextLine]) -> String {
         // 没被这一行接上的段落就此结束：段落只能由紧接着的下一行延续
         open = continued;
     }
-    paragraphs
-        .iter()
-        .map(|p| p.text.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+    let mut out = String::new();
+    let mut prev: Option<&Paragraph> = None;
+    for p in &paragraphs {
+        if let Some(prev) = prev {
+            out.push_str(separator(prev, p, text_width, h));
+        }
+        out.push_str(&p.text);
+        prev = Some(p);
+    }
+    out
+}
+
+/// paragraphs 模式两段之间的分隔：前后两段都是列表项或短行（[`Paragraph::compact`]），且两段之间的竖向空白不超过
+/// lines 模式插空行的阈值（[`BLANK_LINE_GAP`] 个行高，行高取全图的中位数）时只换行，否则照旧空一行。
+///
+/// 宁可多空一行：竖向空白大说明版面上隔开了，多半是另一组（剪贴板历史里相邻的两条、设置页里的两节、标题与下面的
+/// 列表），即使都是短行也照常空行；lines 模式在同样的地方也会空一行，两种模式的分组因此一致。不按框的高度区分标题：
+/// 检测框的高度受并进框里的图标、单独的符号影响很大，设置页截图里同一列相邻的两个框就能差到两倍以上，按高度判断
+/// 只会让同类的截图时而空行、时而不空。
+///
+/// 段落按首行的位置排序，多栏的版面里前后两段可能分属两栏；只要满足上面的条件，同一视觉行上的两个单元格、
+/// 相邻两行的标签之间同样只换行
+fn separator(prev: &Paragraph, next: &Paragraph, text_width: f32, h: f32) -> &'static str {
+    let close = next.first.y0 - prev.last.y1 <= BLANK_LINE_GAP * h;
+    if close && prev.compact(text_width) && next.compact(text_width) {
+        "\n"
+    } else {
+        "\n\n"
+    }
 }
 
 /// 一个片段：一个或几个间距较小的文本框拼成的文字，带外接矩形
@@ -276,6 +307,8 @@ fn rows(lines: &[TextLine]) -> Vec<Row> {
 struct Paragraph {
     text: String,
     lines: usize,
+    /// 以列表项开头（列表项总是另起一段，所以只看首行）
+    item: bool,
     first: Segment,
     last: Segment,
     /// 段内各行的最大右边界
@@ -287,6 +320,7 @@ impl Paragraph {
         Self {
             text: seg.text.clone(),
             lines: 1,
+            item: starts_list_item(&seg.text),
             right: seg.x1,
             first: seg.clone(),
             last: seg,
@@ -328,6 +362,12 @@ impl Paragraph {
         }
         // 列表项另起一段
         !starts_list_item(&seg.text)
+    }
+
+    /// 可以与相邻的同类段落只隔一个换行：列表项（不论折成几行），或一行就结束、宽度不超过全部文字所占宽度
+    /// [`SHORT_PARAGRAPH`] 的短行。`text_width` 是全部文字的外接宽度
+    fn compact(&self, text_width: f32) -> bool {
+        self.item || (self.lines == 1 && self.first.x1 - self.first.x0 <= SHORT_PARAGRAPH * text_width)
     }
 
     fn push(&mut self, seg: Segment, spacing: MixedSpacing) {
@@ -443,8 +483,8 @@ mod tests {
             line("30", 200.0, 40.0, 225.0, 60.0),
         ];
         assert_eq!(to_lines(&input), "Name\tAge\nAlice\t30");
-        // paragraphs：两栏各自成段
-        assert_eq!(to_paragraphs(&input), "Name\n\nAge\n\nAlice\n\n30");
+        // paragraphs：两栏各自成段；单元格都是短行，彼此之间只换行
+        assert_eq!(to_paragraphs(&input), "Name\nAge\nAlice\n30");
     }
 
     #[test]
@@ -492,8 +532,79 @@ mod tests {
         ];
         assert_eq!(
             to_paragraphs(&input),
-            "常驻后台的工具首先要安静：空闲时几乎不占CPU，也不抢走焦点。\n\n1. 第一项\n\n2. 第二项"
+            "常驻后台的工具首先要安静：空闲时几乎不占CPU，也不抢走焦点。\n\n1. 第一项\n2. 第二项"
         );
+    }
+
+    #[test]
+    fn list_items_stay_together_even_when_wrapped() {
+        let input = [
+            line("Before you release:", 10.0, 10.0, 180.0, 30.0),
+            line(
+                "1. Update the version number in every manifest",
+                10.0,
+                60.0,
+                490.0,
+                80.0,
+            ),
+            line("and commit the change.", 10.0, 84.0, 210.0, 104.0),
+            line("2. Run the checks.", 10.0, 108.0, 170.0, 128.0),
+            line(
+                "That is all there is to it, and the rest of this paragraph",
+                10.0,
+                160.0,
+                490.0,
+                180.0,
+            ),
+            line("explains why.", 10.0, 184.0, 120.0, 204.0),
+        ];
+        // 折成两行的列表项与下一项之间也只换行；列表与前后的文字之间隔开了超过一个行高，照常空行
+        assert_eq!(
+            to_paragraphs(&input),
+            "Before you release:\n\n1. Update the version number in every manifest and commit the change.\n2. Run the checks.\n\nThat is all there is to it, and the rest of this paragraph explains why."
+        );
+    }
+
+    #[test]
+    fn short_lines_group_without_blank_lines() {
+        let input = [
+            line(
+                "Wisp keeps every tool one shortcut away and stays out",
+                10.0,
+                10.0,
+                490.0,
+                30.0,
+            ),
+            line("of the way.", 10.0, 34.0, 110.0, 54.0),
+            // 紧挨着的一组标签
+            line("General", 10.0, 70.0, 80.0, 90.0),
+            line("Shortcuts", 10.0, 98.0, 95.0, 118.0),
+            line("Models", 10.0, 126.0, 70.0, 146.0),
+            // 隔开一大段的另一组
+            line("Sync", 10.0, 200.0, 50.0, 220.0),
+            line("About", 10.0, 228.0, 60.0, 248.0),
+            // 一行写完、但写到七成以上宽度的两段正文
+            line(
+                "A single sentence that runs most of the way across.",
+                10.0,
+                256.0,
+                400.0,
+                276.0,
+            ),
+            line(
+                "Another one that also runs most of the way across.",
+                10.0,
+                284.0,
+                390.0,
+                304.0,
+            ),
+        ];
+        assert_eq!(
+            to_paragraphs(&input),
+            "Wisp keeps every tool one shortcut away and stays out of the way.\n\nGeneral\nShortcuts\nModels\n\nSync\nAbout\n\nA single sentence that runs most of the way across.\n\nAnother one that also runs most of the way across."
+        );
+        // lines 模式不受影响
+        assert_eq!(to_lines(&input[2..5]), "General\nShortcuts\nModels");
     }
 
     #[test]

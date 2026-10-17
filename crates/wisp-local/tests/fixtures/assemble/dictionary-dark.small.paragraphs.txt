@@ -5,19 +5,14 @@ Wisp—设计笔记
 常驻后台的工具首先要安静：空闲时几乎不占CPU，不弹无关的通知，也不抢走你正在使用的应用的焦点。Wisp stays out of your way: it idles at near-zero CPU, wakes in milliseconds, and streams the translation right next to your cursor.
 
 The英语 → 中文
-
 自然
 
 is short and purposeful — it explains : of the way.
 
 wher
-
 serendipity /,ser.ən'dɪp.ə.ti/ n.
-
 截图 1. 机缘巧合一 意外发现美好事物的运气
-
 动效与键盘路由在三端保持一致，平台差异
-
 收敛 2. 意外之喜 一 偶然得到的好东西
 
 It was pure serendipity that we met.我们的相遇纯属机缘巧合。

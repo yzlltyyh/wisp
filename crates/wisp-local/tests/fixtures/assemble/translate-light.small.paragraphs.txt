@@ -9,7 +9,6 @@ Wisp —设计笔记
 translation right next to your cursor.
 
 The 英语 → 中文
-
 自然…
 
 and purposeful — it explains 'ay.

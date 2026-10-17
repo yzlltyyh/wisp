@@ -9,23 +9,14 @@ Wisp一设计笔记
 translation right next to your cursor.
 
 The l 性能预算
-
 000 X d purposeful — it explains
-
 wher 面板唤出 p95≤100 ms
-
 首 token p95 ≤ 1.2 s
-
 空闲 CPU ≈ 0%
-
 640 × 240 pt
-
 截图常驻内存≤60 MB
-
 纯文本· qwen3-vl-plus
-
 各由在三端保持一致，平台差异
-
 收敛性能预算
 
 面板唤出 p95≤100 ms 首 token p95 ≤ 1.2 s 空闲 CPU≈ 0%
@@ -33,21 +24,13 @@ wher 面板唤出 p95≤100 ms
 常驻内存≤60 MB
 
 qwen3-vl-plus . 2.1 s
-
 刘翻译
 
 中文→英语
-
 自然
-
 Performance budget
-
 Panel show p95 ≤ 100 ms
-
 First token p95 ≤ 1.2 s
-
 Idle CPU ≈ 0%
-
 Resident memory ≤ 60 MB
-
 GPT-5.4 mini · 980 ms · 42 tokens

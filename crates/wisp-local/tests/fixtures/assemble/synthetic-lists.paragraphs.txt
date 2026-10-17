@@ -1,23 +1,13 @@
 Steps to follow before the release goes out, in order:
 
 1. Update the version number in every manifest and commit the change.
-
 2) Run the checks and wait for every job to pass.
-
 (3) Tag the release and push the tag to the remote.
-
 • Bullet item that is long enough to fill the line.
-
 - Dash item that is long enough to fill the line.
-
 ① 第一项写满了整整一行的宽度，后面紧跟着下一项
-
 ⑴ 带括号的编号也写满了一整行的宽度
-
 ❶ 黑底圆圈的编号同样写满了一整行
-
 一、第一节的内容写满了整整一行的宽度
-
 a. lettered item that also fills the whole line
-
 1.2.3 Multi-level heading numbers fill the line 1.5 GB is not a list item but it does start the line with a number.

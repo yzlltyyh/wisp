@@ -206,6 +206,36 @@ fn synthetic() -> Vec<(String, Vec<TextLine>)> {
             ),
         ),
         (
+            // 短行成组：设置页的标签与按钮、聊天里的昵称、短消息与时间。紧挨着的短行之间只换行；隔开超过一个行高、
+            // 或者有一边是多行的正文时照常空一行
+            "groups",
+            [
+                vec![
+                    line("Settings", 10.0, 10.0, 90.0, 30.0),
+                    line("General", 10.0, 60.0, 80.0, 80.0),
+                    line("Shortcuts", 10.0, 88.0, 95.0, 108.0),
+                    line("Models", 10.0, 116.0, 70.0, 136.0),
+                    line("Save", 300.0, 116.0, 340.0, 136.0),
+                    line("Cancel", 360.0, 116.0, 420.0, 136.0),
+                    line("Alice", 10.0, 180.0, 60.0, 200.0),
+                ],
+                column(
+                    10.0,
+                    204.0,
+                    &[
+                        ("Are we still meeting tomorrow at three? I booked the", true),
+                        ("small room on the second floor.", false),
+                    ],
+                ),
+                vec![
+                    line("10:24", 10.0, 252.0, 50.0, 272.0),
+                    line("Sounds good!", 380.0, 280.0, 490.0, 300.0),
+                    line("10:25", 450.0, 304.0, 490.0, 324.0),
+                ],
+            ]
+            .concat(),
+        ),
+        (
             "columns",
             vec![
                 line("Name", 10.0, 10.0, 60.0, 30.0),
