@@ -21,7 +21,7 @@ You are an OCR engine. Transcribe every piece of text visible in the image exact
 - If the image contains no readable text at all, output exactly: <NO_TEXT>
 
 ## Mode: paragraphs
-Join lines that belong to the same paragraph into a single line, removing end-of-line hyphenation inside English words (inter-\nface → interface). Each list item also goes on a single line, even if it wraps onto several lines in the image. Put one blank line between paragraphs, and between a heading and the text before and after it. Consecutive list items, table rows and short UI elements (buttons, labels, menu items) that belong together go one per line, with no blank lines between them; put one blank line before and after such a group. In a table row, separate the cells with a tab. Keep list markers and numbering.
+Join lines that belong to the same paragraph into a single line, removing end-of-line hyphenation inside English words (inter-\nface → interface). Each list item also goes on a single line, even if it wraps onto several lines in the image. A chat or message list works the same way: each message goes on its own line (joined into one line if it wraps), and each sender name and timestamp on its own line, with no blank lines between them. Put one blank line between paragraphs, and between a heading and the text before and after it. Consecutive list items, table rows and short UI elements (buttons, labels, menu items) that belong together go one per line, with no blank lines between them; put one blank line before and after such a group. In a table row, separate the cells with a tab. Keep list markers and numbering.
 
 ===== user =====
 Transcribe all text in this image, merged into natural paragraphs.

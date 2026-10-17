@@ -605,6 +605,8 @@ fn ocr_parameters() {
             .system
             .contains("In a table row, separate the cells with a tab.")
     );
+    // 聊天记录：每条消息一行（折行的合成一行），昵称与时间各占一行，彼此之间不空行——否则满屏都是空行
+    assert!(paragraphs.system.contains("A chat or message list works the same way"));
 }
 
 #[test]

@@ -44,7 +44,7 @@ Each version ends with an English summary.
 - 用 Windows 记事本等编辑器保存、带 UTF-8 BOM 的 settings.json、styles.json、glossary.json 与 state.json 不再被当成损坏的文件而恢复默认。
 - 设置窗口里的模型服务与术语表改为逐条保存：手动修改配置文件或从其他设备同步来的改动，不会被设置窗口里打开着的旧内容整组覆盖。
 - Windows 在 100 %、125 %、150 %、250 %、300 % 等缩放下，托盘图标不再发虚：通知区域改用按它实际尺寸绘制的图标，更改缩放或换主显示器后自动换成对应的尺寸。
-- OCR 的段落模式里，连续的列表项、表格行与按钮、标签这类短的界面元素之间不再空一行，每项一行，折成几行的列表项合成一行；段落之间与标题前后仍空一行。用模型服务识别时，表格行里的单元格以制表符隔开，粘贴进表格软件时各占一格。
+- OCR 的段落模式里，连续的列表项、表格行、按钮与标签这类短的界面元素，以及聊天记录里的昵称、时间与一条条消息之间不再空一行，每项一行，折成几行的列表项与消息合成一行；段落之间与标题前后仍空一行。用模型服务识别时，表格行里的单元格以制表符隔开，粘贴进表格软件时各占一格。
 - 重新识别同一张截图（⌘R、换识别模式或模型）不再每次在剪贴板历史里多出一条：新结果替换上一次自动复制新建的那一条，识别出的文字没变时沿用原来那一条；期间复制过别的内容或收藏了那一条时不删。
 - 点 OCR 结果面板里的复制按钮、芯片或排版按钮后，键盘仍留在原来的应用里，回去直接 ⌘V 就能粘贴，不用先点回原应用；要在面板里用 ⌘C、⌘L 时先点一下文字或空白处。
 
@@ -81,7 +81,7 @@ Each version ends with an English summary.
 - In the OCR result panel, ⌘↩ (Ctrl+Enter on Windows and Linux) pastes the current text into the app you took the screenshot from and closes the panel, so after editing you no longer need to copy, close, and paste. It pastes the same text ⌘C would copy; in a pinned window it copies instead.
 - Fixes: configuration files saved with a UTF-8 BOM (for example by Windows Notepad) are no longer treated as corrupt and reset; providers and glossary entries in Settings are now saved one at a time, so changes made in the files or synced from another device aren't overwritten by stale values in an open Settings window.
 - Windows: the tray icon is no longer blurry at 100%, 125%, 150%, 250%, 300%, and similar display scaling. The notification area now gets an icon drawn for its actual size, and Wisp switches to the matching size when you change the scaling or the primary display.
-- OCR Paragraphs mode no longer puts a blank line between consecutive list items, table rows, or short interface elements such as buttons and labels; they go one per line (a list item that wraps is joined into one line), and paragraphs and headings are still separated by a blank line. With a model service, the cells of a table row are separated by tabs, so they land in separate cells when pasted into a spreadsheet.
+- OCR Paragraphs mode no longer puts a blank line between consecutive list items, table rows, short interface elements such as buttons and labels, or the names, times and messages in a chat; they go one per line (a list item or message that wraps is joined into one line), and paragraphs and headings are still separated by a blank line. With a model service, the cells of a table row are separated by tabs, so they land in separate cells when pasted into a spreadsheet.
 - Recognizing the same screenshot again (⌘R, or another mode or model) no longer adds a clipboard history entry every time: the new result replaces the entry the previous automatic copy created, or keeps it when the text is unchanged. Nothing is removed if you copied something else in between or added that entry to favorites.
 - Clicking a copy button, a chip, or the layout button in the OCR result panel leaves the keyboard in the app you were using, so ⌘V pastes there right away without clicking back first. To use ⌘C or ⌘L in the panel, click the text or an empty area first.
 
