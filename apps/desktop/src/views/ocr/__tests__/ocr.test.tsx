@@ -836,9 +836,12 @@ describe('排版', () => {
     // 播报只有一处：底栏提示从无障碍树里隐去（它所在的 aria-live 区域不再念一遍）
     expect(toast).toHaveAttribute('aria-hidden', 'true')
     expect(screen.queryByRole('status', { name: '已复制' })).toBeNull()
+    const quiet = within(toast).getByText('已复制')
     act(() => mod('KeyC'))
     await settle()
     expect(screen.getByTestId('inline-toast')).not.toHaveAttribute('aria-hidden')
+    // 「已复制」还没消失、文字也没变：播报的文字换成新挂载的节点，读屏才会再念一次
+    expect(within(screen.getByTestId('inline-toast')).getByText('已复制')).not.toBe(quiet)
   })
 
   it('「合并段内换行」只在逐行模式的菜单里出现；选中后段内换行连起来，左半随之换成它', async () => {

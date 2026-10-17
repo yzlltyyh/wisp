@@ -17,6 +17,11 @@ export interface InlineToastProps {
   children: ReactNode
   /** 只显示、不播报（提示从无障碍树里隐去） */
   silent?: boolean
+  /**
+   * 换一个值就重新挂载提示里的文字（提示本身不重新入场）：同一句话再出现一次时读屏也会再念一遍。只去掉 aria-hidden、
+   * 文字不变的话，部分读屏不认为 aria-live 区域有变化
+   */
+  nonce?: number
   className?: string
   'data-testid'?: string
 }
@@ -25,6 +30,7 @@ export function InlineToast({
   show,
   children,
   silent = false,
+  nonce = 0,
   className,
   'data-testid': testId = 'inline-toast',
 }: InlineToastProps) {
@@ -41,7 +47,7 @@ export function InlineToast({
             {...motion}
           >
             <Icon icon={CircleCheck} size={14} className="ui-toast-icon" />
-            {children}
+            <span key={nonce}>{children}</span>
           </m.span>
         ) : null}
       </AnimatePresence>
@@ -54,7 +60,10 @@ export interface InlineToastControl {
   node: ReactNode
   /** 正在显示：显示期间调用方可以把同一位置的其他提示让出来（两者并排时放不下） */
   visible: boolean
-  /** 显示一条提示，停留 `timing.toastHold` 后淡出；再次调用重新计时。`silent`：只显示、不播报（见模块注释） */
+  /**
+   * 显示一条提示，停留 `timing.toastHold` 后淡出；再次调用重新计时，文字照样重新播报（同一句也是）。`silent`：只显示、
+   * 不播报（见模块注释）
+   */
   show(message: ReactNode, options?: { silent?: boolean }): void
   /** 立即收起（淡出动画照常）；没有显示时什么也不做 */
   hide(): void
@@ -65,6 +74,8 @@ export function useInlineToast(className?: string): InlineToastControl {
   const [message, setMessage] = useState<ReactNode>(null)
   const [visible, setVisible] = useState(false)
   const [silent, setSilent] = useState(false)
+  /** 每次 show 加一：「已复制」还没消失时再复制一次（或从静默变为播报），文字重新挂载，读屏再念一遍 */
+  const [nonce, setNonce] = useState(0)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(
     () => () => {
@@ -76,6 +87,7 @@ export function useInlineToast(className?: string): InlineToastControl {
     if (timer.current !== null) clearTimeout(timer.current)
     setMessage(next)
     setSilent(options?.silent ?? false)
+    setNonce((n) => n + 1)
     setVisible(true)
     timer.current = setTimeout(() => setVisible(false), ms(timing.toastHold))
   }, [])
@@ -87,7 +99,13 @@ export function useInlineToast(className?: string): InlineToastControl {
   }, [])
   return {
     node: (
-      <InlineToast key="inline-toast" show={visible} silent={silent} className={className}>
+      <InlineToast
+        key="inline-toast"
+        show={visible}
+        silent={silent}
+        nonce={nonce}
+        className={className}
+      >
         {message}
       </InlineToast>
     ),

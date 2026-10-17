@@ -845,6 +845,25 @@ describe('useInlineToast', () => {
     act(() => toast.show('已复制'))
     expect(screen.getByTestId('inline-toast')).not.toHaveAttribute('aria-hidden')
   })
+
+  it('每次 show 都重新挂载播报的文字：同一句从静默变为播报、或连着播报两次，读屏都能再听到；提示本身不重新入场', () => {
+    let toast!: InlineToastControl
+    wrap(<Probe expose={(c) => (toast = c)} />)
+    act(() => toast.show('已复制', { silent: true }))
+    const shell = screen.getByTestId('inline-toast')
+    const quiet = screen.getByText('已复制')
+    act(() => toast.show('已复制'))
+    // 只去掉 aria-hidden、文字不变时，部分读屏不认为 aria-live 区域有变化：换成新挂载的节点
+    const loud = screen.getByText('已复制')
+    expect(loud).not.toBe(quiet)
+    expect(quiet.isConnected).toBe(false)
+    expect(loud.closest('[aria-hidden]')).toBeNull()
+    expect(loud.closest('[aria-live]')).not.toBeNull()
+    act(() => toast.show('已复制'))
+    expect(screen.getByText('已复制')).not.toBe(loud)
+    // 外层提示（入场动画所在的节点）一直是同一个
+    expect(screen.getByTestId('inline-toast')).toBe(shell)
+  })
 })
 
 describe('copyText', () => {
