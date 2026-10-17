@@ -19,7 +19,7 @@ crates/wisp-platform       操作系统集成层（macOS / Windows / Linux 实�
 crates/wisp-sync           多设备同步：端到端加密、WebDAV 远端、本机副本与合并
 crates/wisp-local          离线模型：目录与下载、llama-server 托管、ONNX Runtime 工作进程、PP-OCRv6 / 版面 / VL 流水线、PaddleOCR 云端客户端
 vendor/                    打了补丁的上游 crate（wry、tao、tray-icon、notify、oar-ocr）
-scripts/                   检查、版本号、性能、截图、发布脚本
+scripts/                   检查、版本号、性能、截图、OCR 评测、发布脚本
 ```
 
 ## 命令
@@ -37,7 +37,7 @@ pnpm lint && pnpm format:check && pnpm typecheck && pnpm test
 pnpm i18n:check && pnpm check:contract && pnpm check:size
 ```
 
-按需：`pnpm check:cross`（在 macOS 上对 Windows / Linux 目标做类型检查）、`node scripts/gen-fixtures.mjs`（改了 `wisp-types` 后重新生成前端黄金样例）、`pnpm run licenses`（改了依赖后）、`node scripts/release/self-test.mjs`（改了发布脚本或 `CHANGELOG.md` 后）、`cargo test -p wisp-llm --features fake`、`cargo test -p wisp-local --features ort,fake`、`cargo test -p wisp-prompts --features eval`、`pnpm -C apps/desktop exec playwright test`（浏览器级用例，配置在 `apps/desktop/playwright.config.ts`）。
+按需：`pnpm check:cross`（在 macOS 上对 Windows / Linux 目标做类型检查）、`node scripts/gen-fixtures.mjs`（改了 `wisp-types`、「粘贴为…」变换、内置风格等生成前端样例的 Rust 代码后，重新生成 `shared/ipc/fixtures/`）、`pnpm run licenses`（改了依赖后）、`node scripts/release/self-test.mjs`（改了发布脚本或 `CHANGELOG.md` 后）、`cargo test -p wisp-llm --features fake`、`cargo test -p wisp-local --features ort,fake`、`cargo test -p wisp-prompts --features eval`、`pnpm -C apps/desktop exec playwright test`（浏览器级用例，配置在 `apps/desktop/playwright.config.ts`）、`UPDATE_GOLDEN=1 cargo test -p wisp-local --test assemble_golden`（文本拼装规则有意改变、审阅差异后重写 `crates/wisp-local/tests/fixtures/assemble/`）、`pnpm eval:ocr`（OCR 提示词对真实视觉模型的评测，需要 Key；`--dry-run` 不取 Key、不发请求）。
 
 完成改动前至少运行与改动相关的格式化、lint、类型检查与测试，并在结果里如实说明哪些检查跑过、哪些没有跑。
 
@@ -45,7 +45,7 @@ pnpm i18n:check && pnpm check:contract && pnpm check:size
 
 - **注释用简体中文，标识符用英文。** 注释说明为什么这样做，不复述代码；注释应自成一体，把理由直接写出来，不用编号或文档章节号代替解释（引用公开的上游 issue / PR 链接可以）。
 - **平台差异只放在 `crates/wisp-platform`、`crates/wisp-capture` 与 `apps/desktop/src-tauri/src/windows/native/`**（以及 `lib.rs` 的插件注册）。其他位置不写 `#[cfg(target_os)]`，通过 trait 调用。desktop 的 `windows` 模块与 `windows` crate 同名：引用自己的模块写 `crate::windows::…`，引用 crate 写 `::windows::…`。
-- **`crates/*` 不依赖 Tauri。** crate 之间只能横向依赖 `wisp-types` 与 `wisp-text`（`wisp-prompts` 的 `eval` feature 例外）；`wisp-text` 不依赖任何 crate，只放确定性的纯文本规则（版面与几何留在调用方）。`pnpm check:contract` 检查这条边界。
+- **`crates/*` 不依赖 Tauri。** crate 之间只能横向依赖 `wisp-types` 与 `wisp-text`（`wisp-prompts` 的 `eval` feature 例外）；`wisp-text` 除开发依赖外不依赖任何 crate，只放确定性的纯文本规则（版面与几何留在调用方）。`pnpm check:contract` 检查这条边界。
 - **IPC**：命令、事件、字段、枚举值都用 snake_case；命令返回 `Result<T, IpcError>`；`ipc/` 只做参数校验与分发，字符串、浮点数与集合参数在命令体第一步校验。新增命令要同时改 `ipc/mod.rs` 的 `commands!` 与前端 `shared/ipc/commands.ts`。事件名引用 `wisp_types` 里的常量。
 - **类型同步**：改 `crates/wisp-types` 时同步 `apps/desktop/src/shared/ipc/types.ts`，并重新生成 `shared/ipc/fixtures/`（不要手改生成的文件）。
 - **前端**：`@tauri-apps/*` 只能在 `apps/desktop/src/shared/ipc/` 里引用；动效时长与曲线只用 `shared/motion/` 的令牌或 `--dur-*` / `--ease-*`；颜色只用设计令牌；覆盖层（`overlay/`）是原生 TS，不引入 React / Motion。
@@ -66,7 +66,7 @@ pnpm i18n:check && pnpm check:contract && pnpm check:size
 
 ## 提交
 
-提交标题遵循 Conventional Commits：`<type>(<scope>): <描述>`（`feat`、`fix`、`perf`、`refactor`、`docs`、`test`、`ci`、`build`、`chore` 等）。`feat` / `fix` / `perf` / `refactor` 会进入更新日志草稿，请从用户角度描述。只在被要求时提交或推送。
+提交标题遵循 Conventional Commits：`<type>(<scope>): <描述>`（`feat`、`fix`、`perf`、`refactor`、`docs`、`test`、`ci`、`build`、`chore` 等）。`feat` / `fix` / `perf` / `refactor` / `revert` 会进入更新日志草稿，请从用户角度描述。只在被要求时提交或推送。
 
 ## 文档
 

@@ -16,6 +16,7 @@
 | `run-smoke.mjs` | 以 `WISP_SMOKE=1 WISP_FAKE_LLM=1` 启动构建产物，等它写出冒烟报告并退出；`--webview`（默认关闭）时在 macOS / Linux 上每秒采样 WebView 进程内存，写进报告的 `webview` 段（只记录，见下）|
 | `smoke-gate.mjs` | 冒烟报告 / 性能记录与基线比较的门禁（`--ci` 为 CI 口径；`--require-webview` / `--expect-state` / `--expect-views` / `--webview-gate` 见「门禁规则」） |
 | `perf-record.schema.json` / `smoke-report.schema.json` | 两种 JSON 的正式格式（JSON Schema 2020-12） |
+| `lib.mjs` | 各脚本共用的统计、日志解析与 JSON Schema 校验（只依赖 Node 内置模块） |
 | `baselines/` | 门禁的基线（见「基线」）：`macos.json`（本机 macOS 26）、`macos-15.json`（GitHub 的 macos-15 runner） |
 | `examples/` | 格式样例与自检用的真实记录（`smoke-gate.mjs --self-test` 会校验它们）：`smoke-report.failed-run.json` 是一次没有通过的真实冒烟输出（TranslateText 没有被处理，按预期不通过；`log_file` 换成了相对路径）；`perf-post-{hot,recycled}.macos-15.json` 是生成 runner 基线的两份会话后记录 |
 

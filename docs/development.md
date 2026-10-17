@@ -112,8 +112,8 @@ node scripts/bump.mjs --check   # 各处版本号一致
 | `wisp-types` 的类型或其他生成前端样例的 Rust 代码 | `node scripts/gen-fixtures.mjs` 重写 `apps/desktop/src/shared/ipc/fixtures/` 下的样例；只核对用 `--check` |
 | 发布脚本、`cliff.toml`、`CHANGELOG.md` | `node scripts/release/self-test.mjs` |
 | GitHub 工作流或 shell 脚本 | `actionlint`、`shellcheck` |
-| 假模型、提示词评测 | `cargo test -p wisp-llm --features fake --locked`、`cargo test -p wisp-prompts --features eval --locked` |
-| 文本规则（`crates/wisp-text`） | `cargo test -p wisp-text --locked` 与 `cargo test -p wisp-local --locked`：后者把 PP-OCRv6 的黄金样例与一组构造的版面拼成文本，与 `crates/wisp-local/tests/fixtures/assemble/` 逐字比对。规则有意改变时先审阅差异，确认后用 `UPDATE_GOLDEN=1 cargo test -p wisp-local --test assemble_golden` 重写 |
+| 假模型、提示词评测 | `cargo test -p wisp-llm --features fake --locked`、`cargo test -p wisp-prompts --features eval --locked`；改了 `scripts/eval-ocr.mjs` 时加 `node scripts/eval-ocr.mjs --self-test` |
+| 文本规则（`crates/wisp-text`） | `cargo test -p wisp-text --locked` 与 `cargo test -p wisp-local --locked`：后者把 PP-OCRv6 的黄金样例与一组构造的版面拼成文本，与 `crates/wisp-local/tests/fixtures/assemble/` 逐字比对。规则有意改变时先审阅差异，确认后用 `UPDATE_GOLDEN=1 cargo test -p wisp-local --test assemble_golden` 重写；「粘贴为…」的结果随之改变时再运行 `node scripts/gen-fixtures.mjs`，重写浏览器 mock 用的 `fixtures/consts/TransformCases.json` |
 | 离线模型（`crates/wisp-local`、`models_svc/`、`wisp-platform` 的 `system` / `pressure` / `child`） | `cargo test -p wisp-local --features ort,fake --locked` 与 `cargo test -p wisp-platform --locked`（含 `child_guard`）；改了 Windows / Linux 的平台代码时加 `pnpm check:cross`。对真实运行时、模型与 PaddleOCR 服务的测试见下文[离线模型与 PaddleOCR 的真机测试](#离线模型与-paddleocr-的真机测试) |
 | 多设备同步（`crates/wisp-sync`） | `cargo test -p wisp-sync --locked`：加解密与篡改检测、投影往返、合并性质（proptest）、多设备收敛模拟（内存远端）与 WebDAV 客户端（wiremock），都不需要真实账号。对真实服务器的测试默认忽略，用环境变量提供账号：`WISP_SYNC_TEST_URL=https://… WISP_SYNC_TEST_USER=… WISP_SYNC_TEST_PASS=… cargo test -p wisp-sync --locked --test live_webdav --test live_engine -- --ignored`。`live_webdav` 是传输层冒烟，只在地址下 `wisp/` 里的随机子目录中读写；`live_engine` 让两台模拟设备经真实服务器走完连接、加入、同步、删除与清空、清除服务器数据，在地址下单独的 `e2e-<随机 id>/` 目录里进行，不碰真实的同步数据。两者结束时（包括失败时）都会删除自己建的目录。不要把真实的地址与账号写进仓库 |
 | 界面交互（焦点、键盘、逐帧布局） | 浏览器级用例：`pnpm -C apps/desktop exec playwright install webkit chromium`（第一次），然后 `pnpm -C apps/desktop exec playwright test`（配置在 `apps/desktop/playwright.config.ts`，运行 `src/**/__e2e__/*.e2e.ts`） |
@@ -193,7 +193,6 @@ pgrep -fl 'llama-server|wisp-worker|wisp-guard'
 
 在开发构建里手动验证下载与设置页时，用 `WISP_MODELS_DIR=<临时目录>` 把模型放到别处，验证完删除这个目录。
 
-
 ## 调试
 
 - **日志**：日志文件在 macOS `~/Library/Logs/wisp/wisp.log`、Windows `%LOCALAPPDATA%\wisp\logs\wisp.log`、Linux `~/.local/state/wisp/logs/wisp.log`；debug 构建同时输出到终端。级别在「设置 → 通用 → 高级 → 日志级别」里调，改动立即生效。日志按设计不包含任何正文与 Key。
@@ -229,8 +228,8 @@ pgrep -fl 'llama-server|wisp-worker|wisp-guard'
 - **视觉稿**：`panel.html?scenario=design.<视图>`（如 `design.translate-done`、`design.ocr-done`、`design.clipboard-list`）与 `design.settings-models`、`design.onboarding-permissions` 是各视图、设置与引导窗口的静态视觉基准，实现改动后可以对照。源码在 `apps/desktop/src/panel/shell/design/`。
 - **窗口层实验台**：先 `pnpm -C apps/desktop build`，再以 `WISP_WINDOW_LAB=1 WISP_WINDOW_LAB_EXIT=1` 运行带 `tauri/custom-protocol` 的 debug 构建（`target/debug/wisp-desktop`）。它不经业务流程，直接用真实的窗口层走一遍面板、固定窗口、覆盖层、设置窗口与面板回收等路径，每一步输出一行 `window_lab step=… ok|fail` 日志，并检查窗口泄漏；配置与数据放在隔离的临时目录。另有只做测量的模式（内存、冷唤出、延迟等），全部开关见 `apps/desktop/src-tauri/src/windows/window_lab.rs` 的模块注释。
 - **帧模式实验台**：`WISP_FRAME_LAB=native|native-css-fill|css` 让面板反复进入、流式增长、收缩、退出，用于录屏核对与逐帧耗时度量，参数见 `apps/desktop/src-tauri/src/windows/frame_lab.rs` 的模块注释。
-- **提示词评测**：`cargo run -p wisp-prompts --features eval --bin wisp-eval -- --provider-json <文件> --styles all` 用指定的服务把内置样本按各风格翻译一遍，结果写到 `target/eval-runs/`（`--out` 可改），自动断言汇总通过率，其余项留给人工检查；Key 从 `WISP_EVAL_KEY_<ID>` 读取（ID 为服务 id 的大写，非字母数字替换为 `_`）。用法见 `crates/wisp-prompts/src/eval/mod.rs` 的模块注释。支持图片的模型另跑 OCR 截图样本：截图（PNG）从 `--ocr-dir`（默认 `<out>/ocr-samples/`）读取，缺少的样本跳过，文件名与期望见同目录 `samples.rs` 的 `OCR_SAMPLES`。仓库里不放截图，只放生成截图的页面：`crates/wisp-prompts/eval/ocr-pages/`（每张截图一个 HTML 页面，只用系统字体、不联网，与样本的对应见该目录的 README）。
-- **一条命令跑 OCR 评测**：`pnpm eval:ocr` 先用 Playwright 把上面的页面渲染成截图（第一次使用先 `pnpm -C apps/desktop exec playwright install chromium`），再从 Wisp 自己的 `settings.json`（只读）取 OCR 默认模型，调用评测器只跑段落模式的四个样本（O5–O8），按样本的汇总打印在终端，报告写到 `target/eval-runs/`。OCR 默认模型是离线模型或 PaddleOCR 云端时，改用第一个启用的、支持图片的模型，并打印实际用的是哪一个。常用选项：`--model <服务 id>/<模型 id>` 指定模型；`--all` 跑全部 OCR 样本，`--samples O5,O6` 只跑这几个；`--dry-run` 只渲染截图、装配提示词并列出计划，不取 Key、不发请求；`--render-only` 只生成截图；`--settings <文件>` 改读别的设置文件；`--` 之后的参数原样交给 `wisp-eval`。Key 依次取自：环境变量 `WISP_EVAL_KEY_<ID>` 或 `WISP_EVAL_KEY`（前者优先）；系统钥匙串里 Wisp 保存的 Key（macOS 经 `security` 读取，**可能弹出钥匙串授权框，点「允许」即可**；Linux 经 `secret-tool`；Windows 跳过）；都没有时在终端里隐藏输入。Key 只经环境变量交给评测器，不打印、不落盘。
+- **提示词评测**：`cargo run -p wisp-prompts --features eval --bin wisp-eval -- --provider-json <文件> --styles all` 用指定的服务把内置样本按各风格翻译一遍，结果写到 `target/eval-runs/`（`--out` 可改），自动断言汇总通过率，其余项留给人工检查；Key 从 `WISP_EVAL_KEY_<ID>` 读取（ID 为服务 id 的大写，非字母数字替换为 `_`）。用法见 `crates/wisp-prompts/src/eval/mod.rs` 的模块注释。支持图片的模型另跑 OCR 截图样本（`--ocr-only` 只跑这些、不跑翻译样本，`--ocr-samples O5,O6` 只跑列出的几个）：截图（PNG）从 `--ocr-dir`（默认 `<out>/ocr-samples/`）读取，缺少的样本跳过，文件名与期望见同目录 `samples.rs` 的 `OCR_SAMPLES`。仓库里不放截图，只放生成截图的页面：`crates/wisp-prompts/eval/ocr-pages/`（每张截图一个 HTML 页面，只用系统字体、不联网，与样本的对应见该目录的 README）。
+- **一条命令跑 OCR 评测**：`pnpm eval:ocr` 先用 Playwright 把上面的页面渲染成截图（第一次使用先 `pnpm -C apps/desktop exec playwright install chromium`），再从 Wisp 自己的 `settings.json`（只读）取 OCR 默认模型，调用评测器只跑段落模式的四个样本（O5–O8），按样本的汇总打印在终端，报告写到 `target/eval-runs/`。OCR 默认模型不是走模型服务的视觉模型（离线模型、PaddleOCR 云端，或标记为不支持图片）时，改用第一个启用的、支持图片的模型（没有时用视觉能力未知的），并打印实际用的是哪一个。常用选项：`--model <服务 id>/<模型 id>` 指定模型；`--all` 跑全部 OCR 样本，`--samples O5,O6` 只跑这几个；`--dry-run` 只渲染截图、装配提示词并列出计划，不取 Key、不发请求；`--render-only` 只生成截图；`--settings <文件>` 改读别的设置文件；`--out <目录>` 改报告目录（截图写到其下的 `ocr-samples/`）；`--` 之后的参数原样交给 `wisp-eval`。Key 依次取自：环境变量 `WISP_EVAL_KEY_<ID>` 或 `WISP_EVAL_KEY`（前者优先）；系统钥匙串里 Wisp 保存的 Key（macOS 经 `security` 读取，**可能弹出钥匙串授权框，点「允许」即可**；Linux 经 `secret-tool`；Windows 跳过）；都没有时在终端里隐藏输入。Key 只经环境变量交给评测器，不打印、不落盘。
 
 ## 目录约定
 
@@ -294,7 +293,7 @@ pnpm qa:shots --readme                                # 重新生成全部 READM
 pnpm qa:shots --readme --filter clipboard             # 只重做部分文件；--out <目录> 先输出到别处对比
 ```
 
-清单在 `scripts/qa/readme-shots.ts`（场景、主题、视口、裁切框、输出宽度）。截图基于浏览器 mock 的场景，用 WebKit 以 2× 渲染后缩小；脚本最后核对 `README.md` 引用的图片都由清单生成。界面有可见变化时重新生成，并对照 README 里的 alt 文字确认内容仍然相符。
+清单在 `scripts/qa/readme-shots.ts`（场景、主题、视口、裁切框、输出宽度）。截图基于浏览器 mock 的场景，用 WebKit 以 2× 渲染后缩小；脚本最后核对 `README.md` 引用的图片都由清单生成。界面有可见变化时重新生成，并对照 README 里的 alt 文字确认内容仍然相符。其中 translate-light、ocr-dark、settings-providers-light、clipboard-light、dictionary-dark 五张同时是离线 PP-OCRv6 测试的输入：重新生成它们后，要按 `crates/wisp-local/tests/fixtures/ppocr/README.md` 用官方产线重做对应的黄金样例 JSON，再审阅并重写文本拼装的黄金输出（需要下载模型与官方 Python 产线，可以先只重做其余截图）。
 
 ## 发布流程
 

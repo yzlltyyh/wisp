@@ -5,6 +5,9 @@
 「文字一致且 IoU ≥ 0.5」、检测召回与多检。预处理与后处理已与官方产线逐步对齐（见 `parity/` 与 `ocr_opencv_parity`），
 同一份像素输入时两者的文字与框完全相同。
 
+这些 JSON（含低分行）也是文本拼装黄金输出（`tests/assemble_golden.rs`，输出在 `../assemble/`）的输入：重新生成后，
+连同 `assemble/` 的差异一起审阅，确认后用 `UPDATE_GOLDEN=1 cargo test -p wisp-local --test assemble_golden` 重写。
+
 ## 文件
 
 | 文件 | 内容 |

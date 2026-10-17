@@ -1,6 +1,6 @@
 # OCR 评测截图页面
 
-提示词评测器（`wisp-eval`，见 `crates/wisp-prompts/src/eval/`）的 OCR 样本要读截图。仓库里不放截图，只放这些页面：`pnpm eval:ocr` 用 Playwright（Chromium，2 倍像素密度）把每个页面的 `#shot` 元素截成同名 PNG，写到 `target/eval-runs/ocr-samples/`，也就是评测器默认的 `--ocr-dir`。只生成截图用 `pnpm eval:ocr --render-only`，用法见 [docs/development.md](../../../../docs/development.md) 的「提示词评测」。
+提示词评测器（`wisp-eval`，见 `crates/wisp-prompts/src/eval/`）的 OCR 样本要读截图。仓库里不放截图，只放这些页面：`pnpm eval:ocr` 用 Playwright（Chromium，2 倍像素密度）把每个页面的 `#shot` 元素截成同名 PNG，写到 `target/eval-runs/ocr-samples/`，也就是评测器默认的 `--ocr-dir`。只生成截图用 `pnpm eval:ocr --render-only`，用法见 [docs/development.md](../../../../docs/development.md)「开发者工具」一节的「提示词评测」与「一条命令跑 OCR 评测」。
 
 | 页面 | 截图 | 样本（`samples.rs` 的 `OCR_SAMPLES`） | 内容 |
 | --- | --- | --- | --- |

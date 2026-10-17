@@ -32,4 +32,4 @@
 
 ## 修改模板
 
-直接改这里的文件，然后运行 `cargo test -p wisp-prompts`：`tests/snapshots/` 的快照 diff 会列出受影响的提示词，确认无误后用 `INSTA_UPDATE=always cargo test -p wisp-prompts --test snapshots` 更新快照。改动提示词措辞时建议再跑一次评测运行器（`wisp-eval`，见 `src/eval/mod.rs`）对比前后结果。
+直接改这里的文件，然后运行 `cargo test -p wisp-prompts`：`tests/snapshots/` 的快照 diff 会列出受影响的提示词，确认无误后用 `INSTA_UPDATE=always cargo test -p wisp-prompts --test snapshots` 更新快照。改动提示词措辞时建议再跑一次评测运行器（`wisp-eval`，见 `src/eval/mod.rs`）对比前后结果；改 OCR 模板时可以用仓库根目录的 `pnpm eval:ocr` 生成截图并对真实的视觉模型跑 OCR 样本（见 `docs/development.md`）。

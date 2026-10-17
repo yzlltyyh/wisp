@@ -31,16 +31,16 @@
 - **issue、PR 描述与提交信息用中文或英文均可**。
 - **用户可见的文字一律走 i18n**：界面文案在 `apps/desktop/src/locales/zh-CN/` 与 `en-US/` 同时添加；托盘与系统通知的文案在 `apps/desktop/src-tauri/src/app/i18n.rs`。`pnpm i18n:check` 会拦下硬编码的界面文字。
 - **平台差异收敛在平台层**：`#[cfg(target_os)]` 只写在 `crates/wisp-platform`（取词、粘贴、焦点等系统能力）、`crates/wisp-capture`（截图）、`apps/desktop/src-tauri/src/windows/native/`（窗口）以及 `lib.rs` 的插件注册里，其他位置通过 trait 调用（见[架构 · 总览](docs/architecture.md#总览)）。
-- **隐私**：日志只记录元数据（耗时、状态码、模型名等），绝不写入原文、译文、剪贴板内容、截图、API Key、请求头的值或 URL 查询参数。
+- **隐私**：日志只记录元数据（耗时、状态码、模型名等），绝不写入原文、译文、剪贴板内容（包括识别出的片段与变换结果）、截图、API Key、请求头的值、URL 查询参数，以及同步服务器的地址、账号与密码。
 - **依赖**：新增依赖需要说明理由，并锁定精确版本；改了 lockfile 后运行 `pnpm run licenses` 重新生成第三方许可清单并一起提交。
 
 ### Rust
 
-- `cargo fmt` 与 `cargo clippy --workspace --all-targets -- -D warnings` 必须干净。
+- `cargo fmt --all` 与 `cargo clippy --workspace --all-targets --locked -- -D warnings` 必须干净。
 - 公开项写中文文档注释；`unsafe` 块前写 `// SAFETY:` 注释说明为什么成立。
 - 错误类型用 `thiserror`，日志用 `log` 宏。
 - 可能阻塞的系统调用（无障碍接口、剪贴板、X11）要有超时，不要在 async 上下文里直接阻塞，放进 `spawn_blocking` 或工作线程。
-- `crates/*` 不得依赖 Tauri，保证可以脱离 WebView 测试。crate 之间只能横向依赖 `wisp-types` 与 `wisp-text`（`wisp-prompts` 的 `eval` feature 例外）；`wisp-text` 不依赖任何 crate，只放确定性的纯文本规则。`pnpm check:contract` 会检查。
+- `crates/*` 不得依赖 Tauri，保证可以脱离 WebView 测试。crate 之间只能横向依赖 `wisp-types` 与 `wisp-text`（`wisp-prompts` 的 `eval` feature 例外）；`wisp-text` 除开发依赖外不依赖任何 crate，只放确定性的纯文本规则。`pnpm check:contract` 会检查。
 - 跨 IPC 的类型放在 `crates/wisp-types`，同步修改 `apps/desktop/src/shared/ipc/types.ts` 并重新生成黄金样例（`node scripts/gen-fixtures.mjs`）。
 
 ### 前端
