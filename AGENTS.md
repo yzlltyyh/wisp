@@ -10,7 +10,7 @@ Wisp 是常驻后台的轻量桌面工具：划词翻译、截图 OCR、剪贴�
 apps/desktop/src/          前端：entries/（五个页面入口）、panel/、views/、settings/、onboarding/、pinned/、floating/（悬浮剪贴板）、overlay/、shared/、locales/
 apps/desktop/src-tauri/    Rust 应用（wisp-desktop）：app/、orchestrator/、windows/、hotkeys/、clipboard_svc/、settings/、sync_svc/、models_svc/（离线模型）、ipc/、tray/、updater/
 crates/wisp-types          跨 crate / IPC / 持久化的共享类型
-crates/wisp-text           确定性的纯文本规则：文字分类、片段与跨行拼接、列表项判定、空白整理（不依赖任何 crate）
+crates/wisp-text           确定性的纯文本规则：文字分类、片段与跨行拼接、列表项判定、空白整理、合并段内换行（不依赖任何 crate）
 crates/wisp-llm            四种协议的流式 LLM 客户端
 crates/wisp-prompts        提示词模板（templates/）、风格、语言检测、后处理
 crates/wisp-clipboard      剪贴板历史存储（SQLite + FTS5）

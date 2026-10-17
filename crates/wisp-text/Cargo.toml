@@ -1,6 +1,6 @@
 [package]
 name = "wisp-text"
-description = "Wisp 的纯文本规则：文字分类、片段与跨行拼接、列表项判定、空白整理（零依赖、确定性）"
+description = "Wisp 的纯文本规则：文字分类、片段与跨行拼接、列表项判定、空白整理、合并段内换行（零依赖、确定性）"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
