@@ -530,6 +530,12 @@ pub fn panel_set_focusable(window: &tauri::WebviewWindow, focusable: bool) {
     });
 }
 
+/// 点击本来就不会让带 `WS_EX_NOACTIVATE` 的面板成为前台（OCR 视图在 [`panel_set_focusable`] 里已经带上），不需要按
+/// 视图另外设置
+pub fn panel_set_key_on_click(window: &tauri::WebviewWindow, key_on_click: bool) {
+    let _ = (window, key_on_click);
+}
+
 /// 翻译视图被点击后成为前台（去掉 NOACTIVATE 并 `SetForegroundWindow`）
 pub fn panel_activate(window: &tauri::WebviewWindow) {
     on_main_async(window, |hwnd| {

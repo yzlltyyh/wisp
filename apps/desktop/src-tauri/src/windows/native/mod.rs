@@ -20,7 +20,7 @@
 //! | `PINNED_CSS_SHADOW` | Pinned 窗口是否透明并由 CSS 画圆角阴影（只有 Linux；它的 boot 带阴影边距） |
 //! | `set_regular_activation` | macOS ActivationPolicy 切换 |
 //! | `template_overrides` | 模板的平台差异 |
-//! | `panel_*` | 面板的转换、定位、显示 / 隐藏、焦点、点击穿透、WebView2 可见性与内存目标 |
+//! | `panel_*` | 面板的转换、定位、显示 / 隐藏、焦点（含 `panel_set_key_on_click`：点击是否让面板成为 key，只有 macOS 需要设置）、点击穿透、WebView2 可见性与内存目标 |
 //! | `pinned_*` | Pinned 的平台属性、交接（同一帧显示 pinned、隐藏面板）与展开过渡 |
 //! | `float_*` | 悬浮剪贴板：`float_attach`（不抢焦点的窗口属性）、`float_set_on_top`、`float_set_focusable`（搜索框要打字时临时可聚焦）、`float_yield`（发粘贴键前把键盘焦点交还目标应用）、`float_handoff` / `float_show` / `float_hide` |
 //! | `overlay_*` | Overlay 的转换、冻结帧图层、显示 / 隐藏 / 销毁 |

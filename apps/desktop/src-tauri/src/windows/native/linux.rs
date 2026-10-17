@@ -329,6 +329,12 @@ pub fn panel_set_focusable(window: &tauri::WebviewWindow, focusable: bool) {
     }
 }
 
+/// 不可获得焦点的面板被点击时 WM 不把焦点给它（OCR 视图在 [`panel_set_focusable`] 里已经设为不可获得焦点），不需要
+/// 按视图另外设置
+pub fn panel_set_key_on_click(window: &tauri::WebviewWindow, key_on_click: bool) {
+    let _ = (window, key_on_click);
+}
+
 /// 翻译视图被点击后取得焦点（`focusable(true)` + `set_focus`）
 pub fn panel_activate(window: &tauri::WebviewWindow) {
     if let Err(e) = window.set_focusable(true).and_then(|()| window.set_focus()) {

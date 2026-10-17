@@ -221,7 +221,8 @@ mod panel_class {
     tauri_nspanel::tauri_panel! {
         panel!(WispPanel {
             config: {
-                // 输入 / 剪贴板视图要成为 key；翻译视图显示时不 make key，用户点击后非激活面板自动成为 key
+                // 输入 / 剪贴板视图要成为 key；翻译视图显示时不 make key，用户点击后非激活面板自动成为 key；OCR 视图
+                // 点击不成为 key（panel_set_key_on_click），要打字时由前端显式激活
                 can_become_key_window: true,
                 can_become_main_window: false,
                 is_floating_panel: true,
@@ -882,7 +883,21 @@ pub fn panel_set_focusable(window: &tauri::WebviewWindow, focusable: bool) {
     let _ = (window, focusable);
 }
 
-/// 翻译视图被点击后成为 key（非激活面板被点击时 AppKit 通常已经让它成为 key，这里兜底；不激活应用）
+/// 点击是否让面板成为 key：非激活 NSPanel 被点击时 AppKit 默认让它成为 key，之后的 ⌘V 会落进面板自己。`false`（OCR
+/// 视图）时打开 `becomesKeyOnlyIfNeeded`（与悬浮剪贴板相同）：点击只在命中的视图需要键盘时才让面板成为 key，WKWebView
+/// 里的按钮不算，键盘留在原来的应用；要打字的控件由前端调用 [`panel_activate`]（makeKeyWindow 不受这个属性影响）。
+/// 只影响之后的点击，此刻已是 key 的面板不会因此失去 key。异步，排在随后显示面板的主线程操作之前
+pub fn panel_set_key_on_click(window: &tauri::WebviewWindow, key_on_click: bool) {
+    on_main_async(window, move |_, window, _| {
+        match window.app_handle().get_webview_panel(window.label()) {
+            Ok(panel) => panel.set_becomes_key_only_if_needed(!key_on_click),
+            Err(_) => log::warn!("panel key-on-click: {} is not a panel", window.label()),
+        }
+    });
+}
+
+/// 视图要键盘时成为 key（翻译视图被点击；OCR 视图的文本框、菜单）。非激活面板被点击时 AppKit 通常已经让它成为 key，
+/// 这里兜底；OCR 视图打开了 `becomesKeyOnlyIfNeeded`（[`panel_set_key_on_click`]），靠这里成为 key。不激活应用
 pub fn panel_activate(window: &tauri::WebviewWindow) {
     on_main_async(window, |_, _, ns| {
         if ns.isVisible() && !ns.isKeyWindow() {

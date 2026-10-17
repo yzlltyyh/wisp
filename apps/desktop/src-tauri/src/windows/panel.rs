@@ -173,6 +173,13 @@ const RECYCLE_RETRY: Duration = Duration::from_secs(15);
 /// 动画），保证推迟不会无限期持续、也不会留下一个长期的周期唤醒
 const RECYCLE_DEFER_MAX: Duration = Duration::from_secs(120);
 
+/// 点击是否让面板成为 key（macOS 的非激活面板被点击时 AppKit 默认让它成为 key）。OCR 视图不：用户点完底栏按钮（切换
+/// 排版、复制）之后键盘仍在原来的应用里，回去直接 ⌘V；文本框、菜单这些要键盘的控件由前端显式调用 `panel_activate`。
+/// 其他视图保持被点击即成为 key（翻译视图点一下就能用 ⌘C 等按键）
+fn key_on_click(view: PanelView) -> bool {
+    view != PanelView::Ocr
+}
+
 /// 两个桌面矩形在半个逻辑像素内相同
 fn same_rect(a: Rect, b: Rect) -> bool {
     (a.x - b.x).abs() < 0.5
@@ -258,6 +265,9 @@ pub trait PanelHost: Send + Sync + 'static {
     fn pin_webview(&self, height: f64) -> Result<(), IpcError>;
     /// 显示前决定是否可激活（Windows NOACTIVATE / Linux focusable）
     fn set_focusable(&self, focusable: bool);
+    /// 显示前决定点击是否让面板成为 key（[`key_on_click`]；macOS 的 `becomesKeyOnlyIfNeeded`，Windows / Linux 上点击
+    /// 本来就由可激活性决定）。只影响之后的点击：此刻已是 key 的面板不会因此失去 key，`activate` 照常有效
+    fn set_key_on_click(&self, key_on_click: bool);
     /// emit `panel:prepare`
     fn emit_prepare(&self, p: &PanelPrepare) -> Result<(), IpcError>;
     /// emit `panel:hide_request`
@@ -1104,7 +1114,7 @@ impl PanelController {
     /// 模式固定 WebView，随后照常走 ready 的同步显示（整窗淡入，内容已经就绪，不需要外壳）。调用方持有 frame_lock。
     /// 暂存的不是这个会话（已被新的 prepare 取代）或已有当前会话时什么都不做（ready 随后返回 None，页面等新会话的 emit）
     fn promote_pending_for_ready(&self, session_id: u64) {
-        let (rect, focused, max_height) = {
+        let (rect, view, focused, max_height) = {
             let mut g = self.inner.lock();
             if !g.attached || g.session.is_some() || g.pending.as_ref().is_none_or(|(p, _)| p.session_id != session_id)
             {
@@ -1120,16 +1130,16 @@ impl PanelController {
             g.boot_used = true;
             g.used_since_load = true;
             let rect = self.desktop_window_rect(&s);
-            let focused = s.open.focused;
+            let (view, focused) = (s.open.view, s.open.focused);
             let max_height = s.open.geometry.max_height;
             g.session = Some(s);
-            (rect, focused, max_height)
+            (rect, view, focused, max_height)
         };
         log::info!(
             "panel cold show: content ready from Boot.prepare before the page finished loading session={session_id}"
         );
         self.host.restore_visibility();
-        self.host.set_focusable(focused);
+        self.set_activation(view, focused);
         if let Err(e) = self.host.set_frame(rect) {
             log::warn!("panel prepare set_frame failed: {}", e.message);
         }
@@ -1402,7 +1412,7 @@ impl PanelController {
     fn prepare_fresh(&self, open: PanelOpen, rebuilds: u8) {
         let mut session = self.new_session(open, rebuilds);
         let rect = self.desktop_window_rect(&session);
-        let focused = session.open.focused;
+        let (view, focused) = (session.open.view, session.open.focused);
         let max_height = session.open.geometry.max_height;
         let prepare = Self::prepare_payload(&session.open);
         let session_id = session.open.session_id;
@@ -1458,7 +1468,7 @@ impl PanelController {
         self.ended(superseded);
         // Windows 先恢复 WebView2 的可见性与内存目标，再做任何会让前端开始工作的事
         self.host.restore_visibility();
-        self.host.set_focusable(focused);
+        self.set_activation(view, focused);
         if shell {
             // 外壳已经（在锁内排队）移到新矩形、按需重新固定了 WebView
             self.note_hand_over(session_id, handed);
@@ -1522,7 +1532,7 @@ impl PanelController {
     /// 与高度上限——会话几何与窗口始终一致，固定交接、外部点击、自身窗口命中都用得上
     fn prepare_in_place(&self, mut open: PanelOpen, rebuilds: u8) {
         let session_id = open.session_id;
-        let (prepare, focusable, replaced) = {
+        let (prepare, view, focusable, replaced) = {
             let mut g = self.inner.lock();
             let visible = g.visible();
             // 选路之后锁放开过：旧会话期间可能开始隐藏或被清掉，这时不能原地替换，重新选路
@@ -1557,6 +1567,7 @@ impl PanelController {
             // 按新视图决定可激活性：新视图要焦点（输入 / 剪贴板），或面板此刻就是 key（例如在剪贴板里选了条目去翻译——
             // 与翻译视图被点击后成为 key 的状态相同），保持可激活；否则恢复不激活（Windows 加回 WS_EX_NOACTIVATE）
             let focusable = open.focused || key;
+            let view = open.view;
             let mut s = self.new_session(open, rebuilds);
             s.page = Self::page_for_next(&mut g);
             s.window_height = window_height;
@@ -1580,12 +1591,18 @@ impl PanelController {
             g.on_screen = Some(session_id);
             // 旧会话的监听注销；窗口与它的点击穿透区域保持到这次 ready
             self.host.disarm_guards();
-            (prepare, focusable, replaced)
+            (prepare, view, focusable, replaced)
         };
         // 被原地替换的旧会话就此结束（它的内容随交叉淡入退场，流不延续到新会话）
         self.ended(replaced);
-        self.host.set_focusable(focusable);
+        self.set_activation(view, focusable);
         self.emit_and_arm_timeout(&prepare, session_id, 0);
+    }
+
+    /// 显示前按视图决定窗口的激活方式：是否可激活，以及点击是否让它成为 key（[`key_on_click`]）
+    fn set_activation(&self, view: PanelView, focusable: bool) {
+        self.host.set_focusable(focusable);
+        self.host.set_key_on_click(key_on_click(view));
     }
 
     fn prepare_payload(open: &PanelOpen) -> PanelPrepare {
@@ -3618,6 +3635,12 @@ impl PanelHost for TauriPanelHost {
         }
     }
 
+    fn set_key_on_click(&self, key_on_click: bool) {
+        if let Some(win) = self.window() {
+            native::panel_set_key_on_click(&win, key_on_click);
+        }
+    }
+
     fn show_shell(
         &self,
         rect: Rect,
@@ -3875,6 +3898,7 @@ pub(crate) mod mock {
         FinishExit,
         PinWebview(f64),
         SetFocusable(bool),
+        SetKeyOnClick(bool),
         EmitPrepare(u64),
         EmitHideRequest(u64, HideReason),
         EmitFocusChanged(u64, bool),
@@ -4050,6 +4074,9 @@ pub(crate) mod mock {
         }
         fn set_focusable(&self, focusable: bool) {
             self.push(Call::SetFocusable(focusable));
+        }
+        fn set_key_on_click(&self, key_on_click: bool) {
+            self.push(Call::SetKeyOnClick(key_on_click));
         }
         fn emit_prepare(&self, p: &PanelPrepare) -> Result<(), IpcError> {
             self.push(Call::EmitPrepare(p.session_id));
@@ -7413,6 +7440,57 @@ mod tests {
             host.take().iter().any(|c| matches!(c, Call::Show(..))),
             "窗口已离屏：正常显示而不是原地替换"
         );
+    }
+
+    /// 点击是否让面板成为 key 跟着视图走：只有 OCR 视图点击不成为 key（点完底栏按钮键盘仍在原应用），在 emit prepare
+    /// 之前定好；翻译、剪贴板、输入、toast 保持原样。原地替换、冷唤出时页面凭 Boot.prepare 先 ready 的路径同样按新视图设置
+    #[test]
+    fn only_the_ocr_view_stays_out_of_key_on_click() {
+        assert!(!key_on_click(PanelView::Ocr));
+        for view in [
+            PanelView::Translate,
+            PanelView::Clipboard,
+            PanelView::Input,
+            PanelView::Toast,
+        ] {
+            assert!(key_on_click(view), "{view:?}");
+        }
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Css, 24.0);
+        c.prepare(open(1, PanelView::Ocr, anchor_a()));
+        let calls = host.take();
+        let pos = |want: &Call| calls.iter().position(|c| c == want);
+        let set = pos(&Call::SetKeyOnClick(false)).expect("ocr: clicks keep the keyboard elsewhere");
+        assert!(set < pos(&Call::EmitPrepare(1)).expect("emit"), "{calls:?}");
+        assert!(calls.contains(&Call::SetFocusable(false)), "可激活性不变：{calls:?}");
+        c.ready(1, 200.0).expect("shown");
+        c.hide_now(1, HideReason::Escape);
+        host.take();
+        // 隐藏后再显示翻译：恢复被点击即成为 key
+        c.prepare(open(2, PanelView::Translate, anchor_a()));
+        assert!(host.take().contains(&Call::SetKeyOnClick(true)));
+        c.ready(2, 120.0).expect("shown");
+        host.take();
+        // 原地替换：翻译 → OCR → 翻译，各按新视图
+        let mut ocr = open(3, PanelView::Ocr, anchor_b());
+        ocr.transition = PanelTransition::Crossfade;
+        c.prepare(ocr);
+        assert!(host.take().contains(&Call::SetKeyOnClick(false)));
+        c.ready(3, 200.0).expect("in place");
+        host.take();
+        c.prepare(open_with(4, anchor_b(), 420.0, PanelTransition::Crossfade));
+        assert!(host.take().contains(&Call::SetKeyOnClick(true)));
+
+        // 冷唤出：页面凭 Boot.prepare 先于页面加载 ready，暂存的会话变成当前会话时同样按视图设置、早于显示
+        let host = MockHost::existing();
+        let c = cold_with_window(&host, FrameMode::Css, PanelView::Ocr);
+        host.take();
+        c.ready(2, 200.0).expect("shown");
+        let calls = host.take();
+        let pos = |want: &dyn Fn(&Call) -> bool| calls.iter().position(want);
+        let set = pos(&|c| *c == Call::SetKeyOnClick(false)).expect("ocr");
+        let show = pos(&|c| matches!(c, Call::Show(..))).expect("show");
+        assert!(set < show, "{calls:?}");
     }
 
     /// 原地替换按新视图决定可激活性，准备期间的焦点变化照样记下（ready 的激活、PanelShown.focused、Esc 守卫都以它为准）
