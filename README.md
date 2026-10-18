@@ -8,7 +8,7 @@
 
 **看见、理解、记住。** 常驻后台的轻量桌面伴侣：截图 OCR · 划词翻译 · 剪贴板。
 
-macOS（Apple Silicon）· Windows（x64）· Linux（x64）　|　v0.1.1　|　MIT
+macOS（Apple Silicon）· Windows（x64）· Linux（x64）　|　v0.2.0　|　MIT
 
 [下载与安装](#安装) · [接入模型](#接入模型服务) · [快捷键](#默认快捷键) · [使用说明](docs/user-guide.md) · [更新日志](CHANGELOG.md) · [反馈](#反馈)
 
@@ -104,11 +104,11 @@ Wisp 把三件最常用的小事收进一个随叫随到的面板：选中文字
 
 | 平台 | 安装包 | 系统要求 |
 | --- | --- | --- |
-| macOS · Apple Silicon | `Wisp_0.1.1_aarch64.dmg` | macOS 14 Sonoma 或更新 |
-| Windows · x64 | `Wisp_0.1.1_x64-setup.exe` | Windows 10 / 11 |
-| Linux x64 · Debian / Ubuntu | `Wisp_0.1.1_amd64.deb` | Ubuntu 22.04 / 24.04（选 Ubuntu on Xorg）、Debian 12+，或其他提供 X11 会话的发行版¹ |
-| Linux x64 · Fedora | `Wisp-0.1.1-1.x86_64.rpm` | Fedora；完整功能需要 X11 桌面（Xfce、MATE、Cinnamon 等）¹；RHEL 系需先启用 EPEL² |
-| Linux x64 · 其他发行版 | `Wisp_0.1.1_amd64.AppImage` | glibc 2.35+、FUSE 2；完整功能同样需要 X11 会话¹ |
+| macOS · Apple Silicon | `Wisp_0.2.0_aarch64.dmg` | macOS 14 Sonoma 或更新 |
+| Windows · x64 | `Wisp_0.2.0_x64-setup.exe` | Windows 10 / 11 |
+| Linux x64 · Debian / Ubuntu | `Wisp_0.2.0_amd64.deb` | Ubuntu 22.04 / 24.04（选 Ubuntu on Xorg）、Debian 12+，或其他提供 X11 会话的发行版¹ |
+| Linux x64 · Fedora | `Wisp-0.2.0-1.x86_64.rpm` | Fedora；完整功能需要 X11 桌面（Xfce、MATE、Cinnamon 等）¹；RHEL 系需先启用 EPEL² |
+| Linux x64 · 其他发行版 | `Wisp_0.2.0_amd64.AppImage` | glibc 2.35+、FUSE 2；完整功能同样需要 X11 会话¹ |
 
 ¹ Linux 上**只有 X11 会话功能完整**。Ubuntu 25.10 起（包括 26.04 LTS）和 Fedora 43 起的默认 GNOME 已经没有 Xorg 会话——安装包照样能装，但只能按 Wayland 的限制使用（见 [Linux](#linux)）。
 
@@ -139,7 +139,7 @@ Wisp 把三件最常用的小事收进一个随叫随到的面板：选中文字
 
 ### Windows
 
-1. 运行 `Wisp_0.1.1_x64-setup.exe`。安装包没有代码签名，SmartScreen 提示「Windows 已保护你的电脑」时，点 **「更多信息 → 仍要运行」**。浏览器提示「不常下载」时选择保留。
+1. 运行 `Wisp_0.2.0_x64-setup.exe`。安装包没有代码签名，SmartScreen 提示「Windows 已保护你的电脑」时，点 **「更多信息 → 仍要运行」**。浏览器提示「不常下载」时选择保留。
 2. 安装到当前用户，不需要管理员权限。电脑上缺少 WebView2 运行时（部分 Windows 10）时，安装程序会自动下载它，需要联网。
 3. Wisp 常驻在通知区域。图标可能被收进「^」溢出菜单，可以把它拖到任务栏上常显。
 4. 卸载：Windows 11 在「设置 → 应用 → 已安装的应用」，Windows 10 在「设置 → 应用 → 应用和功能」里找到 Wisp。
@@ -148,13 +148,13 @@ Wisp 把三件最常用的小事收进一个随叫随到的面板：选中文字
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./Wisp_0.1.1_amd64.deb
+sudo apt install ./Wisp_0.2.0_amd64.deb
 
 # Fedora（RHEL / AlmaLinux / Rocky Linux 先启用 EPEL；openSUSE 等请用 AppImage）
-sudo dnf install ./Wisp-0.1.1-1.x86_64.rpm
+sudo dnf install ./Wisp-0.2.0-1.x86_64.rpm
 
 # AppImage（Ubuntu 22.04 需要 libfuse2，24.04 起是 libfuse2t64）
-chmod +x Wisp_0.1.1_amd64.AppImage && ./Wisp_0.1.1_amd64.AppImage
+chmod +x Wisp_0.2.0_amd64.AppImage && ./Wisp_0.2.0_amd64.AppImage
 ```
 
 > [!IMPORTANT]
@@ -317,9 +317,9 @@ macOS 的隐私授权与钥匙串访问绑定在代码签名上，默认的 ad-h
 
 ## 项目状态
 
-当前版本 **v0.1.1**（2026-10-14，[Release 页面](https://github.com/yzlltyyh/wisp/releases/tag/v0.1.1)）：所有悬浮面板都可以拖动，修正了 Windows 分数缩放下的截图框选与 macOS 打开设置时的 Dock 图标。
+当前版本 **v0.2.0**（2026-10-18，[Release 页面](https://github.com/yzlltyyh/wisp/releases/tag/v0.2.0)）：新增经 WebDAV 端到端加密的多设备同步、剪贴板收藏、悬浮剪贴板、智能识别与「粘贴为…」、离线模型（PP-OCRv6、PaddleOCR-VL、Index-Translate）与 PaddleOCR 云端识别，OCR 结果可以切换排版并粘贴回原应用；macOS 版改用固定证书签名，以后更新不必重新授权。
 
-三大场景与设置、引导、自动更新、诊断导出等功能都已可用（首个版本 0.1.0 于 2026-10-13 发布，已由 0.1.1 取代）。macOS 是测试最充分的平台，Windows 与 Linux 的测试覆盖仍在完善。完整的变更记录见 [CHANGELOG.md](CHANGELOG.md)。
+三大场景与设置、引导、自动更新、诊断导出等功能都已可用（首个版本 0.1.0 于 2026-10-13 发布）。macOS 是测试最充分的平台，Windows 与 Linux 的测试覆盖仍在完善。完整的变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 反馈
 

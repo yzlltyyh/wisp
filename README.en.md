@@ -8,7 +8,7 @@
 
 **See it. Understand it. Remember it.** A lightweight desktop companion that stays out of sight until you need it: screenshot OCR · selection translation · clipboard history.
 
-macOS (Apple Silicon) · Windows (x64) · Linux (x64)　|　v0.1.1　|　MIT
+macOS (Apple Silicon) · Windows (x64) · Linux (x64)　|　v0.2.0　|　MIT
 
 [Download & install](#install) · [Connect a model](#connect-a-model-provider) · [Shortcuts](#default-shortcuts) · [User guide](docs/user-guide.md) (Chinese) · [Changelog](CHANGELOG.md) (Chinese) · [Feedback](#feedback)
 
@@ -106,11 +106,11 @@ Download the package for your platform from the [latest release](https://github.
 
 | Platform | Package | Requirements |
 | --- | --- | --- |
-| macOS · Apple Silicon | `Wisp_0.1.1_aarch64.dmg` | macOS 14 Sonoma or later |
-| Windows · x64 | `Wisp_0.1.1_x64-setup.exe` | Windows 10 / 11 |
-| Linux x64 · Debian / Ubuntu | `Wisp_0.1.1_amd64.deb` | Ubuntu 22.04 / 24.04 (choose "Ubuntu on Xorg"), Debian 12+, or another distribution with an X11 session¹ |
-| Linux x64 · Fedora | `Wisp-0.1.1-1.x86_64.rpm` | Fedora; full functionality needs an X11 desktop (Xfce, MATE, Cinnamon, etc.)¹; RHEL-based distributions need EPEL first² |
-| Linux x64 · other distributions | `Wisp_0.1.1_amd64.AppImage` | glibc 2.35+ and FUSE 2; full functionality also needs an X11 session¹ |
+| macOS · Apple Silicon | `Wisp_0.2.0_aarch64.dmg` | macOS 14 Sonoma or later |
+| Windows · x64 | `Wisp_0.2.0_x64-setup.exe` | Windows 10 / 11 |
+| Linux x64 · Debian / Ubuntu | `Wisp_0.2.0_amd64.deb` | Ubuntu 22.04 / 24.04 (choose "Ubuntu on Xorg"), Debian 12+, or another distribution with an X11 session¹ |
+| Linux x64 · Fedora | `Wisp-0.2.0-1.x86_64.rpm` | Fedora; full functionality needs an X11 desktop (Xfce, MATE, Cinnamon, etc.)¹; RHEL-based distributions need EPEL first² |
+| Linux x64 · other distributions | `Wisp_0.2.0_amd64.AppImage` | glibc 2.35+ and FUSE 2; full functionality also needs an X11 session¹ |
 
 ¹ On Linux, **only X11 sessions are fully supported**. Starting with Ubuntu 25.10 (including 26.04 LTS) and Fedora 43, the default GNOME desktop no longer offers an Xorg session. The packages still install, but Wisp is limited to what works under Wayland (see [Linux](#linux)).
 
@@ -141,7 +141,7 @@ The release notes of every version end with the SHA-256 checksums of all package
 
 ### Windows
 
-1. Run `Wisp_0.1.1_x64-setup.exe`. The installer is not code-signed, so when SmartScreen shows "Windows protected your PC", click **More info → Run anyway**. If your browser warns that the file is not commonly downloaded, choose to keep it.
+1. Run `Wisp_0.2.0_x64-setup.exe`. The installer is not code-signed, so when SmartScreen shows "Windows protected your PC", click **More info → Run anyway**. If your browser warns that the file is not commonly downloaded, choose to keep it.
 2. Wisp installs for the current user and does not need administrator rights. If the WebView2 Runtime is missing (as on some Windows 10 machines), the installer downloads it automatically, so make sure you are online.
 3. Wisp lives in the notification area. Its icon may be tucked into the **^** overflow menu; drag it onto the taskbar to keep it visible.
 4. To uninstall, find Wisp in **Settings → Apps → Installed apps** on Windows 11, or **Settings → Apps → Apps & features** on Windows 10.
@@ -150,13 +150,13 @@ The release notes of every version end with the SHA-256 checksums of all package
 
 ```bash
 # Debian / Ubuntu
-sudo apt install ./Wisp_0.1.1_amd64.deb
+sudo apt install ./Wisp_0.2.0_amd64.deb
 
 # Fedora (enable EPEL first on RHEL / AlmaLinux / Rocky Linux; use the AppImage on openSUSE and similar)
-sudo dnf install ./Wisp-0.1.1-1.x86_64.rpm
+sudo dnf install ./Wisp-0.2.0-1.x86_64.rpm
 
 # AppImage (needs libfuse2 on Ubuntu 22.04, libfuse2t64 on 24.04 and later)
-chmod +x Wisp_0.1.1_amd64.AppImage && ./Wisp_0.1.1_amd64.AppImage
+chmod +x Wisp_0.2.0_amd64.AppImage && ./Wisp_0.2.0_amd64.AppImage
 ```
 
 > [!IMPORTANT]
@@ -319,9 +319,9 @@ These documents are in Simplified Chinese, and so are the code comments (identif
 
 ## Project status
 
-The current version is **v0.1.1** (2026-10-14, [release page](https://github.com/yzlltyyh/wisp/releases/tag/v0.1.1)): every floating panel can now be dragged, and screenshot selection under fractional display scaling on Windows and the blank Dock icon shown while Settings is open on macOS are fixed.
+The current version is **v0.2.0** (2026-10-18, [release page](https://github.com/yzlltyyh/wisp/releases/tag/v0.2.0)): it adds end-to-end encrypted multi-device sync over WebDAV, clipboard favorites, the floating clipboard, smart detection and Paste as…, offline models (PP-OCRv6, PaddleOCR-VL, Index-Translate) and PaddleOCR cloud recognition, and OCR results you can re-lay out and paste back into the original app; the macOS build is now signed with a stable certificate, so later updates keep your permissions.
 
-All three core features are in place, along with settings, onboarding, automatic updates, and diagnostics export (the first version, 0.1.0, was released on 2026-10-13 and has been superseded by 0.1.1). macOS is the most thoroughly tested platform; test coverage on Windows and Linux is still being expanded. See [CHANGELOG.md](CHANGELOG.md) (Chinese) for the full list of changes.
+All three core features are in place, along with settings, onboarding, automatic updates, and diagnostics export (the first version, 0.1.0, was released on 2026-10-13). macOS is the most thoroughly tested platform; test coverage on Windows and Linux is still being expanded. See [CHANGELOG.md](CHANGELOG.md) (Chinese) for the full list of changes.
 
 ## Feedback
 

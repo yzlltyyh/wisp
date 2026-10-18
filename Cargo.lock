@@ -7619,7 +7619,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-capture"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "ashpd",
  "block2",
@@ -7641,7 +7641,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-clipboard"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "blake3",
  "criterion",
@@ -7663,7 +7663,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-desktop"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "blake3",
@@ -7720,7 +7720,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-llm"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -7742,7 +7742,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-local"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "bytes",
@@ -7772,7 +7772,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-platform"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "ashpd",
  "block2",
@@ -7796,7 +7796,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-prompts"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "aho-corasick",
  "criterion",
@@ -7815,7 +7815,7 @@ dependencies = [
 
 [[package]]
 name = "wisp-sync"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "base64 0.23.1",
  "blake3",
@@ -7847,14 +7847,14 @@ dependencies = [
 
 [[package]]
 name = "wisp-text"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "wisp-types"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

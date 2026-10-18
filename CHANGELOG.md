@@ -4,7 +4,7 @@
 
 Each version ends with an English summary.
 
-## 未发布
+## 0.2.0（2026-10-18）
 
 ### 新功能
 

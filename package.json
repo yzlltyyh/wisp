@@ -1,6 +1,6 @@
 {
   "name": "wisp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Wisp：常驻后台的轻量桌面伴侣（LLM OCR · 划词翻译 · 剪贴板）",
   "license": "MIT",
