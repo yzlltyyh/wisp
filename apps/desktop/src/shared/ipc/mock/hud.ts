@@ -93,8 +93,10 @@ export function mountHud(o: HudOptions): void {
   select.setAttribute('aria-label', 'scenario')
   select.append(new Option('scenario…', ''))
   bar.append(sep(), select)
+  const here = entryOfPath()
   void o.listScenarios().then((list) => {
-    const here = entryOfPath()
+    // 场景列表要动态导入全部场景模块，可能在页面已经销毁之后才返回（单元测试结束、jsdom 环境已拆掉）
+    if (typeof document === 'undefined') return
     for (const s of list) {
       if (o.entryOf(s).entry !== here) continue
       select.append(new Option(`${s.id} — ${s.label}`, s.id, false, q.get('scenario') === s.id))
