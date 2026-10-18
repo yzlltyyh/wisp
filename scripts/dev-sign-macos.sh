@@ -18,15 +18,10 @@
 #   scripts/dev-sign-macos.sh --run <exe> [参数…]   cargo runner：<exe> 的文件名是 wisp-desktop 时先签名再 exec，
 #                                               其他可执行文件（cargo test 的测试二进制等）直接 exec、不签名
 #   scripts/dev-sign-macos.sh --check           检查证书是否可用、默认产物的签名状态
-#   scripts/dev-sign-macos.sh --self-test       在临时钥匙串里走一遍「建证书 → 信任 → 签名 → 校验」，不碰登录钥匙串（CI 用；
-#                                               信任与签名部分需要免密 sudo、且能临时放开授权规则 com.apple.trust-settings.admin，
-#                                               做不到时（本机没有免密 sudo；macOS 15 的 runner）只验证证书生成与导入，见 admin_trust）。
-#                                               无论成功、失败还是被中断，结束时都删除临时钥匙串、恢复钥匙串搜索列表、
-#                                               撤销临时信任
-#   scripts/dev-sign-macos.sh --trust-admin <cert.pem> [钥匙串]
-#                                               在管理员域把证书设为「代码签名：始终信任」（需要免密 sudo）。授权规则放不开时
-#                                               以退出码 3 失败、不会卡住（见 admin_trust）。release.yml 不用它：GitHub 的
-#                                               macos-15 runner 放不开这条规则，发布包改由 scripts/release/resign-macos.sh 重签
+#   scripts/dev-sign-macos.sh --self-test       在临时钥匙串里验证「生成证书 → 导出 p12 → 导入 → 能作为代码签名身份找到」，
+#                                               不碰登录钥匙串（CI 用）。不设置信任、不签名：设置信任需要有人在授权框里确认，
+#                                               无人值守时做不到。无论成功、失败还是被中断，结束时都删除临时钥匙串、
+#                                               恢复钥匙串搜索列表
 # 环境变量：WISP_DEV_IDENTITY 覆盖证书名（默认 "Wisp Dev"）。
 set -euo pipefail
 
@@ -65,10 +60,10 @@ CNF
   rm -f "$dir/key.pem"
 }
 
-# 是否有可用（已信任）的代码签名身份：has_identity [钥匙串]
+# 是否有可用（已信任）的代码签名身份
 # 自签证书默认不受信任（CSSMERR_TP_NOT_TRUSTED），codesign 会报 "no identity found"，必须设置「代码签名：始终信任」
 has_identity() {
-  security find-identity -v -p codesigning ${1:+"$1"} 2> /dev/null | grep -F "\"$identity\"" > /dev/null
+  security find-identity -v -p codesigning 2> /dev/null | grep -F "\"$identity\"" > /dev/null
 }
 
 # 证书（不论是否受信任）是否已在钥匙串里：has_cert [钥匙串]
@@ -76,85 +71,15 @@ has_cert() {
   security find-certificate -c "$identity" ${1:+"$1"} > /dev/null 2>&1
 }
 
-# 签名：sign_one <路径> [钥匙串]
+# 签名：sign_one <路径>
 sign_one() {
-  local path="$1" keychain="${2:-}"
-  local args=(--force --sign "$identity" --identifier "$bundle_id" --timestamp=none)
-  [ -n "$keychain" ] && args+=(--keychain "$keychain")
-  codesign "${args[@]}" "$path"
+  codesign --force --sign "$identity" --identifier "$bundle_id" --timestamp=none "$1"
 }
 
 # 签名结果中的 Authority 与 Identifier
 describe() {
   codesign -dv --verbose=2 "$1" 2>&1 | grep -E '^(Identifier|Authority|Signature)=' | tr '\n' ' '
 }
-
-# 有上限地运行一条命令：bounded <秒> <命令…>，超时先 TERM、1 秒后 KILL，返回 124。授权服务需要交互确认时 security 会一直
-# 等一个没人看得见的授权框（GitHub 的 macOS runner 有图形会话：曾在这里卡住 27 分钟，直到手动取消），
-# 所以凡是可能等交互的特权调用都经它运行。标准输入原样交给命令（`<&0`：后台命令默认读 /dev/null）
-bounded() {
-  local secs="$1" pid ticks=0
-  shift
-  "$@" <&0 &
-  pid=$!
-  while kill -0 "$pid" 2> /dev/null; do
-    if [ "$ticks" -ge $((secs * 10)) ]; then
-      kill -TERM "$pid" 2> /dev/null || true
-      sleep 1
-      kill -KILL "$pid" 2> /dev/null || true
-      wait "$pid" 2> /dev/null || true
-      echo "dev-sign-macos: ${secs} s 内没有结束，已中止：$*（多半是在等一个看不见的授权框）" >&2
-      return 124
-    fi
-    sleep 0.1
-    ticks=$((ticks + 1))
-  done
-  wait "$pid"
-}
-
-# 在管理员域设置 / 撤销证书的「代码签名：始终信任」：admin_trust add|remove <cert.pem> [钥匙串]（需要免密 sudo）。
-# macOS 11 起，即使用 sudo，改管理员域的信任设置也要管理员在授权框里确认：没有图形会话时被拒绝（SecTrustSettingsSetTrustSettings:
-# The authorization was denied since no user interaction was possible），有图形会话但没人操作时（GitHub 的 macOS runner）则一直
-# 等下去。所以先把授权规则 com.apple.trust-settings.admin 临时改为 allow，执行完立即写回原规则。改不了规则时（读不到原规则，
-# 或 `authorizationdb write` 没有回 YES——macOS 15 起 runner 上返回 NO (-60005)）**不再尝试**，以退出码 3 结束：这台机器上没法
-# 无人值守地设置信任。特权调用都有时限（bounded）。函数体在子 shell 里运行：中途失败或被中断时 EXIT trap 同样会写回原规则；
-# 调用方可能在 `||` 里调用它（那里 set -e 不生效），所以每一步都显式判断、显式 exit
-admin_trust() (
-  local action="$1" cert="$2" keychain="${3:-}" right=com.apple.trust-settings.admin saved relaxed=0 out=""
-  local args=()
-  saved="$(mktemp "${TMPDIR:-/tmp}/wisp-authz.XXXXXX")" || exit 1
-  # shellcheck disable=SC2329 # 由下面的 EXIT trap 调用
-  restore_right() {
-    # 原规则文件属于当前用户，由当前 shell 读出后经标准输入交给 sudo（不需要 root 读文件）
-    # shellcheck disable=SC2024
-    if [ "$relaxed" = 1 ] && ! bounded 30 sudo -n security authorizationdb write "$right" < "$saved" > /dev/null 2>&1; then
-      echo "dev-sign-macos: 没能恢复授权规则 ${right}；原规则保存在 ${saved}，请执行 sudo security authorizationdb write ${right} < ${saved}" >&2
-      return 0
-    fi
-    rm -f "$saved"
-  }
-  trap restore_right EXIT
-  trap 'exit 130' INT TERM HUP
-  if security authorizationdb read "$right" > "$saved" 2> /dev/null && [ -s "$saved" ]; then
-    out="$(bounded 30 sudo -n security authorizationdb write "$right" allow 2>&1)" || true
-    case "$out" in *YES*) relaxed=1 ;; esac
-  else
-    out="读不到原规则"
-  fi
-  if [ "$relaxed" != 1 ]; then
-    echo "dev-sign-macos: 没能临时放开授权规则 ${right}（${out:-没有输出}）：这台机器上改管理员域的信任设置需要有人在授权框里确认，不再尝试" >&2
-    exit 3
-  fi
-  case "$action" in
-    add)
-      args=(add-trusted-cert -d -r trustRoot -p codeSign)
-      if [ -n "$keychain" ]; then args+=(-k "$keychain"); fi
-      bounded 60 sudo -n security "${args[@]}" "$cert" || exit $?
-      ;;
-    remove) bounded 60 sudo -n security remove-trusted-cert -d "$cert" || exit $? ;;
-    *) die "admin_trust：未知操作 $action" ;;
-  esac
-)
 
 # 函数体在子 shell 里运行：任何一步失败（die / set -e）或被中断时，EXIT trap 都会删掉临时目录（里面有私钥）
 init() (
@@ -218,10 +143,11 @@ check() {
   return $status
 }
 
-# 函数体在子 shell 里运行，清理挂在 EXIT trap 上（bash 的 RETURN trap 不会在 exit 时触发）：任何一步失败（die /
-# set -e）或被中断，都会删除临时钥匙串、恢复钥匙串搜索列表、撤销管理员域里的临时信任
+# 只验证证书的生成、导出与导入（--init 复用同一个 create_p12），不设置信任也不签名：设置信任要有人在授权框里确认，
+# 无人值守的 CI 上做不到。函数体在子 shell 里运行，清理挂在 EXIT trap 上（bash 的 RETURN trap 不会在 exit 时触发）：
+# 任何一步失败（die / set -e）或被中断，都会删除临时钥匙串、恢复钥匙串搜索列表
 self_test() (
-  local tmp kc kc_pw pass trusted=0 line
+  local tmp kc kc_pw pass line
   local saved=()
   tmp="$(mktemp -d)"
   kc="$tmp/wisp-dev-selftest.keychain-db"
@@ -234,7 +160,6 @@ self_test() (
   done < <(security list-keychains -d user)
   # shellcheck disable=SC2329 # 由下面的 EXIT trap 调用
   cleanup_self_test() {
-    if [ "$trusted" = 1 ]; then admin_trust remove "$tmp/cert.pem" > /dev/null 2>&1 || true; fi
     security delete-keychain "$kc" > /dev/null 2>&1 || true
     if [ ${#saved[@]} -gt 0 ]; then security list-keychains -d user -s "${saved[@]}" > /dev/null 2>&1 || true; fi
     rm -rf "$tmp"
@@ -248,74 +173,17 @@ self_test() (
   security set-keychain-settings -lut 600 "$kc"
   security unlock-keychain -p "$kc_pw" "$kc"
   security import "$tmp/wisp-dev.p12" -k "$kc" -P "$pass" -T /usr/bin/codesign > /dev/null
-  security set-key-partition-list -S apple-tool:,apple: -s -k "$kc_pw" "$kc" > /dev/null
   has_cert "$kc" || die "自检失败：临时钥匙串中找不到证书「${identity}」"
+  # 不加 -v：证书没有被信任，只看私钥与证书能否配成代码签名身份
   security find-identity -p codesigning "$kc" | grep -F "\"$identity\"" > /dev/null ||
     die "自检失败：证书没有对应的私钥，或不是代码签名用途"
-  echo "✓ 证书生成、p12 导出与导入正常（扩展用途 codeSigning）"
-
-  # 不弹窗地设置信任只能用管理员域（sudo）；本机没有免密 sudo 时跳过签名部分（--init 走用户域、会弹窗）
-  if ! sudo -n true 2> /dev/null; then
-    echo "! 没有免密 sudo：跳过「信任 → 签名 → 校验」部分"
-    return 0
-  fi
-  # 先记下再设置：设置到一半失败时也要撤销
-  trusted=1
-  local rc=0
-  echo "· 在管理员域设置信任……"
-  admin_trust add "$tmp/cert.pem" "$kc" || rc=$?
-  if [ "$rc" = 3 ]; then
-    # 规则没放开、什么都没改：不用撤销（撤销同样要等授权框）
-    trusted=0
-    echo "! 这台机器不允许无人值守地改管理员域的信任设置（见上一行）：跳过「信任 → 签名 → 校验」部分"
-    echo "  （发布包不受影响：release.yml 用 rcodesign 重签，不需要信任设置）"
-    return 0
-  fi
-  [ "$rc" = 0 ] || die "自检失败：管理员域的信任设置失败（退出码 ${rc}）"
-  has_identity "$kc" || die "自检失败：设置信任后「${identity}」仍不可用"
-  echo "· 信任已设置，签名并校验……"
-
-  # 签一个可执行文件和一个最小的 .app
-  cp /bin/echo "$tmp/wisp-desktop"
-  mkdir -p "$tmp/Wisp.app/Contents/MacOS"
-  cp /bin/echo "$tmp/Wisp.app/Contents/MacOS/wisp-desktop"
-  cat > "$tmp/Wisp.app/Contents/Info.plist" << PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>wisp-desktop</string>
-<key>CFBundleIdentifier</key><string>$bundle_id</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-</dict></plist>
-PLIST
-  local p first second
-  for p in "$tmp/wisp-desktop" "$tmp/Wisp.app"; do
-    sign_one "$p" "$kc"
-    codesign --verify "$p"
-    grep -Fq "Authority=$identity" <<< "$(describe "$p")" || die "自检失败：$p 的签名不是「${identity}」：$(describe "$p")"
-    grep -Fq "Identifier=$bundle_id" <<< "$(describe "$p")" || die "自检失败：$p 的 identifier 不是 $bundle_id"
-  done
-  # 关键性质：重新编译（内容变化）后 designated requirement 不变
-  first="$(codesign -d -r- "$tmp/wisp-desktop" 2>&1 | grep '^designated')"
-  printf '\n' >> "$tmp/wisp-desktop"
-  sign_one "$tmp/wisp-desktop" "$kc"
-  second="$(codesign -d -r- "$tmp/wisp-desktop" 2>&1 | grep '^designated')"
-  [ -n "$first" ] && [ "$first" = "$second" ] || die "自检失败：内容变化后 designated requirement 变了：$first / $second"
-  grep -q 'certificate leaf' <<< "$first" || die "自检失败：designated requirement 没有绑定证书：$first"
-  echo "✓ dev-sign-macos.sh 自检通过（${first}）"
+  echo "✓ dev-sign-macos.sh 自检通过：证书生成、p12 导出与导入正常（扩展用途 codeSigning）"
 )
 
 case "${1:-}" in
   --init) init ;;
   --check) check ;;
   --self-test) self_test ;;
-  --trust-admin)
-    [ $# -ge 2 ] || die "--trust-admin 需要证书（PEM）路径"
-    [ -f "$2" ] || die "$2 不存在"
-    sudo -n true 2> /dev/null || die "--trust-admin 需要免密 sudo"
-    admin_trust add "$2" "${3:-}"
-    echo "已在管理员域把 $2 设为「代码签名：始终信任」"
-    ;;
   --run)
     shift
     [ $# -ge 1 ] || die "--run 需要可执行文件路径"

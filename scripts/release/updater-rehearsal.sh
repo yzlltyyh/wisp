@@ -17,11 +17,13 @@
 # 不和正在运行的 Wisp 抢组合键，也不会因为按了 ⌥S 以演练 identifier 触发屏幕录制的 TCC 请求）、扩展触发。
 # 编译用单独的 CARGO_TARGET_DIR（<work>/cargo-target）：仓库的 target/release 不会混进演练构建。
 #
-# 演练构建与正式构建的差别只有 `tauri build --config` 叠加的一份配置（updater-rehearsal.mjs overlay）：端点换成
+# 演练构建与正式构建在 tauri 打包上的差别只有 `tauri build --config` 叠加的一份配置（updater-rehearsal.mjs overlay）：端点换成
 # http://127.0.0.1:<端口>/latest.json 并打开 dangerousInsecureTransportProtocol（release 构建只认 https，这只能在编译时
 # 决定）、单独的 identifier、`plugins.wispUpdaterRehearsal.enabled`（打开 Rust 侧 updater::rehearsal 的日志与钥匙串探针），
 # 以及 pubkey（只能是本次生成的测试公钥、key id 与正式公钥不同）。运行中的
 # 应用把内嵌的公钥记进日志，脚本逐次核对它就是预期的那一把。
+# 打包之后的一段演练覆盖不到：正式的 macOS 构建发布时还会经 scripts/release/resign-macos.sh 用固定证书重签，并用重签后的
+# .app 重新打更新包、重新生成 .sig；演练构建不经过这一段，保持 ad-hoc 签名，更新包就是 tauri 打出来的那一份。
 #
 # 场景（每个场景启动一次应用，启动 30 s 后的自动检查是真实的代码路径）：
 #   A  notify    默认策略：检查到新版本只提示、不下载；<from> 经应用自己的钥匙串句柄写入探针条目
@@ -417,7 +419,7 @@ for v in "$from" "$to"; do
   check build "${v}：Info.plist 版本为 $v" test "$(plist "$builds/$v/Wisp.app" CFBundleShortVersionString)" = "$v"
   check build "${v}：identifier 为演练用的 $identifier" test "$(plist "$builds/$v/Wisp.app" CFBundleIdentifier)" = "$identifier"
   check build "${v}：codesign --verify --deep --strict 通过" codesign --verify --deep --strict "$builds/$v/Wisp.app"
-  check build "${v}：ad-hoc 签名（与正式构建相同，tauri.conf.json signingIdentity \"-\"）" \
+  check build "${v}：ad-hoc 签名（演练构建不经过发布时的证书重签）" \
     sh -c "codesign -dv '$builds/$v/Wisp.app' 2>&1 | grep -q '^Signature=adhoc'"
   if out="$(node "$helper" verify --file "$builds/$v/Wisp_${v}_aarch64.app.tar.gz" --sig "$builds/$v/Wisp_${v}_aarch64.app.tar.gz.sig" --version "$v" ${pubkey_args[@]+"${pubkey_args[@]}"} 2>&1)"; then
     record PASS build "${v}：更新器签名可被${pubkey_label}校验，trusted comment 记录了 version:$v"
