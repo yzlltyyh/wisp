@@ -396,7 +396,7 @@ Wisp 主进程（models_svc）
 
 **oar-ocr 的补丁**：oar-ocr / oar-ocr-core 0.10.0 以 `vendor/` 副本经 `[patch.crates-io]` 引入，把 `image` 与 `imageproc` 的默认特性和带 C 代码的 `tokenizers` 收进可选特性，避免特性合并把全部图片解码器链进安装包；详情见 [vendor/README.md](../vendor/README.md)。
 
-**macOS 的 entitlement**：发布构建开启 hardened runtime，默认只允许加载同一 Team ID 签名的动态库，ad-hoc 签名的应用因此拒绝一切非系统库。ORT 工作进程与主程序是同一个二进制，要加载下载来的 ONNX Runtime 动态库，所以主程序带 `com.apple.security.cs.disable-library-validation`（`apps/desktop/src-tauri/Entitlements.plist`，由 `tauri.conf.json` 的 `bundle.macOS.entitlements` 引用）。它只放开库校验：库本身仍须签名，未签名的仍被拒绝；下载的库按钉死的 SHA-256 校验后才会被加载。llama-server 是独立的进程，不受这一项影响。
+**macOS 的 entitlement**：发布构建开启 hardened runtime，默认只允许加载同一 Team ID 签名的动态库，ad-hoc 或自签证书签名（都没有 Team ID）的应用因此拒绝一切非系统库。ORT 工作进程与主程序是同一个二进制，要加载下载来的 ONNX Runtime 动态库，所以主程序带 `com.apple.security.cs.disable-library-validation`（`apps/desktop/src-tauri/Entitlements.plist`，由 `tauri.conf.json` 的 `bundle.macOS.entitlements` 引用；发布时 `scripts/release/resign-macos.sh` 用固定证书重签也带上这份文件）。它只放开库校验：库本身仍须签名，未签名的仍被拒绝；下载的库按钉死的 SHA-256 校验后才会被加载。llama-server 是独立的进程，不受这一项影响。
 
 ## 数据与配置
 
@@ -450,7 +450,7 @@ Wisp 主进程（models_svc）
 | 按下快捷键到面板出现 | ≤ 100 ms |
 | 空闲 CPU | 接近 0（没有周期性唤醒） |
 | 前端资源 / 覆盖层入口 | ≤ 1.6 MB / ≤ 15 KB（压缩前） |
-| 安装包 | dmg ≤ 12 MB、NSIS ≤ 10 MB、deb / rpm ≤ 15 MB、AppImage ≤ 90 MB |
+| 安装包 | dmg ≤ 12 MB、NSIS ≤ 10 MB、deb / rpm ≤ 15 MB、AppImage ≤ 110 MB |
 
 做法：
 

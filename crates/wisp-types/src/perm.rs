@@ -27,7 +27,7 @@ pub struct PermissionSet {
     pub accessibility: PermissionState,
     pub screen_recording: PermissionState,
     pub input_monitoring: PermissionState,
-    /// 更新后授权失效（ad-hoc 签名的 cdhash 变化）
+    /// 更新后授权失效：签名身份变化时出现（0.1.1 及更早是 ad-hoc 签名，每个版本的 cdhash 都不同；以后换证书也一样）
     pub lost_after_update: bool,
 }
 

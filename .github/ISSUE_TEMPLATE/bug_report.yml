@@ -15,7 +15,7 @@ body:
     attributes:
       label: Wisp 版本 / Wisp version
       description: 「设置 → 关于」/ Settings → About
-      placeholder: '0.1.1'
+      placeholder: '0.2.0'
     validations:
       required: true
   - type: dropdown
@@ -45,6 +45,8 @@ body:
         - 划词翻译 / Selection translation
         - 截图 OCR / Screenshot OCR
         - 剪贴板 / Clipboard history
+        - 多设备同步 / Multi-device sync
+        - 离线模型 / Offline models
         - 快捷键与触发 / Shortcuts and triggers
         - 模型服务 / Model providers
         - 设置与引导 / Settings and onboarding

@@ -16,6 +16,8 @@ body:
         - 划词翻译 / Selection translation
         - 截图 OCR / Screenshot OCR
         - 剪贴板 / Clipboard history
+        - 多设备同步 / Multi-device sync
+        - 离线模型 / Offline models
         - 快捷键与触发 / Shortcuts and triggers
         - 模型服务 / Model providers
         - 外观与设置 / Appearance and settings

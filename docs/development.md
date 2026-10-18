@@ -81,7 +81,7 @@ scripts/dev-sign-macos.sh --check                      # 查看证书与产物�
 
 - `--dev` 只对这一次运行生效。不要把 `CARGO_TARGET_*_RUNNER` 写进 shell 配置，那会影响本机所有 Rust 项目。
 - 从终端用 `pnpm dev` 启动的进程，授权会记在终端应用名下。要验证 Wisp 自己的授权流程，用 `pnpm build:debug` 打出 `.app`、重签后从访达或 `open` 启动。
-- 这个脚本重签时不开 hardened runtime，也不带 entitlements，所以开发构建不受动态库校验的影响。发布构建由 tauri 的打包器签名，带 hardened runtime 与 `src-tauri/Entitlements.plist`（离线模型的 ORT 工作进程要加载下载的 ONNX Runtime 动态库，见[架构 · 离线模型与推理进程](architecture.md#离线模型与推理进程)）；可以用 `codesign -d --entitlements - <Wisp.app>` 确认。
+- 这个脚本重签时不开 hardened runtime，也不带 entitlements，所以开发构建不受动态库校验的影响。发布构建由 tauri 先按 ad-hoc 签名打包，再由 `scripts/release/resign-macos.sh` 用固定证书重签，带 hardened runtime 与 `src-tauri/Entitlements.plist`（见下文 [macOS 证书](#macos-证书)；离线模型的 ORT 工作进程要加载下载的 ONNX Runtime 动态库，见[架构 · 离线模型与推理进程](architecture.md#离线模型与推理进程)）；可以用 `codesign -d --entitlements - <Wisp.app>` 确认。
 
 ## 测试与检查
 
@@ -313,7 +313,7 @@ node scripts/release/prepare.mjs --dry-run --tag v<版本>     # 预览 Release 
 - `README.md` 与 `README.en.md` 的版本号、安装包文件名与系统要求一致，两份内容同步；
 - 界面有变化时 README 截图已经更新。
 
-改动了更新器、打包配置或升级了 `tauri` / `tauri-plugin-updater` 之后，在 macOS（Apple Silicon）上跑一次本机更新演练 `scripts/release/updater-rehearsal.sh`：它构建两个版本，用本机 HTTP 服务器代替 GitHub Release，让应用自己完成检查、下载、验签、安装与重启，并验证篡改包、错误密钥、改写版本号三种拒绝路径。演练全程使用一次性测试密钥、隔离的 HOME 与一次性钥匙串，不碰真实的配置与数据；加 `--interactive` 时由人在界面上走一遍更新流程。
+改动了更新器、打包配置或升级了 `tauri` / `tauri-plugin-updater` 之后，在 macOS（Apple Silicon）上跑一次本机更新演练 `scripts/release/updater-rehearsal.sh`：它构建两个版本，用本机 HTTP 服务器代替 GitHub Release，让应用自己完成检查、下载、验签、安装与重启，并验证篡改包、错误密钥、改写版本号三种拒绝路径。演练全程使用一次性测试密钥、隔离的 HOME 与一次性钥匙串，不碰真实的配置与数据；加 `--interactive` 时由人在界面上走一遍更新流程。演练构建的是 ad-hoc 签名的 tauri 产物，不覆盖 macOS 发布时的证书重签与重新打包的更新包（见下文 [macOS 证书](#macos-证书)）；这一段靠发布之后从上一版真实更新一次来确认。
 
 ### 2. 版本号与更新日志
 
@@ -359,6 +359,7 @@ finalize（ubuntu）
 - 草稿资源恰好是：`Wisp_<v>_aarch64.dmg`、`Wisp_<v>_aarch64.app.tar.gz(.sig)`、`Wisp_<v>_x64-setup.exe(.sig)`、`Wisp_<v>_amd64.deb(.sig)`、`Wisp-<v>-1.x86_64.rpm(.sig)`、`Wisp_<v>_amd64.AppImage(.sig)`、`latest.json`；
 - Release 说明的变更段落、下载表、系统要求、首次打开说明、SHA-256 表都在；预发布标记与 tag 一致；
 - 至少在一个平台上下载安装、启动，并核对下载文件的 SHA-256；
+- macOS 的签名身份没有变：`build (macos)` 作业「签名信息（macOS）」一步的输出（运行摘要里的「macOS 签名」）里 `Authority` 为 `Wisp Release`；下载 dmg、挂载后运行 `codesign -d -r- <Wisp.app>`，输出的指定要求 `identifier "io.github.yzlltyyh.wisp" and certificate root = H"<证书 SHA-1>"` 与上一版完全相同。任何一项不符都不要发布，否则所有用户更新后都要重新授权；
 - 变更说明与主分支的 `CHANGELOG.md` 一致（草稿正文取自 **tag 上**的 CHANGELOG）。
 
 **编辑草稿说明**：变更说明在 `<!-- wisp:notes:start -->` 与 `<!-- wisp:notes:end -->` 之间，可以直接在草稿页修改；两对标记（notes 与 checksums）都要保留。`latest.json` 的 `notes` 是 finalize 运行时从草稿里读取的，finalize 之后再改说明，要对 finalize 单独 Re-run job 一次。人工改过说明之后需要重跑时用 Re-run failed jobs；Re-run all jobs 会重新生成标记之外的部分。改过的措辞记得同步回 `CHANGELOG.md`。
@@ -387,7 +388,7 @@ gh release edit v<版本> -R yzlltyyh/wisp --draft=false --latest
 | finalize：签名的 key id 与配置的公钥不一致 | Secrets 里的私钥与 `tauri.conf.json` 的公钥不是一对；把正确的私钥放回 Secrets，不要换公钥 |
 | 草稿的 tag 变成 `untagged-…` | `gh api -X PATCH repos/yzlltyyh/wisp/releases/<id> -f tag_name=v<版本>` 改回后再发布 |
 | Linux 依赖核对失败 | 补 `tauri.conf.json` 的 `bundle.linux.deb.depends` / `rpm.depends`，或同步 `scripts/ci/linux-deps.sh` |
-| 安装包体积超限 | 预算见 `scripts/check-size.mjs`（dmg ≤ 12 MB、NSIS ≤ 10 MB、deb / rpm ≤ 15 MB、AppImage ≤ 90 MB） |
+| 安装包体积超限 | 预算见 `scripts/check-size.mjs`（dmg ≤ 12 MB、NSIS ≤ 10 MB、deb / rpm ≤ 15 MB、AppImage ≤ 110 MB） |
 
 ## 更新器密钥与代码签名
 
@@ -415,7 +416,7 @@ pnpm tauri signer generate -w <仓库之外的路径>/wisp.key   # 交互式设�
 - 本机给 `tauri build` / `tauri bundle` 传私钥时，把私钥文件的**绝对路径**放进 `TAURI_SIGNING_PRIVATE_KEY`（`TAURI_SIGNING_PRIVATE_KEY_PATH` 对它们无效），口令只放在那一条命令的环境变量里。
 - 私钥丢失只能换新公钥，并发布一个需要用户手动下载安装的版本。
 
-**构建步骤里的私钥暴露面**：tauri-cli 在打包时签名，所以发布工作流的「构建」一步必须带着私钥；这一步同时运行 Vite 及其插件与全部依赖的 `build.rs`、过程宏，私钥对它们可见。风险靠锁定版本来降低（`pnpm install --frozen-lockfile`、cargo `--locked`）；`GITHUB_TOKEN` 不进入构建进程，只在「上传到草稿」一步出现。**引入新依赖时请留意这一点。**
+**构建步骤里的私钥暴露面**：tauri-cli 在打包时签名，所以发布工作流的「构建」一步必须带着私钥；这一步同时运行 Vite 及其插件与全部依赖的 `build.rs`、过程宏，私钥对它们可见。风险靠锁定版本来降低（`pnpm install --frozen-lockfile`、cargo `--locked`）；`GITHUB_TOKEN` 不进入构建进程，只在「上传到草稿」一步出现。macOS 在构建之后还有「用固定证书重签」一步：它同样带着更新器私钥（重新生成更新包的签名），并把证书私钥解到 runner 的临时目录里，期间运行 rcodesign（`release.yml` 钉死版本与 SHA-256）与 tauri-cli（`signer sign`）。构建期运行的代码能改写工作区，也能写 `$GITHUB_ENV` / `$GITHUB_PATH` 影响之后的步骤，所以这一步的保护同样只到锁定版本为止。**引入新依赖时请留意这一点。**
 
 ### macOS 证书
 
@@ -427,6 +428,6 @@ pnpm tauri signer generate -w <仓库之外的路径>/wisp.key   # 交互式设�
 
 **改用 Apple 开发者证书签名时**，离线模型依赖主程序的 `com.apple.security.cs.disable-library-validation`（hardened runtime 下加载下载来的、ad-hoc 签名的 ONNX Runtime 动态库，原因见[架构 · 离线模型与推理进程](architecture.md#离线模型与推理进程)），换签名方式之后逐项核对：
 
-1. `codesign -d --entitlements - <Wisp.app>` 的输出里仍有这一项；如果改由工作流自己调用 `codesign`，要带上 `--options runtime` 与 `--entitlements apps/desktop/src-tauri/Entitlements.plist`；
+1. `codesign -d --entitlements - <Wisp.app>` 的输出里仍有这一项。现在由 `scripts/release/resign-macos.sh` 重签时带上（rcodesign 的 `--code-signature-flags runtime` 与 `--entitlements-xml-file`）；换签名工具时（例如改回系统的 `codesign`），同样要带上 hardened runtime（`--options runtime`）与 `apps/desktop/src-tauri/Entitlements.plist`；
 2. 公证通过（`xcrun notarytool submit … --wait` 的结果为 Accepted），`spctl --assess --type execute -v <Wisp.app>` 通过；
 3. 在一台新机器上（没有开发证书、没有下载过模型）实测一次：下载 PP-OCRv6 并完成一次离线识别（确认 ORT 工作进程能加载下载的动态库），再下载 Index-Translate 2B 完成一次离线翻译（确认 llama-server 能启动），结束后没有残留的推理进程。

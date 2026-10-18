@@ -32,6 +32,7 @@
 属于本策略范围的：
 
 - Wisp 应用本身（`apps/desktop`、`crates/*`）：例如 API Key 泄露到界面进程、日志或诊断包，界面进程获得超出设计的权限，剪贴板隐私规则被绕过，更新包的签名校验被绕过；
+- 离线模型：例如下载的模型或推理组件没有通过钉死的 SHA-256 校验也被加载，或者本机的其他程序能访问 Wisp 启动的推理进程（只监听回环地址、每次启动随机生成 API Key 的 llama-server，经管道通信的 ONNX Runtime 工作进程）；
 - 多设备同步：例如服务器或网络上的人不知道同步密码也能读取同步内容，或者改动、调换服务器上的文件而不被发现；WebDAV 密码或同步密钥泄露到界面进程、日志、错误信息或诊断包，或者被发往用户填写的服务器以外的地址；服务器地址、账号、设备名或同步内容出现在日志与诊断包里；
 - 发布流程（`.github/workflows/`、`scripts/release/`）中可能导致发布产物被篡改的问题。
 
@@ -71,6 +72,7 @@ Do not include real API keys, WebDAV passwords, sync passwords, personal data, o
 In scope:
 
 - the Wisp application itself (`apps/desktop`, `crates/*`) — for example, API keys leaking into the UI process, logs, or diagnostics; the UI process gaining more privileges than intended; bypassing the clipboard privacy rules; or bypassing update signature verification;
+- offline models — for example, a downloaded model or inference component being loaded without passing its pinned SHA-256 check, or other programs on the same computer being able to use the inference processes Wisp starts (llama-server, which listens only on the loopback address with an API key generated at each start, and the ONNX Runtime worker, which communicates over pipes);
 - multi-device sync — for example, someone on the server or the network reading synced content without the sync password, or modifying or swapping files on the server without being detected; WebDAV passwords or sync keys leaking into the UI process, logs, error messages, or diagnostics, or being sent anywhere other than the server you entered; or the server address, account, device names, or synced content appearing in logs or diagnostics;
 - issues in the release pipeline (`.github/workflows/`, `scripts/release/`) that could allow release artifacts to be tampered with.
 

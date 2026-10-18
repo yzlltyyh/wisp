@@ -5,7 +5,8 @@
 //!   输入监控的 IOHIDCheckAccess 本身能区分三种状态；
 //! - `request()` 才会触发系统对话框（屏幕录制的系统弹窗每个应用只出现一次，之后只能去系统设置）；
 //! - `open_settings()` 打开「隐私与安全性」对应页面（macOS 13+ 的系统设置仍接受旧的 URL 形式；失败时尝试新形式）。
-//! - `lost_after_update`（ad-hoc 签名更新后授权失效）由 desktop 结合持久化状态判断，平台层恒报 false。
+//! - `lost_after_update`（签名身份变化时更新后授权失效：0.1.1 及更早是 ad-hoc 签名，每个版本的 cdhash 都不同；以后换证书
+//!   也一样）由 desktop 结合持久化状态判断，平台层恒报 false。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

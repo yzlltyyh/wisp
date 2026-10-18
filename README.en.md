@@ -98,7 +98,7 @@ See [Offline models](docs/user-guide.md#离线模型) in the user guide (Chinese
 - **Keyboard first, trackpad friendly**: all five actions have global shortcuts and every action in the panel has a key. Nothing depends on a middle or side mouse button.
 - **Appearance**: light or dark, eight accent colors or your own, frosted glass or solid panels, adjustable text size and panel width; Chinese and English UI.
 - **Optional extra triggers**: a floating button next to selected text, double-tapping a modifier key, and middle / side mouse buttons. They are off by default, and while they are off Wisp installs no system hooks.
-- **Light**: Wisp uses almost no resources while it waits. On an Apple Silicon Mac it idles at about 0.01% CPU, with about 13–15 MiB for the main process and about 50 MiB for the system WebView processes (a bit more for a few dozen seconds after the panel is used; see [Known limitations](#known-limitations)). From shortcut to panel, 95% of repeated invocations take about 30 ms or less, and both the first invocation after launch and the clipboard list with thumbnails stay under 100 ms. The macOS installer is about 7.6 MB.
+- **Light**: Wisp uses almost no resources while it waits. On an Apple Silicon Mac it idles at about 0.01% CPU, with about 13–15 MiB for the main process and about 50 MiB for the system WebView processes (a bit more for a few dozen seconds after the panel is used; see [Known limitations](#known-limitations)). From shortcut to panel, 95% of repeated invocations take about 30 ms or less, and both the first invocation after launch and the clipboard list with thumbnails stay under 100 ms. The macOS installer is about 7.9 MB.
 
 ## Install
 
