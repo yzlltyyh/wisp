@@ -103,6 +103,8 @@ hdiutil attach "$work/rw.dmg" -quiet -nobrowse -noautoopen -mountpoint "$mnt"
 [ -d "$mnt/Wisp.app" ] || die "dmg 里没有 Wisp.app"
 rm -rf "$mnt/Wisp.app"
 ditto "$app" "$mnt/Wisp.app"
+# 挂载可写卷时系统会在卷根建文件系统事件日志 .fseventsd，它不该进安装包（tauri 打 dmg 时同样删掉）；删不掉不影响安装包可用
+rm -rf "$mnt/.fseventsd" || true
 hdiutil detach "$mnt" -quiet
 rm -f "$dmg"
 hdiutil convert "$work/rw.dmg" -quiet -format UDZO -imagekey zlib-level=9 -o "$dmg"
