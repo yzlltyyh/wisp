@@ -344,7 +344,7 @@ build（并行，单个平台失败不影响其他平台）
   macOS  macos-15        aarch64-apple-darwin      dmg、app.tar.gz(.sig)
   Windows windows-latest x86_64-pc-windows-msvc    NSIS exe(.sig)
   Linux  ubuntu-22.04    x86_64-unknown-linux-gnu  deb、rpm、AppImage(.sig)
-  构建 → 签名信息、启动环境、体积与 Linux 依赖核对 → 上传到草稿
+  构建 →（macOS）用固定证书重签 → 签名信息、启动环境、体积与 Linux 依赖核对 → 上传到草稿
 finalize（ubuntu）
   核对产物清单 → 用 tauri.conf.json 的公钥校验每个 .sig → 生成 latest.json → 把 SHA-256 写进说明
 ```
@@ -420,6 +420,8 @@ pnpm tauri signer generate -w <仓库之外的路径>/wisp.key   # 交互式设�
 ### macOS 证书
 
 发布用的自签证书（CN「Wisp Release」，有效期 20 年）已经生成并配置成上表的两个 secret，由维护者在仓库之外保管、备份。它与更新器密钥一样**只生成一次、不能更换**：系统授权（辅助功能、屏幕录制、输入监控）与钥匙串条目都绑定签名身份，换证书或哪一版退回 ad-hoc，所有用户更新后都要重新授权——所以正式发布缺少它时工作流直接失败。证书的生成方法（只做过一次，供参考）：用系统自带的 `/usr/bin/openssl`（LibreSSL）生成 RSA 3072、扩展用途为 `codeSigning` 的自签证书（配置与 `scripts/dev-sign-macos.sh` 的 `create_p12` 相同，只是证书名与有效期不同），`openssl pkcs12 -export` 导出 p12，再分别存为 secret：`base64 -i <p12> | gh secret set MACOS_SELF_SIGNED_P12_BASE64`、`gh secret set MACOS_SELF_SIGNED_P12_PASSWORD < <口令文件>`。
+
+**发布工作流怎样用它签名**：系统的 `codesign` 只肯用受信任的身份签名，自签证书要先设为「代码签名：始终信任」，而 GitHub 的 macOS runner（macos-15 起）不允许无人值守地设置这种信任。所以 tauri 先按 ad-hoc 签名打包，构建之后由 `scripts/release/resign-macos.sh` 用 [rcodesign](https://github.com/indygreg/apple-platform-rs)（`release.yml` 里钉死版本与 SHA-256）直接拿证书与私钥重签 `Wisp.app`（hardened runtime、`Entitlements.plist`），再用重签后的 `.app` 重新打更新包、重新生成它的更新器签名，并替换 dmg 里的 `.app`，每一步都用系统的 `codesign` 核对。指定要求（designated requirement）显式固定为 `identifier "io.github.yzlltyyh.wisp" and certificate root = H"<证书 SHA-1>"`：系统授权按它识别应用，以后每一版都必须一样。证书与私钥只在构建之后的重签一步里解出来，用完即删。
 
 工作流里不要写 `APPLE_CERTIFICATE*` / `APPLE_SIGNING_IDENTITY: ${{ secrets.… }}` 这样的映射：未配置的 secret 会展开成空字符串，tauri-cli 会用空串覆盖配置里的 ad-hoc 签名。将来接入 Apple Developer ID 签名与公证、Windows 代码签名时，接入点见 `release.yml` 里「构建」一步的注释。
 

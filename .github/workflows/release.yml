@@ -180,38 +180,27 @@ jobs:
       - name: macOS 签名：没有自签证书 → ad-hoc
         if: runner.os == 'macOS' && env.HAS_MAC_P12 != 'true'
         run: echo "macOS 签名：ad-hoc（tauri.conf.json 的 signingIdentity \"-\"）"
-      - name: macOS 签名：导入自签证书到临时 keychain
+      - name: macOS 签名：下载 rcodesign（钉死版本与 sha256）
         if: runner.os == 'macOS' && env.HAS_MAC_P12 == 'true'
         shell: bash
         env:
-          MAC_P12: ${{ secrets.MACOS_SELF_SIGNED_P12_BASE64 }}
-          P12_PASSWORD: ${{ secrets.MACOS_SELF_SIGNED_P12_PASSWORD }}
+          RCODESIGN_VERSION: 0.29.0
+          RCODESIGN_SHA256: d1a532150adaf90048260d76359261aa716abafc45c53c5dc18845029184334a
+        # 自签证书不受信任时 codesign 拒绝用它签名，而 macos-15 runner 不允许无人值守地把证书设为信任（改管理员域的信任设置
+        # 要在授权框里确认，临时放开 com.apple.trust-settings.admin 规则也被拒绝）。所以 tauri 先按 ad-hoc 签名打包，构建之后
+        # 再用 rcodesign 直接拿证书与私钥重签（scripts/release/resign-macos.sh），不经过钥匙串、也不看信任设置。
+        # 这一步不碰任何 secret；证书与私钥只在构建之后的重签一步里解出来
         run: |
-          KC="$RUNNER_TEMP/wisp-sign.keychain-db"; KC_PW="$(uuidgen)"; TMP_PW="$(uuidgen)"
-          printf '%s' "$MAC_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          # p12 的口令只经环境变量交给 openssl（-passin env:），不出现在任何命令行上；security import 只能在命令行上
-          # 接收口令，所以先解开、再用一次性口令重新打包给它（这个口令只保护随即删除的临时文件）
-          /usr/bin/openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin env:P12_PASSWORD -nokeys -clcerts -out "$RUNNER_TEMP/cert.pem"
-          /usr/bin/openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin env:P12_PASSWORD -nodes -out "$RUNNER_TEMP/bundle.pem"
-          /usr/bin/openssl pkcs12 -export -in "$RUNNER_TEMP/bundle.pem" -passout "pass:$TMP_PW" -out "$RUNNER_TEMP/import.p12"
-          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/bundle.pem"
-          security create-keychain -p "$KC_PW" "$KC"
-          security set-keychain-settings -lut 21600 "$KC"
-          security unlock-keychain -p "$KC_PW" "$KC"
-          security import "$RUNNER_TEMP/import.p12" -k "$KC" -P "$TMP_PW" -T /usr/bin/codesign
-          rm -f "$RUNNER_TEMP/import.p12"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KC_PW" "$KC" > /dev/null
-          # shellcheck disable=SC2046
-          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
-          # 自签证书默认不受信任，codesign 会报 "no identity found"：在管理员域设置「代码签名：始终信任」（runner 有免密
-          # sudo）。非交互会话里直接 sudo security add-trusted-cert -d 会被授权服务拒绝，脚本临时放开
-          # com.apple.trust-settings.admin 规则、写完即恢复（与 ci.yml 的 dev-sign 自检走同一段代码）
-          bash scripts/dev-sign-macos.sh --trust-admin "$RUNNER_TEMP/cert.pem" "$KC"
-          SHA1="$(security find-identity -v -p codesigning "$KC" | awk '/\)/{print $2; exit}')"
-          if [ -z "$SHA1" ]; then echo "::error::p12 中没有可用于代码签名的身份"; exit 1; fi
-          # 只导出 APPLE_SIGNING_IDENTITY（证书 SHA-1 走 bundler 的 with_signing_identity 分支，不做 Apple 前缀校验）
-          echo "APPLE_SIGNING_IDENTITY=$SHA1" >> "$GITHUB_ENV"
-          echo "macOS 签名：自签证书 $SHA1"
+          d="$RUNNER_TEMP/rcodesign"
+          mkdir -p "$d"
+          url="https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${RCODESIGN_VERSION}/apple-codesign-${RCODESIGN_VERSION}-aarch64-apple-darwin.tar.gz"
+          curl -fsSL --retry 3 -o "$d/rcodesign.tar.gz" "$url"
+          echo "${RCODESIGN_SHA256}  $d/rcodesign.tar.gz" | shasum -a 256 -c -
+          tar -xzf "$d/rcodesign.tar.gz" -C "$d"
+          rc="$(find "$d" -name rcodesign -type f -perm -u+x | head -n 1)"
+          [ -n "$rc" ] || { echo "::error::rcodesign 压缩包里没有可执行文件"; exit 1; }
+          "$rc" --version
+          echo "RCODESIGN=$rc" >> "$GITHUB_ENV"
 
       # ③ 构建：**不带 GITHUB_TOKEN**。私钥与口令只在这一步出现（tauri-cli 打包时签名），但这一步也执行 beforeBuildCommand
       # （vite 及其插件）与 cargo build（全部依赖的 build.rs / 过程宏）——它们与私钥在同一个进程环境里，私钥对它们可见（见文件头
@@ -227,7 +216,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.HAS_UPDATER_KEY == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
           # 注意：这里**不写** APPLE_CERTIFICATE / APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY。
           # 未配置的 secret 会展开成空串但变量仍然存在：tauri-cli 2.12.1 会用空串覆盖配置里的 "-"，bundler 还会尝试导入空证书。
-          # 自签证书的身份只由上面的导入步骤写入 GITHUB_ENV（没有 p12 时完全不出现这个变量）。
+          # 有自签证书时 tauri 同样按 ad-hoc 签名，打包之后由「用固定证书重签」一步重签（见下）。
           # 将来接入 Developer ID 签名 / 公证时，同样只在 secret 非空时写入 GITHUB_ENV；
           # Windows 签名的接入点是 tauri.conf.json 的 bundle.windows.signCommand。
         run: |
@@ -235,6 +224,27 @@ jobs:
           read -ra extra <<< "$TAURI_EXTRA_ARGS"
           pnpm exec tauri build --target "$TARGET" "${extra[@]}" -- --locked
 
+      - name: macOS 签名：用固定证书重签
+        if: runner.os == 'macOS' && env.HAS_MAC_P12 == 'true'
+        shell: bash
+        env:
+          MAC_P12: ${{ secrets.MACOS_SELF_SIGNED_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.MACOS_SELF_SIGNED_P12_PASSWORD }}
+          # 更新包重新打包之后要重新生成它的更新器签名
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.HAS_UPDATER_KEY == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.HAS_UPDATER_KEY == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          d="$RUNNER_TEMP/wisp-sign"
+          mkdir -m 700 "$d"
+          trap 'rm -rf "$d"' EXIT
+          printf '%s' "$MAC_P12" | base64 --decode > "$d/cert.p12"
+          # p12 的口令只经环境变量交给 openssl（-passin env:），不出现在任何命令行上
+          /usr/bin/openssl pkcs12 -in "$d/cert.p12" -passin env:P12_PASSWORD -nokeys -clcerts -out "$d/cert.pem"
+          /usr/bin/openssl pkcs12 -in "$d/cert.p12" -passin env:P12_PASSWORD -nocerts -nodes -out "$d/key.pem"
+          grep -q 'PRIVATE KEY-----' "$d/key.pem" || { echo "::error::p12 里没有私钥"; exit 1; }
+          version="$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")"
+          WISP_SIGN_CERT="$d/cert.pem" WISP_SIGN_KEY="$d/key.pem" \
+            bash scripts/release/resign-macos.sh "target/${{ matrix.target }}/release/bundle" "$version"
       - name: 签名信息（macOS）
         if: runner.os == 'macOS'
         shell: bash
@@ -271,10 +281,10 @@ jobs:
           if [ "$HAS_UPDATER_KEY" != true ]; then flags+=(--no-updater); fi
           node scripts/release/upload.mjs "${flags[@]}"
 
-      - name: 清理临时 keychain
+      - name: 清理解出来的证书与私钥
         if: always() && runner.os == 'macOS' && env.HAS_MAC_P12 == 'true'
         shell: bash
-        run: security delete-keychain "$RUNNER_TEMP/wisp-sign.keychain-db" || true
+        run: rm -rf "$RUNNER_TEMP/wisp-sign"
 
   finalize:
     name: finalize

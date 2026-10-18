@@ -24,8 +24,9 @@
 #                                               无论成功、失败还是被中断，结束时都删除临时钥匙串、恢复钥匙串搜索列表、
 #                                               撤销临时信任
 #   scripts/dev-sign-macos.sh --trust-admin <cert.pem> [钥匙串]
-#                                               在管理员域把证书设为「代码签名：始终信任」（需要免密 sudo；release.yml
-#                                               导入自签 p12 后用它）。授权规则放不开时以退出码 3 失败、不会卡住（见 admin_trust）
+#                                               在管理员域把证书设为「代码签名：始终信任」（需要免密 sudo）。授权规则放不开时
+#                                               以退出码 3 失败、不会卡住（见 admin_trust）。release.yml 不用它：GitHub 的
+#                                               macos-15 runner 放不开这条规则，发布包改由 scripts/release/resign-macos.sh 重签
 # 环境变量：WISP_DEV_IDENTITY 覆盖证书名（默认 "Wisp Dev"）。
 set -euo pipefail
 
@@ -266,8 +267,8 @@ self_test() (
   if [ "$rc" = 3 ]; then
     # 规则没放开、什么都没改：不用撤销（撤销同样要等授权框）
     trusted=0
-    echo "! 这台机器不允许无人值守地改管理员域的信任设置（见上一行）：跳过「信任 → 签名 → 校验」部分。release.yml 的"
-    echo "  --trust-admin（配置自签 p12 之后才用）在同样的 runner 上会以退出码 3 失败"
+    echo "! 这台机器不允许无人值守地改管理员域的信任设置（见上一行）：跳过「信任 → 签名 → 校验」部分"
+    echo "  （发布包不受影响：release.yml 用 rcodesign 重签，不需要信任设置）"
     return 0
   fi
   [ "$rc" = 0 ] || die "自检失败：管理员域的信任设置失败（退出码 ${rc}）"
