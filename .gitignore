@@ -15,9 +15,8 @@ dist/
 dist-ssr/
 *.local
 
-# Rust / Tauri（gen/schemas 由构建生成）
+# Rust / Tauri（构建生成的 gen/schemas 由 apps/desktop/src-tauri/.gitignore 忽略）
 target/
-src-tauri/gen/schemas/
 
 # 日志
 *.log

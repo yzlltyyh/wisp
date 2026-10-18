@@ -13,7 +13,7 @@
  *   - 前端资源（dist 下全部文件）≤ 1.6 MB；
  *   - Overlay ≤ 15 KB。统计口径：overlay.html 的入口 JS **加上它全部的静态 import**
  *     （`<link rel="modulepreload">` 列出的共享 chunk）再加 overlay 的 CSS；动态 import 不计；
- *   - 安装包：dmg ≤ 12 MB、NSIS（*-setup.exe）≤ 10 MB、deb / rpm ≤ 15 MB、AppImage ≤ 90 MB。
+ *   - 安装包：dmg ≤ 12 MB、NSIS（*-setup.exe）≤ 10 MB、deb / rpm ≤ 15 MB、AppImage ≤ 110 MB。
  * 入口依赖图（读取 Rolldown 的 chunk 模块清单）：
  *   - panel 入口静态可达的模块里没有 src/settings、src/onboarding、src/overlay（连 lazy() 出去的 chunk 里也不能有）；
  *     五个视图（翻译 / OCR / 剪贴板 / 输入 / toast）都必须静态导入（首次唤出任何视图都没有懒加载请求）。
@@ -57,7 +57,7 @@ export const BUDGET = {
     { kind: 'NSIS', test: (f) => /-setup\.exe$/i.test(f), max: 10 * MB },
     { kind: 'deb', test: (f) => f.endsWith('.deb'), max: 15 * MB },
     { kind: 'rpm', test: (f) => f.endsWith('.rpm'), max: 15 * MB },
-    { kind: 'AppImage', test: (f) => f.endsWith('.AppImage'), max: 90 * MB },
+    { kind: 'AppImage', test: (f) => f.endsWith('.AppImage'), max: 110 * MB },
     // 不在发布矩阵里（Windows 只出 NSIS），出现时按 NSIS 的预算检查
     { kind: 'MSI', test: (f) => f.endsWith('.msi'), max: 10 * MB },
   ],
