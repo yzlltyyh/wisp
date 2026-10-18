@@ -267,7 +267,7 @@ export function freePort() {
 // ---------------------------------------------------------------------------
 // 隔离 HOME 的设置与数据
 
-/** 五个全局动作（与 wisp-types `HotkeyAction::as_str` 一致，自检核对） */
+/** 五个全局动作（与 wisp-types `HotkeyAction` 声明的字符串值一致，自检核对） */
 export const HOTKEY_ACTIONS = [
   'translate_selection',
   'translate_input',
@@ -768,10 +768,10 @@ async function selfTest() {
   assert.ok(rust.includes(`pub const CONFIG_KEY: &str = "${REHEARSAL_CONFIG_KEY}";`))
   // 演练设置把五个全局快捷键都设为不绑定：动作列表与 Binding::NONE 跟 wisp-types 一致（新增动作时这里先失败）
   const hotkeyRs = readFileSync(join(ROOT, 'crates', 'wisp-types', 'src', 'hotkey.rs'), 'utf8')
-  const asStr = /pub const fn as_str\(self\) -> &'static str \{([\s\S]*?)\n {4}\}/.exec(hotkeyRs)
-  assert.ok(asStr, 'wisp-types hotkey.rs 里找不到 HotkeyAction::as_str')
+  const actions = /pub enum HotkeyAction \{([\s\S]*?)\n {4}\}/.exec(hotkeyRs)
+  assert.ok(actions, 'wisp-types hotkey.rs 里找不到 HotkeyAction')
   assert.deepEqual(
-    [...asStr[1].matchAll(/=> "([a-z_]+)"/g)].map((m) => m[1]),
+    [...actions[1].matchAll(/= "([a-z_]+)"/g)].map((m) => m[1]),
     HOTKEY_ACTIONS,
     'HotkeyAction 的动作变了：同步 HOTKEY_ACTIONS',
   )
