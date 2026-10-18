@@ -45,8 +45,10 @@ identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Conte
 executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
 sha1="$(/usr/bin/openssl x509 -in "$WISP_SIGN_CERT" -noout -fingerprint -sha1 | sed 's/^.*=//; s/://g')"
 [ "${#sha1}" -eq 40 ] || die "读不出证书的 SHA-1"
-requirement="designated => identifier \"$identifier\" and certificate root = H\"$sha1\""
-csreq -r "=$requirement" -b "$work/requirement.bin"
+expression="identifier \"$identifier\" and certificate root = H\"$sha1\""
+requirement="designated => $expression"
+# rcodesign 要的是单条要求（csreq 只给表达式时编出 0xfade0c00）；带 "designated =>" 会编成要求集合，它不认
+csreq -r "=$expression" -b "$work/requirement.bin"
 
 # 核对一个 .app：签名有效、不是 ad-hoc、指定要求与上面一致、开着 hardened runtime、带着 Entitlements.plist 里的权限
 verify_app() {
