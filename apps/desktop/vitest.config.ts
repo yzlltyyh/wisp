@@ -13,6 +13,9 @@ export default defineConfig((env) =>
       restoreMocks: true,
       unstubGlobals: true,
       css: false,
+      // CI 的 Windows runner 比开发机慢数倍：穷举快捷键的核对与同步设置页的交互用例在那里要 4–5 s，会偶尔撞上默认的
+      // 5 s 而失败。本机保持默认值，测试变慢时照样能及时发现
+      testTimeout: process.env.CI ? 20_000 : 5_000,
     },
   }),
 )
