@@ -217,6 +217,7 @@ async fn live_translation_and_ppocr_through_the_models_service() {
         Arc::new(TestLauncher { exe }),
     );
     *svc.idle_override.lock() = Some(Duration::from_secs(4));
+    svc.os_pressure.store(true, std::sync::atomic::Ordering::Release);
     let llm = LlmClient::new(wisp_llm::ClientConfig {
         user_agent: "Wisp/test".to_owned(),
         caps: settings.caps_store(),

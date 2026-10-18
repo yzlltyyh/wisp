@@ -129,6 +129,10 @@ pub struct ModelsService {
     /// 测试：固定加载前内存检查看到的内存与压力（不随测试机器变化）
     #[cfg(test)]
     memory_override: Mutex<Option<lifecycle::MemoryProbe>>,
+    /// 测试：安装系统的内存压力监听。默认不装：测试机器内存吃紧（例如全量编译测试）时，系统的压力警告会释放测试里的槽位，
+    /// 结果就随机器状态变化；用真实模型的测试打开它
+    #[cfg(test)]
+    os_pressure: AtomicBool,
     /// 测试：换掉真正的下载（访问本机的模拟服务器）
     #[cfg(test)]
     download_override: Mutex<Option<queue::TestDownload>>,
@@ -192,6 +196,8 @@ impl ModelsService {
             idle_override: Mutex::new(None),
             #[cfg(test)]
             memory_override: Mutex::new(None),
+            #[cfg(test)]
+            os_pressure: AtomicBool::new(false),
             #[cfg(test)]
             download_override: Mutex::new(None),
             #[cfg(test)]

@@ -842,6 +842,8 @@ impl ModelsService {
         let active = self.slots.any_active();
         {
             let mut p = self.pressure.lock();
+            #[cfg(test)]
+            let active = active && self.os_pressure.load(std::sync::atomic::Ordering::Acquire);
             if active && p.is_none() {
                 let weak = Arc::downgrade(self);
                 *p = wisp_platform::pressure::watch(move |level| {
