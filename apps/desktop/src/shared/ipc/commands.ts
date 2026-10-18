@@ -121,7 +121,6 @@ export interface CommandMap extends OverlayCommandMap {
   styles_reorder: { args: { ids: string[] }; ret: T.Style[] }
   style_preview: { args: { style: T.Style; sample: string }; ret: T.PromptPreview }
   glossary_get: { args: NoArgs; ret: T.GlossaryEntry[] }
-  glossary_set: { args: { entries: T.GlossaryEntry[] }; ret: void }
   glossary_upsert: { args: { entry: T.GlossaryEntry; previous_source: string | null }; ret: void }
   glossary_remove: { args: { source: string }; ret: void }
   glossary_import: { args: NoArgs; ret: number }
@@ -285,7 +284,6 @@ export const COMMAND_NAMES = [
   'styles_reorder',
   'style_preview',
   'glossary_get',
-  'glossary_set',
   'glossary_upsert',
   'glossary_remove',
   'glossary_import',
@@ -653,9 +651,6 @@ export function stylePreview(style: T.Style, sample: string) {
 }
 export function glossaryGet() {
   return call('glossary_get', none)
-}
-export function glossarySet(entries: T.GlossaryEntry[]) {
-  return call('glossary_set', { entries })
 }
 /** 写入一条术语（只改这一条）；`previous_source`：这一行改动前的原文（新行为 null） */
 export function glossaryUpsert(entry: T.GlossaryEntry, previous_source: string | null = null) {

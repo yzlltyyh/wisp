@@ -7,16 +7,12 @@
     "clipboard": "剪贴板"
   },
   "recorder": {
-    "placeholder": "点击录制快捷键",
     "recording": "按下组合…",
     "hint": "{esc} 取消 · {backspace} 清除",
     "none": "未设置",
-    "default": "默认",
     "restore": "恢复默认",
-    "clear": "清除",
     "force": "仍然使用",
     "test": "测试",
-    "test_waiting": "按一下快捷键试试…",
     "test_received": "已收到",
     "modifier_required": "至少需要一个修饰键",
     "check_failed": "无法检测冲突，请重试",
@@ -24,11 +20,8 @@
     "label_value": "{label}：{combo}"
   },
   "state": {
-    "registered": "已生效",
     "fallback": "已改用备选键",
     "failed": "注册失败",
-    "unbound": "未设置",
-    "suspended": "已暂停",
     "unavailable": "当前环境不支持"
   },
   "level": {

@@ -116,14 +116,12 @@
     }
   },
   "details": {
-    "title": "Details",
     "code": "Code",
     "request_id": "Request ID",
     "status": "HTTP status",
     "url": "URL",
     "message": "Server message",
-    "copy": "Copy details",
-    "copied": "Copied"
+    "copy": "Copy details"
   },
   "action": {
     "retry": "Retry",
@@ -177,10 +175,6 @@
     "backend": "The screenshot didn't go through. Please try again.",
     "no_displays": "No display is available to capture.",
     "unsupported": "This desktop doesn't support screenshots."
-  },
-  "keychain": {
-    "denied": "Access to the keychain was denied. Try again and choose Allow when the system asks.",
-    "unavailable": "The system credential store is unavailable"
   },
   "sync": {
     "passphrase": "That sync password is wrong. Enter the one you set on your other devices.",

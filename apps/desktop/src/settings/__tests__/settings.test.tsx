@@ -1150,7 +1150,6 @@ describe('翻译', () => {
       entry: { source: 'Tauri', target: 'Tauri', note: null },
       previous_source: null,
     })
-    expect(h.callsOf('glossary_set')).toHaveLength(0)
   })
 })
 

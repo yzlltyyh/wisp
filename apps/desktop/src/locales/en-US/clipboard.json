@@ -13,8 +13,7 @@
     "marked": "Selected, {n}",
     "favorites_one": "Favorites, {n} item",
     "favorites_other": "Favorites, {n} items",
-    "rename": "Favorite name",
-    "drag": "Drag into another app to drop the content"
+    "rename": "Favorite name"
   },
   "search": {
     "placeholder": "Search clipboard history"
@@ -224,7 +223,6 @@
     "stopped": "Stopped pasting in sequence"
   },
   "float": {
-    "title": "Floating clipboard",
     "unavailable": "The floating clipboard was closed"
   }
 }

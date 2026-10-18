@@ -16,7 +16,6 @@
   "custom": "Custom style",
   "menu": {
     "title": "Translation style",
-    "edit": "Edit current style",
-    "hint": "{key} to switch"
+    "edit": "Edit current style"
   }
 }

@@ -45,7 +45,7 @@ pub const MAX_KEY_BYTES: usize = 8 * 1024;
 /// id 类参数上限（256 字节）：request_id、capture_id、pinned_id、provider_id、model_id、monitor_id、template_id、
 /// 风格 id、设置分组名等（Windows 的 MonitorId `\\.\DISPLAYn`、`custom-<uuid8>`、厂商模型名都远小于此）
 pub const MAX_ID_BYTES: usize = 256;
-/// 集合参数的条数上限：`styles_reorder.ids`、`glossary_set.entries`、`Provider.models` 等
+/// 集合参数的条数上限：`styles_reorder.ids`、导入的术语表、`Provider.models` 等
 /// （术语表的性能预算按 1000 条设计；聚合平台的模型列表约数百条）
 pub const MAX_LIST_LEN: usize = 10_000;
 
@@ -179,7 +179,6 @@ commands![
     cmd_settings::styles_reorder,
     cmd_settings::style_preview,
     cmd_settings::glossary_get,
-    cmd_settings::glossary_set,
     cmd_settings::glossary_upsert,
     cmd_settings::glossary_remove,
     cmd_settings::glossary_import,

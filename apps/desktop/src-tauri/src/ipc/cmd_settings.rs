@@ -163,14 +163,6 @@ pub async fn glossary_get(app_state: State<'_, AppState>) -> Result<Vec<Glossary
     Ok((*app_state.settings.glossary_entries()).clone())
 }
 
-/// 替换术语表
-#[tauri::command(rename_all = "snake_case")]
-pub async fn glossary_set(app_state: State<'_, AppState>, entries: Vec<GlossaryEntry>) -> Result<(), IpcError> {
-    validate_glossary(&entries)?;
-    let settings = Arc::clone(&app_state.settings);
-    run_blocking(move || settings.glossary_set(entries)).await
-}
-
 /// 写入一条术语（只改这一条；`previous_source` 为这一行改动前的原文，改了原文时用它找到原来的条目）
 #[tauri::command(rename_all = "snake_case")]
 pub async fn glossary_upsert(

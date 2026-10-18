@@ -101,11 +101,10 @@ describe('术语表编辑器：逐条写入', () => {
     await settle()
     expect(h.callsOf('glossary_remove').at(-1)).toEqual({ source: 'tokens' })
     expect(server.entries).toEqual([])
-    expect(h.callsOf('glossary_set')).toHaveLength(0)
   })
 
   it('打开之后别处加进来的术语：编辑自己的行不会把它删掉', async () => {
-    const { h, server } = glossaryHarness([e('token', '令牌')])
+    const { server } = glossaryHarness([e('token', '令牌')])
     render(<GlossaryEditor />)
     await waitFor(() => expect(sources()).toHaveLength(1))
     // 其他设备同步来一条（编辑器还没重新读取）
@@ -114,7 +113,6 @@ describe('术语表编辑器：逐条写入', () => {
     await userEvent.type(targets()[0] as HTMLElement, '记号')
     await settle()
     expect(server.entries).toEqual([e('token', '记号'), e('Remote', '远端')])
-    expect(h.callsOf('glossary_set')).toHaveLength(0)
   })
 })
 

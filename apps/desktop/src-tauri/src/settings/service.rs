@@ -1166,8 +1166,10 @@ impl SettingsService {
         Ok(true)
     }
 
-    /// 替换术语表（条目先规范化：去空白、丢弃空 source、按 source 去重）
-    pub fn glossary_set(&self, entries: Vec<GlossaryEntry>) -> Result<(), IpcError> {
+    /// 替换术语表（条目先规范化：去空白、丢弃空 source、按 source 去重）。只给测试准备数据：设置页逐条写入
+    /// （`glossary_upsert` / `glossary_remove`），整表替换会覆盖编辑器打开之后别处（其他设备同步、导入）加进来的术语
+    #[cfg(test)]
+    pub(crate) fn glossary_set(&self, entries: Vec<GlossaryEntry>) -> Result<(), IpcError> {
         let _g = self.glossary_lock.lock();
         self.store_glossary_locked(entries, ChangeOrigin::Local)?;
         Ok(())

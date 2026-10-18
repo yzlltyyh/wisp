@@ -1,14 +1,7 @@
 {
-  "a11y": {
-    "panel": "Wisp 面板",
-    "content": "面板内容"
-  },
   "view": {
-    "translate": "翻译",
     "ocr": "文字识别",
-    "clipboard": "剪贴板",
-    "input": "输入翻译",
-    "toast": "提示"
+    "input": "输入翻译"
   },
   "task": {
     "translate": "翻译",
@@ -18,20 +11,16 @@
   },
   "status": {
     "cancelled": "已取消",
-    "copied": "已复制",
     "truncated": "输出达到上限，已截断",
     "thinking_exhausted": "模型思考耗尽了输出额度",
     "cached": "来自缓存",
     "param_degraded": "部分参数不受支持，已自动调整",
     "retried": "已自动重试",
-    "low_confidence": "语言检测可能不准确",
-    "tokens": "{input} → {output} tokens"
+    "low_confidence": "语言检测可能不准确"
   },
   "stream": {
     "changes": "改动",
-    "thinking": "思考中…",
-    "reviewing": "正在检查译文…",
-    "improving": "正在改进译文…"
+    "thinking": "思考中…"
   },
   "not_ready": {
     "no_provider": {
@@ -110,7 +99,6 @@
     "selection_unavailable": "无法读取选中的文字，请先复制，再粘贴到这里"
   },
   "dev": {
-    "latency": "延迟",
     "selection": "取词",
     "ready": "就绪",
     "shown": "显示",
@@ -118,8 +106,7 @@
     "timeout": "就绪超时",
     "frames": "帧间隔",
     "dropped": "掉帧",
-    "js": "每帧 JS",
-    "p95": "p95"
+    "js": "每帧 JS"
   },
   "offline": {
     "download": "下载 · {size}",

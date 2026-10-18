@@ -13,8 +13,7 @@
     "marked": "已选择，第 {n} 个",
     "favorites_one": "收藏，{n} 条",
     "favorites_other": "收藏，{n} 条",
-    "rename": "收藏名称",
-    "drag": "拖到其他应用里即可放入内容"
+    "rename": "收藏名称"
   },
   "search": {
     "placeholder": "搜索剪贴板历史"
@@ -224,7 +223,6 @@
     "stopped": "连续粘贴已结束"
   },
   "float": {
-    "title": "悬浮剪贴板",
     "unavailable": "悬浮剪贴板已关闭"
   }
 }

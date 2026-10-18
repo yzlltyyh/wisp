@@ -485,9 +485,6 @@ export function installDefaults(d: DefaultsDeps): void {
     user: `${sample}${style.tail_instruction ? `\n\n${style.tail_instruction}` : ''}`,
   }))
   r.handle('glossary_get', () => state.glossary)
-  r.handle('glossary_set', ({ entries }) => {
-    state.glossary = entries
-  })
   // 逐条写入：与 Rust 同一规则（改了原文时占原条目的位置；同原文合并为一条；都没有就追加），并广播 glossary:changed
   r.handle('glossary_upsert', ({ entry, previous_source }) => {
     const source = entry.source.trim()

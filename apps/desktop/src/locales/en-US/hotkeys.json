@@ -7,16 +7,12 @@
     "clipboard": "Clipboard"
   },
   "recorder": {
-    "placeholder": "Click to record",
     "recording": "Press keys…",
     "hint": "{esc} to cancel · {backspace} to clear",
     "none": "Not set",
-    "default": "Default",
     "restore": "Restore default",
-    "clear": "Clear",
     "force": "Use anyway",
     "test": "Test",
-    "test_waiting": "Press the shortcut to test…",
     "test_received": "Received",
     "modifier_required": "Use at least one modifier key",
     "check_failed": "Couldn't check for conflicts. Try again",
@@ -24,11 +20,8 @@
     "label_value": "{label}: {combo}"
   },
   "state": {
-    "registered": "Active",
     "fallback": "Using fallback",
     "failed": "Failed to register",
-    "unbound": "Not set",
-    "suspended": "Paused",
     "unavailable": "Not supported here"
   },
   "level": {

@@ -158,7 +158,7 @@ pub fn validate_style_ids(ids: &[String]) -> Result<(), IpcError> {
     ids.iter().try_for_each(|id| check_id("ids[]", id))
 }
 
-/// `glossary_set` 的条目
+/// 术语条目：`glossary_upsert` 的单条，以及导入、合并后的整张术语表
 pub fn validate_glossary(entries: &[GlossaryEntry]) -> Result<(), IpcError> {
     check_list_len("entries", entries.len(), MAX_LIST_LEN)?;
     entries.iter().try_for_each(|e| {

@@ -1,14 +1,7 @@
 {
-  "a11y": {
-    "panel": "Wisp panel",
-    "content": "Panel content"
-  },
   "view": {
-    "translate": "Translate",
     "ocr": "Text recognition",
-    "clipboard": "Clipboard",
-    "input": "Type to translate",
-    "toast": "Notice"
+    "input": "Type to translate"
   },
   "task": {
     "translate": "Translate",
@@ -18,20 +11,16 @@
   },
   "status": {
     "cancelled": "Cancelled",
-    "copied": "Copied",
     "truncated": "Output hit the limit and was truncated",
     "thinking_exhausted": "The model used up its output budget while thinking",
     "cached": "From cache",
     "param_degraded": "Some parameters were unsupported and adjusted",
     "retried": "Retried automatically",
-    "low_confidence": "Language detection may be inaccurate",
-    "tokens": "{input} → {output} tokens"
+    "low_confidence": "Language detection may be inaccurate"
   },
   "stream": {
     "changes": "Changes",
-    "thinking": "Thinking…",
-    "reviewing": "Reviewing…",
-    "improving": "Improving…"
+    "thinking": "Thinking…"
   },
   "not_ready": {
     "no_provider": {
@@ -110,7 +99,6 @@
     "selection_unavailable": "Wisp couldn't read the selected text. Copy it first, then paste it here"
   },
   "dev": {
-    "latency": "Latency",
     "selection": "Selection",
     "ready": "Ready",
     "shown": "Shown",
@@ -118,8 +106,7 @@
     "timeout": "Ready timeout",
     "frames": "Frame time",
     "dropped": "Dropped",
-    "js": "JS / frame",
-    "p95": "p95"
+    "js": "JS / frame"
   },
   "offline": {
     "download": "Download · {size}",
