@@ -196,8 +196,10 @@ pub trait Presence: Send + Sync {
     /// 电源状态（用不用电池、是否开着省电模式）；取不到的项为 None
     fn power(&self) -> PowerState;
 
-    /// 订阅「回到电脑前 / 解锁 / 唤醒」等事件；本平台没有事件来源时为 None（调用方低频复查 [`Self::input_idle`]）。
-    /// 回调在平台的通知线程上执行，只做 O(1) 的工作；返回值丢弃即注销
+    /// 订阅「回到电脑前 / 解锁 / 唤醒」等事件与锁屏状态；本平台什么都提供不了时为 None（调用方低频复查
+    /// [`Self::input_idle`]）。订阅对象报告哪些事件会送达（`PresenceWatch::reports_*`），送不到的由调用方复查。
+    /// 回调在平台的通知线程上执行，只做 O(1) 的工作；返回值丢弃即注销。订阅在有的平台上要等新线程就绪（最多约 2 s），
+    /// 调用方应当在阻塞线程里调用
     fn watch(&self, cb: PresenceCallback) -> Option<Box<dyn PresenceWatch>> {
         let _ = cb;
         None

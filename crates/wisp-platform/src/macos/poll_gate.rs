@@ -136,6 +136,9 @@ struct Inner {
     tier: Tier,
     /// 最近一次看到 changeCount 变化、或 Wisp 自己要用剪贴板（[`PollGate::nudge`]）的时刻（None：还没有过，只按输入算）
     last_activity: Option<Instant>,
+    /// 上一次 tick 时键鼠已经空闲了 [`QUIET_AFTER`] 以上。「人回来了」按输入空闲自己的变化判断，不看档位：程序改了
+    /// 剪贴板（脚本、通用剪贴板）会让档位先回到活跃，之后人回来时档位不再变化
+    input_quiet: bool,
     next_id: u64,
     sources: Vec<(u64, DispatchRetained<DispatchSource>)>,
     /// 已经请求在主线程上挂系统通知（只挂一次）
@@ -275,26 +278,31 @@ impl PollGate {
             if changed {
                 g.last_activity = Some(now);
             }
+            // 键鼠空闲了一阵之后又有了输入：人回到了电脑前（只是剪贴板被程序改了不算）
+            let quiet = idle >= QUIET_AFTER;
+            let returned = std::mem::replace(&mut g.input_quiet, quiet) && !quiet;
             let since_activity = g
                 .last_activity
                 .map_or(Duration::MAX, |t| now.saturating_duration_since(t));
             let next = Tier::for_quiet(idle.min(since_activity));
-            if next == g.tier {
-                return None;
+            let retiered = next != g.tier;
+            if retiered {
+                g.tier = next;
+                // 刚读过一次：变慢、变快都从下一个周期起算（变快 = 期间有过输入，4 Hz 下一次在 250 ms 内）
+                for (_, s) in &g.sources {
+                    self.arm(s, false, next, false);
+                }
             }
-            g.tier = next;
-            // 刚读过一次：变慢、变快都从下一个周期起算（变快 = 期间有过输入，4 Hz 下一次在 250 ms 内）
-            for (_, s) in &g.sources {
-                self.arm(s, false, next, false);
-            }
-            next
+            (retiered.then_some(next), returned)
         };
-        log::debug!("clipboard polling tier {next:?}");
-        // 慢档里发现有了输入：人回到了电脑前（只是剪贴板被程序改了不算）
-        if next == Tier::Active && idle < QUIET_AFTER {
+        let (next, returned) = next;
+        if let Some(tier) = next {
+            log::debug!("clipboard polling tier {tier:?}");
+        }
+        if returned {
             self.emit(PresenceEvent::Returned);
         }
-        Some(next)
+        next
     }
 
     /// Wisp 自己要用剪贴板：回到活跃档并保持 30 s，慢档时立即读一次。调用点：剪贴板面板即将显示（`poll_now`，面板里
@@ -600,6 +608,15 @@ mod tests {
         assert!(gate.set_paused(true));
         assert!(gate.set_paused(false));
         assert_eq!(take(), [PresenceEvent::Locked, PresenceEvent::Unlocked]);
+        // 程序先改了剪贴板（档位因此回到活跃），人随后才回来：档位不再变化，仍然要通知
+        assert_eq!(gate.retier(false, t0 + s(500), s(400)), Some(Tier::Away));
+        assert_eq!(gate.retier(true, t0 + s(501), s(401)), Some(Tier::Active));
+        assert!(take().is_empty(), "只是剪贴板变了");
+        assert_eq!(gate.retier(false, t0 + s(510), s(1)), None, "档位没变");
+        assert_eq!(take(), [PresenceEvent::Returned]);
+        // 一直有输入：不重复通知
+        assert_eq!(gate.retier(false, t0 + s(511), s(1)), None);
+        assert!(take().is_empty());
         // 轮询停了：事件来源没了
         assert!(!gate.has_sources());
         gate.remove(7);

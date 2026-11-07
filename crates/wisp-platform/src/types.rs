@@ -388,6 +388,14 @@ pub type PresenceCallback = std::sync::Arc<dyn Fn(PresenceEvent) + Send + Sync>;
 pub trait PresenceWatch: Send + Sync {
     /// 「回到电脑前」（空闲之后的第一次输入）此刻会不会经回调通知：会的话调用方在用户离开期间不必定时复查输入空闲
     fn reports_return(&self) -> bool;
-    /// 屏幕此刻是否锁定或显示器睡眠（由系统事件维护；不知道时为 false）
+    /// 屏幕此刻是否锁定或显示器睡眠（由系统事件或最近一次查询维护；不知道时为 false）
     fn screen_idle(&self) -> bool;
+    /// 屏幕解锁（[`Self::screen_idle`] 变回 false）会不会经回调通知：会的话调用方在锁屏期间不必定时复查
+    fn reports_unlock(&self) -> bool {
+        false
+    }
+    /// 省电模式的开关会不会经回调通知（[`PresenceEvent::PowerChanged`]）：会的话调用方在省电模式下不必定时复查电源状态
+    fn reports_power(&self) -> bool {
+        false
+    }
 }

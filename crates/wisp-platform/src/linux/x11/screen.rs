@@ -314,8 +314,15 @@ pub(crate) fn on_destroy(x: &X11, window: Window) {
     }
 }
 
-/// 距最近一次用户输入多久（MIT-SCREEN-SAVER 扩展的 QueryInfo）；服务器没有这个扩展或请求失败时为 None
-pub(crate) fn input_idle(x: &X11) -> Option<std::time::Duration> {
+/// 距最近一次用户输入多久，以及服务器的屏幕保护此刻是否开着（MIT-SCREEN-SAVER 扩展的 QueryInfo，一次往返，由 X
+/// 服务器自己回答，不等别的客户端）；服务器没有这个扩展或请求失败时为 None。xss-lock、light-locker 之类按服务器屏幕
+/// 保护锁屏的配置，屏保开着就是锁着屏
+pub(crate) fn saver_info(x: &X11) -> Option<(std::time::Duration, bool)> {
+    use x11rb::protocol::screensaver::State;
     let reply = x.conn.screensaver_query_info(x.root).ok()?.reply().ok()?;
-    Some(std::time::Duration::from_millis(u64::from(reply.ms_since_user_input)))
+    let active = reply.state == u8::from(State::ON) || reply.state == u8::from(State::CYCLE);
+    Some((
+        std::time::Duration::from_millis(u64::from(reply.ms_since_user_input)),
+        active,
+    ))
 }

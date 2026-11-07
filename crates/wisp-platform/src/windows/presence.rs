@@ -6,7 +6,11 @@
 //! - 事件：一个**隐藏的顶层窗口**（message-only 窗口收不到 `WM_POWERBROADCAST` 广播）跑在专用线程上，空闲时阻塞在
 //!   `GetMessageW` 中，零唤醒。`WTSRegisterSessionNotification` 收锁屏 / 解锁，电源广播收睡眠唤醒与插拔电源。
 //!   只在订阅期间存在，丢弃订阅即销毁窗口、结束线程。没有锁屏的「回到电脑前」没有事件可收，`reports_return` 为 false，
-//!   由调用方在安静 / 离开时低频复查输入空闲（一次系统调用，不联网）。
+//!   由调用方在安静 / 离开时低频复查输入空闲（一次系统调用，不联网）；锁屏期间解锁有会话通知（`reports_unlock`），
+//!   调用方不必复查。节电模式的开关没有确定会送达的广播（`PBT_APMPOWERSTATUSCHANGE` 只保证插拔电源与电量变化），
+//!   `reports_power` 为 false，由调用方低频复查电源状态。
+//!
+//! 订阅要等新线程建好窗口（通常几毫秒，最多 2 s），会阻塞调用线程：调用方应当在阻塞线程池里调用 `watch`。
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -100,6 +104,8 @@ thread_local! {
 struct WinWatch {
     hwnd: RawHwnd,
     locked: Arc<AtomicBool>,
+    /// 会话通知登记成功（锁屏 / 解锁都会送达）
+    sessions: bool,
 }
 
 impl PresenceWatch for WinWatch {
@@ -109,6 +115,10 @@ impl PresenceWatch for WinWatch {
 
     fn screen_idle(&self) -> bool {
         self.locked.load(Ordering::Acquire)
+    }
+
+    fn reports_unlock(&self) -> bool {
+        self.sessions
     }
 }
 
@@ -124,7 +134,7 @@ impl Drop for WinWatch {
 fn spawn(cb: PresenceCallback) -> Result<WinWatch, String> {
     let locked = Arc::new(AtomicBool::new(false));
     let sink_locked = Arc::clone(&locked);
-    let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<RawHwnd, String>>(1);
+    let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(RawHwnd, bool), String>>(1);
     std::thread::Builder::new()
         .name("wisp-presence".into())
         .spawn(move || {
@@ -141,23 +151,27 @@ fn spawn(cb: PresenceCallback) -> Result<WinWatch, String> {
                 }
             };
             // SAFETY: 本线程创建的窗口；注销在 WM_CLOSE 里
-            if let Err(e) = unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) } {
-                // 没有会话通知时仍有电源广播：照常运行
-                log::debug!("session notifications unavailable: {e}");
-            }
+            let sessions = match unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION) } {
+                Ok(()) => true,
+                Err(e) => {
+                    // 没有会话通知时仍有电源广播：照常运行
+                    log::debug!("session notifications unavailable: {e}");
+                    false
+                }
+            };
             SINK.with(|s| {
                 *s.borrow_mut() = Some(Sink {
                     cb,
                     locked: sink_locked,
                 });
             });
-            let _ = ready_tx.send(Ok(RawHwnd::new(hwnd)));
+            let _ = ready_tx.send(Ok((RawHwnd::new(hwnd), sessions)));
             wnd::run_message_loop(|_| false);
             SINK.with(|s| *s.borrow_mut() = None);
         })
         .map_err(|e| format!("spawn presence watcher: {e}"))?;
     match ready_rx.recv_timeout(Duration::from_secs(2)) {
-        Ok(Ok(hwnd)) => Ok(WinWatch { hwnd, locked }),
+        Ok(Ok((hwnd, sessions))) => Ok(WinWatch { hwnd, locked, sessions }),
         Ok(Err(e)) => Err(e),
         Err(_) => Err("presence watcher did not start".into()),
     }

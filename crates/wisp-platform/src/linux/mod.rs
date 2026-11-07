@@ -106,6 +106,8 @@ struct Ctx {
     keymaps: Arc<RwLock<Vec<AppKeymap>>>,
     appearance: Arc<Appearance>,
     apps: Apps,
+    /// 最近一次查询输入空闲时，服务器的屏幕保护开着（`Presence` 的订阅据此报告锁屏）
+    saver_on: AtomicBool,
 }
 
 impl Ctx {
@@ -151,6 +153,7 @@ pub(crate) fn create(cfg: PlatformConfig) -> Platform {
         keymaps: cfg.keymaps,
         appearance,
         apps: Apps::new(),
+        saver_on: AtomicBool::new(false),
     });
     let imp = || Box::new(Imp(Arc::clone(&ctx)));
     Platform {
@@ -482,11 +485,21 @@ impl OutsideClick for Imp {
 
 /// 实时同步的分档用：输入空闲只在 X11 会话、并且 X 连接已经建立时读（屏幕保护扩展的 QueryInfo，一次往返）；
 /// Wayland 会话（即使有 XWayland）读不到原生 Wayland 窗口上的输入，返回 None。没有「回到电脑前」的事件来源，
-/// 由调用方低频复查
+/// 由调用方低频复查；同一个回复里的屏幕保护状态记下来，订阅据此报告锁屏（不多一次往返）
 impl Presence for Imp {
     fn input_idle(&self) -> Option<Duration> {
-        let x = self.0.x11_ready()?;
-        x11::screen::input_idle(&x)
+        let Some((idle, saver_on)) = self.0.x11_ready().and_then(|x| x11::screen::saver_info(&x)) else {
+            self.0.saver_on.store(false, Ordering::Release);
+            return None;
+        };
+        self.0.saver_on.store(saver_on, Ordering::Release);
+        Some(idle)
+    }
+
+    fn watch(&self, cb: crate::types::PresenceCallback) -> Option<Box<dyn crate::types::PresenceWatch>> {
+        // 没有事件可送（回调用不上）；只报告最近一次查询看到的屏幕保护状态
+        let _ = cb;
+        Some(Box::new(SaverWatch(Arc::clone(&self.0))))
     }
 
     fn power(&self) -> crate::types::PowerState {
@@ -496,6 +509,20 @@ impl Presence for Imp {
             ))),
             low_power: None,
         }
+    }
+}
+
+/// X11 的「订阅」：没有事件来源，屏幕保护状态随最近一次 [`Presence::input_idle`] 查询更新（调用方每次规划先查输入
+/// 空闲、再读这里）
+struct SaverWatch(Arc<Ctx>);
+
+impl crate::types::PresenceWatch for SaverWatch {
+    fn reports_return(&self) -> bool {
+        false
+    }
+
+    fn screen_idle(&self) -> bool {
+        self.0.saver_on.load(Ordering::Acquire)
     }
 }
 
