@@ -321,6 +321,11 @@
     max-width: 320px;
     padding: 4px;
     box-sizing: border-box;
+    /*
+     * 只纵向滚动：overflow-y 不是 visible 时 overflow-x 会跟着算成 auto，分页菜单换页时从右侧滑入的新页（stepSwitch 的
+     * +8 px）与淡出的旧页会撑出一条横向滚动条（Windows 的经典滚动条一闪而过）
+     */
+    overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
     border-radius: var(--r-menu);
@@ -455,6 +460,14 @@
   .ui-pmenu-pos > .ui-pmenu {
     position: relative;
     max-height: inherit;
+  }
+  /*
+   * 换页的高度过渡期间（显式高度，与 AutoHeight 的 data-animating 同一个约定）不出滚动条：变高时菜单本体暂时比内容矮，
+   * 滚动条会在过渡里闪现、挤窄内容（第二行说明随之换行、高度跟着变）。滚动位置照常保留，过渡结束回到自然高度后
+   * 放不下才出现
+   */
+  .ui-pmenu[data-animating] {
+    overflow-y: hidden;
   }
   .ui-pmenu-page {
     display: flex;

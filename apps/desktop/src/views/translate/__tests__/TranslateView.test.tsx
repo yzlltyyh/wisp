@@ -868,6 +868,12 @@ describe('菜单按下就打开、随卡片长高像帘子一样露出（floatin
       .mockImplementation(function (this: HTMLElement) {
         return isMenu(this) ? 235 : 0
       })
+    // 可视高度与外框同高（没有边框、没有溢出）：浮层的自然高度 = 外框高 − 可视高 + 内容高
+    const client = vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (
+      this: Element,
+    ) {
+      return this instanceof HTMLElement && isMenu(this) ? 235 : 0
+    })
     try {
       render(
         <FloatingContext value={boundary}>
@@ -907,6 +913,7 @@ describe('菜单按下就打开、随卡片长高像帘子一样露出（floatin
     } finally {
       height.mockRestore()
       scroll.mockRestore()
+      client.mockRestore()
     }
   })
 

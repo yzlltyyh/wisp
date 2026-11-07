@@ -10,7 +10,8 @@
  * - 焦点：定位完成的那次提交里移进菜单；关闭时（任何原因、包括调用方直接把 open 置 false）焦点还留在正在退场的菜单
  *   里或落到 body 上，就还给触发器——视图不需要自己补焦点；
  * - 指针：悬停高亮、点击选择、点外面关闭；
- * - 溢出：放不下时内部滚动，上 / 下还有内容的一侧显示一道渐隐阴影（纯 CSS，background-attachment）；
+ * - 溢出：放不下时内部滚动，上 / 下还有内容的一侧显示一道渐隐阴影（纯 CSS，background-attachment）。打开时与键盘导航
+ *   把高亮项滚进视野（只滚菜单自己，见 {@link revealInMenu}）；悬停改变高亮不滚动——否则指针下的内容会跑掉；
  * - 动效：presets.menuIn / menuOut，变换原点在触发器一侧；减少动效时只淡入淡出；
  * - 在面板里挂到卡片内并预留高度（卡片随之长高），不会被窗口裁掉（floating.tsx）；
  * - `ref` / `className` / `onExitComplete`：调用方不必再按 role + 无障碍名称去找菜单元素。
@@ -133,6 +134,8 @@ export function Menu({
     placed,
   } = useFloating({ open, anchor, side, align, flip, shift, offset: 4, reserve: true })
   const [active, setActive] = useState(-1)
+  /** 下一次高亮变化要滚进视野：打开时与键盘导航置位，悬停清掉（悬停不滚动） */
+  const reveal = useRef(false)
   const pointerMoved = usePointerIntent()
   const typeahead = useRef({ text: '', at: 0 })
   const baseId = useId()
@@ -155,6 +158,7 @@ export function Menu({
       start = items.findIndex((e) => isItem(e) && e.checked === true && !e.disabled)
       if (start < 0) start = firstEnabled(items, 0, 1)
     } else if (initialActive === 'first') start = firstEnabled(items, 0, 1)
+    reveal.current = start >= 0
     setActive(start)
     // 只在打开时执行
     // oxlint-disable-next-line react/exhaustive-deps
@@ -230,14 +234,19 @@ export function Menu({
     }
   }, [open, anchor, close, floatingRef])
 
-  // 高亮项滚入视野（键盘导航）
-  useEffect(() => {
-    if (!open || active < 0) return
-    document.getElementById(`${baseId}-${active}`)?.scrollIntoView({ block: 'nearest' })
-  }, [open, active, baseId])
+  // 高亮项滚进视野（打开时、键盘导航）：定位完成（max-height 生效）之后、绘制之前，打开的第一帧就看得见勾选项
+  useLayoutEffect(() => {
+    if (!open || !placed || active < 0 || !reveal.current) return
+    reveal.current = false
+    const menu = floatingRef.current
+    const item = document.getElementById(`${baseId}-${active}`)
+    if (menu && item) revealInMenu(menu, item)
+  }, [open, placed, active, baseId, floatingRef])
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.nativeEvent.isComposing) return
+    // 键盘改变的高亮要滚进视野（没有命中的按键在下一次悬停时清掉）
+    reveal.current = true
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
@@ -318,7 +327,9 @@ export function Menu({
                 leading={leading}
                 testId={testId}
                 onActivate={(e) => {
-                  if (pointerMoved(e) && i !== active) setActive(i)
+                  if (!pointerMoved(e)) return
+                  reveal.current = false
+                  if (i !== active) setActive(i)
                 }}
                 onSelect={() => select(i)}
               />
@@ -328,6 +339,32 @@ export function Menu({
       </AnimatePresence>
     </FloatingPortal>
   )
+}
+
+/**
+ * 把菜单项滚进菜单的可视区，只滚菜单自己：scrollIntoView 会连带滚动所有可滚动的祖先，包括 overflow: hidden 的面板
+ * 卡片（程序化滚动照样生效），卡片追赶内容的那几帧里会把整张卡片的内容滚上去。位置用 offsetTop 沿 offsetParent 累加
+ * （不受进入动画的缩放影响）；菜单的上下内边距读计算样式，滚到头时第一项 / 最后一项与菜单边缘留出同样的空隙。
+ * Menu 与 PagedMenu 共用
+ */
+export function revealInMenu(menu: HTMLElement, item: HTMLElement): void {
+  let top = 0
+  let node: HTMLElement | null = item
+  while (node && node !== menu) {
+    top += node.offsetTop
+    const parent: Element | null = node.offsetParent
+    node = parent instanceof HTMLElement && menu.contains(parent) ? parent : null
+  }
+  // 没有沿 offsetParent 走到菜单（菜单本身没有定位）：退回按视口矩形换算
+  if (node !== menu) {
+    top = item.getBoundingClientRect().top - menu.getBoundingClientRect().top - menu.clientTop
+    top += menu.scrollTop
+  }
+  const cs = getComputedStyle(menu)
+  const start = top - (parseFloat(cs.paddingTop) || 0)
+  const end = top + item.offsetHeight + (parseFloat(cs.paddingBottom) || 0)
+  if (start < menu.scrollTop) menu.scrollTop = Math.max(0, start)
+  else if (end > menu.scrollTop + menu.clientHeight) menu.scrollTop = end - menu.clientHeight
 }
 
 /** 前导列与文字之间、各列的渲染：Menu 与 PagedMenu 共用（同一套 .ui-menu* 结构，视图不依赖内部类名） */

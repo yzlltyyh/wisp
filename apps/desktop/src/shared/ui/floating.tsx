@@ -14,6 +14,13 @@
  * 内部滚动。`shift`（右键菜单这类以指针为锚的浮层）：两侧都放不下、而边界本身放得下时，整份浮层上移到边界内（盖住
  * 锚点），只有边界比浮层还矮时才限高滚动。
  * 没有 boundary 的窗口（设置 / 引导）挂到 body、以视口为边界。
+ *
+ * 测量与重新定位不能打断浮层自己的滚动：
+ * - 自然高度不改样式地量：`浮层外框高 − 滚动容器可视高 + 滚动容器内容高`。临时去掉 max-height 再量，会在那次强制排版
+ *   里让菜单不再溢出，Chromium / WebKit 随即把它的滚动位置夹回 0——菜单一滚就跳回顶部、滚动条拖不动、键盘导航被抵消。
+ *   公式的前提：**滚动容器是浮层本身，或者由 `scroller` 显式传入**（分页菜单传菜单本体）；滚动容器更深、又没有传入时
+ *   量到的是受限之后的高度；
+ * - 打开期间跟随锚点的 scroll 监听跳过浮层自己（及其中元素）的滚动：它们不会移动锚点。
  */
 import {
   createContext,
@@ -190,12 +197,32 @@ function viewportBox(): Box {
   return { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight }
 }
 
+/**
+ * 浮层的自然高度，不改样式地量（见文件头）：外框高 − 滚动容器的可视高 + 滚动容器的内容高。没有溢出时就是外框高
+ */
+function naturalHeight(
+  el: HTMLElement,
+  scroller: RefObject<HTMLElement | null> | undefined,
+): number {
+  const s = scroller?.current ?? el
+  return el.offsetHeight - s.clientHeight + s.scrollHeight
+}
+
 export interface UseFloatingOptions extends PositionOptions {
   open: boolean
   /** 锚点：元素或固定矩形（ContextMenu 的指针位置） */
   anchor: RefObject<HTMLElement | null> | Box | null
   /** 是否预留卡片高度（菜单 / Popover 为 true，Tooltip 为 false） */
   reserve?: boolean
+  /** 真正滚动的元素（量自然高度用，见文件头）；缺省为浮层本身 */
+  scroller?: RefObject<HTMLElement | null>
+}
+
+export interface FloatingUpdateOptions {
+  /** 留在当前一侧（不翻到另一侧）：分页菜单换页时锚定的一边不动 */
+  keepSide?: boolean
+  /** 调用方量好的自然高度（分页菜单只量当前页：换页时淡出的旧页仍在滚动区域里） */
+  height?: number
 }
 
 export interface FloatingState {
@@ -205,7 +232,7 @@ export interface FloatingState {
   placed: boolean
   side: Side
   /** 重新计算（内容尺寸变化后调用） */
-  update(): void
+  update(options?: FloatingUpdateOptions): void
 }
 
 /**
@@ -217,47 +244,72 @@ export function useFloating(options: UseFloatingOptions): FloatingState {
   const ref = useRef<HTMLDivElement | null>(null)
   const id = useRef(Symbol('floating'))
   const [pos, setPos] = useState<(Position & { left: number; top: number }) | null>(null)
-  const { open, anchor, side, align, offset, padding, flip, shift, reserve = false } = options
+  const {
+    open,
+    anchor,
+    side,
+    align,
+    offset,
+    padding,
+    flip,
+    shift,
+    reserve = false,
+    scroller,
+  } = options
   /** 下拉帘用的几何（相对边界顶边；每次定位时更新，逐帧裁切时不读布局） */
   const geo = useRef<{ top: number; bottom: number; radius: string } | null>(null)
   /** 关闭之后延迟释放预留的计时器 */
   const releaseTimer = useRef(0)
+  /** 最近一次定位落在哪一侧（keepSide 用） */
+  const placedSide = useRef<Side | null>(null)
 
-  const update = useCallback(() => {
-    const el = ref.current
-    if (!el || !anchor) return
-    const a: Box =
-      'current' in anchor
-        ? (anchor.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 0, height: 0 })
-        : anchor
-    const b: Box = boundary ? boundary.rect() : viewportBox()
-    // 测量自然尺寸：先去掉 maxHeight 限制
-    const prevMax = el.style.maxHeight
-    el.style.maxHeight = 'none'
-    const size = { width: el.offsetWidth, height: el.scrollHeight }
-    el.style.maxHeight = prevMax
-    const computed = computePosition(a, size, b, { side, align, offset, padding, flip, shift })
-    const top = computed.y - b.top
-    geo.current = {
-      top,
-      bottom: top + Math.min(size.height, computed.maxHeight),
-      radius: getComputedStyle(el).borderTopLeftRadius || '0px',
-    }
-    // 挂在卡片内时用 absolute（相对浮层容器），挂在 body 时用 fixed（视口坐标）
-    const c = boundary?.container?.getBoundingClientRect()
-    const next = { ...computed, left: computed.x - (c?.left ?? 0), top: computed.y - (c?.top ?? 0) }
-    setPos((p) =>
-      p &&
-      p.left === next.left &&
-      p.top === next.top &&
-      p.maxHeight === next.maxHeight &&
-      p.side === next.side &&
-      p.origin === next.origin
-        ? p
-        : next,
-    )
-    if (reserve && boundary?.reserve) boundary.reserve(id.current, next.bottomFromTop)
-  }, [anchor, boundary, side, align, offset, padding, flip, shift, reserve])
+  const update = useCallback(
+    (opts: FloatingUpdateOptions = {}) => {
+      const el = ref.current
+      if (!el || !anchor) return
+      const a: Box =
+        'current' in anchor
+          ? (anchor.current?.getBoundingClientRect() ?? { left: 0, top: 0, width: 0, height: 0 })
+          : anchor
+      const b: Box = boundary ? boundary.rect() : viewportBox()
+      const size = { width: el.offsetWidth, height: opts.height ?? naturalHeight(el, scroller) }
+      const keep = opts.keepSide ? placedSide.current : null
+      const computed = computePosition(a, size, b, {
+        side: keep ?? side,
+        align,
+        offset,
+        padding,
+        flip: keep ? false : flip,
+        shift,
+      })
+      placedSide.current = computed.side
+      const top = computed.y - b.top
+      geo.current = {
+        top,
+        bottom: top + Math.min(size.height, computed.maxHeight),
+        radius: getComputedStyle(el).borderTopLeftRadius || '0px',
+      }
+      // 挂在卡片内时用 absolute（相对浮层容器），挂在 body 时用 fixed（视口坐标）
+      const c = boundary?.container?.getBoundingClientRect()
+      const next = {
+        ...computed,
+        left: computed.x - (c?.left ?? 0),
+        top: computed.y - (c?.top ?? 0),
+      }
+      setPos((p) =>
+        p &&
+        p.left === next.left &&
+        p.top === next.top &&
+        p.maxHeight === next.maxHeight &&
+        p.side === next.side &&
+        p.origin === next.origin
+          ? p
+          : next,
+      )
+      if (reserve && boundary?.reserve) boundary.reserve(id.current, next.bottomFromTop)
+    },
+    [anchor, boundary, side, align, offset, padding, flip, shift, reserve, scroller],
+  )
 
   useLayoutEffect(() => {
     // 关闭时保留最后的位置：退出动画仍在原处播放
@@ -265,7 +317,7 @@ export function useFloating(options: UseFloatingOptions): FloatingState {
     // 关闭后又很快打开：上一次的预留还没释放，接着用
     window.clearTimeout(releaseTimer.current)
     update()
-    // 窗口尺寸变化、任何容器滚动时跟随锚点（每帧最多一次）；只在打开期间监听
+    // 窗口尺寸变化、锚点所在的容器滚动时跟随锚点（每帧最多一次）；只在打开期间监听
     let frame = 0
     const schedule = () => {
       if (!frame) {
@@ -275,12 +327,17 @@ export function useFloating(options: UseFloatingOptions): FloatingState {
         })
       }
     }
+    // 浮层自己（或其中元素）的滚动不会移动锚点：不重新定位（见文件头）
+    const onScroll = (e: Event) => {
+      if (e.target instanceof Node && ref.current?.contains(e.target)) return
+      schedule()
+    }
     window.addEventListener('resize', schedule)
-    window.addEventListener('scroll', schedule, { capture: true, passive: true })
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
     const reserveId = id.current
     return () => {
       window.removeEventListener('resize', schedule)
-      window.removeEventListener('scroll', schedule, { capture: true })
+      window.removeEventListener('scroll', onScroll, { capture: true })
       if (frame) cancelAnimationFrame(frame)
       // 等浮层淡出（menuOut）之后再释放：卡片不在浮层淡出的同时缩回（每开一次菜单整块面板「呼吸」一次）
       if (reserve && boundary?.reserve) {

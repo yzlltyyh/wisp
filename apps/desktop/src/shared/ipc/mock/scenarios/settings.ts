@@ -1054,6 +1054,21 @@ export const scenarios: readonly Scenario[] = [
     clickWhenReady(ctx, '[data-testid="style-row-academic"] .st-style-main'),
   ),
   page('ocr', '设置 · OCR', 'ocr'),
+  page(
+    'ocr-many-models',
+    '设置 · OCR（很多视觉模型：识别模型下拉要在菜单里滚动）',
+    'ocr',
+    (_ctx, mock) => {
+      const relay = templateProvider('relay', 'relay')
+      relay.name = '中转站'
+      relay.base_url = 'https://relay.example.com/v1'
+      relay.models = Array.from({ length: 30 }, (_, i) =>
+        model(`vision-${String(i + 1).padStart(2, '0')}`, 'yes'),
+      )
+      mock.state.settings.providers.push(relay)
+      mock.state.hasKey.relay = true
+    },
+  ),
   {
     id: 'settings.ocr-history',
     label: '设置 · OCR 识别历史（深链锚点、列表、展开回看、实时插入）',

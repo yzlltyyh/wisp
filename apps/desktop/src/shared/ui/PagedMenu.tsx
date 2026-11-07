@@ -11,7 +11,9 @@
  * - 子页顶部的返回行「‹ 视觉模型」：‹ 在前导列里，标题与条目文字左对齐，无障碍名称由调用方给（「返回识别菜单」）；
  * - 打开时在定位完成（浮层可见）之后才把焦点移进菜单；关闭后焦点还在退场的菜单里 / 落到 body 时还给触发器。
  * - 锚点可以是触发器元素，也可以是一个固定矩形（右键菜单的指针位置，与 Menu 相同）；锚在矩形上时没有触发器，
- *   关闭后焦点还给 `returnFocus`。
+ *   关闭后焦点还给 `returnFocus`；
+ * - 换页之后重新定位：卡片的预留与下拉帘按新页计算（更高的子页让卡片长高，不被卡片裁掉），锚定的一侧不变。新页从顶上
+ *   开始、初始高亮项滚进视野；悬停改变高亮不滚动（只有打开、换页与键盘导航才滚，且只滚菜单自己）。
  */
 import { ChevronLeft } from 'lucide-react'
 import { AnimatePresence, m, useAnimationControls, useIsPresent } from 'motion/react'
@@ -36,6 +38,7 @@ import { cx } from './cx'
 import {
   MenuEntryView,
   MenuLead,
+  revealInMenu,
   usePointerIntent,
   type MenuEntry,
   type MenuItemEntry,
@@ -78,7 +81,8 @@ export interface PagedMenuProps {
   /** 放不下时翻到另一侧（默认 true；调用方自己算好了位置时传 false，与 Menu 相同） */
   flip?: boolean
   /**
-   * 打开时高亮哪一项：first（键盘打开）/ none（指针打开，悬停才高亮，与 Menu 相同）。换页之后总是高亮新页的第一项
+   * 打开时高亮哪一项：first（键盘打开）/ none（指针打开，悬停才高亮，与 Menu 相同）。键盘与点击换页之后高亮新页的
+   * 第一项（或勾选项）；悬停进入的子页不预先高亮
    */
   initialActive?: 'first' | 'none'
   minWidth?: number
@@ -137,6 +141,8 @@ export function PagedMenu({
   className,
 }: PagedMenuProps) {
   const reduced = useReducedMotionPref()
+  /** 菜单本体：真正滚动的元素（定位层只是外框） */
+  const box = useRef<HTMLDivElement>(null)
   const floating = useFloating({
     open,
     anchor,
@@ -145,8 +151,8 @@ export function PagedMenu({
     flip,
     offset: MENU_OFFSET,
     reserve: true,
+    scroller: box,
   })
-  const box = useRef<HTMLDivElement>(null)
   const sizer = useAnimationControls()
   const boundary = useFloatingBoundary()
   /**
@@ -156,6 +162,8 @@ export function PagedMenu({
   const [anchorBottom, setAnchorBottom] = useState<number | null>(null)
   const baseId = useId()
   const [active, setActive] = useState(-2)
+  /** 下一次高亮变化要滚进视野：打开时与键盘导航置位，悬停清掉（悬停不滚动） */
+  const reveal = useRef(false)
   /** 换页的高度动画里 WebKit 合成的 mousemove 不算悬停（usePointerIntent） */
   const pointerMoved = usePointerIntent()
   const typeahead = useRef({ text: '', at: 0 })
@@ -163,6 +171,11 @@ export function PagedMenu({
   const shown = useRef<{ key: string; height: number } | null>(null)
   /** 换页的高度过渡进行中 */
   const sizing = useRef(false)
+  /** 旧页淡出结束时菜单是否还开着（onExitComplete 里读） */
+  const openRef = useRef(open)
+  useLayoutEffect(() => {
+    openRef.current = open
+  })
   const items = page.items
   const checkable = items.some((e) => isItem(e) && e.checked !== undefined)
   const leading = checkable || !!page.back || items.some((e) => isItem(e) && e.icon !== undefined)
@@ -210,6 +223,20 @@ export function PagedMenu({
       (returnFocus?.current ?? anchorElement(anchor))?.focus({ preventScroll: true })
   }, [open, returnFocus, anchor])
 
+  /**
+   * 定位层按当前页的自然高度（只量当前页：换页时淡出的旧页由 popLayout 绝对定位，仍在菜单本体的滚动区域里，
+   * scrollHeight 会把它算进去）
+   */
+  const naturalHeight = (): number | undefined => {
+    const pos = floating.ref.current
+    const el = box.current
+    const current = el?.querySelector<HTMLElement>(':scope > .ui-pmenu-page:not([inert])')
+    if (!pos || !el || !current) return undefined
+    const cs = getComputedStyle(el)
+    const padding = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+    return pos.offsetHeight - el.clientHeight + padding + current.offsetHeight
+  }
+
   // 换页：高亮新页的初始项；容器从旧高度过渡到新高度，锚定的一边不动
   useLayoutEffect(() => {
     const el = box.current
@@ -217,27 +244,47 @@ export function PagedMenu({
     const prev = shown.current
     if (prev?.key === page.key) return
     // 指针打开的第一页不预先高亮（悬停才高亮）；进入子页 / 返回时高亮新页的第一项
-    setActive(!prev && initialMode === 'none' ? -2 : initialActive(page))
+    const start = !prev && initialMode === 'none' ? -2 : initialActive(page)
+    setActive(start)
     // 过渡起点：正在过渡时取当前可见的高度，否则取上一页稳定时的高度
     const from = sizing.current ? el.offsetHeight : (prev?.height ?? 0)
     sizer.stop()
     sizing.current = false
+    delete el.dataset.animating
     // 新页的自然高度：旧页已脱离排版（popLayout），先去掉过渡中的显式高度
     el.style.height = ''
     const to = el.offsetHeight
     shown.current = { key: page.key, height: to }
-    if (!prev) return
-    // 锚定的一边由定位层的 CSS 固定（在触发器上方时用 bottom，见 anchorBottom），高度变化不需要重新定位
+    if (!prev) {
+      // 打开：定位完成（max-height 生效）之后再滚进视野（见下面的 effect）
+      reveal.current = start >= BACK
+      return
+    }
+    // 点击换页：按下时焦点落到了被点的那一项（tabIndex = -1 的元素点一下就能拿到焦点），旧页随即 inert，焦点会掉到
+    // body、键盘就进不了菜单。还给菜单本体（菜单项的键盘导航本来就经 aria-activedescendant）
+    const focused = document.activeElement
+    if (focused !== el && (!focused || focused === document.body || el.contains(focused)))
+      el.focus({ preventScroll: true })
+    // 新页从顶上开始，初始高亮项滚进视野——按新页的高度算（这一刻菜单本体还是新页的自然高度，下面才写上过渡起点）
+    reveal.current = false
+    el.scrollTop = 0
+    const first = start >= BACK ? document.getElementById(`${baseId}-${page.key}-${start}`) : null
+    if (first) revealInMenu(el, first)
+    // 重新定位：卡片的预留与下拉帘按新页算（更高的子页让卡片长高，不被裁掉）；留在原来的一侧——锚定的一边由定位层的
+    // CSS 固定（在触发器上方时用 bottom，见 anchorBottom），高度变化时不动
+    floating.update({ keepSide: true, height: naturalHeight() })
     if (reduced || Math.abs(to - from) < 1) {
       sizer.set({ height: 'auto' })
       return
     }
-    // 起点同步写上（Motion 的第一帧在下一帧才应用，否则会先画出一帧新高度）
+    // 起点同步写上（Motion 的第一帧在下一帧才应用，否则会先画出一帧新高度）；过渡期间不出滚动条（data-animating）
     el.style.height = `${from}px`
+    el.dataset.animating = ''
     sizing.current = true
     void sizer.start({ height: [from, to], transition: HEIGHT_SPRING }).then(() => {
       if (shown.current?.key !== page.key || !sizing.current) return
       sizing.current = false
+      delete el.dataset.animating
       // 回到自然高度（Motion 记着动画的终值，重渲染时会写回去，所以经它来设）
       sizer.set({ height: 'auto' })
     })
@@ -268,11 +315,15 @@ export function PagedMenu({
     }
   }, [open, anchor, close, floating.ref])
 
-  // 高亮项滚入视野（键盘导航）
-  useEffect(() => {
-    if (!open || active < BACK) return
-    document.getElementById(`${baseId}-${page.key}-${active}`)?.scrollIntoView({ block: 'nearest' })
-  }, [open, active, baseId, page.key])
+  // 高亮项滚进视野（打开时、键盘导航；换页时由换页的 effect 直接滚）：定位完成之后、绘制之前，只滚菜单自己
+  useLayoutEffect(() => {
+    if (!open || !placed || active < BACK || !reveal.current) return
+    reveal.current = false
+    const el = box.current
+    const item = document.getElementById(`${baseId}-${page.key}-${active}`)
+    if (el && item) revealInMenu(el, item)
+    // oxlint-disable-next-line react/exhaustive-deps -- 只跟随高亮项与定位完成（换页由换页的 effect 处理）
+  }, [open, placed, active])
 
   const select = (index: number) => {
     if (index === BACK) return page.back?.onSelect()
@@ -285,6 +336,8 @@ export function PagedMenu({
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.nativeEvent.isComposing) return
+    // 键盘改变的高亮要滚进视野（没有命中的按键在下一次悬停时清掉）
+    reveal.current = true
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
@@ -385,7 +438,14 @@ export function PagedMenu({
               onKeyDown={onKeyDown}
               onPointerLeave={() => setActive(-2)}
             >
-              <AnimatePresence initial={false} mode="popLayout">
+              <AnimatePresence
+                initial={false}
+                mode="popLayout"
+                // 旧页淡出之后按当前页再定位一次（换页时已按当前页量过；这里兜住淡出期间宽度等的变化）
+                onExitComplete={() => {
+                  if (openRef.current) floating.update({ keepSide: true, height: naturalHeight() })
+                }}
+              >
                 <PageView key={page.key} pageKey={page.key} motion={pageMotion}>
                   {page.back ? (
                     <>
@@ -399,7 +459,9 @@ export function PagedMenu({
                         data-active={active === BACK || undefined}
                         data-testid={`${page['data-testid']}-item-back`}
                         onPointerMove={(e) => {
-                          if (pointerMoved(e)) setActive(BACK)
+                          if (!pointerMoved(e)) return
+                          reveal.current = false
+                          setActive(BACK)
                         }}
                         onClick={() => select(BACK)}
                       >
@@ -420,7 +482,9 @@ export function PagedMenu({
                       leading={leading}
                       testId={page['data-testid'] ?? 'paged-menu'}
                       onActivate={(e) => {
-                        if (pointerMoved(e) && i !== active) setActive(i)
+                        if (!pointerMoved(e)) return
+                        reveal.current = false
+                        if (i !== active) setActive(i)
                       }}
                       onSelect={() => select(i)}
                     />

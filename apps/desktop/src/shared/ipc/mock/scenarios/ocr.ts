@@ -133,6 +133,53 @@ function seedSettings(): void {
   state.settings.defaults.ocr = { provider_id: 'qwen', model_id: 'qwen3-vl-plus' }
 }
 
+/**
+ * 很多视觉模型：四家服务各六个（含当前的 qwen3-vl-plus），「视觉模型 ›」页在任何卡片上限下都放不下、要在菜单里
+ * 滚动——菜单滚动、键盘导航与换页的用例需要稳定的溢出
+ */
+function seedManyVisionModels(): void {
+  const state = window.__WISP_MOCK__?.state
+  if (!state) return
+  const six = (ids: readonly string[]) => ids.map((id) => model(id, 'yes'))
+  state.settings.providers = [
+    provider(
+      'qwen',
+      '通义千问',
+      six([
+        'qwen3-vl-plus',
+        'qwen3-vl-flash',
+        'qwen3-vl-max',
+        'qwen-vl-ocr',
+        'qwen2.5-vl-72b',
+        'qwen2.5-vl-32b',
+      ]),
+    ),
+    provider(
+      'openai',
+      'OpenAI',
+      six(['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano', 'gpt-4.1', 'gpt-4.1-mini', 'o4-mini']),
+    ),
+    provider(
+      'zhipu',
+      '智谱',
+      six(['glm-4.6v', 'glm-4.6v-flash', 'glm-4.5v', 'glm-4v-plus', 'glm-4v', 'glm-4v-flash']),
+    ),
+    provider(
+      'moonshot',
+      'Moonshot',
+      six([
+        'kimi-vl-a3b',
+        'kimi-k2-vision',
+        'moonshot-v1-8k-vision',
+        'moonshot-v1-32k-vision',
+        'moonshot-v1-128k-vision',
+        'kimi-latest',
+      ]),
+    ),
+  ]
+  state.settings.defaults.ocr = { provider_id: 'qwen', model_id: 'qwen3-vl-plus' }
+}
+
 /** 与识别文本一致的截图缩略图（PNG）；`path` 缺省为 `crop/cap-<w>x<h>.png` */
 async function thumb(
   ctx: MockContext,
@@ -449,6 +496,16 @@ export const scenarios: readonly Scenario[] = [
     id: 'done',
     label: 'OCR · 完成（可编辑 + 自动复制「已复制」）',
     async run(ctx) {
+      await recognized(ctx)
+      await pause(350)
+    },
+  }),
+  scenario({
+    id: 'many-models',
+    label: 'OCR · 很多视觉模型（「视觉模型 ›」页要在菜单里滚动）',
+    async run(ctx) {
+      // 在挂载之前（第一个 await 之前）换掉设置快照：视图读到的就是这份
+      seedManyVisionModels()
       await recognized(ctx)
       await pause(350)
     },
