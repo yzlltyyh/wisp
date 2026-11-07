@@ -212,8 +212,8 @@ export function PagedMenu({
   /** 最近一次指针位置（文档级 pointermove；判断真实移动的基线） */
   const lastPt = useRef<{ x: number; y: number } | null>(null)
   /**
-   * 页面出现时压在指针下的那一行：undefined = 页面出现后还没有真实移动（第一次真实移动落在哪一行就是哪一行）；
-   * null = 没有 / 已经离开过；数字 = 行号（返回行为 BACK）
+   * 页面出现时压在指针下的那一行：数字 = 行号（返回行为 BACK）；null = 没有 / 已经离开过；undefined = 页面出现时
+   * 不知道指针在哪（刚打开：文档级监听这时才挂上，还没有坐标），由之后的第一次指针事件认定
    */
   const rest = useRef<number | null | undefined>(undefined)
   /** 悬停换页之后的防误触：换页处的指针位置；离开超过 GUARD_RADIUS 之前吞掉按下与点击 */
@@ -226,6 +226,31 @@ export function PagedMenu({
     if (dwell.current) clearTimeout(dwell.current.timer)
     dwell.current = null
   }, [])
+  /** 指针下是当前页的哪一行（返回行为 BACK）；分隔线、分组标题、退场的旧页、菜单外为 null */
+  const rowAt = useCallback(
+    (target: EventTarget | null): number | null => {
+      const el = target instanceof Element ? target.closest('[role^="menuitem"]') : null
+      if (!el || !box.current?.contains(el)) return null
+      const prefix = `${baseId}-${pageRef.current.key}-`
+      return el.id.startsWith(prefix) ? Number(el.id.slice(prefix.length)) : null
+    },
+    [baseId],
+  )
+  /**
+   * 换页时指针（最近一次移动的位置，换页之后它没有动过）压在新页的哪一行。按命中测试从上往下找：淡出的旧页叠在
+   * 新页上面（popLayout 绝对定位）时跳过它；先碰到菜单以外的东西就是不在菜单上。不知道指针在哪、引擎不支持命中测试
+   * 时为 undefined
+   */
+  const rowUnderPointer = (): number | null | undefined => {
+    const p = lastPt.current
+    if (!p || typeof document.elementsFromPoint !== 'function') return undefined
+    for (const el of document.elementsFromPoint(p.x, p.y)) {
+      const row = rowAt(el)
+      if (row !== null) return row
+      if (!floating.ref.current?.contains(el)) return null
+    }
+    return null
+  }
   const items = page.items
   const checkable = items.some((e) => isItem(e) && e.checked !== undefined)
   const leading = checkable || !!page.back || items.some((e) => isItem(e) && e.icon !== undefined)
@@ -337,6 +362,9 @@ export function PagedMenu({
     el.scrollTop = 0
     const first = start >= BACK ? document.getElementById(`${baseId}-${page.key}-${start}`) : null
     if (first) revealInMenu(el, first)
+    // 页面出现时压在指针下的那一行：按指针现在的位置直接认定（不等之后的移动来猜）。这一刻是新页的最终排版（自然高度、
+    // 滚动位置已定；在触发器上方时底边由定位层锚住），高度过渡结束后静止的指针停在哪一行，就是这一行
+    rest.current = rowUnderPointer()
     // 重新定位：卡片的预留与下拉帘按新页算（更高的子页让卡片长高，不被裁掉）；留在原来的一侧——锚定的一边由定位层的
     // CSS 固定（在触发器上方时用 bottom，见 anchorBottom），高度变化时不动
     floating.update({ keepSide: true, height: naturalHeight() })
@@ -391,13 +419,6 @@ export function PagedMenu({
   // 悬停进入子页：文档级的指针移动（菜单外的移动、行间的分隔线与分组标题都要看到）与按键；只在打开期间挂着
   useEffect(() => {
     if (!open) return
-    /** 指针下是当前页的哪一行（返回行为 BACK）；分隔线、分组标题、菜单外为 null */
-    const rowAt = (target: EventTarget | null): number | null => {
-      const el = target instanceof Element ? target.closest('[role^="menuitem"]') : null
-      if (!el || !box.current?.contains(el)) return null
-      const prefix = `${baseId}-${pageRef.current.key}-`
-      return el.id.startsWith(prefix) ? Number(el.id.slice(prefix.length)) : null
-    }
     const fire = () => {
       const d = dwell.current
       dwell.current = null
@@ -419,6 +440,10 @@ export function PagedMenu({
       const p = { x: e.clientX, y: e.clientY }
       const last = lastPt.current
       lastPt.current = p
+      const row = rowAt(e.target)
+      // 页面出现时不知道指针在哪（刚打开）：之后的第一次事件——浮层出现在静止的指针下时引擎合成的移动，或者第一次
+      // 真实移动——落在哪一行，就当作出现时压在指针下的那一行（离出现时的位置最近的一次）
+      if (rest.current === undefined) rest.current = row
       // 第一次只记基线；坐标没变的是布局变化时引擎合成的移动（见 usePointerIntent）：都不算移动
       if (!last || (last.x === p.x && last.y === p.y)) return
       const g = guard.current
@@ -426,9 +451,7 @@ export function PagedMenu({
         guard.current = null
         hoverEntry.current = null
       }
-      const row = rowAt(e.target)
-      if (rest.current === undefined) rest.current = row
-      else if (rest.current !== null && row !== rest.current) rest.current = null
+      if (rest.current !== null && row !== rest.current) rest.current = null
       const it = row !== null && row >= 0 ? pageRef.current.items[row] : undefined
       const armable =
         (e.pointerType === 'mouse' || e.pointerType === 'pen') &&
@@ -462,7 +485,7 @@ export function PagedMenu({
       guard.current = null
       hoverEntry.current = null
     }
-  }, [open, baseId, cancelDwell, floating.ref])
+  }, [open, cancelDwell, floating.ref, rowAt])
 
   // 高亮项滚进视野（打开时、键盘导航；换页时由换页的 effect 直接滚）：定位完成之后、绘制之前，只滚菜单自己；
   // 只认 reveal 记下的那一项（见上）

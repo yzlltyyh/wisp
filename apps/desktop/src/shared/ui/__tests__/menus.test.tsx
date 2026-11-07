@@ -412,6 +412,44 @@ describe('PagedMenu：悬停进入子页', () => {
     expect(currentPage()).toBe('root')
   })
 
+  it('打开后的第一次移动（只记基线）落在哪一行，就当作出现时压在指针下的那一行：紧接着第一次真实移动就落到「›」上也算移进来', () => {
+    mountPaged()
+    move(item('a'), 20, 12)
+    move(item('more'), 20, 40)
+    wait(DWELL)
+    expect(currentPage()).toBe('sub')
+  })
+
+  it('换页时按指针最近一次的位置认定出现时压在它下面的那一行：返回根页后第一次移动就直接落到「›」上也算移进来', () => {
+    const { menu } = mountPaged()
+    hoverMore(40)
+    wait(DWELL)
+    expect(currentPage()).toBe('sub')
+    // 离开换页处（解除防误触），停在子页顶部的返回行上
+    move(item('x'), 60, 40)
+    move(item('back'), 60, 12)
+    // 命中测试（jsdom 不排版）：上面一行是根页的 Alpha，往下是 More
+    const hit = (_x: number, y: number) => [y < 26 ? item('a') : item('more')]
+    Object.defineProperty(document, 'elementsFromPoint', { configurable: true, value: hit })
+    try {
+      fireEvent.keyDown(menu, { key: 'ArrowLeft' })
+      expect(currentPage()).toBe('root')
+      // 出现时指针压着 Alpha；第一次移动（快速移动合并成的一次事件）直接落到 More 上：计时
+      move(item('more'), 60, 40)
+      wait(DWELL)
+      expect(currentPage()).toBe('sub')
+      // 反过来：出现时指针就压着「›」（换页前停在返回行下面一行），之后的抖动不计时
+      move(item('x'), 60, 44)
+      fireEvent.keyDown(menu, { key: 'ArrowLeft' })
+      expect(currentPage()).toBe('root')
+      move(item('more'), 61, 45)
+      wait(DWELL * 3)
+      expect(currentPage()).toBe('root')
+    } finally {
+      delete (document as { elementsFromPoint?: unknown }).elementsFromPoint
+    }
+  })
+
   it('离开菜单、按下、按键、触摸、禁用的「›」：不进入', () => {
     const { menu } = mountPaged()
     hoverMore()
