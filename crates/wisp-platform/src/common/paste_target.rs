@@ -70,6 +70,23 @@ pub fn finder_surface(role: &str, in_window: Option<bool>) -> FocusSurface {
     }
 }
 
+/// macOS：前台应用是 Finder 时的焦点类别。`key_focus_pid` 是键盘焦点实际所在的进程（None = 没读到），`finder_role`
+/// 读 Finder 焦点元素的角色与窗口归属（交给 [`finder_surface`]），只在键盘焦点确实在 Finder 时调用。
+///
+/// 前台应用是 Finder 不等于键盘焦点在 Finder：Spotlight、Alfred、Raycast 这类不激活自己的面板盖在 Finder 上时，前台应用
+/// （菜单栏、`NSWorkspace`）仍是 Finder，Finder 自己报告的焦点却是面板背后的文件视图——只问 Finder 会把粘进面板的每一下
+/// 都判为落空。键盘焦点在别的进程时是「其余」，读不到时判断不了
+pub fn finder_focus_surface(
+    finder_pid: i32,
+    key_focus_pid: Option<i32>,
+    finder_role: impl FnOnce() -> Option<(String, Option<bool>)>,
+) -> Option<FocusSurface> {
+    match key_focus_pid? {
+        pid if pid == finder_pid => finder_role().map(|(role, in_window)| finder_surface(&role, in_window)),
+        _ => Some(FocusSurface::Other),
+    }
+}
+
 /// Windows 的类名比较不区分大小写（`RegisterClass` 的规则）
 fn class_is(class: &str, name: &str) -> bool {
     class.eq_ignore_ascii_case(name)
@@ -189,6 +206,43 @@ mod tests {
             FocusSurface::Other,
             "macOS 不做菜单规则"
         );
+    }
+
+    #[test]
+    fn finder_is_only_asked_when_it_holds_the_keyboard_focus() {
+        const FINDER: i32 = 300;
+        fn role(r: &'static str, w: Option<bool>) -> impl FnOnce() -> Option<(String, Option<bool>)> {
+            move || Some((r.to_owned(), w))
+        }
+        // 键盘焦点在 Finder：照角色判断
+        assert_eq!(
+            finder_focus_surface(FINDER, Some(FINDER), role("AXList", Some(true))),
+            Some(FocusSurface::FileView)
+        );
+        assert_eq!(
+            finder_focus_surface(FINDER, Some(FINDER), role("AXTextField", Some(true))),
+            Some(FocusSurface::TextInput)
+        );
+        // Finder 自己的焦点读不到（超时、缺权限）
+        assert_eq!(finder_focus_surface(FINDER, Some(FINDER), || None), None);
+        // Spotlight / Alfred / Raycast 的面板盖在 Finder 上、拿走了键盘焦点：不问 Finder，按「其余」
+        let asked = std::cell::Cell::new(false);
+        let finder_view = || {
+            asked.set(true);
+            Some(("AXList".to_owned(), Some(true)))
+        };
+        assert_eq!(
+            finder_focus_surface(FINDER, Some(301), finder_view),
+            Some(FocusSurface::Other)
+        );
+        assert!(!asked.get(), "键盘焦点不在 Finder 时不读它的焦点元素");
+        // 键盘焦点所在的进程读不到：判断不了，也不问 Finder
+        let finder_view = || {
+            asked.set(true);
+            Some(("AXList".to_owned(), Some(true)))
+        };
+        assert_eq!(finder_focus_surface(FINDER, None, finder_view), None);
+        assert!(!asked.get());
     }
 
     #[test]

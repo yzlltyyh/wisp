@@ -7,7 +7,8 @@
 //!   预算用完立即返回 Timeout，不会逐次叠加；
 //! - systemWide 元素的消息超时是**进程全局**的（对它设置会改变所有未单独设置超时的元素），因此只设一次、固定为
 //!   0.1 s，绝不按某次探测的预算收紧（否则会把并发进行的取词误判为超时）。预算不足 0.1 s 的探测（中键判定）
-//!   不经过 systemWide，直接用目标进程的应用元素并按剩余预算设超时；
+//!   不经过 systemWide，直接用目标进程的应用元素并按剩余预算设超时。例外是连续粘贴的焦点探测：键盘焦点所在的进程
+//!   只有 systemWide 知道（[`key_focus_pid`]），它的预算只比 0.1 s 少了查前台进程的那几毫秒，最坏也只超出这么多；
 //! - `APIDisabled` / 未受信任 → 权限缺失；等满超时的 `CannotComplete` → 超时（同一个 pid 不再重试）；
 //!   其余错误与空串交给调用方走回退；
 //! - 不在主线程调用（由调用方保证：取词在工作线程，中键判定在 tap 线程）。
@@ -143,17 +144,33 @@ impl Element {
 
     /// 读取一个属性
     pub(crate) fn attr(&self, name: &str) -> Result<CFRetained<CFType>, AxFail> {
+        match self.attr_raw(name) {
+            Ok(Some(v)) => Ok(v),
+            Ok(None) => Err(AxFail::Unsupported),
+            Err(e) => Err(AxFail::from_error(e)),
+        }
+    }
+
+    /// 读取一个属性，失败时给出原始的 AXError（`AxFail` 把「没有这个属性」与「元素已失效」归为一类，个别判断要分开）。
+    /// 成功但没有值时为 `Ok(None)`
+    fn attr_raw(&self, name: &str) -> Result<Option<CFRetained<CFType>>, AXError> {
         let key = CFString::from_str(name);
         let mut out: *const CFType = std::ptr::null();
         // SAFETY: out 指向有效的指针槽；成功时得到 +1 引用，由 CFRetained 接管
         let err = unsafe { self.el.copy_attribute_value(&key, NonNull::from(&mut out)) };
         if err != AXError::Success {
-            return Err(AxFail::from_error(err));
+            return Err(err);
         }
-        NonNull::new(out.cast_mut())
-            // SAFETY: Copy 规则返回的 +1 引用
-            .map(|p| unsafe { CFRetained::from_raw(p) })
-            .ok_or(AxFail::Unsupported)
+        // SAFETY: Copy 规则返回的 +1 引用
+        Ok(NonNull::new(out.cast_mut()).map(|p| unsafe { CFRetained::from_raw(p) }))
+    }
+
+    /// 元素所属的进程（`AXUIElementGetPid`：读元素自带的 pid，不向任何应用发消息）
+    pub(crate) fn pid(&self) -> Option<i32> {
+        let mut pid: i32 = 0;
+        // SAFETY: pid 指向有效的 pid_t 槽位（macOS 上 pid_t 就是 i32）；元素有效
+        let err = unsafe { self.el.pid(NonNull::from(&mut pid)) };
+        (err == AXError::Success && pid > 0).then_some(pid)
     }
 
     /// 读取一个带参数的属性
@@ -387,27 +404,49 @@ pub(crate) fn link_at(p: CGPoint, deadline: Duration, owner_pid: Option<i32>) ->
     (!budget.expired()).then_some(false)
 }
 
-/// 某个进程焦点元素的角色（`AXRole`）与它是否属于某个窗口（`AXWindow` 属性；None = 没读到）。只读角色与归属，不读值、
-/// 不读标题。只走该进程的应用元素（不经 systemWide：只关心这个进程自己的焦点，超时也能按剩余预算设置）。取不到焦点
-/// 元素、超时、缺权限时为 None
-pub(crate) fn focused_role(pid: i32, deadline: Duration) -> Option<(String, Option<bool>)> {
+/// 键盘焦点所在的进程：systemWide 的 `AXFocusedApplication`，再读它自带的 pid（[`Element::pid`]）。与 `NSWorkspace` 的
+/// 前台应用不同，它认得不激活自己的面板（Spotlight、Alfred、Raycast）拿走的键盘焦点。只读这一个属性，不读焦点元素与
+/// 任何值。systemWide 的超时是全局固定的（见模块文档），这里只在预算还有剩余时发请求。缺权限、超时、读不到时为 None
+pub(crate) fn key_focus_pid(budget: &Budget) -> Option<i32> {
     if !trusted() {
         return None;
     }
-    let budget = Budget::new(deadline);
-    let el = focused_element(Some(pid), &budget, Route::AppOnly).ok()?;
-    let role = el.within(&budget).ok()?.string("AXRole").ok()?;
+    let app = Element::system_wide()
+        .within(budget)
+        .ok()?
+        .child("AXFocusedApplication")
+        .ok()?;
+    let pid = app.pid()?;
+    (!budget.expired()).then_some(pid)
+}
+
+/// 某个进程焦点元素的角色（`AXRole`）与它是否属于某个窗口（`AXWindow` 属性；None = 没读到）。只读角色与归属，不读值、
+/// 不读标题。只走该进程的应用元素（不经 systemWide：只关心这个进程自己的焦点，超时也能按剩余预算设置）。取不到焦点
+/// 元素、超时、缺权限、预算用完时为 None
+pub(crate) fn focused_role(pid: i32, budget: &Budget) -> Option<(String, Option<bool>)> {
+    if !trusted() {
+        return None;
+    }
+    let el = focused_element(Some(pid), budget, Route::AppOnly).ok()?;
+    let role = el.within(budget).ok()?.string("AXRole").ok()?;
     // 只有分组 / 滚动区要看归属（桌面不在任何窗口里），其余角色省掉这次 AX 调用
     let in_window = if matches!(role.as_str(), "AXGroup" | "AXScrollArea") {
-        match el.within(&budget).ok()?.attr("AXWindow") {
-            Ok(_) => Some(true),
-            Err(AxFail::Unsupported) => Some(false),
-            Err(_) => None,
-        }
+        window_membership(el.within(budget).ok()?.attr_raw("AXWindow").map(|v| v.is_some()))
     } else {
         None
     };
     (!budget.expired()).then_some((role, in_window))
+}
+
+/// 读 `AXWindow` 的结果（成功时是否有值）→ 元素是否属于某个窗口。只有「没有这个属性 / 没有值」算不在任何窗口里
+/// （桌面）；元素已经失效（视图切换、窗口关闭的一瞬间）、没有实现、超时等一律算没读到——否则任何失败都会让分组 /
+/// 滚动区被当成桌面
+fn window_membership(read: Result<bool, AXError>) -> Option<bool> {
+    match read {
+        Ok(has_window) => Some(has_window),
+        Err(AXError::NoValue | AXError::AttributeUnsupported) => Some(false),
+        Err(_) => None,
+    }
 }
 
 /// 对某个 Electron 应用打开完整的无障碍树（**不**设置 AXEnhancedUserInterface，它会让窗口动画失常）
@@ -415,4 +454,27 @@ pub(crate) fn enable_manual_accessibility(pid: i32, budget: &Budget) -> Result<(
     Element::application(pid)
         .within(budget)?
         .set_bool("AXManualAccessibility", true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_a_missing_window_attribute_means_the_desktop() {
+        assert_eq!(window_membership(Ok(true)), Some(true));
+        assert_eq!(window_membership(Ok(false)), Some(false));
+        assert_eq!(window_membership(Err(AXError::NoValue)), Some(false));
+        assert_eq!(window_membership(Err(AXError::AttributeUnsupported)), Some(false));
+        // 元素已失效、自定义元素没有实现、超时、其他错误：没读到，不当成桌面
+        for e in [
+            AXError::InvalidUIElement,
+            AXError::NotImplemented,
+            AXError::CannotComplete,
+            AXError::Failure,
+            AXError::APIDisabled,
+        ] {
+            assert_eq!(window_membership(Err(e)), None, "{e:?}");
+        }
+    }
 }

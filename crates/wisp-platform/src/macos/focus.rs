@@ -255,10 +255,12 @@ impl FocusTracker for MacFocus {
             });
         }
         let left = deadline.checked_sub(started.elapsed()).filter(|d| !d.is_zero())?;
-        let (role, in_window) = super::ax::focused_role(pid, left)?;
-        Some(FocusFacts {
-            surface: paste_target::finder_surface(&role, in_window),
-        })
+        let budget = super::ax::Budget::new(left);
+        // 先确认键盘焦点就在 Finder（不激活自己的面板盖在 Finder 上时前台应用仍是 Finder），再读它的焦点元素
+        let surface = paste_target::finder_focus_surface(pid, super::ax::key_focus_pid(&budget), || {
+            super::ax::focused_role(pid, &budget)
+        })?;
+        Some(FocusFacts { surface })
     }
 }
 
