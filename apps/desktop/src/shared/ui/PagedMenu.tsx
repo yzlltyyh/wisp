@@ -183,8 +183,11 @@ export function PagedMenu({
   const [anchorBottom, setAnchorBottom] = useState<number | null>(null)
   const baseId = useId()
   const [active, setActive] = useState(-2)
-  /** 下一次高亮变化要滚进视野：打开时与键盘导航置位，悬停清掉（悬停不滚动） */
-  const reveal = useRef(false)
+  /**
+   * 要滚进视野的高亮项（下标）：打开时与键盘导航写上目标，高亮真的变成它、而且定位完成时滚一次；悬停清掉（悬停不滚动）。
+   * 记下标而不是布尔：关闭不重置高亮，重新打开的那次提交里 active 还是上一次留下的那一项（与 Menu 相同）
+   */
+  const reveal = useRef<number | null>(null)
   /** 换页的高度动画里 WebKit 合成的 mousemove 不算悬停（usePointerIntent） */
   const pointerMoved = usePointerIntent()
   const typeahead = useRef({ text: '', at: 0 })
@@ -321,7 +324,7 @@ export function PagedMenu({
     shown.current = { key: page.key, height: to }
     if (!prev) {
       // 打开：定位完成（max-height 生效）之后再滚进视野（见下面的 effect）
-      reveal.current = start >= BACK
+      reveal.current = start >= BACK ? start : null
       return
     }
     // 点击换页：按下时焦点落到了被点的那一项（tabIndex = -1 的元素点一下就能拿到焦点），旧页随即 inert，焦点会掉到
@@ -330,7 +333,7 @@ export function PagedMenu({
     if (focused !== el && (!focused || focused === document.body || el.contains(focused)))
       el.focus({ preventScroll: true })
     // 新页从顶上开始，初始高亮项滚进视野——按新页的高度算（这一刻菜单本体还是新页的自然高度，下面才写上过渡起点）
-    reveal.current = false
+    reveal.current = null
     el.scrollTop = 0
     const first = start >= BACK ? document.getElementById(`${baseId}-${page.key}-${start}`) : null
     if (first) revealInMenu(el, first)
@@ -461,15 +464,29 @@ export function PagedMenu({
     }
   }, [open, baseId, cancelDwell, floating.ref])
 
-  // 高亮项滚进视野（打开时、键盘导航；换页时由换页的 effect 直接滚）：定位完成之后、绘制之前，只滚菜单自己
+  // 高亮项滚进视野（打开时、键盘导航；换页时由换页的 effect 直接滚）：定位完成之后、绘制之前，只滚菜单自己；
+  // 只认 reveal 记下的那一项（见上）
   useLayoutEffect(() => {
-    if (!open || !placed || active < BACK || !reveal.current) return
-    reveal.current = false
+    if (!open || !placed || active < BACK || reveal.current !== active) return
+    reveal.current = null
     const el = box.current
     const item = document.getElementById(`${baseId}-${page.key}-${active}`)
     if (el && item) revealInMenu(el, item)
     // oxlint-disable-next-line react/exhaustive-deps -- 只跟随高亮项与定位完成（换页由换页的 effect 处理）
   }, [open, placed, active])
+
+  /** 键盘改变高亮：新的高亮项滚进视野；已经是它（被滚轮滚开了）时高亮不变，直接滚（与 Menu 相同） */
+  const moveTo = (index: number) => {
+    if (index === active) {
+      reveal.current = null
+      const el = box.current
+      const item = index >= BACK ? document.getElementById(`${baseId}-${page.key}-${index}`) : null
+      if (placed && el && item) revealInMenu(el, item)
+      return
+    }
+    reveal.current = index
+    setActive(index)
+  }
 
   const select = (index: number) => {
     if (index === BACK) return page.back?.onSelect()
@@ -482,25 +499,23 @@ export function PagedMenu({
 
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.nativeEvent.isComposing) return
-    // 键盘改变的高亮要滚进视野（没有命中的按键在下一次悬停时清掉）
-    reveal.current = true
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
         // 没有高亮项（指针打开、指针离开过）时从第一项开始
-        setActive((a) => nextEnabled(page, a < BACK ? (page.back ? BACK : 0) : a + 1, 1))
+        moveTo(nextEnabled(page, active < BACK ? (page.back ? BACK : 0) : active + 1, 1))
         return
       case 'ArrowUp':
         e.preventDefault()
-        setActive((a) => nextEnabled(page, a < BACK ? items.length - 1 : a - 1, -1))
+        moveTo(nextEnabled(page, active < BACK ? items.length - 1 : active - 1, -1))
         return
       case 'Home':
         e.preventDefault()
-        setActive(nextEnabled(page, page.back ? BACK : 0, 1))
+        moveTo(nextEnabled(page, page.back ? BACK : 0, 1))
         return
       case 'End':
         e.preventDefault()
-        setActive(nextEnabled(page, items.length - 1, -1))
+        moveTo(nextEnabled(page, items.length - 1, -1))
         return
       case 'Enter':
       case ' ':
@@ -539,7 +554,7 @@ export function PagedMenu({
         const i = (Math.max(active, 0) + (ta.text.length > 1 ? k - 1 : k)) % n
         const it = items[i]
         if (it && isItem(it) && !it.disabled && it.label.toLocaleLowerCase().startsWith(needle)) {
-          setActive(i)
+          moveTo(i)
           break
         }
       }
@@ -610,7 +625,7 @@ export function PagedMenu({
                         data-testid={`${page['data-testid']}-item-back`}
                         onPointerMove={(e) => {
                           if (!pointerMoved(e)) return
-                          reveal.current = false
+                          reveal.current = null
                           setActive(BACK)
                         }}
                         onClick={() => select(BACK)}
@@ -633,7 +648,7 @@ export function PagedMenu({
                       testId={page['data-testid'] ?? 'paged-menu'}
                       onActivate={(e) => {
                         if (!pointerMoved(e)) return
-                        reveal.current = false
+                        reveal.current = null
                         if (i !== active) setActive(i)
                       }}
                       onSelect={() => select(i)}

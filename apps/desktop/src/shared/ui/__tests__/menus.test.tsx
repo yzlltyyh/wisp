@@ -175,6 +175,109 @@ describe('Menu 的滚入视野', () => {
     expect(menu.scrollTop).toBe(0)
     expect(into).not.toHaveBeenCalled()
   })
+
+  it('重新打开时滚进视野的是这次的初始高亮项：上次用键盘停在靠下的项、关闭之后再打开，勾选项仍然可见', async () => {
+    stubLayout()
+    // 勾选第 2 项（顶边 28，底边 56：不滚动就在可视区里）
+    const list = items(40).map((e, i) => ({ ...e, checked: i === 1 }))
+    wrap(
+      <DropdownMenu
+        items={list}
+        label="菜单"
+        highlightSelected
+        renderTrigger={(p) => (
+          <button type="button" {...p}>
+            打开
+          </button>
+        )}
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: '打开' })
+    fireEvent.click(trigger)
+    let menu = await screen.findByRole('menu')
+    await frame()
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/-1$/)
+    fireEvent.keyDown(menu, { key: 'End' })
+    expect(menu.scrollTop).toBe(40 * 28 - 100)
+    // 关闭（再点一下触发器）、再打开：高亮回到勾选项，勾选项在可视区里
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(trigger)
+    menu = await screen.findByRole('menu')
+    await frame()
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/-1$/)
+    expect(menu.scrollTop).toBeLessThanOrEqual(28)
+    expect(menu.scrollTop + 100).toBeGreaterThanOrEqual(56)
+  })
+
+  it('键盘打开（高亮第一项）同样：上次停在最后一项，再打开时第一项可见', async () => {
+    stubLayout()
+    const trigger = dropdown(items(40))
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    let menu = await screen.findByRole('menu')
+    await frame()
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/-0$/)
+    fireEvent.keyDown(menu, { key: 'End' })
+    expect(menu.scrollTop).toBe(40 * 28 - 100)
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+    menu = await screen.findByRole('menu')
+    await frame()
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/-0$/)
+    expect(menu.scrollTop).toBe(0)
+  })
+
+  it('键盘导航到已经高亮、却被滚出视野的项（先滚轮滚开再按 End）：同样滚回来', async () => {
+    stubLayout()
+    const trigger = dropdown(items(40))
+    fireEvent.click(trigger)
+    const menu = await screen.findByRole('menu')
+    await frame()
+    fireEvent.keyDown(menu, { key: 'End' })
+    expect(menu.scrollTop).toBe(40 * 28 - 100)
+    menu.scrollTop = 0
+    fireEvent.keyDown(menu, { key: 'End' })
+    expect(menu.scrollTop).toBe(40 * 28 - 100)
+  })
+})
+
+describe('PagedMenu 的滚入视野', () => {
+  it('重新打开时滚进视野的是这次的初始高亮项（不是上次留下的高亮）', async () => {
+    stubLayout()
+    function Reopen() {
+      const [open, setOpen] = React.useState(true)
+      return (
+        <>
+          <button type="button" onClick={() => setOpen((o) => !o)}>
+            开关
+          </button>
+          <PagedMenu
+            open={open}
+            onClose={() => setOpen(false)}
+            anchor={{ left: 10, top: 10, width: 0, height: 0 }}
+            page={{ key: 'root', label: '操作', 'data-testid': 'pm', items: items(40) }}
+            direction={1}
+            initialActive="first"
+          />
+        </>
+      )
+    }
+    wrap(<Reopen />)
+    let menu = screen.getByRole('menu')
+    await frame()
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/-root-0$/)
+    fireEvent.keyDown(menu, { key: 'End' })
+    expect(menu.scrollTop).toBe(40 * 28 - 100)
+    const toggle = screen.getByRole('button', { name: '开关' })
+    // 菜单开着时点外面只关菜单（这一下被吞掉）：用 click 直接切换
+    fireEvent.click(toggle)
+    fireEvent.click(toggle)
+    menu = await screen.findByRole('menu')
+    await frame()
+    expect(menu.getAttribute('aria-activedescendant')).toMatch(/-root-0$/)
+    expect(menu.scrollTop).toBe(0)
+  })
 })
 
 // ---------------------------------------------------------------------------

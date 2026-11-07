@@ -132,6 +132,41 @@ test('设置 › OCR 的识别模型下拉（很多模型）：滚轮 / 拖动�
   await expectScrollable(page, menu, '[role^="menuitem"]')
 })
 
+test('设置 › OCR 的识别模型下拉：键盘停在最后一项、Esc 关闭之后再打开，勾选的模型仍在可视区里', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 760, height: 480 })
+  await open(page, '/settings.html?scenario=settings.ocr-many-models', { os: 'windows' })
+  const trigger = page.getByTestId('ocr-model-select')
+  const menu = page.getByTestId('ocr-model-select-menu')
+  /** 勾选项与高亮项是否完整地在菜单的可视区里 */
+  const shown = () =>
+    menu.evaluate((el) => {
+      const m = el.getBoundingClientRect()
+      const inView = (n: Element | null) => {
+        if (!n) return false
+        const r = n.getBoundingClientRect()
+        return r.top >= m.top - 1 && r.bottom <= m.bottom + 1
+      }
+      const checked = el.querySelector('[aria-checked="true"]')
+      const active = el.querySelector('[data-active]')
+      return { checked: inView(checked), active: inView(active), same: checked === active }
+    })
+  await trigger.click()
+  await expect(menu).toBeFocused()
+  await page.waitForTimeout(300)
+  expect(await shown()).toEqual({ checked: true, active: true, same: true })
+  await page.keyboard.press('End')
+  await frames(page)
+  expect(await menu.evaluate((el) => el.scrollTop)).toBeGreaterThan(0)
+  await page.keyboard.press('Escape')
+  await expect(menu).toHaveCount(0)
+  await trigger.click()
+  await expect(menu).toBeFocused()
+  await frames(page)
+  expect(await shown()).toEqual({ checked: true, active: true, same: true })
+})
+
 test('面板 OCR「视觉模型 ›」页（很多模型）：可以滚动、不弹回，换页时与换页后都没有横向滚动条', async ({
   page,
 }) => {

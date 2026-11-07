@@ -136,8 +136,12 @@ export function Menu({
     placed,
   } = useFloating({ open, anchor, side, align, flip, shift, offset: 4, reserve: true })
   const [active, setActive] = useState(-1)
-  /** 下一次高亮变化要滚进视野：打开时与键盘导航置位，悬停清掉（悬停不滚动） */
-  const reveal = useRef(false)
+  /**
+   * 要滚进视野的高亮项（下标）：打开时与键盘导航写上目标，高亮真的变成它、而且定位完成时滚一次；悬停清掉（悬停不滚动）。
+   * 记下标而不是一个布尔：关闭不重置高亮，重新打开的那次提交里 active 还是上一次留下的那一项（定位沿用上次的位置，
+   * 这次提交里就已经 placed）——按布尔会拿它滚动并把标志用掉，等高亮变成勾选项时不再滚，勾选项留在可视区外
+   */
+  const reveal = useRef<number | null>(null)
   const pointerMoved = usePointerIntent()
   const typeahead = useRef({ text: '', at: 0 })
   const baseId = useId()
@@ -160,7 +164,7 @@ export function Menu({
       start = items.findIndex((e) => isItem(e) && e.checked === true && !e.disabled)
       if (start < 0) start = firstEnabled(items, 0, 1)
     } else if (initialActive === 'first') start = firstEnabled(items, 0, 1)
-    reveal.current = start >= 0
+    reveal.current = start >= 0 ? start : null
     setActive(start)
     // 只在打开时执行
     // oxlint-disable-next-line react/exhaustive-deps
@@ -238,35 +242,47 @@ export function Menu({
     }
   }, [open, anchor, close, floatingRef])
 
-  // 高亮项滚进视野（打开时、键盘导航）：定位完成（max-height 生效）之后、绘制之前，打开的第一帧就看得见勾选项
+  // 高亮项滚进视野（打开时、键盘导航）：定位完成（max-height 生效）之后、绘制之前，打开的第一帧就看得见勾选项。
+  // 只认 reveal 记下的那一项（见上）
   useLayoutEffect(() => {
-    if (!open || !placed || active < 0 || !reveal.current) return
-    reveal.current = false
+    if (!open || !placed || active < 0 || reveal.current !== active) return
+    reveal.current = null
     const menu = floatingRef.current
     const item = document.getElementById(`${baseId}-${active}`)
     if (menu && item) revealInMenu(menu, item)
   }, [open, placed, active, baseId, floatingRef])
 
+  /** 键盘改变高亮：新的高亮项滚进视野。已经是它（例如滚轮把它滚开了，再按 End）时高亮不变、effect 不会再跑，直接滚 */
+  const moveTo = (index: number) => {
+    if (index === active) {
+      reveal.current = null
+      const menu = floatingRef.current
+      const item = index >= 0 ? document.getElementById(`${baseId}-${index}`) : null
+      if (placed && menu && item) revealInMenu(menu, item)
+      return
+    }
+    reveal.current = index
+    setActive(index)
+  }
+
   const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.nativeEvent.isComposing) return
-    // 键盘改变的高亮要滚进视野（没有命中的按键在下一次悬停时清掉）
-    reveal.current = true
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault()
-        setActive((a) => firstEnabled(items, a + 1, 1))
+        moveTo(firstEnabled(items, active + 1, 1))
         return
       case 'ArrowUp':
         e.preventDefault()
-        setActive((a) => firstEnabled(items, a < 0 ? items.length - 1 : a - 1, -1))
+        moveTo(firstEnabled(items, active < 0 ? items.length - 1 : active - 1, -1))
         return
       case 'Home':
         e.preventDefault()
-        setActive(firstEnabled(items, 0, 1))
+        moveTo(firstEnabled(items, 0, 1))
         return
       case 'End':
         e.preventDefault()
-        setActive(firstEnabled(items, items.length - 1, -1))
+        moveTo(firstEnabled(items, items.length - 1, -1))
         return
       case 'Enter':
       case ' ':
@@ -292,7 +308,7 @@ export function Menu({
         const i = (Math.max(active, 0) + (ta.text.length > 1 ? k - 1 : k)) % n
         const it = items[i]
         if (it && isItem(it) && !it.disabled && it.label.toLocaleLowerCase().startsWith(needle)) {
-          setActive(i)
+          moveTo(i)
           break
         }
       }
@@ -332,7 +348,7 @@ export function Menu({
                 testId={testId}
                 onActivate={(e) => {
                   if (!pointerMoved(e)) return
-                  reveal.current = false
+                  reveal.current = null
                   if (i !== active) setActive(i)
                 }}
                 onSelect={() => select(i)}
