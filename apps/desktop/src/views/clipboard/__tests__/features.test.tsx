@@ -362,7 +362,7 @@ describe('芯片（识别出的片段）', () => {
     expect(ipc.called('clipboard_paste')).toEqual([])
   })
 
-  it('打开动效期间出现的小条：防误点的基线在开始接收指针时取（等待期间移过去停下，补发的指针事件不算移动）', async () => {
+  it('打开动效期间出现的小条：等待期间移过去停下，开始接收指针时补发的指针事件不算移动', async () => {
     const store = createClipStore(payload([meta(1, { preview: 'otp' }), meta(2)]))
     store.setState({ inspect: { id: 1, result: OTP } })
     const run = vi.fn<ClipRunner['run']>()
@@ -371,7 +371,6 @@ describe('芯片（识别出的片段）', () => {
       run,
       ctx: (source: string, target: number) => ({ source, target }),
     } as unknown as ClipRunner
-    let at = { x: 10, y: 10 }
     const holdUntil = performance.now() + 80
     renderIn(
       <RowChips
@@ -380,14 +379,15 @@ describe('芯片（识别出的片段）', () => {
         id={1}
         y={motionValue(0)}
         h={motionValue(44)}
-        pointer={() => at}
+        pointer={() => ({ x: 10, y: 10 })}
         holdUntil={() => holdUntil}
       />,
     )
     const slot = document.querySelector('.clip-rowchips-slot') as HTMLElement
     expect(slot.hasAttribute('data-hold')).toBe(true)
-    // 等待期间（小条不接收指针、事件落在下面的行上）指针移到小条将要出现的位置停下：列表记下这个坐标
-    at = { x: 300, y: 50 }
+    // 等待期间（小条不接收指针、事件落在下面的行上）指针移到小条将要出现的位置停下
+    fireEvent.pointerMove(document.body, { clientX: 200, clientY: 50, pointerType: 'mouse' })
+    fireEvent.pointerMove(document.body, { clientX: 300, clientY: 50, pointerType: 'mouse' })
     await waitFor(() => expect(slot.hasAttribute('data-hold')).toBe(false))
     const chip = screen.getAllByTestId('clip-chip')[0] as HTMLElement
     // 开始接收指针时引擎可能在原坐标补发一次 pointermove：坐标没变，不算移动，单击仍交给这一行
@@ -396,6 +396,48 @@ describe('芯片（识别出的片段）', () => {
     expect(run).not.toHaveBeenCalled()
     // 真的移动之后才算点芯片
     fireEvent.pointerMove(chip, { clientX: 302, clientY: 50, pointerType: 'mouse' })
+    fireEvent.click(chip, { detail: 1 })
+    expect(run).toHaveBeenCalledWith('paste_fragment', expect.anything(), {
+      index: 0,
+      mode: 'normal',
+    })
+  })
+
+  it('盖在小条上的菜单关掉时引擎在指针原处补发的移动不算（指针在菜单里移动过、停在小条的位置上）：单击仍交给这一行', async () => {
+    const store = createClipStore(payload([meta(1, { preview: 'otp' }), meta(2)]))
+    store.setState({ inspect: { id: 1, result: OTP } })
+    const run = vi.fn<ClipRunner['run']>()
+    const runner = {
+      os: 'macos',
+      run,
+      ctx: (source: string, target: number) => ({ source, target }),
+    } as unknown as ClipRunner
+    renderIn(
+      <>
+        <RowChips
+          store={store}
+          runner={runner}
+          id={1}
+          y={motionValue(0)}
+          h={motionValue(44)}
+          // 小条出现时列表最后见到的指针在别处
+          pointer={() => ({ x: 10, y: 10 })}
+          holdUntil={() => 0}
+        />
+        <div data-testid="menu">菜单</div>
+      </>,
+    )
+    const chip = screen.getAllByTestId('clip-chip')[0] as HTMLElement
+    // 指针在盖住小条的菜单里移动（事件落在菜单上，小条收不到），在「收藏」上点一下：菜单关闭、面板留着
+    const menu = screen.getByTestId('menu')
+    fireEvent.pointerMove(menu, { clientX: 200, clientY: 60, pointerType: 'mouse' })
+    fireEvent.pointerMove(menu, { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    fireEvent.pointerDown(menu, { button: 0, clientX: 300, clientY: 50, pointerType: 'mouse' })
+    // 菜单消失，小条露出在静止的指针下：引擎在原坐标补发一次移动——不算移动，单击按「点这一行」
+    fireEvent.pointerMove(chip, { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    fireEvent.click(chip, { detail: 1 })
+    expect(run).not.toHaveBeenCalled()
+    fireEvent.pointerMove(chip, { clientX: 301, clientY: 50, pointerType: 'mouse' })
     fireEvent.click(chip, { detail: 1 })
     expect(run).toHaveBeenCalledWith('paste_fragment', expect.anything(), {
       index: 0,

@@ -214,7 +214,8 @@
  * ---- 芯片小条：选中行右侧识别出的片段（preview/Chips.tsx 的 RowChips）----
  * 放在列表的滚动内容里、listbox 之外，与选中指示器同一个 y / 高度（槽位撑满行高、小条垂直居中），右缘与行内容对齐
  * （行左右内缩 6 + 行内边距 8）。浮起表面 + 控件阴影（比浮层轻，不在行内压出一块厚阴影）；收起时宽度上限
- * min(45%, 200px)，芯片放不下时省略值；⌘E 展开到露出行首图标，显示全部、横向滚动
+ * min(45%, 200px)，芯片放不下时省略值；⌘E 展开到露出行首图标，显示全部、横向滚动。
+ * 槽位本身就是这个上限的宽度（不接收指针），小条在里面靠右：Chips.tsx 按槽位的宽度判断第一个芯片放不放得下
  */
 .clip-rowchips-slot {
   position: absolute;
@@ -223,13 +224,17 @@
   z-index: 2;
   display: flex;
   align-items: center;
-  max-width: min(45%, 200px);
+  justify-content: flex-end;
+  width: min(45%, 200px);
   pointer-events: none;
 }
 .clip-rowchips-slot[data-focus] {
-  max-width: calc(100% - 64px);
+  width: calc(100% - 64px);
 }
 .clip-rowchips {
+  /* 收起时第一个芯片给后面留的位置（见下面的 data-rest）；Chips.tsx 读 --chips-rest-both 判断要不要把第二个芯片也折进「+N」 */
+  --chips-rest-chip: 44px;
+  --chips-rest-both: 84px;
   position: relative;
   height: 28px;
   padding: 2px;
@@ -243,18 +248,20 @@
   flex: 0 1 auto;
   min-width: 40px;
 }
-/* 收起时第一个芯片（最常用的，验证码排在最前）完整显示，放不下时后面的先省略：它不收缩，只给后面留出最窄的位置
-   （data-rest：后面还有一个芯片 → 40 + 间距 4；再有「+N」→ 再加约 40）。按比例收缩的话它也会被削掉几 px，6 位的
-   验证码就成了「4829…」 */
-.clip-rowchips:not([data-focus]) .clip-chip:first-child {
+/* 收起时第一个芯片（最常用的，验证码排在最前）完整显示，放不下时后面的先省略：它不收缩，只给后面的芯片留出最窄的
+   位置（data-rest：后面是第二个芯片 → 40 + 间距 4；再有「+N」→ 再加约 40）。按比例收缩的话它也会被削掉几 px，6 位的
+   验证码就成了「4829…」；连这些位置都留不出时，Chips.tsx 把第二个芯片也折进「+N」。
+   后面只有「+N」时（折过）照常收缩：「+N」本身不收缩，第一个芯片只在真的放不下时省略；这时不按百分比留位置——小条
+   放得下时宽度随内容，留出的位置比「+N」宽就会无端削掉第一个芯片 */
+.clip-rowchips:not([data-focus]):not([data-rest='more']) .clip-chip:first-child {
   flex-shrink: 0;
   max-width: 100%;
 }
-.clip-rowchips[data-rest='1'] .clip-chip:first-child {
-  max-width: calc(100% - 44px);
+.clip-rowchips[data-rest='chip'] .clip-chip:first-child {
+  max-width: calc(100% - var(--chips-rest-chip));
 }
-.clip-rowchips[data-rest='2'] .clip-chip:first-child {
-  max-width: calc(100% - 84px);
+.clip-rowchips[data-rest='both'] .clip-chip:first-child {
+  max-width: calc(100% - var(--chips-rest-both));
 }
 .clip-rowchips-slot[data-focus] .clip-chip {
   flex: none;

@@ -3,6 +3,7 @@
  * - 芯片小条：以正常速度（约 1 px / ms）从选中行上横着移过去点芯片，粘贴的是片段；小条出现在静止的指针下时单击
  *   仍是「点这一行」；触屏轻点与读屏 / 键盘的合成点击照样是点芯片；从第 1 行竖直扫到第 4 行，选中跟手、没有页面错误；
  * - 底部停靠的确认条：有提示条时键盘移到最后一条再删除，确认条停在这一行下面；
+ * - 三个片段（验证码、电话、链接）：卡片窄到放不下「验证码 + 第二个芯片 + “+N”」时第二个芯片也折进「+N」，验证码完整显示；
  * - Space：正在输入搜索词时是空格，↓ 之后是预览。
  * 运行方式见 apps/desktop/playwright.config.ts。
  */
@@ -13,7 +14,12 @@ test.use({ viewport: { width: 1280, height: 800 } })
 type Call = [string, unknown]
 
 /** 打开场景并记录 mock 的 IPC 调用（`ipc_log=1` 时 mock 路由逐条 console.debug）与页面错误 */
-async function open(page: Page, scenario: string): Promise<{ calls: Call[]; errors: string[] }> {
+async function open(
+  page: Page,
+  scenario: string,
+  /** 附加的查询参数（例如 `&panel_width=320`） */
+  extra = '',
+): Promise<{ calls: Call[]; errors: string[] }> {
   const calls: Call[] = []
   const errors: string[] = []
   page.on('pageerror', (e) => errors.push(e.message))
@@ -25,7 +31,7 @@ async function open(page: Page, scenario: string): Promise<{ calls: Call[]; erro
       () => undefined,
     )
   })
-  await page.goto(`/panel.html?scenario=${scenario}&os=macos&lang=zh-CN&hud=0&ipc_log=1`)
+  await page.goto(`/panel.html?scenario=${scenario}&os=macos&lang=zh-CN&hud=0&ipc_log=1${extra}`)
   await page.waitForSelector('html[data-settled]')
   return { calls, errors }
 }
@@ -154,6 +160,36 @@ test.describe('触屏', () => {
     expect(called(calls, 'clipboard_paste')).toEqual([])
   })
 })
+
+// 420：两个芯片 + 「+1」放得下完整的验证码；360（面板最窄）与 320（悬浮窗最窄）放不下，第二个芯片折进「+2」
+for (const [width, chips] of [
+  [420, 2],
+  [360, 1],
+  [320, 1],
+] as const) {
+  test(`三个片段、卡片宽 ${width}：验证码芯片完整显示（显示 ${chips} 个芯片）`, async ({
+    page,
+  }) => {
+    const { errors } = await open(page, 'clipboard.chips-three', `&panel_width=${width}`)
+    const strip = await liveStrip(page)
+    const all = strip.getByTestId('clip-chip')
+    await expect(all).toHaveCount(chips)
+    await expect(all.first()).toHaveText('482913')
+    const clipped = await all
+      .first()
+      .locator('.clip-chip-text')
+      .evaluate((el) => el.scrollWidth > el.clientWidth)
+    expect(clipped).toBe(false)
+    await expect(strip.getByTestId('clip-chips-more')).toHaveText(`+${3 - chips}`)
+    // 小条整个在卡片里（不被卡片裁掉）
+    const card = await page.locator('.clip').first().boundingBox()
+    const box = await strip.boundingBox()
+    if (!card || !box) throw new Error('no box')
+    expect(box.x).toBeGreaterThanOrEqual(card.x)
+    expect(box.x + box.width).toBeLessThanOrEqual(card.x + card.width)
+    expect(errors).toEqual([])
+  })
+}
 
 test('有提示条时用键盘移到最后一条再删除：确认条停在这一行下面，不压住它', async ({ page }) => {
   await open(page, 'clipboard.favorites-view')

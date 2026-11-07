@@ -11,13 +11,17 @@
  *   序号（数字键直接粘贴第 n 个），当前芯片高亮并滚进可见范围，搜索框的 aria-activedescendant 指向它；
  * - 按动作激活，不按时间：小条出现时鼠标如果已经停在它下面，单击仍是「点这一行」（用户瞄准的是原来在那里的行）；指针在
  *   小条上真的移动过（坐标变了）或从外面移进来之后，单击才是点芯片。只挡鼠标：触屏 / 笔的轻点没有悬停，读屏与键盘
- *   激活是没有指针事件的合成点击，它们点到的就是芯片；
+ *   激活是没有指针事件的合成点击，它们点到的就是芯片。「真的移动」与文档里上一次指针事件比（不论落在哪里，含菜单），
+ *   不与小条出现时记下的位置比：盖在小条上的菜单关掉时，引擎在指针原处补发的移动不算；
+ * - 收起时第一个芯片在给后面两样（第二个芯片、「+N」）留出位置之后放不下完整的值（窄面板、悬浮窗最窄时）：第二个芯片
+ *   也折进「+N」，不把第一个削短；
  * - 换条目时旧小条原地淡出（不随指示器滑过相邻的行）、立即不接收指针；新小条由列表在指示器到达目标行之后才给出；面板
  *   打开时等首屏的 rowIn 进场结束再淡入；
  * - 片段的值不写日志。
  */
 import { AnimatePresence, m, useIsPresent, useMotionValue, type MotionValue } from 'motion/react'
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -56,7 +60,7 @@ export interface RowChipsProps {
   /** 选中指示器的位置与高度（同一组 MotionValue） */
   y: MotionValue<number>
   h: MotionValue<number>
-  /** 列表最近一次见到的指针坐标（还没见过时为 null）：判断小条出现时是不是压在静止的指针下 */
+  /** 列表最近一次见到的指针坐标（还没见过时为 null）：「真的移动」的起始基线（之后由文档级的指针事件接着记） */
   pointer(): { x: number; y: number } | null
   /** 打开动效（rowIn stagger）结束的时刻（performance.now）：在这之前出现的小条等到那时再淡入 */
   holdUntil(): number
@@ -64,20 +68,61 @@ export interface RowChipsProps {
 
 /** 选中行右侧的芯片小条（见文件头） */
 export function RowChips(props: RowChipsProps) {
-  const { store, id } = props
+  const { store, id, pointer } = props
   const entities = useStore(store, (s) =>
     id !== null && s.inspect?.id === id ? s.inspect.result.entities : null,
   )
   // 每换一次条目换一个 key：旧小条原地淡出，新小条重新挂载；A → B → A 也不会把正在淡出的那个拉回来、从 B 滑过去
   const [slot, setSlot] = useState({ id, key: 0 })
   if (slot.id !== id) setSlot({ id, key: slot.key + 1 })
+
+  // 防误点的基线：文档里最近两次指针事件的坐标（任何目标——菜单、头部、菜单开着时被拦下的移动都算）。引擎在布局变化时
+  // （小条出现、盖在上面的菜单消失、恢复接收指针）补发的移动重复上一次指针事件的坐标，据此与真实移动区分。只在列表给出
+  // 小条期间监听；开始监听时以列表最近见到的坐标为起点
+  const track = useRef<{ prev: Point | null; last: Point | null }>({ prev: null, last: null })
+  const tracking = id !== null
+  useLayoutEffect(() => {
+    if (!tracking) return
+    track.current = { prev: null, last: pointer() }
+    // 文档的捕获阶段：早于 React 挂在根节点上的监听，小条处理这次事件时 prev 已是它之前的那一次
+    const note = (e: PointerEvent) => {
+      const t = track.current
+      t.prev = t.last
+      t.last = { x: e.clientX, y: e.clientY }
+    }
+    const opts = { capture: true, passive: true }
+    document.addEventListener('pointermove', note, opts)
+    document.addEventListener('pointerdown', note, opts)
+    return () => {
+      document.removeEventListener('pointermove', note, opts)
+      document.removeEventListener('pointerdown', note, opts)
+    }
+  }, [tracking, pointer])
+  const moved = useCallback((e: ReactPointerEvent) => {
+    const p = track.current.prev
+    return p !== null && (p.x !== e.clientX || p.y !== e.clientY)
+  }, [])
+
   return (
     <AnimatePresence>
       {id !== null && entities && entities.length > 0 ? (
-        <Strip key={slot.key} {...props} id={id} entities={entities} />
+        <Strip key={slot.key} {...props} id={id} entities={entities} moved={moved} />
       ) : null}
     </AnimatePresence>
   )
+}
+
+interface Point {
+  x: number
+  y: number
+}
+
+/**
+ * 收起时第一个芯片给后面两样（第二个芯片、「+N」）留的位置：读 clipboard.css 的 --chips-rest-both（与 data-rest 的
+ * 预留同一个值）
+ */
+function restBoth(strip: HTMLElement): number {
+  return parseFloat(getComputedStyle(strip).getPropertyValue('--chips-rest-both')) || 0
 }
 
 function Strip({
@@ -87,15 +132,21 @@ function Strip({
   entities,
   y,
   h,
-  pointer,
   holdUntil,
-}: RowChipsProps & { id: number; entities: readonly Entity[] }) {
+  moved,
+}: RowChipsProps & {
+  id: number
+  entities: readonly Entity[]
+  /** 这次指针事件是真实的移动（坐标与文档里上一次指针事件不同） */
+  moved(e: ReactPointerEvent): boolean
+}) {
   const t = useT()
   const tip = useChipTip(runner.os)
   const chip = useStore(store, (s) => s.chip)
   const present = useIsPresent()
   const motion = usePreset('popover')
   const box = useRef<HTMLDivElement>(null)
+  const slotRef = useRef<HTMLDivElement>(null)
 
   // 位置：在场时跟着选中指示器（实时变化的位移里与选中行同一条曲线）；退场时停在原处淡出，不随指示器滑到新的选中行。
   // 布局阶段解绑：列表在同一次提交的布局阶段才让指示器出发
@@ -113,15 +164,11 @@ function Strip({
     }
   }, [present, y, h, sy, sh])
 
-  // 防误点（按动作激活）：小条开始接收指针时（打开动效的等待结束之后）指针所在的坐标作为基线；之后在小条上收到
-  // 坐标不同的指针事件才算真的移到了小条上。引擎在布局变化、pointer-events 恢复时会在原坐标补发指针事件，坐标没变，不算
-  const origin = useRef(pointer())
+  // 防误点（按动作激活）：在小条上收到真实的移动（坐标与文档里上一次指针事件不同）才算真的移到了小条上。引擎在布局
+  // 变化、pointer-events 恢复、盖在上面的菜单消失时会在原坐标补发指针事件，坐标与上一次相同，不算
   const armed = useRef(false)
   const onPointerMove = (e: ReactPointerEvent) => {
-    if (armed.current) return
-    const o = origin.current
-    if (o === null) origin.current = { x: e.clientX, y: e.clientY }
-    else if (e.clientX !== o.x || e.clientY !== o.y) armed.current = true
+    if (!armed.current && moved(e)) armed.current = true
   }
   // 触屏 / 笔按下：没有悬停，小条不会「冒到静止的指针下面」，按到哪里就是点哪里
   const onPointerDown = (e: ReactPointerEvent) => {
@@ -148,14 +195,6 @@ function Strip({
     const timer = setTimeout(() => setLive(true), wait)
     return () => clearTimeout(timer)
   }, [live, wait])
-  // 等待期间指针的事件落在下面的行上（列表照常记下坐标）：开始接收指针的这一刻（提交之后、绘制之前）重新取基线，
-  // 等待期间移过来停下的指针在恢复接收时被补发的那次 pointermove 不算移动
-  const held = useRef(!live)
-  useLayoutEffect(() => {
-    if (!live || !held.current) return
-    held.current = false
-    if (!armed.current) origin.current = pointer()
-  }, [live, pointer])
   const enter = motion.animate?.transition
   const animate =
     wait > 0 && motion.animate
@@ -186,16 +225,52 @@ function Strip({
     else if (right > el.scrollLeft + el.clientWidth) el.scrollLeft = right - el.clientWidth
   }, [chip])
 
+  // 收起时第一个芯片放不下完整的值：第二个芯片也折进「+N」（见文件头）。槽位的宽度就是小条能用的宽度（clipboard.css），
+  // 第一个芯片完整显示要多宽 = 现在的宽度 + 被省略掉的部分；两者折不折都量得到，结果不随折叠来回变。布局之后、绘制之前
+  // 量（第一帧就是对的），尺寸变了时重新量
   const focus = chip !== null
-  const shown = focus ? entities : entities.slice(0, COLLAPSED)
+  const foldable = !focus && entities.length > COLLAPSED
+  const [fold, setFold] = useState(false)
+  useLayoutEffect(() => {
+    const slot = slotRef.current
+    const strip = box.current
+    if (!foldable || !slot || !strip) {
+      setFold(false)
+      return
+    }
+    const measure = () => {
+      const first = strip.querySelector<HTMLElement>('.clip-chip')
+      const text = first?.querySelector<HTMLElement>('.clip-chip-text')
+      // 没有排版（宽度为 0）时不折
+      if (!first || !text || slot.clientWidth === 0) return setFold(false)
+      const cs = getComputedStyle(strip)
+      const room =
+        slot.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+      const natural = first.offsetWidth + Math.max(0, text.scrollWidth - text.clientWidth)
+      // 宽度都是取整过的：差 1 px 以内也折，免得小数部分被省略号吃掉
+      setFold(natural + 1 > room - restBoth(strip))
+    }
+    measure()
+    if (typeof ResizeObserver === 'undefined') return
+    // 槽位：缩放窗口；小条：芯片的内容或字体变了（折不折的结果只取决于这两者，不会因为折叠本身来回变）
+    const ro = new ResizeObserver(measure)
+    ro.observe(slot)
+    ro.observe(strip)
+    return () => ro.disconnect()
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- 片段变了（第一个芯片换了值）时重新量
+  }, [foldable, entities])
+  const shown = focus ? entities : entities.slice(0, fold && foldable ? 1 : COLLAPSED)
   const more = entities.length - shown.length
   const numbered = focus && entities.length >= 2
-  // 收起时第一个芯片后面还排着几样（第二个芯片、「+N」）：第一个芯片据此给它们留位置（clipboard.css）
-  const rest = focus ? 0 : (shown.length > 1 ? 1 : 0) + (more > 0 ? 1 : 0)
+  // 收起时第一个芯片后面排着什么（第二个芯片、「+N」）：第一个芯片据此给它们留位置（clipboard.css）
+  let rest: 'chip' | 'more' | 'both' | undefined
+  if (!focus && shown.length > 1) rest = more > 0 ? 'both' : 'chip'
+  else if (!focus && more > 0) rest = 'more'
   return (
     // 槽位上的指针处理只决定单击的去向（见 toRow，芯片的点击冒泡上来）；键盘经 ⌘E 进入芯片模式，焦点一直在搜索框里
     // oxlint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions
     <m.div
+      ref={slotRef}
       className="clip-rowchips-slot"
       data-focus={focus || undefined}
       data-exiting={!present || undefined}
@@ -216,7 +291,7 @@ function Strip({
         role="toolbar"
         aria-label={t('smart.a11y.chips')}
         data-focus={focus || undefined}
-        data-rest={rest || undefined}
+        data-rest={rest}
         data-testid="clip-chips"
       >
         {shown.map((e, index) => (
