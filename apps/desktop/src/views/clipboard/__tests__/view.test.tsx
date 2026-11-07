@@ -667,6 +667,25 @@ describe('菜单与悬停卡片', () => {
     fireEvent.pointerMove(again, { clientX: 42, clientY: 130, pointerType: 'mouse' })
     await waitFor(() => expect(screen.queryByTestId('clip-hover')).toBeNull())
   })
+
+  it('识别出的片段不放进悬停卡片（在选中行右侧的小条里）；全文预览里仍有', async () => {
+    ipc.results.clipboard_inspect = {
+      entities: [{ kind: 'otp', value: '482913', start: 0, end: 6, sensitive: false }],
+      transforms: [],
+    }
+    ipc.results.clipboard_get = () => null
+    await preloadPreview()
+    mount()
+    armPointer()
+    const row = document.getElementById('clip-row-3') as HTMLElement
+    fireEvent.pointerMove(row, { clientX: 40, clientY: 160, pointerType: 'mouse' })
+    const card = await screen.findByTestId('clip-hover', undefined, { timeout: 2000 })
+    await screen.findByTestId('clip-chips')
+    expect(within(card).queryByTestId('clip-chip')).toBeNull()
+    key('Space')
+    const full = await screen.findByTestId('clip-preview')
+    expect(within(full).getByTestId('clip-preview-chips')).toBeTruthy()
+  })
 })
 
 describe('删除与清空的动效', () => {
@@ -857,8 +876,10 @@ describe('行（分组与无障碍）', () => {
     mount()
     expect(search().getAttribute('role')).toBe('combobox')
     expect(search().getAttribute('aria-expanded')).toBe('true')
-    const listbox = screen.getByTestId('clip-list')
-    expect(listbox.getAttribute('role')).toBe('listbox')
+    // listbox 是滚动容器里的内容层（滚动容器里还有不属于选项的芯片小条）
+    const listbox = screen.getByRole('listbox')
+    expect(screen.getByTestId('clip-list').contains(listbox)).toBe(true)
+    expect(listbox.getAttribute('aria-label')).toBe(t('clipboard.a11y.list'))
     expect(search().getAttribute('aria-controls')).toBe(listbox.id)
     const item = meta(3, { last_used_at: NOW - 3 * 86_400_000 })
     const label = rowLabel(item, NOW, t)

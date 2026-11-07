@@ -69,6 +69,7 @@ import {
 import {
   applyChange,
   canLoadMore,
+  chipsHidden,
   isSearching,
   keepSelection,
   placeItem,
@@ -768,6 +769,8 @@ export function createClipCommands(
 
   const enterChips = () => {
     const s = get()
+    // 芯片小条在多选、确认条、命名条打开时不显示：这时不进芯片模式（否则 aria-activedescendant 指向看不见的芯片）
+    if (chipsHidden(s)) return
     const n = s.inspect?.id === s.selectedId ? (s.inspect?.result.entities.length ?? 0) : 0
     if (n > 0) set({ chip: 0, preview: false })
   }
@@ -1463,8 +1466,10 @@ export function createClipCommands(
         missedChanges = false
         reloadFirstPage()
       }
-      // 光标换条目：退出芯片条的键盘焦点，停下来之后检视新的那一条（同一条目的更新使缓存失效后重新检视）
+      // 光标换条目：退出芯片模式，停下来之后检视新的那一条（同一条目的更新使缓存失效后重新检视）。芯片小条被多选 /
+      // 确认条 / 命名条挡掉时同样退出芯片模式
       const unsubscribe = store.subscribe((s, prev) => {
+        if (s.chip !== null && chipsHidden(s)) set({ chip: null })
         if (s.selectedId !== prev.selectedId) {
           if (s.chip !== null) set({ chip: null })
         } else if (s.inspect !== null || visibleHits(s) === visibleHits(prev)) return

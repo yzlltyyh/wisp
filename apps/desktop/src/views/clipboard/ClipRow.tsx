@@ -8,7 +8,8 @@
  * - 文件条目里全部文件都已不存在时标题置灰划线，行尾标「已不存在」；只有空白的文本显示占位说明；
  * - 验证码「N 分钟后删除」用视图每分钟刷新一次的时间基准（不另开计时器）；
  * - 无障碍：选项的名称按「类型 · 名称 · 内容 · 来源 · 时间（· 已收藏 · 验证码 · 已选择）」组织，⌘n 角标不进名称（放在
- *   aria-keyshortcuts）。进入动效（打开时的 rowIn、实时插入的 rowInsert）由列表包在行外面（ClipList 的 RowShell）。
+ *   aria-keyshortcuts）。进入动效（打开时的 rowIn、实时插入的 rowInsert）由列表包在行外面（ClipList 的 RowShell）；
+ * - 选中行右侧浮着芯片小条时（`chips`），行尾按小条的宽度让位（clipboard.css 的 --clip-chips-w）。
  */
 import { Code, File, Image as ImageIcon, Link, Star, Type } from 'lucide-react'
 import { memo, type ReactNode } from 'react'
@@ -55,6 +56,11 @@ export interface ClipRowProps {
   /** 检索词（收藏的名称按它高亮）；不在检索时为空 */
   query: string
   os: OsKind
+  /**
+   * 右侧浮着芯片小条（列表画在行外面）：行尾让出小条的宽度并淡出，标题提前省略，不被小条硬盖住；来源、时间与验证码
+   * 倒计时在悬停卡片里仍看得到
+   */
+  chips: boolean
 }
 
 /** 行内缩略图的最大尺寸（design.* 视觉稿：56 × 44） */
@@ -222,6 +228,7 @@ function ClipRowImpl({
   flat,
   query,
   os,
+  chips,
 }: ClipRowProps) {
   const t = useT()
   const it = hit.item
@@ -248,6 +255,7 @@ function ClipRowImpl({
       data-badge={badge !== null || undefined}
       data-marked={mark !== null || undefined}
       data-named={it.name ? true : undefined}
+      data-chips={chips || undefined}
       data-testid="clip-row"
       leading={
         <span className="clip-lead">

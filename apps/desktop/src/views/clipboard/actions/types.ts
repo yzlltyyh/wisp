@@ -44,10 +44,12 @@ export interface ActionArgs {
   favorite: undefined
   /** 底部的命名条（命名即收藏） */
   rename: undefined
-  /** ⌘E 进入芯片条；菜单里是「提取」子页 */
+  /** ⌘E 进入芯片模式；菜单里（与芯片小条上的「+N」）是「提取」子页 */
   extract: undefined
-  /** 粘贴一个片段（芯片、「提取」子页里的项、芯片条上的 ↩） */
+  /** 粘贴一个片段（芯片、「提取」子页里的项、芯片模式里的 ↩） */
   paste_fragment: FragmentArg
+  /** 芯片模式里的数字键：粘贴第 n 个片段（1–9，两个以上片段时） */
+  chip_pick: number
   open_link: undefined
   reveal: undefined
   save_image: undefined

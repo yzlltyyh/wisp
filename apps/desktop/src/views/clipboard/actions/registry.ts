@@ -122,6 +122,18 @@ function inspected(c: ActionCtx): ClipInspect | null {
 }
 const entitiesOf = (c: ActionCtx) => inspected(c)?.entities ?? []
 const transformsOf = (c: ActionCtx) => inspected(c)?.transforms ?? []
+/**
+ * 芯片模式里的数字键可用：两个以上片段时（只有一个时 ↩ 就够了，数字照常打进搜索框）。芯片模式只对光标所在、已检视的
+ * 条目进入，按 store 判断——提示条的上下文没有作用对象
+ */
+const pickable = (c: ActionCtx): boolean =>
+  c.s.chip !== null && (c.s.inspect?.result.entities.length ?? 0) >= 2
+
+/** 粘贴作用对象的第 index 个片段 */
+function pasteEntity(c: ActionCtx, x: ActionEnv, index: number, mode: PasteMode): void {
+  const e = entitiesOf(c)[index]
+  if (e && c.target) x.cmd.pasteText(e.value, c.target.id, mode)
+}
 
 /** 条目操作：右键菜单与 ⌘K 操作菜单 */
 const ITEM_MENUS = { context: {}, command: {} } as const
@@ -355,7 +367,7 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
           },
         ),
       ),
-    // ⌘E：键盘焦点进入芯片条；菜单里：换到「提取」子页
+    // ⌘E：键盘焦点进入芯片模式（选中行右侧的小条展开）；菜单里、小条上的「+N」：换到「提取」子页
     run: (c, x) => (c.source === 'key' ? x.cmd.enterChips() : x.ui.openItemMenu('extract')),
   },
   paste_fragment: {
@@ -367,10 +379,25 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
       { combo: 'Alt+Enter', layers: ['chips'], arg: { mode: 'copy_only' } },
     ],
     hints: { chips: { order: 1, priority: 0, label: 'clipboard.hint.paste', layer: 'chips' } },
-    run: (c, x, arg) => {
-      const e = entitiesOf(c)[arg?.index ?? c.s.chip ?? -1]
-      if (e && c.target) x.cmd.pasteText(e.value, c.target.id, arg?.mode ?? 'normal')
+    run: (c, x, arg) => pasteEntity(c, x, arg?.index ?? c.s.chip ?? -1, arg?.mode ?? 'normal'),
+  },
+  chip_pick: {
+    group: 'nav',
+    arity: 'one',
+    when: (c) => entitiesOf(c).length > 0,
+    // 芯片模式里数字键直接粘贴第 n 个（小条上带着序号）；超出个数的数字拦下、什么都不做（不打进搜索框）。提示条显示成
+    // 区间「1–9」，只用到首尾两个
+    keys: DIGITS.map((n): KeySpec<number> => ({
+      combo: `Digit${n}`,
+      layers: ['chips'],
+      arg: n,
+      when: pickable,
+      display: n === 1 || n === DIGITS.length ? pickable : false,
+    })),
+    hints: {
+      chips: { order: 2, priority: 3, label: 'clipboard.hint.pick', layer: 'chips', span: true },
     },
+    run: (c, x, n = 0) => pasteEntity(c, x, n - 1, 'normal'),
   },
   open_link: {
     group: 'item',
@@ -767,7 +794,7 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
     group: 'nav',
     arity: 'none',
     keys: [{ combo: 'Escape', layers: ['chips'], repeat: 'run' }],
-    hints: { chips: { order: 2, priority: 2, label: 'clipboard.hint.back', layer: 'chips' } },
+    hints: { chips: { order: 3, priority: 2, label: 'clipboard.hint.back', layer: 'chips' } },
     run: (_c, x) => x.cmd.exitChips(),
   },
   rename_commit: {

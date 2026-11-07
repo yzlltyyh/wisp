@@ -14,6 +14,7 @@ import { ClipboardView } from '../ClipboardView'
 import { ClipFloatContext, type ClipFloatShell } from '../host'
 import { resetWebviewClipboardForTest } from '../useClipboard'
 import {
+  armPointer,
   fakeIpc,
   idleTransport,
   key,
@@ -86,6 +87,28 @@ describe('悬浮剪贴板宿主', () => {
     expect(selectedId()).toBe(4)
     // 检索照常发起（去抖之后）
     await waitFor(() => expect(ipc.called('clipboard_search')).toHaveLength(1))
+  })
+
+  it('交接过来的搜索词同样适用 Space 的规则：接着打字时是空格，↓ 之后是预览', async () => {
+    const hits = sample()
+      .filter((m) => m.preview.includes('a'))
+      .map((item) => ({ item, highlights: [] }))
+    ipc.results.clipboard_search = {
+      items: hits,
+      pinned_count: 0,
+      next_offset: null,
+      query: 'a',
+      filter: 'all',
+    }
+    ipc.results.clipboard_get = () => null
+    const { preloadPreview } = await import('../previewModule')
+    await preloadPreview()
+    mountFloating(sample(), shell({ seed: { query: 'a', filter: 'all', selectedId: 3 } }))
+    await waitFor(() => expect(document.querySelector('.clip-group')).toBeNull())
+    expect(key('Space').defaultPrevented).toBe(false)
+    key('ArrowDown')
+    expect(key('Space').defaultPrevented).toBe(true)
+    expect(await screen.findByTestId('clip-preview')).toBeTruthy()
   })
 
   it('头部按钮来自注册表：置顶开关与关闭；没有交接到悬浮窗的钉子', () => {
@@ -161,6 +184,27 @@ describe('悬浮剪贴板宿主', () => {
     mountFloating()
     expect(row(3).getAttribute('draggable')).toBe('true')
     expect(row(5).getAttribute('draggable')).toBeNull()
+  })
+
+  it('选中行右侧的芯片同样可用：单击粘贴片段，不让窗口临时可聚焦（不抢目标应用的键盘）', async () => {
+    const { preloadPreview } = await import('../previewModule')
+    await preloadPreview()
+    ipc.results.clipboard_inspect = {
+      entities: [{ kind: 'otp', value: '482913', start: 0, end: 6, sensitive: false }],
+      transforms: [],
+    }
+    ipc.results.clipboard_paste_text = { type: 'pasted' }
+    mountFloating(sample(), shell({ seed: { query: '', filter: 'all', selectedId: 3 } }))
+    armPointer()
+    const chip = await screen.findByTestId('clip-chip', undefined, { timeout: 2000 })
+    fireEvent.pointerMove(chip, { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    fireEvent.mouseDown(chip)
+    fireEvent.click(chip)
+    expect(ipc.called('clipboard_paste_text')).toEqual([
+      { text: '482913', from: 3, mode: 'normal' },
+    ])
+    expect(ipc.called('clipboard_float_focus')).not.toContainEqual({ focused: true })
+    expect(document.activeElement).not.toBe(chip)
   })
 })
 

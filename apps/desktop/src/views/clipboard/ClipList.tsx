@@ -25,6 +25,10 @@
  *   慢下来）：正常速度往下扫时卡片收起、卡片下面的那一行照常被选中，不会挡住指针的去路；点卡片等于点它对应的行；
  *   卡片的出现 / 消失都按 presets.popover；单击粘贴（可改为双击），右键菜单 / ⌘K 操作菜单含全部操作（菜单项、单击 /
  *   双击的粘贴都经操作注册表，见 actions/）；菜单是分页的（「粘贴为…」「提取」在同一个浮层里换页）；
+ * - 选中行右侧的芯片小条（识别出的片段，preview/Chips.tsx）：放在滚动内容里、listbox 之外（VirtualList 的 overlay），
+ *   与选中指示器同一个位置；指示器到达选中行之后才给出。指针在小条上时不改选中、不弹卡片；小条上没被芯片处理的单击
+ *   （小条刚出现在静止的指针下）与右键按选中行处理；
+ * - 浏览意图（Space 是预览）：自上次编辑搜索词以来指针真的跨过了行边界、累计移动 ≥ 24 px（noteBrowse）；
  * - 多选：⌘ / Ctrl 点击切换一条、⇧ 点击从起点选到这一条；已有选择时单击也是切换（不会误粘贴一条、丢掉整个选择）。
  *   标记的序号画在行首（只是行的一个属性，不进行模型的缓存输入）；
  * - 收藏分组的标题是折叠按钮，「查看全部 N 个收藏」行切到收藏视图（都经注册表的操作）；
@@ -69,7 +73,6 @@ import {
 import type { ClipActionId, ClipRunner, MenuSurface } from './actions'
 import { ClipRow } from './ClipRow'
 import {
-  CHIP_STRIP_INSET,
   firstItemIndex,
   HEADER_HEIGHT,
   indexOfId,
@@ -113,6 +116,8 @@ export interface ClipListProps {
    * 会让它临时可聚焦、抢走目标应用的键盘
    */
   refocusSearch: boolean
+  /** 列表末尾的滚动余量（px）：底部停靠的确认条 / 轻提示压在列表上时，最后一行能停在它们上方（见 model.ts 的 DOCK_INSET） */
+  endInset: number
 }
 
 interface Hover {
@@ -153,7 +158,7 @@ const LEAD_CARRY = 0.35
 const CARD_INTENT_SPEED = 0.3
 /**
  * 指针移动多远（px，自上次编辑搜索词起累计）、并且跨过了行边界，才算移到了列表上（浏览意图，Space 是预览）：打字时手
- * 搭在鼠标上的轻微晃动远小于它，移到相邻的行至少要半行（22 px）
+ * 搭在鼠标上的轻微晃动远小于它；从一行的中间移到相邻的行要 22 px（半个 44 px 的行），再多一点就够
  */
 const BROWSE_TRAVEL = 24
 /** 覆盖式滚动条：滑块离列表区上下边的距离、最短长度、指针离右边缘多近时显示 */
@@ -215,6 +220,7 @@ export function ClipList({
   listboxId,
   showKey,
   refocusSearch,
+  endInset,
 }: ClipListProps) {
   const t = useT()
   const reduced = useReducedMotionPref()
@@ -229,6 +235,7 @@ export function ClipList({
   const actionMenu = useStore(store, (s) => s.actionMenu)
   const marks = useStore(store, (s) => s.marks)
   const inspect = useStore(store, (s) => s.inspect)
+  const renaming = useStore(store, (s) => s.rename !== null)
   // 检索时行里的收藏名称按查询词高亮（预览的高亮来自 Rust）
   const nameQuery = useStore(store, (s) => (isSearching(s) ? s.query.trim() : ''))
   /** 条目 → 选择序号（从 1 开始）：每行 O(1) 取用 */
@@ -597,11 +604,13 @@ export function ClipList({
   // 第一帧画出来的就是起点（opacity 0、下移 4 px），不会先整行出现再闪一下
   const active = useViewActive()
   const playedFor = useRef<number | null>(null)
+  /** 打开的 stagger 播完的时刻（performance.now）：芯片小条不在这之前淡入，不与选中行的 rowIn 叠在一起 */
+  const openHold = useRef(0)
   useLayoutEffect(() => {
     if (showKey === null || !active || playedFor.current === showKey) return
     playedFor.current = showKey
     const el = listRef.current?.element()
-    if (el && !reduced) playOpenStagger(el, rows, offsets)
+    if (el && !reduced) openHold.current = performance.now() + playOpenStagger(el, rows, offsets)
     // 只在显示时执行（rows 取那一刻的）
     // oxlint-disable-next-line react/exhaustive-deps
   }, [showKey, active])
@@ -629,7 +638,7 @@ export function ClipList({
 
   // ----- 覆盖式滚动条：不占内容宽度（行与高亮离卡片两边恒为 6 px，三端一致）。滚动时、指针靠近右边缘时、拖动时
   // 出现，停下一会儿后淡出；几何只在显示时计算（不在挂载 / 每次渲染时读布局）
-  const total = listContentHeight(rows) + CHIP_STRIP_INSET
+  const total = listContentHeight(rows) + endInset
   const barRef = useRef<HTMLDivElement>(null)
   const thumbRef = useRef<HTMLDivElement>(null)
   const barTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -737,6 +746,48 @@ export function ClipList({
   useEffect(() => hideHover(), [reveal, covered, confirm, hideHover])
   useEffect(() => () => clearHoverTimer(), [])
 
+  // ----- 芯片小条（preview/Chips.tsx 的 RowChips）：选中行右侧识别出的片段。指示器到达选中行之后才给出——不在指示器
+  // 滑动的途中出现在相邻的行上、刚出现就被指针点到；实时变化的位移里同一条目的小条留着，跟着指示器走
+  const [arrivedAt, setArrivedAt] = useState<number | null>(null)
+  const targetY = selectedIndex >= 0 ? startOf(selectedIndex) : null
+  const arrivalFor = useRef(selectedId)
+  useEffect(() => {
+    const reselected = arrivalFor.current !== selectedId
+    arrivalFor.current = selectedId
+    if (selectedId === null || targetY === null) return
+    const id = selectedId
+    const near = (v: number) => Math.abs(v - targetY) < 0.5
+    if (near(indicatorY.get())) {
+      setArrivedAt(id)
+      return
+    }
+    // A → B → A 很快地来回：上一次到达 A 的记录作废，等指示器真的回到 A（只是 A 的位置因为实时变化而移动时不作废，
+    // 小条跟着指示器走）
+    if (reselected) setArrivedAt((at) => (at === id ? null : at))
+    return indicatorY.on('change', (v) => {
+      if (near(v)) setArrivedAt(id)
+    })
+  }, [selectedId, targetY, indicatorY])
+  // 多选（小条会挡住选择序号的含义）、确认条 / 命名条、全文预览打开时不显示
+  const chipsFor =
+    preview !== null &&
+    selectedId !== null &&
+    arrivedAt === selectedId &&
+    inspect?.id === selectedId &&
+    inspect.result.entities.length > 0 &&
+    marks.length === 0 &&
+    confirm === null &&
+    !renaming &&
+    !covered
+      ? selectedId
+      : null
+  const pointerAt = useCallback(() => {
+    const p = pointer.current
+    return p.armed ? { x: p.x, y: p.y } : null
+  }, [])
+  const holdUntil = useCallback(() => openHold.current, [])
+  const RowChips = preview?.RowChips
+
   // ----- 分页：距离末尾不到两屏
   const maybeLoadMore = useCallback(
     (el: HTMLElement) => {
@@ -766,6 +817,11 @@ export function ClipList({
   const inCard = (target: EventTarget | null) =>
     target instanceof Element && target.closest('.clip-hover') !== null
   const idOf = (el: HTMLElement | null) => (el ? Number(el.dataset.clipId) : null)
+  /** 芯片小条浮在选中行上：落在它上面、芯片自己没处理的指针事件（还没激活时的单击、右键）按选中行算 */
+  const inRowChips = (target: EventTarget | null) =>
+    target instanceof Element && target.closest('.clip-rowchips') !== null
+  const rowIdOf = (target: EventTarget | null): number | null =>
+    inRowChips(target) ? store.getState().selectedId : idOf(rowAt(target))
   /** 卡片下面的那一行（指针穿过卡片往下扫时） */
   const rowUnder = (x: number, y: number): HTMLElement | null => {
     if (typeof document.elementsFromPoint !== 'function') return null
@@ -869,6 +925,8 @@ export function ClipList({
       if (near && bar.dataset.near === undefined && syncBar()) bar.dataset.near = ''
       else if (!near && bar.dataset.near !== undefined) delete bar.dataset.near
     }
+    // 指针在芯片小条上：小条属于选中行，选中项与悬停卡片都不变（横着移过去就点得到）
+    if (inRowChips(e.target)) return
     let el: HTMLElement | null
     if (hover && !inCard(e.target) && p.speed < CARD_INTENT_SPEED && inBridge(e, hover)) {
       // 慢慢从行移向卡片、正经过两者之间的那几 px（属于相邻的行）：仍算在这一行上，卡片不收起
@@ -917,7 +975,7 @@ export function ClipList({
     if (e.button !== 0) return
     const row = rowAt(e.target)
     pressed.current = {
-      id: inCard(e.target) ? (hover?.id ?? null) : idOf(row),
+      id: inCard(e.target) ? (hover?.id ?? null) : rowIdOf(e.target),
       at: performance.now(),
     }
     // 拖出：拖拽开始的回调里只能同步写数据，按下时先取好（多选时拖的是整个选择）；大条目等开始移动再取
@@ -1025,7 +1083,8 @@ export function ClipList({
       }
       return
     }
-    const id = idOf(rowAt(e.target))
+    // 芯片小条上没被芯片处理的单击（小条刚出现在静止的指针下）：按点选中行处理
+    const id = rowIdOf(e.target)
     if (id === null) return
     hideHover()
     if (markClick(e, id)) return
@@ -1036,7 +1095,7 @@ export function ClipList({
   const onDoubleClick = (e: ReactMouseEvent) => {
     if (!pasteOnDoubleClick || e.shiftKey || (os === 'macos' ? e.metaKey : e.ctrlKey)) return
     if (store.getState().marks.length > 0) return
-    const id = inCard(e.target) ? (hover?.id ?? null) : idOf(rowAt(e.target))
+    const id = inCard(e.target) ? (hover?.id ?? null) : rowIdOf(e.target)
     if (id === null) return
     hideHover()
     paste(id)
@@ -1159,7 +1218,8 @@ export function ClipList({
   }
   const onContextMenu = (e: ReactMouseEvent) => {
     e.preventDefault()
-    const id = idOf(inCard(e.target) ? rowUnder(e.clientX, e.clientY) : rowAt(e.target))
+    // 右键芯片小条：选中行的右键菜单
+    const id = inCard(e.target) ? idOf(rowUnder(e.clientX, e.clientY)) : rowIdOf(e.target)
     if (id === null) return
     openMenu(id, e.clientX, e.clientY, 'pointer')
   }
@@ -1234,6 +1294,7 @@ export function ClipList({
             flat={flat}
             query={r.hit.item.name ? nameQuery : ''}
             os={os}
+            chips={r.key === chipsFor}
           />
         </RowShell>
       )
@@ -1252,6 +1313,7 @@ export function ClipList({
       os,
       moving,
       reduced,
+      chipsFor,
     ],
   )
   const estimateSize = useCallback((i: number) => rowHeight(rows[i]), [rows])
@@ -1296,11 +1358,24 @@ export function ClipList({
         getItemKey={getItemKey}
         renderItem={renderItem}
         height={height}
-        endInset={CHIP_STRIP_INSET}
+        endInset={endInset}
         selectedIndex={-1}
         overscan={screenRows(height)}
         aria-label={t('clipboard.a11y.list')}
         data-testid="clip-list"
+        overlay={
+          RowChips ? (
+            <RowChips
+              store={store}
+              runner={runner}
+              id={chipsFor}
+              y={indicatorY}
+              h={indicatorH}
+              pointer={pointerAt}
+              holdUntil={holdUntil}
+            />
+          ) : null
+        }
       />
       <div ref={barRef} className="clip-scrollbar" aria-hidden="true" data-none="">
         <div
@@ -1397,13 +1472,13 @@ const ROW_IN_SHIFT = Number((presets.rowIn.initial as { y?: number }).y ?? 0)
 /**
  * 打开时的 stagger（presets.rowIn + listStagger）：对视口里的行内容逐个播一次「淡入 + 下移 4 px → 0」，第 n 个可选行
  * 延后 n × 12 ms（分组标题与它下面那一条同时，第 8 个之后的与第 8 个一起）。WAAPI、`fill: backwards`：等待期间停在起点，
- * 播完不留样式；作用在行内容（FLIP 位移的那一层的子节点）上，与实时变化的位移互不干扰
+ * 播完不留样式；作用在行内容（FLIP 位移的那一层的子节点）上，与实时变化的位移互不干扰。返回最后一行播完的时间（毫秒）
  */
 function playOpenStagger(
   list: HTMLElement,
   rows: readonly Row[],
   offsets: readonly number[],
-): void {
+): number {
   const t = presets.rowIn.transition as { duration: number; ease: readonly number[] }
   const timing_: KeyframeAnimationOptions = {
     duration: ms(t.duration),
@@ -1417,6 +1492,7 @@ function playOpenStagger(
   const last = presets.listStagger.maxItems - 1
   const step = ms(presets.listStagger.staggerChildren)
   const bottom = list.scrollTop + list.clientHeight
+  let end = 0
   for (const node of list.querySelectorAll<HTMLElement>('.ui-vlist-row[data-index]')) {
     const index = Number(node.dataset.index)
     const row = rows[index]
@@ -1427,8 +1503,11 @@ function playOpenStagger(
     const next = rows[index + 1]
     const order =
       row.type === 'item' ? row.ordinal - 1 : next?.type === 'item' ? next.ordinal - 1 : 0
-    target.animate(keyframes, { ...timing_, delay: Math.min(order, last) * step })
+    const delay = Math.min(order, last) * step
+    target.animate(keyframes, { ...timing_, delay })
+    end = Math.max(end, delay + (timing_.duration as number))
   }
+  return end
 }
 
 /**

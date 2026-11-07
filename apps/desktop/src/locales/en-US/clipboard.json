@@ -89,7 +89,8 @@
     "clear_marks": "Deselect",
     "choose": "Choose",
     "queue": "Sequence",
-    "leave": "Back to app"
+    "leave": "Back to app",
+    "pick": "Paste by number"
   },
   "action": {
     "paste": "Paste",

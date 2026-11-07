@@ -1,8 +1,8 @@
 /**
  * 剪贴板视图：版式与 design.clipboard-* 视觉稿一致——
  * 头部（大号无边框搜索 · 过滤「全部 ▾」· ⋯）/ 暂停横幅 / 列表（「收藏 / 最近」两组，收藏可折叠；检索结果与收藏视图
- * 平铺；唯一的滑动选中指示器）/ 底部快捷键提示条（列表 / 预览 / 多选 / 芯片条各一组）。底部浮层里依次是芯片条（光标
- * 所在条目识别出的片段）、确认条 / 命名条与轻提示。
+ * 平铺；唯一的滑动选中指示器，选中行右侧浮着识别出的片段）/ 底部快捷键提示条（列表 / 预览 / 多选 / 芯片模式各一组）。
+ * 底部浮层里是确认条 / 命名条与轻提示。
  *
  * 用户能触发的操作（快捷键、菜单、提示条、预览里的按钮）都在操作注册表里声明（actions/registry.ts），这里只把注册表
  * 派生出的键位层、菜单与提示条接到界面上；面板与悬浮窗的差异由宿主适配（host.ts）给出。
@@ -18,8 +18,8 @@
  * - 键盘由统一的路由拦截（视图层 + 预览 / 确认条的 overlay 层）；按住 ⌘ 时行尾显示 ⌘1–9 角标；⌘K 打开操作菜单；
  *   清空确认是模态的：只接受 ↩ 确认、Esc 取消、Space 切换「保留收藏」，其余按键与指针都不落到列表上；确认条上沿
  *   的渐隐遮罩随确认条一起淡入淡出；
- * - 全文预览、芯片条与命名条的代码（`./preview`）在视图显示后空闲时预取并缓存（previewModule.ts），打开 / 关闭都是真正的
- *   交叉淡入；芯片条在检视结果到达后才出现，模块晚到也只是晚一点出现；
+ * - 全文预览、芯片小条与命名条的代码（`./preview`）在视图显示后空闲时预取并缓存（previewModule.ts），打开 / 关闭都是真正
+ *   的交叉淡入；芯片小条在检视结果到达后才出现，模块晚到也只是晚一点出现；
  * - 隐藏时外壳卸载整个视图：列表、详情缓存、计时器随之释放（隐藏时只保留 Rust 缓存的首屏数据）；原图只在预览里请求，卸载时清空 src。
  */
 import './clipboard.css'
@@ -103,6 +103,7 @@ import { hiddenHints } from './hints'
 import { useClipHost, useHostHeight, type GrowFollow } from './host'
 import {
   BANNER_HEIGHT,
+  DOCK_INSET,
   EMPTY_HEIGHT,
   FILTERS,
   HEADER_HEIGHT,
@@ -297,7 +298,7 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
   const searchingMode = isSearching({ ...store.getState(), query })
   const flat = searchingMode && store.getState().search !== null
 
-  // ----- 全文预览 / 芯片条 / 命名条的代码：显示后空闲时预取；预取之前就按了 Space、打开了命名条时立即加载，到达之前
+  // ----- 全文预览 / 芯片小条 / 命名条的代码：显示后空闲时预取；预取之前就按了 Space、打开了命名条时立即加载，到达之前
   // 列表不淡出
   const previewMod = usePreviewModule(preview || renaming)
   useEffect(() => {
@@ -522,17 +523,7 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
   // 没有提示条时，底部的轻提示同样用它（胶囊停在列表上，不能压着行文字）
   const confirmOpen = confirm !== null || renaming
   const statusDocked = status !== null && !hintBar
-  // 芯片条浮在列表底部：与确认条同一个渐隐遮罩，被盖住的那一行不会被拦腰截断
-  const chipsShown =
-    useStore(
-      store,
-      (s) =>
-        s.inspect !== null && s.inspect.id === s.selectedId && s.inspect.result.entities.length > 0,
-    ) &&
-    !confirmOpen &&
-    !showPreview &&
-    !empty
-  const masked = confirmOpen || statusDocked || chipsShown
+  const masked = confirmOpen || statusDocked
   const [dock, setDock] = useState<'off' | 'on' | 'leaving'>('off')
   const [dockFor, setDockFor] = useState(masked)
   if (dockFor !== masked) {
@@ -569,7 +560,6 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
       data-confirm={confirm ? confirm.kind : renaming ? 'rename' : undefined}
       data-dock-mask={dock !== 'off' || masked || undefined}
       data-status-docked={statusDocked || undefined}
-      data-chips={(chipsShown && previewMod !== null) || undefined}
       data-status-bar={(status !== null && hintBar) || undefined}
       // 点在非输入区域（列表空白、行、按钮、横幅、确认条、空状态）时焦点不离开搜索框（见 focus.ts）
       onMouseDown={keepSearchFocus}
@@ -613,7 +603,14 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
           // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role
           role="combobox"
           aria-expanded={!empty}
-          aria-controls={empty ? undefined : listboxId}
+          // 芯片模式下活动后代是选中行右侧的芯片（在 listbox 之外）：一并列出芯片小条
+          aria-controls={
+            empty
+              ? undefined
+              : chipFocus !== null && previewMod
+                ? `${listboxId} ${previewMod.ROW_CHIPS_ID}`
+                : listboxId
+          }
           aria-activedescendant={
             chipFocus !== null && previewMod
               ? previewMod.chipDomId(chipFocus)
@@ -796,6 +793,7 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
             listboxId={listboxId}
             showKey={shown ? sessionId : null}
             refocusSearch={host.focusOnShow}
+            endInset={hintBar ? 0 : DOCK_INSET}
           />
         )}
         <AnimatePresence>
@@ -826,9 +824,6 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
         />
       ) : null}
       <div className="clip-footer-layer">
-        {previewMod ? (
-          <previewMod.ChipStrip store={store} runner={runner} hidden={!chipsShown} />
-        ) : null}
         <div className="clip-dock">
           <ConfirmDock t={t} store={store} runner={runner} />
           {previewMod ? <previewMod.RenameDock store={store} cmd={cmd} runner={runner} /> : null}
@@ -1056,7 +1051,7 @@ function StatusPill({
 /**
  * 底部快捷键提示条：各项、显示顺序与优先级都来自注册表（操作的 `hints`）——列表里是 粘贴 · 纯文本 · 仅复制 · 收藏 ·
  * 删除 · Space 预览 · ⌘K 操作 · ⌘F 筛选 · Esc 关闭；放不下时按优先级整项隐藏（`hints.ts`：必留 粘贴 / 纯文本 / 筛选 /
- * 关闭，其余按 仅复制 → 删除 → 收藏 → 预览 → 操作 让位），不加宽面板、不出现半截提示。预览打开时换成预览里的一组；
+ * 关闭，其余按 预览 → 仅复制 → 删除 → 收藏 → 操作 让位），不加宽面板、不出现半截提示。预览打开时换成预览里的一组；
  * 没有条目时整条变淡。只随模式 / 空列表变化（memo）。
  *
  * 取舍在 ResizeObserver 回调里直接改 DOM（`data-off`）：回调在布局之后、绘制之前执行，宽度变化与换项在同一帧里

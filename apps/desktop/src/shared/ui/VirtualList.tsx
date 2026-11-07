@@ -13,6 +13,9 @@
  *   只有这几行包一层 Motion 组件，其余行（以及之后滚动进来的行）是普通 div：滚动热路径上不创建 VisualElement /
  *   MotionValue（滚动期间不能出现 > 8 ms 的长任务）。每行在挂载时决定用哪种，之后不变（元素类型不变，不会重新挂载内容）；
  * - 边缘渐隐只在滚动、总高度或视口高度变化时同步（不在每次渲染时读布局；暂存中不读，显示时再同步）；
+ * - 无障碍：listbox（`role` / `id` / `aria-label`）是内容层，不是滚动容器——滚动容器里可以另放随内容滚动、却不属于选项的
+ *   浮层（`overlay`）；
+
  * - 隐藏时外壳会整体卸载视图，这里不需要额外的隐藏处理。
  *
  * 通过 `ref` 拿到 `scrollToIndex`（键盘移动选中项时让它保持可见）。
@@ -104,15 +107,21 @@ export interface VirtualListProps {
   /** 行与行之间、首尾的留白（px） */
   paddingY?: number
   /**
-   * 末尾额外的留白（px）：列表底部有浮层盖住一截时（剪贴板的芯片条），最后一行能滚到浮层上方，按键移动时也不会停在
-   * 浮层下面
+   * 末尾额外的留白（px）：列表底部有浮层盖住一截时（剪贴板没有提示条时停靠的确认条 / 轻提示），最后一行能滚到浮层
+   * 上方，按键移动时也不会停在浮层下面
    */
   endInset?: number
   className?: string
-  /** 滚动容器（listbox）的 id：组合框的 aria-controls 指向它 */
+  /** 内容层（listbox）的 id：组合框的 aria-controls 指向它 */
   id?: string
+  /** 内容层的角色（默认 listbox；行是它的选项） */
   role?: string
   'aria-label'?: string
+  /**
+   * 同一个滚动容器里、内容层（listbox）之外的浮层：绝对定位时坐标与行相同、随内容一起原生滚动，但不属于列表的选项
+   * （剪贴板选中行右侧的芯片小条）
+   */
+  overlay?: ReactNode
   ref?: Ref<VirtualListHandle>
   'data-testid'?: string
 }
@@ -132,6 +141,7 @@ export function VirtualList({
   id: listId,
   role = 'listbox',
   'aria-label': ariaLabel,
+  overlay,
   ref,
   'data-testid': testId = 'virtual-list',
 }: VirtualListProps) {
@@ -205,16 +215,20 @@ export function VirtualList({
       ref={scroller}
       className={cx('ui-scroll ui-vlist', className)}
       style={{ height }}
-      id={listId}
-      role={role}
-      aria-label={ariaLabel}
       data-testid={testId}
       onScroll={(e) => {
         scrolled.current = true
         syncFadeEdges(e.currentTarget)
       }}
     >
-      <div className="ui-vlist-inner" style={innerStyle}>
+      {/* listbox 是内容层而不是滚动容器：滚动容器里还可以放不属于选项的浮层（overlay） */}
+      <div
+        className="ui-vlist-inner"
+        style={innerStyle}
+        id={listId}
+        role={role}
+        aria-label={ariaLabel}
+      >
         {selected ? (
           <m.div
             className="ui-vlist-indicator"
@@ -238,6 +252,7 @@ export function VirtualList({
           </div>
         ))}
       </div>
+      {overlay}
     </div>
   )
 }

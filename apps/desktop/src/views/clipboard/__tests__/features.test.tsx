@@ -1,7 +1,8 @@
 /**
  * 剪贴板 v2 的功能（都经操作注册表）：
  * - 收藏：分组标题折叠（写回 Rust、序号只数列出来的行）、超过 5 条时「查看全部 N 个收藏」进入收藏视图、⌘D、命名条；
- * - 芯片：光标停下来之后检视，芯片条出现；点芯片粘贴片段、⌥ 点击只复制；⌘E 进入芯片条，←/→ / ↩ / Esc；
+ * - 芯片：光标停下来之后检视，选中行右侧出现芯片小条（最多两个 + 「+N」）；指针横着移过去点芯片粘贴片段、⌥ 点击只
+ *   复制，小条出现在静止的指针下时单击仍是「点这一行」；⌘E 展开，←/→ / ↩ / 1–9 / Esc；多选 / 确认条 / 命名条 / 预览时不显示；
  * - 「粘贴为…」：⌥⇧↩ 直接打开到子页，选一种变换按它粘贴；
  * - 多选：⌘ 点击编号、⇧↓ 扩展、↩ 合并粘贴、⌘D / ⌫ 作用于全部（含收藏时先确认）、Esc 先取消选择；
  * - 验证码的「N 分钟后删除」、图片「识别文字」、⌘P 在悬浮窗接入之前只拦下。
@@ -20,6 +21,7 @@ import {
   resetWebviewClipboardForTest,
 } from '../useClipboard'
 import {
+  armPointer,
   fakeIpc,
   HOUR,
   idleTransport,
@@ -43,12 +45,15 @@ function mount(items: ClipItemMeta[] = sample(), extra = {}) {
 }
 
 const search = () => screen.getByTestId('clip-search') as HTMLInputElement
+const selected = () => search().getAttribute('aria-activedescendant')
 const rowIds = () =>
   screen.getAllByTestId('clip-row').map((r) => Number(r.getAttribute('data-clip-id')))
 const row = (id: number) => document.getElementById(`clip-row-${id}`) as HTMLElement
 /** 等检视的去抖与 IPC 往返（真实计时器） */
 const settleInspect = () =>
   act(() => new Promise<void>((r) => setTimeout(r, INSPECT_DEBOUNCE_MS + 20)))
+/** 等一次粘贴的 IPC 往返结束（进行中的粘贴会挡掉紧接着的下一次） */
+const settlePaste = () => act(() => new Promise<void>((r) => setTimeout(r, 0)))
 
 /** 7 条收藏 + 3 条最近 */
 function favorites(): ClipItemMeta[] {
@@ -73,6 +78,16 @@ const OTP: ClipInspect = {
     { kind: 'phone', value: '13800138000', start: 25, end: 38, sensitive: false },
   ],
   transforms: ['trim', 'upper'],
+}
+
+/** 四个片段：收起时只放两个 + 「+2」 */
+const MANY: ClipInspect = {
+  entities: [
+    ...OTP.entities,
+    { kind: 'email', value: 'a@wisp.app', start: 40, end: 50, sensitive: false },
+    { kind: 'url', value: 'https://wisp.app', start: 52, end: 68, sensitive: false },
+  ],
+  transforms: [],
 }
 
 beforeEach(async () => {
@@ -197,42 +212,224 @@ describe('收藏', () => {
 })
 
 describe('芯片（识别出的片段）', () => {
-  it('光标停下来之后检视：芯片条出现（验证码在前）；点芯片粘贴片段，⌥ 点击只复制', async () => {
-    ipc.results.clipboard_inspect = OTP
+  it('光标停下来之后检视：小条出现在选中行右侧（列表的滚动内容里、listbox 之外），收起时最多两个 + 「+N」，行尾让位', async () => {
+    ipc.results.clipboard_inspect = MANY
     mount([meta(1, { preview: '【Wisp】验证码 482913，客服 138 0013 8000' }), meta(2)])
     await settleInspect()
     expect(ipc.called('clipboard_inspect')).toEqual([{ id: 1 }])
     const strip = await screen.findByTestId('clip-chips')
+    expect(strip.closest('.ui-vlist')).toBe(screen.getByTestId('clip-list'))
+    expect(strip.closest('[role="listbox"]')).toBeNull()
+    expect(screen.getByRole('listbox').contains(row(1))).toBe(true)
     const chips = within(strip).getAllByTestId('clip-chip')
     expect(chips.map((c) => c.textContent)).toEqual(['482913', '13800138000'])
+    const more = within(strip).getByTestId('clip-chips-more')
+    expect(more.textContent).toBe(t('smart.chip.more', { n: 2 }))
+    expect(more.getAttribute('aria-label')).toBe(t('smart.a11y.more', { n: 2 }))
+    expect(row(1).hasAttribute('data-chips')).toBe(true)
+    expect(row(2).hasAttribute('data-chips')).toBe(false)
+  })
+
+  it('指针移到小条上再点芯片：粘贴片段，⌥ 点击只复制；在小条上移动不改选中', async () => {
+    ipc.results.clipboard_inspect = OTP
+    mount([meta(1, { preview: '【Wisp】验证码 482913，客服 138 0013 8000' }), meta(2)])
+    armPointer()
+    await settleInspect()
+    const strip = await screen.findByTestId('clip-chips')
+    const chips = within(strip).getAllByTestId('clip-chip')
+    fireEvent.pointerMove(chips[1] as HTMLElement, {
+      clientX: 300,
+      clientY: 50,
+      pointerType: 'mouse',
+    })
+    expect(selected()).toBe('clip-row-1')
     fireEvent.click(chips[1] as HTMLElement, { altKey: true })
     expect(ipc.called('clipboard_paste_text')).toEqual([
       { text: '13800138000', from: 1, mode: 'copy_only' },
     ])
+    await settlePaste()
+    fireEvent.click(chips[0] as HTMLElement)
+    expect(ipc.called('clipboard_paste_text').at(-1)).toEqual({
+      text: '482913',
+      from: 1,
+      mode: 'normal',
+    })
+    expect(ipc.called('clipboard_paste')).toEqual([])
   })
 
-  it('⌘E 进入芯片条：→ 移动、↩ 粘贴当前片段；Esc 回到列表；↑↓ 换条目时芯片条随之收起', async () => {
+  it('回归：在小条上移动选中项不变、小条还在；移到相邻的行上照常换条目，旧小条立即不可点并消失', async () => {
     ipc.results.clipboard_inspect = ({ id }: { id: number }) =>
       id === 1 ? OTP : { entities: [], transforms: [] }
+    mount([meta(1, { preview: 'otp' }), meta(2), meta(3)])
+    armPointer()
+    await settleInspect()
+    const strip = await screen.findByTestId('clip-chips')
+    fireEvent.pointerMove(strip, { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    fireEvent.pointerMove(strip, { clientX: 290, clientY: 52, pointerType: 'mouse' })
+    expect(selected()).toBe('clip-row-1')
+    expect(screen.getByTestId('clip-chips')).toBe(strip)
+    const old = within(strip).getAllByTestId('clip-chip')[0] as HTMLElement
+    // 悬停即选中没有被破坏：指针移到下一行上照常换条目
+    fireEvent.pointerMove(row(2), { clientX: 120, clientY: 80, pointerType: 'mouse' })
+    expect(selected()).toBe('clip-row-2')
+    expect(row(1).hasAttribute('data-chips')).toBe(false)
+    // 旧小条要么已经卸载，要么正在原地淡出（不接收指针）
+    const exiting = screen.queryByTestId('clip-chips')
+    expect(exiting === null || exiting.closest('[data-exiting]') !== null).toBe(true)
+    fireEvent.click(old)
+    expect(ipc.called('clipboard_paste_text')).toEqual([])
+    expect(ipc.called('clipboard_paste')).toEqual([])
+    await waitFor(() => expect(screen.queryByTestId('clip-chips')).toBeNull())
+  })
+
+  it('指示器到达选中行之后小条才出现：A → B → A 很快地来回时，回到 A 的小条等指示器真的回来', async () => {
+    setPlatform('macos', false)
+    ipc.results.clipboard_inspect = ({ id }: { id: number }) =>
+      id === 1 ? OTP : { entities: [], transforms: [] }
+    mount([meta(1, { preview: 'otp' }), meta(2), meta(3)])
+    armPointer()
+    await settleInspect()
+    await screen.findByTestId('clip-chips')
+    fireEvent.pointerMove(row(2), { clientX: 120, clientY: 80, pointerType: 'mouse' })
+    fireEvent.pointerMove(row(1), { clientX: 120, clientY: 50, pointerType: 'mouse' })
+    expect(selected()).toBe('clip-row-1')
+    // 指示器还在从第二行往回走：小条还没出来（旧的那个正在淡出）
+    expect(row(1).hasAttribute('data-chips')).toBe(false)
+    await waitFor(() => expect(row(1).hasAttribute('data-chips')).toBe(true))
+    expect(document.querySelectorAll('.clip-rowchips-slot:not([data-exiting])')).toHaveLength(1)
+    // 同时在场的新旧两个小条里只有新的那个带 id
+    expect(document.querySelectorAll('#clip-rowchips')).toHaveLength(1)
+    expect(document.querySelectorAll('#clip-chip-0')).toHaveLength(1)
+  })
+
+  it('防误点：小条出现在静止的指针下，单击按「点这一行」处理（粘贴整条），不粘贴片段', async () => {
+    ipc.results.clipboard_inspect = OTP
+    mount([meta(1, { preview: 'otp' }), meta(2)])
+    armPointer()
+    // 指针停在第一行的右半边，小条随后出现在它下面
+    fireEvent.pointerMove(row(1), { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    await settleInspect()
+    const strip = await screen.findByTestId('clip-chips')
+    const chip = within(strip).getAllByTestId('clip-chip')[0] as HTMLElement
+    // 布局变化时引擎会在原坐标补发一次指针事件：坐标没变，不算移动
+    fireEvent.pointerMove(chip, { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    fireEvent.pointerDown(chip, { button: 0, clientX: 300, clientY: 50 })
+    fireEvent.click(chip)
+    await waitFor(() => expect(ipc.called('clipboard_paste')).toEqual([{ id: 1, mode: 'normal' }]))
+    expect(ipc.called('clipboard_paste_text')).toEqual([])
+  })
+
+  it('「+N」打开操作菜单的「提取」子页', async () => {
+    ipc.results.clipboard_inspect = MANY
+    mount([meta(1, { preview: 'otp' }), meta(2)])
+    armPointer()
+    await settleInspect()
+    const more = await screen.findByTestId('clip-chips-more')
+    fireEvent.pointerMove(more, { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    fireEvent.click(more)
+    const page = await screen.findByTestId('clip-menu-extract')
+    // 返回行 + 全部片段
+    expect(within(page).getAllByRole('menuitem')).toHaveLength(MANY.entities.length + 1)
+    expect(ipc.called('clipboard_paste')).toEqual([])
+  })
+
+  it('⌘E 进入芯片模式：小条展开显示全部（带序号），→ 移动、↩ 粘贴、数字键直接粘贴第 n 个；Esc 回到列表；↑↓ 换条目时收起', async () => {
+    ipc.results.clipboard_inspect = ({ id }: { id: number }) =>
+      id === 1 ? MANY : { entities: [], transforms: [] }
     mount([meta(1, { preview: 'otp' }), meta(2), meta(3)])
     await settleInspect()
     await screen.findByTestId('clip-chips')
     key('KeyE', { meta: true })
-    expect(screen.getAllByTestId('clip-chip')[0]?.hasAttribute('data-active')).toBe(true)
+    const strip = screen.getByTestId('clip-chips')
+    expect(strip.hasAttribute('data-focus')).toBe(true)
+    const chips = within(strip).getAllByTestId('clip-chip')
+    expect(chips).toHaveLength(MANY.entities.length)
+    expect(within(strip).queryByTestId('clip-chips-more')).toBeNull()
+    expect(chips.map((c) => c.querySelector('.clip-chip-index')?.textContent)).toEqual([
+      '1',
+      '2',
+      '3',
+      '4',
+    ])
+    expect(chips[0]?.hasAttribute('data-active')).toBe(true)
     expect(search().getAttribute('aria-activedescendant')).toBe('clip-chip-0')
+    expect(search().getAttribute('aria-controls')?.split(' ')).toContain(strip.id)
+    // 提示条说明数字键
+    expect(document.querySelector('[data-hint="chip_pick"]')).not.toBeNull()
     key('ArrowRight')
     expect(screen.getAllByTestId('clip-chip')[1]?.hasAttribute('data-active')).toBe(true)
-    key('Enter')
+    // 超出个数的数字什么都不做，也不打进搜索框
+    expect(key('Digit9').defaultPrevented).toBe(true)
+    expect(ipc.called('clipboard_paste_text')).toEqual([])
+    key('Digit3')
     expect(ipc.called('clipboard_paste_text')).toEqual([
-      { text: '13800138000', from: 1, mode: 'normal' },
+      { text: 'a@wisp.app', from: 1, mode: 'normal' },
     ])
+    // 粘贴之后退出芯片模式（面板随之收起）；再进一次，↩ 粘贴当前芯片
+    await settlePaste()
+    key('KeyE', { meta: true })
+    key('ArrowRight')
+    key('Enter')
+    expect(ipc.called('clipboard_paste_text').at(-1)).toEqual({
+      text: '13800138000',
+      from: 1,
+      mode: 'normal',
+    })
     expect(ipc.called('clipboard_paste')).toEqual([])
+    await settlePaste()
     key('KeyE', { meta: true })
     key('Escape')
-    expect(screen.getAllByTestId('clip-chip')[0]?.hasAttribute('data-active')).toBe(false)
+    expect(screen.getByTestId('clip-chips').hasAttribute('data-focus')).toBe(false)
     expect(search().getAttribute('aria-activedescendant')).toBe('clip-row-1')
     key('ArrowDown')
     await waitFor(() => expect(screen.queryByTestId('clip-chips')).toBeNull())
+  })
+
+  it('只有一个片段时芯片模式里数字键不绑定（照常打进搜索框），提示条里也没有「1–9」', async () => {
+    ipc.results.clipboard_inspect = { entities: [OTP.entities[0]], transforms: [] }
+    mount([meta(1, { preview: 'otp' }), meta(2)])
+    await settleInspect()
+    await screen.findByTestId('clip-chips')
+    key('KeyE', { meta: true })
+    expect(screen.getByTestId('clip-chips').hasAttribute('data-focus')).toBe(true)
+    expect(document.querySelector('[data-hint="chip_pick"]')).toBeNull()
+    expect(screen.getAllByTestId('clip-chip')[0]?.querySelector('.clip-chip-index')).toBeNull()
+    expect(key('Digit1').defaultPrevented).toBe(false)
+  })
+
+  it('多选、删除确认、命名条、全文预览打开时不显示小条；打开预览时退出芯片模式', async () => {
+    ipc.results.clipboard_inspect = ({ id }: { id: number }) =>
+      id === 1 ? OTP : { entities: [], transforms: [] }
+    ipc.results.clipboard_get = () => null
+    mount([meta(1, { preview: 'otp', pinned: true }), meta(2), meta(3)])
+    await settleInspect()
+    await screen.findByTestId('clip-chips')
+    const gone = () => waitFor(() => expect(screen.queryByTestId('clip-chips')).toBeNull())
+    const back = () => screen.findByTestId('clip-chips')
+    // 删除收藏的行内确认
+    key('Backspace')
+    expect(screen.getByTestId('view-clipboard').getAttribute('data-confirm')).toBe('delete')
+    await gone()
+    key('Escape')
+    await back()
+    // 多选（⌘ 点击选中行本身）
+    fireEvent.click(row(1), { metaKey: true })
+    await gone()
+    key('Escape')
+    await back()
+    // 全文预览；芯片模式下打开预览时退出芯片模式
+    key('KeyE', { meta: true })
+    key('Space')
+    expect(await screen.findByTestId('clip-preview')).toBeTruthy()
+    await gone()
+    expect(search().getAttribute('aria-activedescendant')).toBe('clip-row-1')
+    key('Escape')
+    expect((await back()).hasAttribute('data-focus')).toBe(false)
+    // 命名条
+    key('KeyK', { meta: true })
+    fireEvent.click(await screen.findByTestId('clip-context-menu-item-rename'))
+    await screen.findByTestId('clip-rename-input')
+    await gone()
   })
 
   it('识别设置变了（settings:changed）：丢掉按旧设置算出的检视结果，当前条目重新检视', async () => {

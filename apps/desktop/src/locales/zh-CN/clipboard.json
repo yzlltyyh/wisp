@@ -89,7 +89,8 @@
     "clear_marks": "取消选择",
     "choose": "选择",
     "queue": "连续粘贴",
-    "leave": "回到应用"
+    "leave": "回到应用",
+    "pick": "按序号粘贴"
   },
   "action": {
     "paste": "粘贴",

@@ -221,6 +221,14 @@ export function spaceOpensPreview(s: ClipState): boolean {
 }
 
 /**
+ * 芯片小条此刻被挡掉（多选、确认条、命名条）：不显示，也不进芯片模式。全文预览另算：⌘E 会先关掉预览，打开预览时退出
+ * 芯片模式
+ */
+export function chipsHidden(s: ClipState): boolean {
+  return s.marks.length > 0 || s.confirm !== null || s.rename !== null
+}
+
+/**
  * 当前显示的条目：搜索框有内容且已有检索结果时显示结果（新的结果到达之前保留上一次的，不闪烁；过滤变了先在本地
  * 收窄），否则显示最近列表
  */

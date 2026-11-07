@@ -28,9 +28,11 @@
   },
   "chip": {
     "label": "{kind}: {value}",
-    "tip": "Click to paste, {alt}-click to copy"
+    "tip": "Click to paste, {alt}-click to copy",
+    "more": "+{n}"
   },
   "a11y": {
-    "chips": "Detected items"
+    "chips": "Detected items",
+    "more": "{n} more"
   }
 }

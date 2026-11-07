@@ -141,7 +141,7 @@
       calc(100% - 36px)
   );
 }
-.clip:is([data-confirm], [data-status-docked], [data-chips]) .clip-body {
+.clip:is([data-confirm], [data-status-docked]) .clip-body {
   --clip-dock-fade: 1;
   transition-timing-function: var(--ease-standard);
 }
@@ -208,6 +208,90 @@
 /* 被删除 / 清空的行的残影：留在原处淡出（ClipList），不接收指针 */
 .clip-ghost {
   pointer-events: none;
+}
+
+/*
+ * ---- 芯片小条：选中行右侧识别出的片段（preview/Chips.tsx 的 RowChips）----
+ * 放在列表的滚动内容里、listbox 之外，与选中指示器同一个 y / 高度（槽位撑满行高、小条垂直居中），右缘与行内容对齐
+ * （行左右内缩 6 + 行内边距 8）。浮起表面 + 控件阴影（比浮层轻，不在行内压出一块厚阴影）；收起时宽度上限
+ * min(45%, 200px)，芯片放不下时省略值；⌘E 展开到露出行首图标，显示全部、横向滚动
+ */
+.clip-rowchips-slot {
+  position: absolute;
+  top: 0;
+  right: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  max-width: min(45%, 200px);
+  pointer-events: none;
+}
+.clip-rowchips-slot[data-focus] {
+  max-width: calc(100% - 64px);
+}
+.clip-rowchips {
+  position: relative;
+  height: 28px;
+  padding: 2px;
+  border-radius: var(--r-row);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-control);
+  pointer-events: auto;
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.clip-rowchips .clip-chip {
+  flex: 0 1 auto;
+  min-width: 40px;
+}
+/* 收起时第一个芯片（最常用的，验证码排在最前）完整显示，放不下时后面的先省略：它不收缩，只给后面留出最窄的位置
+   （data-rest：后面还有一个芯片 → 40 + 间距 4；再有「+N」→ 再加约 40）。按比例收缩的话它也会被削掉几 px，6 位的
+   验证码就成了「4829…」 */
+.clip-rowchips:not([data-focus]) .clip-chip:first-child {
+  flex-shrink: 0;
+  max-width: 100%;
+}
+.clip-rowchips[data-rest='1'] .clip-chip:first-child {
+  max-width: calc(100% - 44px);
+}
+.clip-rowchips[data-rest='2'] .clip-chip:first-child {
+  max-width: calc(100% - 84px);
+}
+.clip-rowchips-slot[data-focus] .clip-chip {
+  flex: none;
+}
+/* 「+N」：折起来的片段数，点它打开「提取」子页 */
+.clip-rowchips .clip-chip-more {
+  flex: none;
+  min-width: 0;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
+}
+/* 退场中（换了条目，原地淡出）、打开动效期间等待淡入：不接收指针 */
+.clip-rowchips-slot:is([data-exiting], [data-hold]) .clip-rowchips {
+  pointer-events: none;
+}
+/* 按住 ⌘ 显示 ⌘n 角标：小条让出行尾（延迟与角标的淡入相同，⌘C 这类一按即放的快捷键不闪）；芯片模式里不让 */
+.clip[data-mod-held] .clip-rowchips-slot:not([data-focus]) .clip-rowchips {
+  opacity: 0;
+  pointer-events: none;
+  transition-delay: var(--dur-slow);
+}
+/* 选中行的行尾（来源、时间、验证码倒计时）在小条下面让位：宽度至少是小条的宽度（标题提前省略，不被小条硬盖住），
+   内容靠右（按住 ⌘ 时角标在原处出现） */
+.clip-row .ui-row-trailing {
+  transition: opacity var(--dur-fast) var(--ease-standard);
+}
+.clip-row[data-chips] .ui-row-trailing {
+  justify-content: flex-end;
+  min-width: var(--clip-chips-w, 0px);
+  opacity: 0;
+}
+.clip[data-mod-held] .clip-row[data-chips] .ui-row-trailing {
+  opacity: 1;
+  transition-delay: var(--dur-slow);
+}
+[data-reduced-motion='true'] :is(.clip-rowchips, .clip-row .ui-row-trailing) {
+  transition-duration: var(--dur-base);
 }
 
 /* 选中指示器（本视图自绘，见 ClipList）：挂在内容层的第一个子节点，画在行的下面 */
@@ -860,34 +944,11 @@
   pointer-events: none;
 }
 
-/* ---- 芯片条：光标所在条目识别出的片段，浮在列表底部（提示条上方，离左右 8 px）；放不下时横向滚动 ---- */
-.clip-chips-dock {
-  position: absolute;
-  right: 8px;
-  bottom: 4px;
-  left: 8px;
-  display: flex;
-  justify-content: flex-start;
-  pointer-events: none;
-}
-.clip[data-hint-bar] .clip-chips-dock {
-  bottom: 40px;
-}
-.clip-chips-float {
-  padding: 4px;
-  border-radius: var(--r-row);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-popover);
-  pointer-events: auto;
-}
-/* 预览里的芯片：跟在内容里，不浮起、可以折行 */
+/* 全文预览里的芯片：跟在内容里，不浮起、可以折行 */
 .clip-chips-inline {
   flex-wrap: wrap;
   padding: 0 0 8px;
   overflow: visible;
-}
-.clip-hover .clip-chips-inline {
-  padding: 0 12px 8px;
 }
 
 /* ---- 行内二次确认：浮在卡片底部，离左右下三边都是 8 px（盖住提示条），从下往上展开 ---- */

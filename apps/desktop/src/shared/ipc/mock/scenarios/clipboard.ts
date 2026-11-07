@@ -12,8 +12,8 @@
  * - `clipboard.scroll-10k` 是流畅度场景（`pnpm qa:shots --perf`）：1 万条混合行高（44 / 64）+ 分组标题，连续滚动之后按住 ↓，期间
  *   断言 DOM 行节点数 ≤ 可视行数 × 3 + 分组标题数、没有原图请求，结果写在 `<html data-qa-*>` 上；
  * - `clipboard.paste-toast-*`：每个 `CopiedReason` 一个 toast 场景（中英文由 `lang` 参数切换）；
- * - 收藏、芯片、多选、「粘贴为…」、命名：`clipboard.favorites-*`、`clipboard.chips-otp`、`clipboard.multi-select`、
- *   `clipboard.paste-as`、`clipboard.rename`；
+ * - 收藏、芯片、多选、「粘贴为…」、命名：`clipboard.favorites-*`、`clipboard.chips`（选中行右侧的芯片小条，浏览器级
+ *   用例从这里开始）、`clipboard.chips-otp`（⌘E 展开）、`clipboard.multi-select`、`clipboard.paste-as`、`clipboard.rename`；
  * - 悬浮剪贴板与连续粘贴：`clipboard.float`、`clipboard.float-queue`（clipfloat 入口）、`clipboard.queue-start`、
  *   `clipboard.queue-toast`。
  */
@@ -1178,9 +1178,13 @@ export const scenarios: readonly Scenario[] = [
     seeds: (os, now) => [...favoriteSeeds(os, now), ...seeds(os, now)],
     act: () => $<HTMLButtonElement>('[data-testid="clip-show-favorites"]')?.click(),
   }),
-  clip('chips-otp', '剪贴板 · 验证码条目的芯片条与「N 分钟后删除」（⌘E 进入芯片条）', {
+  clip('chips', '剪贴板 · 选中行右侧的芯片小条（验证码在前，行尾让位）', {
+    // 光标打开时就在验证码上：停下来之后检视，指示器到位后小条出现
     seeds: smartSeeds,
-    // 光标打开时就在验证码上：停下来之后检视，芯片条出现；⌘E 把键盘焦点交给芯片条
+  }),
+  clip('chips-otp', '剪贴板 · 验证码条目的芯片小条与「N 分钟后删除」（⌘E 展开、带序号）', {
+    seeds: smartSeeds,
+    // 光标打开时就在验证码上：停下来之后检视，芯片小条出现；⌘E 把键盘焦点交给芯片（小条展开）
     act: (ctx) => steps(ctx, [[400, () => press('e', 'KeyE', { mod: true })]]),
   }),
   clip('multi-select', '剪贴板 · 多选（⌘ 点击按顺序编号，提示条换成合并粘贴）', {

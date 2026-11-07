@@ -76,6 +76,8 @@ const INSPECT: ClipInspect = {
   })),
   transforms: Object.keys(TRANSFORM_SPECS) as (keyof typeof TRANSFORM_SPECS)[],
 }
+/** 只有一个片段 */
+const ONE: ClipInspect = { entities: INSPECT.entities.slice(0, 1), transforms: [] }
 
 /**
  * 上下文的各种组合：平台 × 条目 × 暂停与否 × 预览是否提供本地状态；另外每个条目各有一份「已检视（芯片条有键盘焦点）」
@@ -390,7 +392,7 @@ describe('操作注册表', () => {
     }
   })
 
-  it('芯片条：←/→ 选择、↩ 粘贴片段、Esc 返回（芯片条自己的键位层）', () => {
+  it('芯片模式：←/→ 选择、↩ 粘贴片段、1–9 直接粘贴第 n 个（两个以上片段时）、Esc 返回（自己的键位层）', () => {
     for (const os of OSES) {
       const c = contexts(os).find((x) => x.s.chip !== null && x.target?.kind === 'text')
       if (!c) throw new Error('no chip context')
@@ -398,14 +400,24 @@ describe('操作注册表', () => {
       expect(hints.map((h) => [h.id, h.combos])).toEqual([
         ['chip_move', ['ArrowLeft', 'ArrowRight']],
         ['paste_fragment', ['Enter']],
+        ['chip_pick', ['Digit1', 'Digit9']],
         ['chip_exit', ['Escape']],
       ])
+      expect(hints.find((h) => h.id === 'chip_pick')?.span).toBe(true)
       expect(pressIn('chips', 'Enter', c)).toBe('paste_fragment')
       expect(pressIn('chips', 'Alt+Enter', c)).toBe('paste_fragment')
       expect(pressIn('chips', 'ArrowRight', c)).toBe('chip_move')
+      expect(pressIn('chips', 'Digit2', c)).toBe('chip_pick')
       expect(pressIn('chips', 'Escape', c)).toBe('chip_exit')
-      // 列表层的 ↩ 仍是粘贴整条
+      // 列表层的 ↩ 仍是粘贴整条，数字不是快捷键（打进搜索框）
       expect(pressIn('list', 'Enter', c)).toBe('paste')
+      expect(pressIn('list', 'Digit2', c)).toBe(null)
+      // 只有一个片段：数字键不绑定，提示条里也没有
+      const one = { ...c, s: { ...c.s, inspect: { id: c.target?.id ?? 0, result: ONE } } }
+      expect(pressIn('chips', 'Digit1', one)).toBe(null)
+      expect(hintItems('chips', { ...one, target: null }, t).map((h) => h.id)).not.toContain(
+        'chip_pick',
+      )
     }
   })
 

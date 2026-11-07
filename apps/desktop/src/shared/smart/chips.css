@@ -1,5 +1,5 @@
 /*
- * 识别出的片段（芯片）：剪贴板的芯片条 / 预览与 OCR 视图共用（EntityChip.tsx）。芯片是控件填充色的小按钮，值用等宽数字；
+ * 识别出的片段（芯片）：剪贴板的芯片小条 / 全文预览与 OCR 视图共用（EntityChip.tsx）。芯片是控件填充色的小按钮，值用等宽数字；
  * 芯片条放不下时横向滚动（不显示滚动条）。各自的停靠位置在各视图的样式里
  */
 .clip-chips {
@@ -38,7 +38,7 @@
 .clip-chip:active {
   background: var(--fill-control-pressed);
 }
-/* 剪贴板 ⌘E 进入芯片条后的当前芯片（焦点仍在搜索框里，高亮代替焦点环） */
+/* 剪贴板 ⌘E 进入芯片模式后的当前芯片（焦点仍在搜索框里，高亮代替焦点环） */
 .clip-chip[data-active] {
   background: var(--fill-selected);
   box-shadow: inset 0 0 0 1px var(--accent);
@@ -46,6 +46,13 @@
 .clip-chip-icon {
   flex: none;
   color: var(--fg-2);
+}
+/* 芯片模式里的序号（数字键直接粘贴第 n 个）：比值淡一级，等宽数字 */
+.clip-chip-index {
+  flex: none;
+  font-weight: 600;
+  color: var(--fg-2);
+  font-variant-numeric: tabular-nums;
 }
 .clip-chip-text {
   overflow: hidden;
