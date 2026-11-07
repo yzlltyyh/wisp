@@ -31,8 +31,9 @@
 //! 翻译 / OCR 视图可以在会话内切换为阅读布局（[`PanelController::set_reading`]）：宽度与高度上限换成阅读布局的值（翻译 760、
 //! OCR 880 或按截图，上限工作区 × 0.85），位置保持（左边不动、右侧越界时整体左移），之后按拖过的面板处理（长到工作区外时
 //! 整体推回）；收起恢复展开之前的宽度与上限，位置保持当前的。宽度与上限的改变都落在前端内容完全透明的那一刻
-//! （`timing.crossfade` 之后），之前的高度变化仍按旧上限夹。阅读布局只属于这次会话：原地替换的新会话、下一次唤出都回到
-//! 普通布局。
+//! （`timing.crossfade` 之后），之前的高度变化仍按旧上限夹。Css 帧模式里会让还看得见的旧卡片移动的窗口改变（窗口左移、
+//! Above 窗口的顶边上移）同样推迟到那一刻，期间窗口留在原处（`Session::frame_hold`）。阅读布局只属于这次会话：原地替换的
+//! 新会话、下一次唤出都回到普通布局。
 //!
 //! ## 打断与恢复
 //! - **淡出中又来新的 prepare**：淡出立即完成（旧内容不会被带到新位置上闪一下）；
@@ -118,6 +119,10 @@ const SHELL_LOAD_WAIT: Duration = Duration::from_secs(2);
 
 /// 减少动效时窗口淡入淡出的时长（线性）
 const REDUCED_FADE: f64 = sizing::timing::REDUCED_FADE;
+
+/// Native 帧模式的宽度切换在到期后的第一帧由 displayLink 执行，计时器线程与主线程的时钟也有出入：到期之后再算这么久
+/// 它仍可能没执行（几帧的余量）。宁可多算——当成还没执行时只是多发一次目标相同的切换
+const WIDTH_SWITCH_SLACK: Duration = Duration::from_millis(50);
 
 /// 一次 prepare 的输入（几何与视图策略由 WindowManager 按设置与锚点算好）
 #[derive(Debug, Clone, PartialEq)]
@@ -494,8 +499,13 @@ struct Session {
     /// 展开 / 收起之后、前端提交新版式之前（内容完全透明的那一刻之前）卡片高度仍按这个旧上限夹：前端这段时间还按旧版式
     /// 上报高度（例如流式输出中），按新的较小上限夹会让窗口先缩高、再在透明帧收宽，成了两段运动
     reading_hold: Option<(Instant, f64)>,
-    /// 展开 / 收起的轮次（不透明窗口推迟到透明帧改窗口的计时器据此作废）
+    /// 展开 / 收起的轮次（Css 帧模式推迟到透明帧改窗口的计时器据此作废）
     reading_seq: u64,
+    /// Css 帧模式：展开 / 收起之后、内容完全透明之前，窗口仍停在切换之前的位置——值是那时窗口里卡片的左边（本屏逻辑坐标），
+    /// `window_width` 与 `window_height` 也还是那时的。旧内容此刻完全不透明，贴着窗口左边（Above 还贴底边），提前把窗口
+    /// 左移或把 Above 窗口的顶边上移会让它跟着横跳 / 跳一帧；期间的改窗口（高度阶梯、推回、不透明窗口的高度）都按这个
+    /// 位置与宽度算，透明帧（[`PanelController::reading_frame`]）再换到新几何
+    frame_hold: Option<f64>,
 }
 
 impl Session {
@@ -530,8 +540,12 @@ struct Inner {
     /// 窗口当前在屏幕上（含淡出中、ready 超时后的 alpha 0），值是「它离屏时会报告完成」的那个会话：显示它的会话，或
     /// 原地替换 / 接管窗口的新会话。旧会话迟到的离屏回调据此判断窗口是否真的已经离屏（见 [`PanelController::finish_hide`]）
     on_screen: Option<u64>,
-    /// Native 帧模式：WebView 当前被固定的高度（原地替换时只在需要时重新固定，见 macos.rs 的 `panel_pin_webview`）
+    /// Native 帧模式：WebView 当前被固定的高度（原地替换时只在需要时重新固定，见 macos.rs 的 `panel_pin_webview`）。
+    /// 带重新固定的宽度切换排下时就记成新值（切换在之后的某一帧执行）
     pinned_webview: Option<f64>,
+    /// Native 帧模式：最近一次排下的宽度切换最晚在这一刻之前执行完（[`PanelController::width_switch`]）。之前它可能还在
+    /// 等：新的切换会替换它，窗口此刻的宽度也还不是它的目标
+    width_switch_until: Option<Instant>,
     /// 截图前隐藏在等这个会话的离屏完成（淡出中的会话）
     exit_waiter: Option<(u64, std::sync::mpsc::SyncSender<()>)>,
     /// 窗口不存在 / 页面没加载完时暂存的 prepare（连同已重建的次数）
@@ -1037,12 +1051,19 @@ impl PanelController {
         self.frame_mode == FrameMode::Css && !self.opaque && self.margin > 0.0
     }
 
-    /// 显示时的窗口高度：Native / 不透明 = 卡片；Css + Above 取上限（会话内不再改变）；其余 = 卡片 + 2·margin
+    /// 显示时的窗口高度：Native / 不透明 = 卡片；Css + Above 取上限（之后通常不再改变）；其余 = 卡片 + 2·margin。
+    ///
+    /// Above 的上限不超过固定边以上的空间（窗口顶边不伸出工作区）：按锚点放置的面板上限本来就是这样算的；拖过 / 展开阅读过
+    /// 的面板上限按整个工作区，卡片要长到那么高时会整体推回（[`PanelGeometry::fit_card`]），窗口顶边用不着伸到工作区外——
+    /// 伸出去的部分可能落在另一块显示器上（Windows 按窗口面积最大的那块屏决定缩放，多屏缩放不同时整窗会换一种缩放）。
+    /// 卡片真的比窗口高了（推回、拖到更低处之后）由 `resize_to` 再把窗口长高
     fn window_height_for(&self, g: &PanelGeometry, card: f64) -> f64 {
         match self.frame_mode {
             FrameMode::Native => card,
             FrameMode::Css if self.opaque => card,
-            FrameMode::Css if g.placement == Placement::Above => g.max_height + 2.0 * self.margin,
+            FrameMode::Css if g.placement == Placement::Above => {
+                g.max_height.min(g.available_height().max(card)) + 2.0 * self.margin
+            }
             FrameMode::Css => card + 2.0 * self.margin,
         }
     }
@@ -1051,6 +1072,10 @@ impl PanelController {
         let g = &s.open.geometry;
         let mut local = g.window_rect(s.window_height, self.margin);
         local.width = s.window_width + 2.0 * self.margin;
+        if let Some(x) = s.frame_hold {
+            // 展开 / 收起之后、透明帧之前：窗口留在切换之前的位置（见 `Session::frame_hold`）
+            local.x = x - self.margin;
+        }
         g.screen.to_desktop(local, self.unit)
     }
 
@@ -1468,6 +1493,7 @@ impl PanelController {
             loose: false,
             reading_hold: None,
             reading_seq: 0,
+            frame_hold: None,
         }
     }
 
@@ -1615,8 +1641,15 @@ impl PanelController {
                 .as_ref()
                 .filter(|s| visible && matches!(s.phase, Phase::Preparing | Phase::Shown))
                 .map(|s| {
+                    let mut geometry = s.open.geometry.clone();
+                    if let Some(x) = s.frame_hold {
+                        // 展开 / 收起之后、透明帧之前：窗口与看得见的旧卡片还在切换之前的位置，新会话从那里接着放（锚点
+                        // 对应的变换原点不变）
+                        geometry.origin_x += geometry.x - x;
+                        geometry.x = x;
+                    }
                     (
-                        s.open.geometry.clone(),
+                        geometry,
                         s.window_height,
                         s.window_width,
                         s.card_height,
@@ -1959,7 +1992,8 @@ impl PanelController {
     /// - Native（窗口即卡片）：高度始终走 spring.gentle（固定边不动）。宽度 / 左边要变时**不在这里改**——旧视图此刻还
     ///   完全不透明，立即改宽度会把它裁掉或按新宽度重排；改为 [`WidthSwitch`]：`width_delay`（旧视图淡出完、内容完全
     ///   透明的那一刻）之后由 displayLink 在一帧里改左边与宽度，WebView 的重新固定也放在这一帧。宽度不变时只在上限变大
-    ///   时重新固定 WebView（变小时保留较高的 WebView，窗口裁掉多余部分，不必让可见的内容等一次 WebContent 重排）
+    ///   时重新固定 WebView（变小时保留较高的 WebView，窗口裁掉多余部分，不必让可见的内容等一次 WebContent 重排）。
+    ///   上一次排下的宽度切换还没执行时（旧会话刚展开 / 收起阅读）总是排一次，替换掉它
     fn apply_in_place(&self, p: &InPlace) {
         if self.frame_mode == FrameMode::Css {
             if let Err(e) = self.host.set_frame(p.rect) {
@@ -1974,21 +2008,19 @@ impl PanelController {
             }
             return;
         };
-        let pinned = self.inner.lock().pinned_webview;
-        let horizontal_change = (current.x - p.rect.x).abs() >= 0.5 || (current.width - p.rect.width).abs() >= 0.5;
-        if horizontal_change {
-            let pin = pinned
-                .is_none_or(|h| (h - p.max_height).abs() >= 0.5)
-                .then_some(p.max_height);
-            self.host.switch_width(WidthSwitch {
-                x: p.rect.x,
-                width: p.rect.width,
-                delay: p.width_delay,
-                pin,
-            });
-            if pin.is_some() {
-                self.inner.lock().pinned_webview = Some(p.max_height);
-            }
+        let (switch, pinned) = {
+            let mut g = self.inner.lock();
+            // 上一次排下的宽度切换（例如刚点了展开阅读）可能还没执行：窗口此刻的宽度不是它的目标，比较不出要不要改——
+            // 总是排一次到新矩形的切换（替换掉那一次，不让它在新会话上把窗口改成旧会话的宽度）
+            let pending = g.width_switch_until.is_some_and(|t| Instant::now() < t);
+            let horizontal_change =
+                pending || (current.x - p.rect.x).abs() >= 0.5 || (current.width - p.rect.width).abs() >= 0.5;
+            let switch =
+                horizontal_change.then(|| Self::width_switch(&mut g, p.rect, p.width_delay, p.max_height, true));
+            (switch, g.pinned_webview)
+        };
+        if let Some(switch) = switch {
+            self.host.switch_width(switch);
         } else if pinned.is_none_or(|h| p.max_height > h + 0.5) {
             match self.host.pin_webview(p.max_height) {
                 Ok(()) => self.inner.lock().pinned_webview = Some(p.max_height),
@@ -2282,9 +2314,16 @@ impl PanelController {
                     s.window_height = card;
                     frame(self, s)
                 }
-                // Above：窗口已是上限高度，卡片在窗口内由 CSS 跟随（见模块注释）；推回时整个窗口下移
+                // Above：窗口已是上限高度，卡片在窗口内由 CSS 跟随（见模块注释）；推回时整个窗口下移。拖过 / 展开阅读过的
+                // 面板窗口顶边不伸出工作区（见 window_height_for）：卡片推回后、或拖到更低处之后比窗口高了，窗口按新位置长高
+                // ——推回时窗口顶边仍贴工作区顶，只是底边下移
                 FrameMode::Css if geometry.placement == Placement::Above => {
-                    if pushed {
+                    if card + 2.0 * self.margin > s.window_height + 0.25 {
+                        s.window_height = self
+                            .window_height_for(&s.open.geometry, card)
+                            .max(card + 2.0 * self.margin);
+                        frame(self, s)
+                    } else if pushed {
                         frame(self, s)
                     } else {
                         Act::Keep
@@ -2377,7 +2416,9 @@ impl PanelController {
             if (next.width - old.width).abs() < 0.5 && (next.x - old.x).abs() < 0.5 {
                 return;
             }
-            let old_right = old.x + s.window_width;
+            // 展开 / 收起阅读后窗口还停在切换之前的位置（Css 帧模式，见 `Session::frame_hold`）：并集从窗口此刻的位置算。
+            // 交换这一刻旧内容已经完全透明，窗口直接放到新几何
+            let old_right = s.frame_hold.take().unwrap_or(old.x) + s.window_width;
             s.open.geometry = next;
             let g2 = &s.open.geometry;
             s.window_width = if self.css_with_margin() {
@@ -2387,27 +2428,27 @@ impl PanelController {
                 g2.width
             };
             let rect = self.desktop_window_rect(s);
-            let act = if s.dragging {
+            let max_height = g2.max_height;
+            let dragging = s.dragging;
+            if dragging {
                 // 用户正在拖动：窗口位置以系统为准，改窗口推迟到拖动结束
                 match self.frame_mode {
                     FrameMode::Native => s.width_pending = true,
                     FrameMode::Css => s.frame_pending = true,
                 }
+            }
+            self.host.update_guard_card(Self::card_hit(s));
+            self.host.set_click_through(self.click_region(s));
+            let slack = self.arm_slack(s, CSS_SLACK_RECLAIM);
+            let act = if dragging {
                 Act::Keep
             } else if self.frame_mode == FrameMode::Native {
-                Act::Native(WidthSwitch {
-                    x: rect.x,
-                    width: rect.width,
-                    delay: Duration::ZERO,
-                    // 高度上限没变（同一固定边、同一上限），WebView 不必重新固定
-                    pin: None,
-                })
+                // 高度上限没变（同一固定边、同一上限），WebView 不必重新固定（替换掉还没执行的切换时除外，见 width_switch）
+                Act::Native(Self::width_switch(&mut g, rect, Duration::ZERO, max_height, false))
             } else {
                 Act::Frame(rect)
             };
-            self.host.update_guard_card(Self::card_hit(s));
-            self.host.set_click_through(self.click_region(s));
-            (act, self.arm_slack(s, CSS_SLACK_RECLAIM))
+            (act, slack)
         };
         match act {
             Act::Native(switch) => self.host.switch_width(switch),
@@ -2432,9 +2473,12 @@ impl PanelController {
     ///   收起时 v1 保持当前位置，上限恢复为展开之前的值（不超过固定边以外的空间；拖过的面板按整个工作区）；
     /// - 上限变化与宽度切换在同一时刻提交：Native 帧模式的 [`WidthSwitch`] 排在 `timing.crossfade` 之后（与前端淡出完同一
     ///   时刻），同一帧重新固定 WebView；在那之前卡片高度仍按旧上限夹（[`Session::reading_hold`]），不会先缩高、再收宽；
-    /// - Css 帧模式（带透明边距）：窗口立即取新旧两张卡片的并集（宽度稳定后回收），Above 放置的窗口高度随新上限重算并
-    ///   立即改窗口——展开时窗口向上长到新上限（卡片贴窗口底边，看不出变化），收起时保持（卡片还在按旧高度收缩，窗口先缩
-    ///   会把它裁掉；Above 的窗口高度不回收，见 [`Self::has_slack`]）；不透明窗口（窗口即卡片）等到透明帧再改；
+    /// - Css 帧模式（带透明边距）：窗口要取新旧两张卡片的并集（宽度稳定后回收），Above 放置的窗口高度按新上限重算（顶边
+    ///   不伸出工作区，见 [`Self::window_height_for`]）。只向右、向下变大的改变立即做（旧卡片贴着窗口左边，Below 还贴顶边，
+    ///   看不出变化；透明帧里新卡片一出现就不会被裁到）；窗口要左移（右侧放不下、整体左移）或 Above 窗口的顶边要上移时，
+    ///   旧内容此刻还完全不透明，会跟着横跳 / 跳一帧——推迟到透明帧（[`Session::frame_hold`]、[`Self::reading_frame`]）。
+    ///   收起时 Above 的窗口高度保持（卡片还在按旧高度收缩，窗口先缩会把它裁掉；Above 的窗口高度不回收，见
+    ///   [`Self::has_slack`]）。不透明窗口（窗口即卡片）一律等到透明帧再改；
     /// - 用户正在拖动：同 [`Self::set_width`]，改窗口推迟到拖动结束。
     ///
     /// 只对已显示的当前会话生效：会话已过期、正在隐藏、视图没有阅读布局、工作区放不下（翻译）时返回 None；状态没变
@@ -2443,7 +2487,7 @@ impl PanelController {
         enum Act {
             Native(WidthSwitch),
             Frame(Rect),
-            /// 不透明窗口：等内容完全透明（`timing.crossfade`）再改到新矩形
+            /// Css 帧模式：等内容完全透明（`timing.crossfade`）再改窗口（[`PanelController::reading_frame`]）
             Later(Duration, u64),
             Keep,
         }
@@ -2451,7 +2495,6 @@ impl PanelController {
         let (act, slack, result) = {
             let mut g = self.inner.lock();
             let options = g.options;
-            let pinned = g.pinned_webview;
             let s = g
                 .session
                 .as_mut()
@@ -2507,7 +2550,9 @@ impl PanelController {
             let exit = Self::crossfade_exit(options);
             s.reading_hold = Some((Instant::now() + exit, old.max_height));
             s.reading_seq = s.reading_seq.wrapping_add(1);
-            let old_right = old.x + s.window_width;
+            // 窗口里卡片此刻的左边：上一次展开 / 收起推迟的窗口改变可能还在等透明帧（`frame_hold`）
+            let window_x = s.frame_hold.unwrap_or(old.x);
+            let old_right = window_x + s.window_width;
             s.open.geometry = next;
             let g2 = &s.open.geometry;
             let result = PanelReading {
@@ -2515,39 +2560,40 @@ impl PanelController {
                 max_height: g2.max_height,
                 layout: s.reading.map(|r| r.layout),
             };
-            if self.css_with_margin() {
-                // 新卡片的左边只会不变或左移（keep_position），并集从新卡片左边开始
-                s.window_width = old_right.max(g2.x + g2.width) - g2.x;
-                // Above 的窗口高度是会话上限：展开时随之变高；收起时保持（见文档注释）。Below 的窗口不比卡片 + 2·m 矮
-                s.window_height = s.window_height.max(self.window_height_for(g2, s.card_height));
-            } else {
-                s.window_width = g2.width;
-            }
             let new_max = g2.max_height;
-            let rect = self.desktop_window_rect(s);
-            let act = if s.dragging {
-                match self.frame_mode {
-                    FrameMode::Native => s.width_pending = true,
-                    FrameMode::Css => s.frame_pending = true,
+            // Native 帧模式的宽度切换（锁内最后再排，要改 `pinned_webview`）
+            let mut native = None;
+            let act = if self.frame_mode == FrameMode::Native {
+                s.window_width = g2.width;
+                if s.dragging {
+                    s.width_pending = true;
+                } else {
+                    native = Some(self.desktop_window_rect(s));
                 }
                 Act::Keep
-            } else if self.frame_mode == FrameMode::Native {
-                let pin = pinned.is_none_or(|h| (h - new_max).abs() >= 0.5).then_some(new_max);
-                Act::Native(WidthSwitch {
-                    x: rect.x,
-                    width: rect.width,
-                    delay: exit,
-                    pin,
-                })
-            } else if self.opaque {
-                Act::Later(exit, s.reading_seq)
             } else {
-                Act::Frame(rect)
+                let (width, height) = self.reading_window_size(s, old_right);
+                let g2 = &s.open.geometry;
+                // 会让还看得见的旧卡片跟着动的改变（窗口左移、Above 的顶边上移；不透明窗口改宽度会让旧内容重排）等透明帧，
+                // 只向右、向下变大立即做
+                let moves = !self.css_with_margin()
+                    || (g2.x - window_x).abs() >= 0.5
+                    || (g2.placement == Placement::Above && (height - s.window_height).abs() >= 0.5);
+                if s.dragging || !moves {
+                    s.frame_hold = None;
+                    s.window_width = width;
+                    s.window_height = height;
+                    if s.dragging {
+                        s.frame_pending = true;
+                        Act::Keep
+                    } else {
+                        Act::Frame(self.desktop_window_rect(s))
+                    }
+                } else {
+                    s.frame_hold = Some(window_x);
+                    Act::Later(exit, s.reading_seq)
+                }
             };
-            if let Act::Native(WidthSwitch { pin: Some(h), .. }) = act {
-                g.pinned_webview = Some(h);
-            }
-            let s = g.session.as_mut()?;
             self.host.update_guard_card(Self::card_hit(s));
             self.host.set_click_through(self.click_region(s));
             log::debug!(
@@ -2556,7 +2602,12 @@ impl PanelController {
                 result.width,
                 result.max_height
             );
-            (act, self.arm_slack(s, CSS_SLACK_RECLAIM), result)
+            let slack = self.arm_slack(s, CSS_SLACK_RECLAIM);
+            let act = match native {
+                Some(rect) => Act::Native(Self::width_switch(&mut g, rect, exit, new_max, true)),
+                None => act,
+            };
+            (act, slack, result)
         };
         match act {
             Act::Native(switch) => self.host.switch_width(switch),
@@ -2584,11 +2635,27 @@ impl PanelController {
         Some(result)
     }
 
-    /// 不透明窗口（窗口即卡片）展开 / 收起阅读：内容完全透明之后才把窗口改到新矩形（提前改会让旧内容按新宽度重排一下）。
-    /// 期间又切换了一次（轮次不同）、会话已过期或正在拖动时什么都不做（拖动结束时按会话几何补上）
+    /// Css 帧模式展开 / 收起之后的窗口尺寸（卡片区宽度, 窗口高度）。带透明边距时宽度取新旧两张卡片的并集（`old_right` 是
+    /// 旧卡片区的右边；新卡片的左边只会不变或左移，并集从新卡片左边开始），高度不低于新几何需要的（Above 是新上限，顶边
+    /// 不伸出工作区；Below 是卡片 + 2·m）；不透明窗口就是新卡片
+    fn reading_window_size(&self, s: &Session, old_right: f64) -> (f64, f64) {
+        let g = &s.open.geometry;
+        if self.css_with_margin() {
+            (
+                old_right.max(g.x + g.width) - g.x,
+                s.window_height.max(self.window_height_for(g, s.card_height)),
+            )
+        } else {
+            (g.width, s.window_height)
+        }
+    }
+
+    /// Css 帧模式展开 / 收起阅读推迟到透明帧的窗口改变（见 [`Session::frame_hold`]）：内容完全透明之后把窗口放到新几何
+    /// （[`Self::reading_window_size`]，并集稳定后回收）。期间又切换了一次（轮次不同，由那一次的计时器接手）、窗口已经
+    /// 放到位（视图交换时的 `set_width`）或会话已过期时什么都不做；正在拖动时只记下尺寸，拖动结束时补上
     fn reading_frame(&self, session_id: u64, seq: u64) {
         let _frame = self.frame_lock.lock();
-        let rect = {
+        let (rect, slack) = {
             let mut g = self.inner.lock();
             let Some(s) = g
                 .session
@@ -2597,14 +2664,45 @@ impl PanelController {
             else {
                 return;
             };
+            let Some(window_x) = s.frame_hold.take() else {
+                return;
+            };
+            let (width, height) = self.reading_window_size(s, window_x + s.window_width);
+            s.window_width = width;
+            s.window_height = height;
             if s.dragging {
                 s.frame_pending = true;
                 return;
             }
-            self.desktop_window_rect(s)
+            self.host.set_click_through(self.click_region(s));
+            (self.desktop_window_rect(s), self.arm_slack(s, CSS_SLACK_RECLAIM))
         };
         if let Err(e) = self.host.set_frame(rect) {
             log::warn!("panel set_reading failed: {}", e.message);
+        }
+        if slack {
+            self.schedule_slack(session_id, CSS_SLACK_RECLAIM);
+        }
+    }
+
+    /// Native 帧模式：排一次宽度切换（锁内决定，由调用方在锁外经 [`PanelHost::switch_width`] 发出）。`repin` 为 true 时，
+    /// 上限与 WebView 此刻固定的高度不同就在同一帧重新固定。上一次排下的切换可能还没执行（`width_switch_until`）：新的
+    /// 切换会替换它（macos.rs 的 `schedule_width`），它带的重新固定（已经记进 `pinned_webview`）就不会发生了——这时总是
+    /// 带上重新固定
+    fn width_switch(g: &mut Inner, rect: Rect, delay: Duration, max_height: f64, repin: bool) -> WidthSwitch {
+        let now = Instant::now();
+        let replaces = g.width_switch_until.is_some_and(|t| now < t);
+        let changed = g.pinned_webview.is_none_or(|h| (h - max_height).abs() >= 0.5);
+        let pin = (replaces || (repin && changed)).then_some(max_height);
+        if pin.is_some() {
+            g.pinned_webview = pin;
+        }
+        g.width_switch_until = Some(now + delay + WIDTH_SWITCH_SLACK);
+        WidthSwitch {
+            x: rect.x,
+            width: rect.width,
+            delay,
+            pin,
         }
     }
 
@@ -2633,8 +2731,9 @@ impl PanelController {
             let now = Instant::now();
             if now < due {
                 Step::Later(due - now)
-            } else if s.dragging {
-                // 用户正在拖动：窗口位置以系统为准，回收等拖动结束之后
+            } else if s.dragging || s.frame_hold.is_some() {
+                // 用户正在拖动：窗口位置以系统为准，回收等拖动结束之后。展开 / 收起推迟的窗口改变还没做（透明帧之前）：
+                // 回收会按新卡片的宽度改窗口，等它做完
                 Step::Later(CSS_SLACK_RECLAIM)
             } else {
                 s.slack_timer = false;
@@ -3381,9 +3480,14 @@ impl PanelController {
         let mut next = s.open.geometry.clone();
         next.follow_window(screen, local, self.margin);
         let g = &s.open.geometry;
-        let moved =
-            next.screen.id != g.screen.id || (next.x - g.x).abs() >= 1.0 || (next.edge_y - g.edge_y).abs() >= 1.0;
+        // 展开 / 收起之后、透明帧之前窗口还停在切换之前的位置（`frame_hold`）：按窗口里卡片此刻的左边判断有没有移动
+        let x = s.frame_hold.unwrap_or(g.x);
+        let moved = next.screen.id != g.screen.id || (next.x - x).abs() >= 1.0 || (next.edge_y - g.edge_y).abs() >= 1.0;
         if moved {
+            if s.frame_hold.is_some() {
+                // 几何跟着窗口走了：窗口与几何的左边重新一致，透明帧只剩换尺寸
+                s.frame_hold = Some(next.x);
+            }
             s.open.geometry = next;
         }
         moved
@@ -3452,7 +3556,7 @@ impl PanelController {
         }
         let frame_guard = self.frame_lock.lock();
         let window = self.read_window();
-        let (settle, blur) = {
+        let (settle, blur, pin) = {
             let mut g = self.inner.lock();
             if !current(&g) {
                 return;
@@ -3491,12 +3595,28 @@ impl PanelController {
                 s.dragged,
                 s.open.geometry.card_rect(s.card_height)
             );
-            (settle, blur)
+            let max_height = s.open.geometry.max_height;
+            // Native 帧模式直接放到会话几何（setFrame 会取消还没执行的宽度切换）：WebView 要跟上上限。拖动中展开阅读时
+            // 宽度切换推迟到了这里，上限变大了而 WebView 还固定在旧上限，下面那截内容会被截掉；被取消的切换带的重新固定也
+            // 不会发生了。上限变小时保留较高的 WebView（窗口裁掉多余部分，同原地替换）
+            let pin = (self.frame_mode == FrameMode::Native && matches!(settle, Settle::Frame(_)))
+                .then(|| {
+                    let pending = g.width_switch_until.take().is_some_and(|t| Instant::now() < t);
+                    (pending || g.pinned_webview.is_none_or(|h| h + 0.5 < max_height)).then_some(max_height)
+                })
+                .flatten();
+            (settle, blur, pin)
         };
         match settle {
             Settle::Frame(rect) => {
                 if let Err(e) = self.host.set_frame(rect) {
                     log::warn!("panel settle after drag failed: {}", e.message);
+                }
+                if let Some(h) = pin {
+                    match self.host.pin_webview(h) {
+                        Ok(()) => self.inner.lock().pinned_webview = Some(h),
+                        Err(e) => log::warn!("panel pin webview failed: {}", e.message),
+                    }
                 }
             }
             Settle::Native(h, placement, bound, animate) => {
@@ -4678,6 +4798,11 @@ mod tests {
         o.geometry = place_panel(&screen(), PlaceAnchor::Rect(anchor), width, 120.0, 483.0);
         o.transition = transition;
         o
+    }
+
+    /// 排下的宽度切换已经执行（mock 宿主不计时，切换立即生效；控制器按时间判断它是否可能还在等）
+    fn switch_done(c: &PanelController) {
+        c.inner.lock().width_switch_until = None;
     }
 
     fn set_frames(calls: &[Call]) -> Vec<Rect> {
@@ -6201,7 +6326,8 @@ mod tests {
         assert_eq!(switch_of(&calls).and_then(|w| w.pin), Some(400.0), "{calls:?}");
         assert!(!calls.iter().any(|c| matches!(c, Call::PinWebview(_))));
 
-        // 宽度不变而上限变大：WebView 必须在窗口长过旧的固定高度之前长到新上限
+        // 宽度不变而上限变大：WebView 必须在窗口长过旧的固定高度之前长到新上限（上一次的宽度切换已经执行）
+        switch_done(&c);
         c.prepare(open_with(5, anchor_a(), 360.0, PanelTransition::Crossfade));
         c.ready(5, 150.0).expect("shown in place");
         let calls = host.take();
@@ -8275,8 +8401,7 @@ mod tests {
         );
     }
 
-    /// Css 帧模式（带透明边距）：窗口立即取新旧两张卡片的并集（稳定后回收）；Above 放置的窗口高度随新上限立即重算
-    /// （展开时向上长，收起时保持：卡片还在按旧高度收缩，窗口先缩会把它裁掉）
+    /// Css 帧模式（带透明边距）：只向右变宽时窗口立即取新旧两张卡片的并集（旧卡片贴着窗口左边，看不出变化），稳定后回收
     #[test]
     fn reading_css_widens_the_window_and_recomputes_above_height() {
         let host = MockHost::existing();
@@ -8289,6 +8414,10 @@ mod tests {
         let calls = host.take();
         assert!(switches(&calls).is_empty(), "{calls:?}");
         assert_eq!(set_frames(&calls), vec![Rect::new(276.0, 206.0, 760.0 + 48.0, 348.0)]);
+        assert!(
+            !calls.contains(&Call::Schedule(crossfade())),
+            "左边不动：不必等透明帧 {calls:?}"
+        );
         let region = last_region(&calls).expect("click-through");
         assert_eq!(region.card, Rect::new(300.0, 230.0, 760.0, 300.0));
         assert_eq!(c.set_reading(1, false), Some(collapsed(420.0, 483.0)));
@@ -8308,25 +8437,99 @@ mod tests {
             vec![Rect::new(276.0, 206.0, 420.0 + 48.0, 348.0)],
             "稳定后回收到卡片"
         );
+    }
 
-        // Above（选区靠下）：窗口 = 上限 + 2·m
+    /// Css 帧模式：展开时右侧放不下（卡片整体左移）——旧卡片此刻还完全不透明、贴着窗口左边，窗口立即左移会让它横跳。
+    /// 窗口留在原处，期间的高度变化也按原来的左边与宽度改；透明帧才放到新旧并集（新卡片的位置）
+    #[test]
+    fn reading_css_moves_the_window_left_only_in_the_transparent_frame() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Css, 24.0);
+        // 选区靠右：420 宽的卡片夹到 1440 − 8 − 420 = 1012
+        c.prepare(open(1, PanelView::Translate, Rect::new(1100.0, 200.0, 100.0, 18.0)));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        let before = host.window_frame().expect("frame");
+        assert_eq!(before, Rect::new(988.0, 206.0, 468.0, 348.0));
+        assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 684.0)));
+        let calls = host.take();
+        assert!(set_frames(&calls).is_empty(), "点下时不改窗口：{calls:?}");
+        assert!(calls.contains(&Call::Schedule(crossfade())), "{calls:?}");
+        // 会话几何已是新的（点击判定、关闭监听按新卡片，它盖住旧卡片）
+        assert_eq!(
+            c.snapshot().expect("snapshot").rect,
+            Rect::new(672.0, 230.0, 760.0, 300.0)
+        );
+        // 淡出期间前端还按旧版式上报高度：窗口只长高，左边与宽度不动
+        c.resize(1, 340.0, ResizeSpring::Gentle);
+        host.run_timers(Duration::ZERO);
+        for f in set_frames(&host.take()) {
+            assert_eq!((f.x, f.width), (before.x, before.width), "透明帧之前窗口不横移：{f:?}");
+        }
+        host.run_timers(crossfade());
+        let calls = host.take();
+        let frame = *set_frames(&calls).last().expect("moved in the transparent frame");
+        // 并集：新卡片 672…1432，旧卡片 1012…1432 → 从 672 起 760 宽
+        assert_eq!((frame.x, frame.width), (648.0, 760.0 + 48.0));
+        assert_eq!(last_region(&calls).expect("click-through").window, frame);
+        // 透明帧之后照常：收起不再移动（左边保持当前的 672）
+        assert_eq!(c.set_reading(1, false), Some(collapsed(420.0, 483.0)));
+        let frames = set_frames(&host.take());
+        assert!(frames.iter().all(|f| f.x == 648.0), "{frames:?}");
+
+        // 淡出期间又收起：上一次推迟的改窗口作废，窗口仍从原来的位置算起，最后只按这一次改
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Css, 24.0);
+        c.prepare(open(1, PanelView::Translate, Rect::new(1100.0, 200.0, 100.0, 18.0)));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        c.set_reading(1, true).expect("expanded");
+        c.set_reading(1, false).expect("collapsed");
+        assert!(set_frames(&host.take()).is_empty());
+        host.run_timers(crossfade());
+        let frames = set_frames(&host.take());
+        assert_eq!(frames.len(), 1, "{frames:?}");
+        // 收起后的卡片在 672（v1 保持当前位置）；并集从 672 到原来窗口里旧卡片的右边 1432
+        assert_eq!((frames[0].x, frames[0].width), (648.0, 760.0 + 48.0));
+    }
+
+    /// Css 帧模式 Above（选区靠下）：展开时窗口顶边要上移——推迟到透明帧；窗口顶边不伸出工作区（卡片要更高时整体推回，
+    /// 窗口顶边仍贴工作区顶、底边下移）；收起时窗口高度保持
+    #[test]
+    fn reading_css_above_moves_the_top_edge_in_the_transparent_frame() {
         let host = MockHost::existing();
         let c = loaded(&host, FrameMode::Css, 24.0);
         c.prepare(open(1, PanelView::Translate, Rect::new(300.0, 700.0, 100.0, 18.0)));
         c.ready(1, 120.0).expect("shown");
         host.take_timers();
         host.take();
+        // 固定边（卡片底边）688；窗口 = 上限 483 + 2·24
         assert_eq!(host.window_frame(), Some(Rect::new(276.0, 712.0 - 531.0, 468.0, 531.0)));
         c.set_reading(1, true).expect("expanded");
+        let calls = host.take();
+        assert!(set_frames(&calls).is_empty(), "点下时不动顶边：{calls:?}");
+        host.run_timers(crossfade());
+        // 新上限 684，但固定边以上只有 688 − (25 + 8) = 655：窗口 655 + 48，顶边 = 工作区顶 + 8 − 24
+        let top = 25.0 + placement::EDGE_INSET - 24.0;
         assert_eq!(
             set_frames(&host.take()),
-            vec![Rect::new(276.0, 712.0 - 732.0, 760.0 + 48.0, 684.0 + 48.0)],
-            "展开：窗口随新上限向上长（卡片贴窗口底边）"
+            vec![Rect::new(276.0, top, 760.0 + 48.0, 655.0 + 48.0)],
+            "透明帧：窗口随新上限向上长到工作区顶（卡片贴窗口底边）"
+        );
+        // 长到上限 684：伸出工作区顶 → 卡片整体下移（底边 33 + 684），窗口顶边不动、底边跟着下移
+        c.resize(1, 684.0, ResizeSpring::Gentle);
+        let frame = *set_frames(&host.take()).last().expect("grown");
+        assert_eq!(frame, Rect::new(276.0, top, 808.0, 684.0 + 48.0));
+        assert_eq!(
+            c.snapshot().expect("snapshot").rect,
+            Rect::new(300.0, 33.0, 760.0, 684.0)
         );
         c.set_reading(1, false).expect("collapsed");
         assert_eq!(
             set_frames(&host.take()),
-            vec![Rect::new(276.0, 712.0 - 732.0, 760.0 + 48.0, 684.0 + 48.0)],
+            vec![Rect::new(276.0, top, 760.0 + 48.0, 684.0 + 48.0)],
             "收起：窗口高度保持"
         );
     }
@@ -8344,7 +8547,12 @@ mod tests {
         let calls = host.take();
         assert!(set_frames(&calls).is_empty(), "{calls:?}");
         assert!(calls.contains(&Call::Schedule(crossfade())), "{calls:?}");
+        // 淡出期间（流式中）前端还按旧版式上报高度：窗口只改高度，宽度仍是旧的（旧内容不按新宽度重排）
+        c.resize(1, 320.0, ResizeSpring::Gentle);
+        assert_eq!(set_frames(&host.take()), vec![Rect::new(300.0, 230.0, 420.0, 320.0)]);
         host.run_timers(crossfade());
+        assert_eq!(set_frames(&host.take()), vec![Rect::new(300.0, 230.0, 760.0, 320.0)]);
+        c.resize(1, 300.0, ResizeSpring::Gentle);
         assert_eq!(set_frames(&host.take()), vec![Rect::new(300.0, 230.0, 760.0, 300.0)]);
         c.set_reading(1, false).expect("collapsed");
         c.set_reading(1, true).expect("expanded again");
@@ -8374,8 +8582,25 @@ mod tests {
         assert!(switches(&calls).is_empty(), "拖动中不切换：{calls:?}");
         drag_to(&host, Rect::new(300.0, 230.0, 420.0, 300.0));
         host.run_timers(DRAG_SETTLE);
-        let frame = *set_frames(&host.take()).last().expect("applied after the drag");
+        let calls = host.take();
+        let frame = *set_frames(&calls).last().expect("applied after the drag");
         assert_eq!((frame.x, frame.width), (300.0, 760.0));
+        // WebView 跟上新上限（还固定在旧的 483 的话，下面那截内容被截掉）
+        let pin = calls.iter().position(|c| *c == Call::PinWebview(684.0));
+        let set = calls.iter().rposition(|c| matches!(c, Call::SetFrame(_)));
+        assert!(
+            pin.is_some() && pin > set,
+            "放到会话几何之后重新固定 WebView：{calls:?}"
+        );
+        // 拖动中收起：上限变小，保留较高的 WebView（窗口裁掉多余部分），不重新固定
+        c.drag_start(1);
+        c.set_reading(1, false).expect("collapsed");
+        drag_to(&host, Rect::new(300.0, 230.0, 760.0, 300.0));
+        host.run_timers(DRAG_SETTLE);
+        let calls = host.take();
+        let frame = *set_frames(&calls).last().expect("applied after the drag");
+        assert_eq!((frame.x, frame.width), (300.0, 420.0));
+        assert!(!calls.iter().any(|c| matches!(c, Call::PinWebview(_))), "{calls:?}");
 
         let host = MockHost::existing();
         let c = loaded(&host, FrameMode::Native, 0.0);
@@ -8457,11 +8682,15 @@ mod tests {
         c.ready(1, 300.0).expect("shown");
         host.take_timers();
         host.take();
+        let before = host.window_frame().expect("frame");
         assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 571.0)));
+        // 原来的卡片已夹到 852（右边贴 1272），新卡片要左移 340：旧卡片此刻还完全不透明，点下时窗口不动
         let calls = host.take();
-        // 原来的卡片已夹到 852（右边贴 1272）：新卡片右边同样在 1272，并集就是新卡片；四周 24 的边距，逻辑
-        // (488, 306, 808, 348) × 1.5
-        assert_eq!(set_frames(&calls), vec![Rect::new(732.0, 459.0, 1212.0, 522.0)]);
+        assert!(set_frames(&calls).is_empty(), "点下时窗口不横移：{calls:?}");
+        assert_eq!(host.window_frame(), Some(before));
+        host.run_timers(crossfade());
+        // 透明帧：新卡片右边同样在 1272，并集就是新卡片；四周 24 的边距，逻辑 (488, 306, 808, 348) × 1.5
+        assert_eq!(set_frames(&host.take()), vec![Rect::new(732.0, 459.0, 1212.0, 522.0)]);
         let snap = c.snapshot().expect("snapshot");
         assert_eq!(snap.rect, Rect::new(512.0, 330.0, 760.0, 300.0));
         assert!(snap.rect.right() <= win.work.right() - placement::EDGE_INSET);
@@ -8484,6 +8713,104 @@ mod tests {
         assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 1183.0)));
         // 逻辑 (276, 206, 808, 348) → 物理 (2880 + 414, −300 + 309, 1212, 522)
         assert_eq!(set_frames(&host.take()), vec![Rect::new(3294.0, 9.0, 1212.0, 522.0)]);
+    }
+
+    /// 展开后拖到工作区高度不同的另一块屏再收起：恢复的会话上限按两块屏工作区高度的比例换算（按那块屏的整个工作区，
+    /// 拖过的面板），宽度回到展开之前的
+    #[test]
+    fn reading_collapse_on_another_screen_scales_the_cap() {
+        let host = MockHost::existing();
+        let b = Screen {
+            id: "2".to_owned(),
+            frame: Rect::new(1440.0, -100.0, 1920.0, 1080.0),
+            work: Rect::new(0.0, 0.0, 1920.0, 1040.0),
+            scale: 1.0,
+            physical_origin: PhysPoint { x: 2880, y: -200 },
+            primary: false,
+        };
+        *host.screens.lock() = vec![screen(), b];
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(open(1, PanelView::Translate, anchor_a()));
+        c.ready(1, 300.0).expect("shown");
+        assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 684.0)));
+        host.take_timers();
+        host.take();
+        c.drag_start(1);
+        drag_to(&host, Rect::new(1640.0, 100.0, 760.0, 300.0));
+        host.run_timers(DRAG_SETTLE);
+        assert_eq!(c.snapshot().expect("snapshot").screen.id, "2");
+        host.take();
+        // 展开之前的上限 483 是 A 屏工作区 805 的 0.6 → B 屏 1040 × 0.6 = 624
+        assert_eq!(c.set_reading(1, false), Some(collapsed(420.0, 624.0)));
+        let switch = *switches(&host.take()).last().expect("switch");
+        assert_eq!((switch.width, switch.pin), (420.0, Some(624.0)));
+    }
+
+    /// Native 帧模式：刚展开（宽度切换还在等透明帧）就来了原地替换、新卡片与窗口此刻一样宽——仍要排一次到新矩形的
+    /// 切换替换掉它，否则那次过期的切换会把新会话的窗口改成阅读宽度
+    #[test]
+    fn reading_switch_still_pending_is_replaced_by_an_in_place_replacement() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(open(1, PanelView::Translate, anchor_a()));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        c.set_reading(1, true).expect("expanded");
+        // mock 的切换立即生效；真实的还在等 timing.crossfade：窗口仍是 420 宽
+        *host.frame.lock() = Some(Rect::new(300.0, 230.0, 420.0, 300.0));
+        host.take();
+        c.prepare(open_with(2, anchor_a(), 420.0, PanelTransition::Crossfade));
+        c.ready(2, 200.0).expect("shown in place");
+        let calls = host.take();
+        let switch = *switches(&calls).last().expect("replacement switch");
+        assert_eq!((switch.x, switch.width), (300.0, 420.0));
+        // 被替换的那次带着重新固定（684）：新的必须自己固定到新会话的上限
+        assert_eq!(switch.pin, Some(483.0));
+        assert!(!calls.iter().any(|c| matches!(c, Call::PinWebview(_))), "{calls:?}");
+        // 切换执行过之后的原地替换照常比较窗口：宽度不变就不排
+        switch_done(&c);
+        c.prepare(open_with(3, anchor_a(), 420.0, PanelTransition::Crossfade));
+        c.ready(3, 200.0).expect("shown in place");
+        assert!(switches(&host.take()).is_empty());
+    }
+
+    /// Css 帧模式：透明帧之前按下头部（拖动开始、没有移动）不算拖过；真的拖动了，几何跟着窗口走，透明帧只换尺寸
+    #[test]
+    fn reading_css_drag_during_the_hold_follows_the_window() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Css, 24.0);
+        c.prepare(open(1, PanelView::Translate, Rect::new(1100.0, 200.0, 100.0, 18.0)));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        c.set_reading(1, true).expect("expanded");
+        c.drag_start(1);
+        host.run_timers(DRAG_SETTLE);
+        assert!(
+            set_frames(&host.take()).is_empty(),
+            "只按了一下：窗口没移动，不算拖过、不改窗口"
+        );
+        assert_eq!(c.snapshot().expect("snapshot").rect.x, 672.0);
+        host.run_timers(crossfade());
+        let frame = *set_frames(&host.take()).last().expect("transparent frame");
+        assert_eq!((frame.x, frame.width), (648.0, 808.0));
+
+        // 透明帧之前真的拖到了左边：几何跟着窗口（卡片左边 400），透明帧在拖动结束时补上新宽度
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Css, 24.0);
+        c.prepare(open(1, PanelView::Translate, Rect::new(1100.0, 200.0, 100.0, 18.0)));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        c.set_reading(1, true).expect("expanded");
+        c.drag_start(1);
+        drag_to(&host, Rect::new(376.0, 206.0, 468.0, 348.0));
+        host.run_timers(crossfade());
+        assert!(set_frames(&host.take()).is_empty(), "拖动中不改窗口");
+        host.run_timers(DRAG_SETTLE);
+        let frame = *set_frames(&host.take()).last().expect("applied after the drag");
+        assert_eq!((frame.x, frame.width), (376.0, 808.0));
+        assert_eq!(c.snapshot().expect("snapshot").rect.x, 400.0);
     }
 
     /// OCR：高截图并排 880、宽截图堆叠（宽度按截图）
