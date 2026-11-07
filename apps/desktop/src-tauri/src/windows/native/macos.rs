@@ -541,7 +541,9 @@ pub fn panel_show_shell(
 /// [`panel_move_shell`]）时整个矩形接着用矩形弹簧走到位；`animate` 为 false（减少动效）时直接到位。窗口 alpha 若还在淡入
 /// 就让它继续。`key` 时成为 key：外壳上已经截住了按键（窗口本来就是 key）就立即，否则与 [`panel_show`] 相同推迟一轮
 /// （先让第一帧出来）。最后卸掉输入守卫，把外壳期间截住的按键按原顺序放回事件队列最前面——页面此时已经聚焦了输入框
-/// （视图在 prepare 时挂载并自动聚焦），按键照常进入页面。票已作废时什么都不做
+/// （视图在 prepare 时挂载并自动聚焦），按键照常进入页面。外壳期间吞掉的鼠标恢复正常；`passive`（连续粘贴的进度提示）
+/// 时转为整窗穿透，同 `ShowOpts::passive`。票已作废时什么都不做
+#[allow(clippy::too_many_arguments)] // 三端同名同签名，外壳淡入要用到每一个
 pub fn panel_reveal_shell(
     window: &tauri::WebviewWindow,
     rect: Rect,
@@ -549,6 +551,7 @@ pub fn panel_reveal_shell(
     fade: Fade,
     key: bool,
     animate: bool,
+    passive: bool,
     ticket: &ShowTicket,
 ) -> Result<(), IpcError> {
     let ticket = ticket.clone();
@@ -587,7 +590,7 @@ pub fn panel_reveal_shell(
         } else {
             driver.animate_rect(ns, target);
         }
-        ns.setIgnoresMouseEvents(false);
+        ns.setIgnoresMouseEvents(passive);
         driver.fade_content(ns, fade);
         if ns.alphaValue() < 1.0 && !driver.alpha_running() {
             driver.fade(1.0, fade, None);

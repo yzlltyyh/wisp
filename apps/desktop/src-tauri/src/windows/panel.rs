@@ -329,8 +329,9 @@ pub trait PanelHost: Send + Sync + 'static {
         let _ = (rect, max_height, animate);
     }
     /// 外壳上的会话 ready：高度从外壳的估计值弹到 `rect`（位置也变了时整个矩形走弹簧；`animate` 为 false 时直接到位），
-    /// 内容按 `fade` 淡入，`key` 时成为 key；外壳期间截住的按键随即按原顺序重放给页面，鼠标恢复正常。默认实现退回
-    /// [`Self::reveal`]
+    /// 内容按 `fade` 淡入，`key` 时成为 key；外壳期间截住的按键随即按原顺序重放给页面，鼠标恢复正常（`passive` 时转为
+    /// 整窗穿透，同 [`ShowOpts::passive`]）。默认实现退回 [`Self::reveal`]
+    #[allow(clippy::too_many_arguments)] // 与三端的 `native::panel_reveal_shell` 一一对应，拆成结构体只为凑数
     fn reveal_shell(
         &self,
         rect: Rect,
@@ -338,10 +339,11 @@ pub trait PanelHost: Send + Sync + 'static {
         fade: Fade,
         key: bool,
         animate: bool,
+        passive: bool,
         ticket: &ShowTicket,
     ) -> Result<(), IpcError> {
         let _ = (placement, animate);
-        self.reveal(rect, Some(fade), key, false, ticket)
+        self.reveal(rect, Some(fade), key, passive, ticket)
     }
     /// Native 帧模式的高度变化
     /// 原生逐帧弹簧（保留速度重定目标）。`spring`：`panel_resize` 指定的弹簧，其余调用方用 gentle。
@@ -575,6 +577,8 @@ enum ReadyPlan {
         fade: Fade,
         key: bool,
         animate: bool,
+        /// 连续粘贴的进度提示：外壳期间吞掉点击，内容淡入时转为整窗穿透（外壳被别的视图接过时按接过它的会话）
+        passive: bool,
     },
     /// 原地替换（窗口保持可见）
     InPlace(InPlace),
@@ -1790,6 +1794,7 @@ impl PanelController {
                     fade: self.fade_for(options, true),
                     key: focused,
                     animate: !options.reduce_motion,
+                    passive: s.open.corner_notice(),
                 }
             } else if was == Phase::TimedOut {
                 ReadyPlan::Reveal {
@@ -1835,7 +1840,10 @@ impl PanelController {
                 fade,
                 key,
                 animate,
-            } => self.host.reveal_shell(rect, placement, fade, key, animate, &ticket),
+                passive,
+            } => self
+                .host
+                .reveal_shell(rect, placement, fade, key, animate, passive, &ticket),
             ReadyPlan::InPlace(p) => {
                 self.apply_in_place(&p);
                 if p.activate {
@@ -3711,10 +3719,11 @@ impl PanelHost for TauriPanelHost {
         fade: Fade,
         key: bool,
         animate: bool,
+        passive: bool,
         ticket: &ShowTicket,
     ) -> Result<(), IpcError> {
         let win = self.window().ok_or_else(|| IpcError::not_found("panel window"))?;
-        native::panel_reveal_shell(&win, rect, placement, fade, key, animate, ticket)
+        native::panel_reveal_shell(&win, rect, placement, fade, key, animate, passive, ticket)
     }
 
     fn emit_prepare(&self, p: &PanelPrepare) -> Result<(), IpcError> {
@@ -3957,7 +3966,7 @@ pub(crate) mod mock {
         /// 主线程执行到显示时票已作废，跳过
         ShowSkipped,
         Reveal(Rect),
-        /// 紧接着的 `Reveal` 保持整窗穿透（连续粘贴的进度提示）
+        /// 紧接着的 `Reveal` / `RevealShell` 保持整窗穿透（连续粘贴的进度提示）
         RevealPassive,
         AnimateHeight(f64, bool),
         /// `panel_resize` 指定了 snappy 的高度弹簧：(高度, 是否动画)
@@ -4315,12 +4324,16 @@ pub(crate) mod mock {
             _fade: Fade,
             key: bool,
             _animate: bool,
+            passive: bool,
             ticket: &ShowTicket,
         ) -> Result<(), IpcError> {
             if !ticket.valid() {
                 return Err(ShowTicket::superseded());
             }
             self.push(Call::RevealShell(rect, key));
+            if passive {
+                self.push(Call::RevealPassive);
+            }
             Ok(())
         }
         fn schedule(&self, delay: Duration, f: Box<dyn FnOnce() + Send>) {
@@ -6070,6 +6083,11 @@ mod tests {
 
     /// 卸载过的控制器上来一次冷唤出：窗口重建好（页面还没加载）
     fn cold_with_window(host: &Arc<MockHost>, frame_mode: FrameMode, view: PanelView) -> Arc<PanelController> {
+        cold_with_open(host, frame_mode, open(2, view, anchor_a()))
+    }
+
+    /// 同 [`cold_with_window`]，冷唤出的是给定的会话（session_id 应为 2）
+    fn cold_with_open(host: &Arc<MockHost>, frame_mode: FrameMode, second: PanelOpen) -> Arc<PanelController> {
         let c = loaded(host, frame_mode, 0.0);
         c.set_options(PanelOptions {
             unload_after: Some(Duration::from_secs(600)),
@@ -6081,7 +6099,7 @@ mod tests {
         host.run_timers(Duration::from_secs(600));
         assert!(!*host.exists.lock(), "已卸载");
         host.take();
-        c.prepare(open(2, view, anchor_a()));
+        c.prepare(second);
         wait_recreated(host);
         // 外壳在建好窗口的同一个阻塞任务里显示：等它出现
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -7784,6 +7802,49 @@ mod tests {
         let calls = host.take();
         assert!(calls.iter().any(|c| matches!(c, Call::Reveal(_))));
         assert!(!calls.contains(&Call::RevealPassive), "{calls:?}");
+    }
+
+    /// 冷唤出（空闲卸载、回收重建之后）的进度提示：外壳本身吞掉点击，ready 时内容淡入并转为整窗穿透；外壳被别的视图
+    /// 接过时按接过它的视图，不穿透
+    #[test]
+    fn corner_notice_stays_passive_after_the_cold_shell() {
+        let host = MockHost::existing();
+        let c = cold_with_open(&host, FrameMode::Native, toast_open(2, true));
+        host.fire(PanelEvent::PageLoaded);
+        host.run_timers(READY_TIMEOUT);
+        host.take();
+        c.ready(2, 56.0).expect("revealed");
+        let calls = host.take();
+        let reveal = calls
+            .iter()
+            .position(|c| matches!(c, Call::RevealShell(..)))
+            .expect("reveal shell");
+        assert_eq!(calls.get(reveal + 1), Some(&Call::RevealPassive), "{calls:?}");
+        // 外壳期间又来了剪贴板视图：它接过外壳，ready 时接收鼠标
+        let host = MockHost::existing();
+        let c = cold_with_open(&host, FrameMode::Native, toast_open(2, true));
+        c.prepare(open(3, PanelView::Clipboard, anchor_a()));
+        host.fire(PanelEvent::PageLoaded);
+        host.run_timers(READY_TIMEOUT);
+        host.take();
+        c.ready(3, 300.0).expect("revealed");
+        let calls = host.take();
+        assert!(calls.iter().any(|c| matches!(c, Call::RevealShell(..))), "{calls:?}");
+        assert!(!calls.contains(&Call::RevealPassive), "{calls:?}");
+        // 反过来：剪贴板视图的外壳被进度提示接过，ready 时穿透
+        let host = MockHost::existing();
+        let c = cold_with_window(&host, FrameMode::Native, PanelView::Clipboard);
+        c.prepare(toast_open(3, true));
+        host.fire(PanelEvent::PageLoaded);
+        host.run_timers(READY_TIMEOUT);
+        host.take();
+        c.ready(3, 56.0).expect("revealed");
+        let calls = host.take();
+        let reveal = calls
+            .iter()
+            .position(|c| matches!(c, Call::RevealShell(..)))
+            .expect("reveal shell");
+        assert_eq!(calls.get(reveal + 1), Some(&Call::RevealPassive), "{calls:?}");
     }
 
     /// 进度提示在屏幕角落：显示期间与隐藏之后都不算「上一张卡片」（普通 toast、悬浮剪贴板、固定窗口以它为起点）；

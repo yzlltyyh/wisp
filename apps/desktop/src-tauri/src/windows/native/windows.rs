@@ -423,6 +423,7 @@ pub fn panel_move_shell(window: &tauri::WebviewWindow, rect: Rect, max_height: O
 }
 
 /// 见 [`panel_show_shell`]：退回 [`panel_reveal`]
+#[allow(clippy::too_many_arguments)] // 三端同名同签名（macOS 的外壳淡入要用到每一个）
 pub fn panel_reveal_shell(
     window: &tauri::WebviewWindow,
     rect: Rect,
@@ -430,10 +431,11 @@ pub fn panel_reveal_shell(
     fade: Fade,
     key: bool,
     animate: bool,
+    passive: bool,
     ticket: &ShowTicket,
 ) -> Result<(), IpcError> {
     let _ = (placement, animate);
-    panel_reveal(window, rect, Some(fade), key, false, ticket)
+    panel_reveal(window, rect, Some(fade), key, passive, ticket)
 }
 
 /// 已经在屏幕上的面板（ready 超时后）改到 `rect`；Css 帧模式没有窗口淡入。票已作废时什么都不做
