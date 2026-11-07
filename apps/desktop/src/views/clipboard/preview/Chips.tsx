@@ -9,8 +9,9 @@
  *   会在半路换掉条目，芯片条随之撤掉；
  * - 收起时最多 COLLAPSED 个芯片 + 「+N」（点它打开操作菜单的「提取」子页）；⌘E 进入芯片模式时向左展开、显示全部并带
  *   序号（数字键直接粘贴第 n 个），当前芯片高亮并滚进可见范围，搜索框的 aria-activedescendant 指向它；
- * - 按动作激活，不按时间：小条出现时指针如果已经停在它下面，单击仍是「点这一行」（用户瞄准的是原来在那里的行）；指针在
- *   小条上真的移动过（坐标变了）或从外面移进来之后，单击才是点芯片；
+ * - 按动作激活，不按时间：小条出现时鼠标如果已经停在它下面，单击仍是「点这一行」（用户瞄准的是原来在那里的行）；指针在
+ *   小条上真的移动过（坐标变了）或从外面移进来之后，单击才是点芯片。只挡鼠标：触屏 / 笔的轻点没有悬停，读屏与键盘
+ *   激活是没有指针事件的合成点击，它们点到的就是芯片；
  * - 换条目时旧小条原地淡出（不随指示器滑过相邻的行）、立即不接收指针；新小条由列表在指示器到达目标行之后才给出；面板
  *   打开时等首屏的 rowIn 进场结束再淡入；
  * - 片段的值不写日志。
@@ -112,8 +113,8 @@ function Strip({
     }
   }, [present, y, h, sy, sh])
 
-  // 防误点（按动作激活）：出现时指针所在的坐标作为基线；之后在小条上收到坐标不同的指针事件才算真的移到了小条上。
-  // 引擎在布局变化时会在原坐标补发指针事件，坐标没变，不算
+  // 防误点（按动作激活）：小条开始接收指针时（打开动效的等待结束之后）指针所在的坐标作为基线；之后在小条上收到
+  // 坐标不同的指针事件才算真的移到了小条上。引擎在布局变化、pointer-events 恢复时会在原坐标补发指针事件，坐标没变，不算
   const origin = useRef(pointer())
   const armed = useRef(false)
   const onPointerMove = (e: ReactPointerEvent) => {
@@ -122,11 +123,18 @@ function Strip({
     if (o === null) origin.current = { x: e.clientX, y: e.clientY }
     else if (e.clientX !== o.x || e.clientY !== o.y) armed.current = true
   }
-  /** 这次单击交给列表当作「点这一行」：还没激活（退场中的小条什么都不做，也不交给列表） */
-  const toRow = () => present && !armed.current
+  // 触屏 / 笔按下：没有悬停，小条不会「冒到静止的指针下面」，按到哪里就是点哪里
+  const onPointerDown = (e: ReactPointerEvent) => {
+    if (e.pointerType === 'touch' || e.pointerType === 'pen') armed.current = true
+  }
+  /**
+   * 这次单击交给列表当作「点这一行」：鼠标还没在小条上移动过（退场中的小条什么都不做，也不交给列表）。detail 为 0 的
+   * 是读屏 / 键盘激活的合成点击（VoiceOver 的 AXPress、NVDA 的激活、HTMLElement.click()），前面没有指针事件，按点芯片算
+   */
+  const toRow = (e: ReactMouseEvent) => present && !armed.current && e.detail !== 0
   /** 小条自己处理了这次单击（激活之后点在芯片之间的空隙、退场中）：不冒泡成「点这一行」 */
   const keep = (e: ReactMouseEvent) => {
-    if (!toRow()) e.stopPropagation()
+    if (!toRow(e)) e.stopPropagation()
   }
   const pick = (index: number, mode: ChipMode) => {
     if (present) runner.run('paste_fragment', runner.ctx('pointer', id), { index, mode })
@@ -140,6 +148,14 @@ function Strip({
     const timer = setTimeout(() => setLive(true), wait)
     return () => clearTimeout(timer)
   }, [live, wait])
+  // 等待期间指针的事件落在下面的行上（列表照常记下坐标）：开始接收指针的这一刻（提交之后、绘制之前）重新取基线，
+  // 等待期间移过来停下的指针在恢复接收时被补发的那次 pointermove 不算移动
+  const held = useRef(!live)
+  useLayoutEffect(() => {
+    if (!live || !held.current) return
+    held.current = false
+    if (!armed.current) origin.current = pointer()
+  }, [live, pointer])
   const enter = motion.animate?.transition
   const animate =
     wait > 0 && motion.animate
@@ -188,6 +204,7 @@ function Strip({
       {...motion}
       animate={animate}
       onPointerMove={onPointerMove}
+      onPointerDown={onPointerDown}
       onClick={keep}
       onDoubleClick={keep}
     >
@@ -222,7 +239,7 @@ function Strip({
             aria-label={t('smart.a11y.more', { n: more })}
             data-testid="clip-chips-more"
             onClick={(e) => {
-              if (toRow()) return
+              if (toRow(e)) return
               e.stopPropagation()
               // 「提取」：指针来源时在选中行打开操作菜单、直接到这一页（列出全部片段）
               if (present) runner.run('extract', runner.ctx('pointer', id))

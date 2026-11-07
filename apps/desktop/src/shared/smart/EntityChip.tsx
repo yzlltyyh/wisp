@@ -47,9 +47,9 @@ export function EntityChip({
   index?: number
   /**
    * 返回 true 时这次单击不算点芯片：不阻止冒泡、不粘贴片段，交给外层当作「点这一行」（剪贴板的芯片小条刚出现在静止的
-   * 指针下时，用户点的是原来在那里的行）
+   * 鼠标下时，用户点的是原来在那里的行）
    */
-  guard?: () => boolean
+  guard?: (e: ReactMouseEvent) => boolean
   onPick(mode: ChipMode): void
 }) {
   const t = useT()
@@ -67,7 +67,7 @@ export function EntityChip({
       data-active={active || undefined}
       data-testid="clip-chip"
       onClick={(e) => {
-        if (guard?.()) return
+        if (guard?.(e)) return
         // 芯片在行里 / 卡片里：点击不再冒泡成「点这一行」（那会粘贴整条）
         e.stopPropagation()
         onPick(chipMode(e))

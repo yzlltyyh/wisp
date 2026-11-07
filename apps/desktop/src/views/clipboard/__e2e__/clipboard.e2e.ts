@@ -1,7 +1,7 @@
 /**
  * 剪贴板视图的浏览器级用例：jsdom 不排版、没有真实的指针速度与按键默认行为，这些只能在真实引擎里验证——
  * - 芯片小条：以正常速度（约 1 px / ms）从选中行上横着移过去点芯片，粘贴的是片段；小条出现在静止的指针下时单击
- *   仍是「点这一行」；从第 1 行竖直扫到第 4 行，选中跟手、没有页面错误；
+ *   仍是「点这一行」；触屏轻点与读屏 / 键盘的合成点击照样是点芯片；从第 1 行竖直扫到第 4 行，选中跟手、没有页面错误；
  * - Space：正在输入搜索词时是空格，↓ 之后是预览。
  * 运行方式见 apps/desktop/playwright.config.ts。
  */
@@ -108,6 +108,36 @@ test('芯片小条出现在静止的指针下：单击按「点这一行」处�
     .poll(() => called(calls, 'clipboard_paste'))
     .toEqual([expect.objectContaining({ id, mode: 'normal' })])
   expect(called(calls, 'clipboard_paste_text')).toEqual([])
+})
+
+test('读屏 / 键盘激活芯片（没有指针事件的合成点击）：粘贴片段', async ({ page }) => {
+  const { calls } = await open(page, 'clipboard.chips')
+  const strip = await liveStrip(page)
+  // VoiceOver 的 AXPress、NVDA 的激活与 HTMLElement.click() 一样：detail 为 0，之前没有 pointermove
+  await strip
+    .getByTestId('clip-chip')
+    .first()
+    .evaluate((el) => (el as HTMLElement).click())
+  await expect
+    .poll(() => called(calls, 'clipboard_paste_text'))
+    .toEqual([expect.objectContaining({ text: '482913', mode: 'normal' })])
+  expect(called(calls, 'clipboard_paste')).toEqual([])
+})
+
+test.describe('触屏', () => {
+  test.use({ hasTouch: true })
+
+  test('轻点芯片（只有 pointerdown / up / click）：粘贴片段，不粘贴整条', async ({ page }) => {
+    const { calls } = await open(page, 'clipboard.chips')
+    const strip = await liveStrip(page)
+    const chip = await strip.getByTestId('clip-chip').first().boundingBox()
+    if (!chip) throw new Error('no chip')
+    await page.touchscreen.tap(chip.x + chip.width / 2, chip.y + chip.height / 2)
+    await expect
+      .poll(() => called(calls, 'clipboard_paste_text'))
+      .toEqual([expect.objectContaining({ text: '482913', mode: 'normal' })])
+    expect(called(calls, 'clipboard_paste')).toEqual([])
+  })
 })
 
 test('从第 1 行竖直扫到第 4 行：选中项跟着指针走，没有页面错误', async ({ page }) => {

@@ -8,13 +8,17 @@
  * - 验证码的「N 分钟后删除」、图片「识别文字」、⌘P 在悬浮窗接入之前只拦下。
  */
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { motionValue } from 'motion/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setTransport } from '../../../shared/ipc'
 import type { ClipInspect, ClipItemMeta, SettingsSnapshot } from '../../../shared/ipc/types'
 import { t } from '../../../shared/i18n/i18n'
+import type { ClipRunner } from '../actions'
 import { ClipboardView } from '../ClipboardView'
 import { INSPECT_DEBOUNCE_MS } from '../model'
+import { RowChips } from '../preview/Chips'
 import { preloadPreview } from '../previewModule'
+import { createClipStore } from '../store'
 import {
   awaitClipboardView,
   installClipboardEvents,
@@ -313,10 +317,90 @@ describe('芯片（识别出的片段）', () => {
     const chip = within(strip).getAllByTestId('clip-chip')[0] as HTMLElement
     // 布局变化时引擎会在原坐标补发一次指针事件：坐标没变，不算移动
     fireEvent.pointerMove(chip, { clientX: 300, clientY: 50, pointerType: 'mouse' })
-    fireEvent.pointerDown(chip, { button: 0, clientX: 300, clientY: 50 })
-    fireEvent.click(chip)
+    fireEvent.pointerDown(chip, { button: 0, clientX: 300, clientY: 50, pointerType: 'mouse' })
+    // 真实的鼠标单击：detail 是点击次数（≥ 1）
+    fireEvent.click(chip, { detail: 1 })
     await waitFor(() => expect(ipc.called('clipboard_paste')).toEqual([{ id: 1, mode: 'normal' }]))
     expect(ipc.called('clipboard_paste_text')).toEqual([])
+  })
+
+  it('防误点只挡鼠标：触屏轻点芯片（没有 pointermove）粘贴片段，不粘贴整条', async () => {
+    ipc.results.clipboard_inspect = OTP
+    mount([meta(1, { preview: 'otp' }), meta(2)])
+    armPointer()
+    fireEvent.pointerMove(row(1), { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    await settleInspect()
+    const chip = within(await screen.findByTestId('clip-chips')).getAllByTestId(
+      'clip-chip',
+    )[0] as HTMLElement
+    // 轻点只有 pointerdown / up / click，坐标与鼠标最后停的位置相同
+    fireEvent.pointerDown(chip, { button: 0, clientX: 300, clientY: 50, pointerType: 'touch' })
+    fireEvent.pointerUp(chip, { button: 0, clientX: 300, clientY: 50, pointerType: 'touch' })
+    fireEvent.click(chip, { detail: 1 })
+    expect(ipc.called('clipboard_paste_text')).toEqual([
+      { text: '482913', from: 1, mode: 'normal' },
+    ])
+    expect(ipc.called('clipboard_paste')).toEqual([])
+  })
+
+  it('防误点只挡鼠标：读屏 / 键盘激活芯片与「+N」（detail 为 0 的合成点击）按芯片处理', async () => {
+    ipc.results.clipboard_inspect = MANY
+    mount([meta(1, { preview: 'otp' }), meta(2)])
+    armPointer()
+    fireEvent.pointerMove(row(1), { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    await settleInspect()
+    const strip = await screen.findByTestId('clip-chips')
+    // VoiceOver 的 AXPress、NVDA 的激活与 HTMLElement.click() 都没有指针事件，detail 为 0
+    fireEvent.click(within(strip).getAllByTestId('clip-chip')[1] as HTMLElement, { detail: 0 })
+    expect(ipc.called('clipboard_paste_text')).toEqual([
+      { text: '13800138000', from: 1, mode: 'normal' },
+    ])
+    expect(ipc.called('clipboard_paste')).toEqual([])
+    await settlePaste()
+    fireEvent.click(within(strip).getByTestId('clip-chips-more'), { detail: 0 })
+    expect(await screen.findByTestId('clip-menu-extract')).toBeTruthy()
+    expect(ipc.called('clipboard_paste')).toEqual([])
+  })
+
+  it('打开动效期间出现的小条：防误点的基线在开始接收指针时取（等待期间移过去停下，补发的指针事件不算移动）', async () => {
+    const store = createClipStore(payload([meta(1, { preview: 'otp' }), meta(2)]))
+    store.setState({ inspect: { id: 1, result: OTP } })
+    const run = vi.fn<ClipRunner['run']>()
+    const runner = {
+      os: 'macos',
+      run,
+      ctx: (source: string, target: number) => ({ source, target }),
+    } as unknown as ClipRunner
+    let at = { x: 10, y: 10 }
+    const holdUntil = performance.now() + 80
+    renderIn(
+      <RowChips
+        store={store}
+        runner={runner}
+        id={1}
+        y={motionValue(0)}
+        h={motionValue(44)}
+        pointer={() => at}
+        holdUntil={() => holdUntil}
+      />,
+    )
+    const slot = document.querySelector('.clip-rowchips-slot') as HTMLElement
+    expect(slot.hasAttribute('data-hold')).toBe(true)
+    // 等待期间（小条不接收指针、事件落在下面的行上）指针移到小条将要出现的位置停下：列表记下这个坐标
+    at = { x: 300, y: 50 }
+    await waitFor(() => expect(slot.hasAttribute('data-hold')).toBe(false))
+    const chip = screen.getAllByTestId('clip-chip')[0] as HTMLElement
+    // 开始接收指针时引擎可能在原坐标补发一次 pointermove：坐标没变，不算移动，单击仍交给这一行
+    fireEvent.pointerMove(chip, { clientX: 300, clientY: 50, pointerType: 'mouse' })
+    fireEvent.click(chip, { detail: 1 })
+    expect(run).not.toHaveBeenCalled()
+    // 真的移动之后才算点芯片
+    fireEvent.pointerMove(chip, { clientX: 302, clientY: 50, pointerType: 'mouse' })
+    fireEvent.click(chip, { detail: 1 })
+    expect(run).toHaveBeenCalledWith('paste_fragment', expect.anything(), {
+      index: 0,
+      mode: 'normal',
+    })
   })
 
   it('右键芯片小条：打开选中行的右键菜单', async () => {
