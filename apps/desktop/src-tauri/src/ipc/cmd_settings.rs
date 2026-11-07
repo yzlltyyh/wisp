@@ -35,7 +35,8 @@ pub async fn settings_patch(
 }
 
 /// 同步的开关、地址与账号只由连接 / 断开同步的命令写入（要与凭据存储里的条目保持一致）；设置页经补丁只能改
-/// `sync.auto` 与 `sync.content`。`sync: null`（整组恢复默认）同样会改到它们，一并拒绝
+/// `sync.auto`、`sync.content` 与实时同步的两个开关（`sync.realtime` / `sync.realtime_clipboard`）。`sync: null`
+/// （整组恢复默认）同样会改到它们，一并拒绝
 fn check_sync_patch(patch: &serde_json::Value) -> Result<(), IpcError> {
     let Some(sync) = patch.get("sync") else {
         return Ok(());
@@ -213,6 +214,8 @@ mod tests {
             json!({"appearance": {"font_size": 15}}),
             json!({"sync": {"auto": false}}),
             json!({"sync": {"content": {"images": false}}}),
+            json!({"sync": {"realtime": true}}),
+            json!({"sync": {"realtime": true, "realtime_clipboard": true}}),
         ] {
             assert!(check_sync_patch(&ok).is_ok(), "{ok}");
         }

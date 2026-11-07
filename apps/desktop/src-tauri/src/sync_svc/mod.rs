@@ -7,6 +7,8 @@
 //! - **开启后只由事件驱动**：本机改动经钩子与 sink 捕获（[`capture`]），由日志写入线程写进 sync.db（[`writer`]）；
 //!   上传由「有待上传的改动」时的一次性去抖发起，取回由用户活动触发（面板、托盘、设置窗口、再次启动），节流与退避都只是
 //!   原子读写（[`gate`]），没有任何周期定时器。
+//! - **实时同步（实验性）是唯一的例外**：用户打开后，[`realtime`] 在使用电脑期间按分档做只读探测，离开时不联网；
+//!   关闭时不存在任何任务、计时器或保留的客户端。
 //! - **钥匙串**：同步凭据只在用户活动触发的一轮里第一次读取，之后缓存在内存；模型服务的 Key 也只在这类轮次里读写
 //!   （本进程成功访问过一次之后，本机改动触发的上传也可以读）。
 //! - **隐私**：日志与错误里只有阶段、计数、HTTP 状态码与错误种类；不出现地址、账号、密码、同步密码、密钥、远端路径、
@@ -32,6 +34,7 @@ pub mod errors;
 pub mod gate;
 pub mod identity;
 pub mod local;
+pub mod realtime;
 pub mod reconcile;
 pub mod writer;
 
@@ -59,6 +62,8 @@ use wisp_types::{
 };
 
 pub use wisp_sync::CycleReason;
+
+pub use self::realtime::{RemoteClipArrival, RemoteClipHook};
 
 use self::capture::{Capturer, Captures, Msg};
 use self::gate::{Debounce, Gate, Queue, clock_ms};
@@ -104,10 +109,11 @@ struct Active {
     sink: AtomicBool,
 }
 
-/// 运行循环里保留的 WebDAV 客户端：连续的几轮共用，空闲后释放
+/// 保留的 WebDAV 客户端：连续的几轮与实时同步的探测共用一个客户端（一个连接池，不用每次重新握手）。没有实时同步时
+/// 队列空了就释放；实时同步运行期间保留，由客户端自己的空闲时限管住连接
 struct RemoteSlot {
     tag: [u8; 32],
-    remote: WebDav,
+    remote: Arc<WebDav>,
 }
 
 /// 多设备同步服务
@@ -139,6 +145,10 @@ pub struct SyncService {
     started: AtomicBool,
     /// 上一次处理过的 `settings.sync`（持有 `lifecycle` 时读写）：连接、断开写入的设置在这里直接记下，跟随任务不再重复处理
     seen: Mutex<Option<SyncSettings>>,
+    /// 保留的 WebDAV 客户端（里面有密码；关闭、断开、凭据失效时清掉）
+    remote: Mutex<Option<RemoteSlot>>,
+    /// 实时同步（实验性）
+    realtime: realtime::Realtime,
 }
 
 impl std::fmt::Debug for SyncService {
@@ -192,6 +202,8 @@ impl SyncService {
             progress_ms: AtomicI64::new(0),
             started: AtomicBool::new(false),
             seen: Mutex::new(None),
+            remote: Mutex::new(None),
+            realtime: realtime::Realtime::default(),
         })
     }
 
@@ -229,7 +241,15 @@ impl SyncService {
     /// 发起一轮同步（O(1)，可以在热路径上调用）。没有开启同步、关闭了自动同步、在节流间隔或退避期内、或因需要处理的
     /// 错误暂停时什么也不做；「立即同步」与连接后的首轮不受这些限制。正在同步时合并成「结束后再来一轮」
     pub fn trigger(self: &Arc<Self>, reason: CycleReason) {
-        if !self.gate.allows(reason, clock_ms()) {
+        let now = clock_ms();
+        // 实时同步：用户活动（面板打开就该进热档）先唤醒它重新规划，节流挡住的触发也算
+        if reason.is_user_activity() {
+            self.realtime.note_activity(now);
+        }
+        if reason != CycleReason::Poll {
+            self.realtime.nudge();
+        }
+        if !self.gate.allows(reason, now) {
             return;
         }
         self.queue.push(reason);
@@ -478,6 +498,7 @@ impl SyncService {
         self.gate.set_auto(self.settings.get().sync.auto);
         self.gate.set_enabled(true);
         self.gate.resume();
+        self.realtime_reenabled();
         self.pins_checked.store(false, Ordering::Release);
         self.set_status(|s| {
             s.phase = SyncPhase::Idle;
@@ -756,9 +777,11 @@ impl SyncService {
         }
     }
 
-    /// 关闭：卸钩子 → 打断进行中的一轮并等它退出 → 写完队列、结束写入线程 → 关闭 sync.db。不删除文件
+    /// 关闭：停下实时同步 → 卸钩子 → 打断进行中的一轮并等它退出 → 写完队列、结束写入线程 → 关闭 sync.db。不删除文件
     async fn deactivate(&self) {
         self.gate.set_enabled(false);
+        self.stop_realtime_and_wait().await;
+        self.release_remote();
         let Some(active) = self.active.write().take() else {
             return;
         };
@@ -888,6 +911,7 @@ impl SyncService {
                 .is_some_and(|c| !c.matches(&cur.server_url, &cur.username));
             if stale {
                 *self.creds.lock() = None;
+                self.release_remote();
                 active.engine.lock();
                 self.fail(&SyncError::Locked);
             }
@@ -895,11 +919,16 @@ impl SyncService {
         if prev.content != cur.content {
             self.apply_content(&active, &prev.content, &cur.content).await;
         }
-        if prev.auto != cur.auto || prev.content != cur.content {
-            // 改同步设置是用户操作：解除暂停，按新设置同步一轮
+        let realtime_on = cur.realtime && !prev.realtime;
+        if realtime_on {
+            self.realtime_reenabled();
+        }
+        if prev.auto != cur.auto || prev.content != cur.content || realtime_on {
+            // 改同步设置是用户操作：解除暂停，按新设置同步一轮（刚打开实时同步时，这一轮读到凭据后实时同步随之开始）
             self.gate.resume();
             self.trigger(CycleReason::SettingsChanged);
         }
+        self.follow_realtime();
     }
 
     /// 内容开关变化：剪贴板 / 识别历史关闭期间不记录，重新打开时对该域重新加入（条目自身的时间）
@@ -938,13 +967,14 @@ impl SyncService {
             }
         });
         let now = clock_ms();
+        self.realtime.note_activity(now);
         if !self.gate.debounce_allowed(now) || !self.debounce.note(now) {
             return;
         }
         let svc = Arc::clone(self);
         tauri::async_runtime::spawn(async move {
             loop {
-                let wait = svc.debounce.deadline().saturating_sub(clock_ms());
+                let wait = svc.debounce.deadline(svc.realtime.alive()).saturating_sub(clock_ms());
                 if wait <= 0 {
                     break;
                 }
@@ -970,13 +1000,15 @@ impl SyncService {
         }
     }
 
-    /// 依次处理排队的触发，直到队列空；WebDAV 客户端在连续的几轮之间共用，循环结束即释放
+    /// 依次处理排队的触发，直到队列空；WebDAV 客户端在连续的几轮之间共用，循环结束即释放（实时同步运行期间保留）
     async fn run_loop(self: Arc<Self>) {
-        let mut slot: Option<RemoteSlot> = None;
         loop {
             if let Some(reason) = self.queue.take() {
-                self.run_one(reason, &mut slot).await;
+                self.run_one(reason).await;
                 continue;
+            }
+            if !self.realtime.alive() {
+                self.release_remote();
             }
             self.running.store(false, Ordering::Release);
             // 放下标记的同时又有触发排进来、而它的 kick 因为标记还在没有启动新循环：接着处理
@@ -991,8 +1023,10 @@ impl SyncService {
         }
     }
 
-    async fn run_one(self: &Arc<Self>, reason: CycleReason, slot: &mut Option<RemoteSlot>) {
+    async fn run_one(self: &Arc<Self>, reason: CycleReason) {
         let _cycle = self.cycle_lock.lock().await;
+        // 探测拿到的列表只给紧接着的 `Poll` 那一轮；不管这一轮跑不跑，都不留给更晚的一轮
+        let listing = self.realtime.take_listing(reason);
         let Some(active) = self.active() else { return };
         if !self.gate.enabled() {
             return;
@@ -1007,16 +1041,12 @@ impl SyncService {
                 return;
             }
         };
-        let tag = remote_tag(&credential);
-        let remote = match slot.take() {
-            Some(s) if s.tag == tag => s.remote,
-            _ => match WebDav::new(&credential.server_url, &credential.username, &credential.password) {
-                Ok(remote) => remote,
-                Err(e) => {
-                    self.cycle_failed(reason, &e);
-                    return;
-                }
-            },
+        let remote = match self.shared_remote(&credential) {
+            Ok(remote) => remote,
+            Err(e) => {
+                self.cycle_failed(reason, &e);
+                return;
+            }
         };
         drop(credential);
         let keychain = reason.is_user_activity() || self.keychain_ok.load(Ordering::Acquire);
@@ -1038,7 +1068,7 @@ impl SyncService {
         notified.as_mut().enable();
         let result = if self.generation.load(Ordering::Acquire) == generation {
             tokio::select! {
-                r = active.engine.sync_cycle(&remote, &active.store, reason, &options, &*progress) => Some(r),
+                r = active.engine.sync_cycle_with(&*remote, &active.store, reason, &options, &*progress, listing) => Some(r),
                 () = &mut notified => None,
             }
         } else {
@@ -1048,11 +1078,36 @@ impl SyncService {
         active.store.set_keychain_allowed(false);
         match result {
             // 同步正在关闭
-            None => return,
+            None => {}
             Some(Ok(report)) => self.cycle_succeeded(&active, reason, keychain, &options, report).await,
             Some(Err(e)) => self.cycle_failed(reason, &e),
         }
-        *slot = Some(RemoteSlot { tag, remote });
+    }
+
+    /// 与这份凭据对应的 WebDAV 客户端：保留着同一个账号的就沿用（探测与每一轮共用连接池），否则新建并保留
+    fn shared_remote(&self, credential: &SyncCredential) -> Result<Arc<WebDav>, SyncError> {
+        let tag = remote_tag(credential);
+        let mut slot = self.remote.lock();
+        if let Some(s) = slot.as_ref().filter(|s| s.tag == tag) {
+            s.remote.set_keep_alive(self.realtime.alive());
+            return Ok(Arc::clone(&s.remote));
+        }
+        let remote = Arc::new(WebDav::new(
+            &credential.server_url,
+            &credential.username,
+            &credential.password,
+        )?);
+        remote.set_keep_alive(self.realtime.alive());
+        *slot = Some(RemoteSlot {
+            tag,
+            remote: Arc::clone(&remote),
+        });
+        Ok(remote)
+    }
+
+    /// 放掉保留的 WebDAV 客户端（连同里面的密码与连接池）
+    fn release_remote(&self) {
+        self.remote.lock().take();
     }
 
     /// 本轮用的凭据。缓存里没有时只在用户活动触发的轮次里读钥匙串（`Ok(None)` = 这一轮不同步）；与设置里的地址、账号
@@ -1172,6 +1227,8 @@ impl SyncService {
             report.bytes_down
         );
         let now = now_ms();
+        self.realtime
+            .note_cycle(clock_ms(), report.pushed > 0, report.pulled > 0, report.requests);
         self.set_status(|s| {
             *s = SyncStatus {
                 phase: SyncPhase::Idle,
@@ -1182,6 +1239,8 @@ impl SyncService {
                 error_detail: None,
                 progress: None,
                 device_count: report.device_count,
+                realtime: s.realtime,
+                checked_ms: s.checked_ms,
             };
             if report.corrupt_devices > 0 {
                 // 有设备的数据读不出来：只跳过那台设备，其他照常；作为暂时性问题显示，不暂停自动同步
@@ -1195,6 +1254,10 @@ impl SyncService {
         if report.again && self.gate.allows_continuation(reason, clock_ms()) {
             self.queue.push(reason);
         }
+        self.hand_off_remote_clips(reason, &report.remote_clips);
+        // 这一轮读到了凭据（或者条件刚满足）：实时同步该开始就开始；在跑的话按新的情况重新规划
+        self.ensure_realtime();
+        self.realtime.nudge();
         if options.content.clipboard && !self.pins_checked.swap(true, Ordering::AcqRel) {
             self.check_pins(active).await;
         }
@@ -1234,9 +1297,17 @@ impl SyncService {
         let kind = errors::kind_of(e.kind());
         let transient = e.is_transient();
         if transient {
-            self.gate.failed_transient(clock_ms());
+            let now = clock_ms();
+            self.gate.failed_transient(now);
+            // 服务器说了要等多久（限流）：至少等那么久
+            if let Some(ms) = e.retry_after_ms() {
+                self.gate
+                    .defer_until(now.saturating_add(i64::try_from(ms).unwrap_or(i64::MAX)));
+            }
         } else {
             self.gate.failed_persistent();
+            // 自动同步暂停了：实时同步跟着停（用户处理之后的那一轮成功时重新开始）
+            self.stop_realtime();
         }
         if matches!(
             kind,
@@ -1245,8 +1316,10 @@ impl SyncService {
                 | SyncErrorKind::Passphrase
                 | SyncErrorKind::VaultReset
         ) {
-            // 凭据已经不能用了：下次用户操作时重新读取（「更新密码…」会写入新的）
+            // 凭据已经不能用了：下次用户操作时重新读取（「更新密码…」会写入新的）；保留的客户端里也有旧密码
             *self.creds.lock() = None;
+            self.release_remote();
+            self.stop_realtime();
             if let Some(active) = self.active() {
                 active.engine.lock();
             }

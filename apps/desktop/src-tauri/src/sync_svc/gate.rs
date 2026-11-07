@@ -1,7 +1,7 @@
 //! 自动同步的触发判定：节流、退避与暂停。
 //!
 //! 面板显示、托盘打开这类热路径直接调用 [`Gate::allows`]，所以全部是原子读写（O(1)），不加锁、不分配。没有任何计时器：
-//! 退避只记下「什么时候之后才可以再试」，由下一次用户活动来检查。时间一律取自 [`clock_ms`]。
+//! 退避只记下「什么时候之后才可以再试」，由下一次用户活动（或实时同步的规划）来检查。时间一律取自 [`clock_ms`]。
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, Ordering};
 use std::time::Instant;
@@ -15,6 +15,9 @@ use super::identity::now_ms;
 pub const DEBOUNCE_MS: i64 = 2_000;
 /// 去抖的上限：从第一次改动算起最多等这么久（连续不断的改动也不会一直推迟上传）
 pub const DEBOUNCE_MAX_MS: i64 = 10_000;
+/// 实时同步开着时的去抖：另一台设备每隔几秒就在看，本机的复制也要尽快上去
+pub const REALTIME_DEBOUNCE_MS: i64 = 500;
+pub const REALTIME_DEBOUNCE_MAX_MS: i64 = 2_000;
 /// 剪贴板视图显示：距上次同步至少这么久才再拉取
 pub const CLIPBOARD_SHOWN_MS: i64 = 5_000;
 /// 其他面板视图显示
@@ -71,32 +74,35 @@ pub fn is_explicit(reason: CycleReason) -> bool {
     matches!(reason, CycleReason::Manual | CycleReason::Connect)
 }
 
-/// 合并排队的触发时保留「更强」的那个：用户明确的操作优先（它们不受限制，钥匙串也只在用户活动里读）
+/// 合并排队的触发时保留「更强」的那个：用户明确的操作优先（它们不受限制，钥匙串也只在用户活动里读）。实时同步的探测
+/// 最弱：和别的触发合并时，那一轮自己列一次目录（探测拿到的列表只给 `Poll` 那一轮用）。0 表示队列为空
 fn rank(reason: CycleReason) -> u8 {
     match reason {
-        CycleReason::LocalChange => 1,
-        CycleReason::PanelShown => 2,
-        CycleReason::TrayOpened => 3,
-        CycleReason::SettingsFocused => 4,
-        CycleReason::ClipboardShown => 5,
-        CycleReason::Relaunch => 6,
-        CycleReason::SettingsChanged => 7,
-        CycleReason::Connect => 8,
-        CycleReason::Manual => 9,
+        CycleReason::Poll => 1,
+        CycleReason::LocalChange => 2,
+        CycleReason::PanelShown => 3,
+        CycleReason::TrayOpened => 4,
+        CycleReason::SettingsFocused => 5,
+        CycleReason::ClipboardShown => 6,
+        CycleReason::Relaunch => 7,
+        CycleReason::SettingsChanged => 8,
+        CycleReason::Connect => 9,
+        CycleReason::Manual => 10,
     }
 }
 
 fn from_rank(rank: u8) -> Option<CycleReason> {
     Some(match rank {
-        1 => CycleReason::LocalChange,
-        2 => CycleReason::PanelShown,
-        3 => CycleReason::TrayOpened,
-        4 => CycleReason::SettingsFocused,
-        5 => CycleReason::ClipboardShown,
-        6 => CycleReason::Relaunch,
-        7 => CycleReason::SettingsChanged,
-        8 => CycleReason::Connect,
-        9 => CycleReason::Manual,
+        1 => CycleReason::Poll,
+        2 => CycleReason::LocalChange,
+        3 => CycleReason::PanelShown,
+        4 => CycleReason::TrayOpened,
+        5 => CycleReason::SettingsFocused,
+        6 => CycleReason::ClipboardShown,
+        7 => CycleReason::Relaunch,
+        8 => CycleReason::SettingsChanged,
+        9 => CycleReason::Connect,
+        10 => CycleReason::Manual,
         _ => return None,
     })
 }
@@ -157,6 +163,15 @@ impl Gate {
 
     pub fn paused(&self) -> bool {
         self.paused.load(Ordering::Acquire)
+    }
+
+    pub fn auto(&self) -> bool {
+        self.auto.load(Ordering::Acquire)
+    }
+
+    /// 退避截止时间（[`clock_ms`]）；不在退避期内时为 None
+    pub fn retry_after(&self) -> Option<i64> {
+        Some(self.retry_after_ms.load(Ordering::Acquire)).filter(|t| *t > 0)
     }
 
     /// 这次触发现在能不能发起一轮同步
@@ -222,6 +237,11 @@ impl Gate {
         at
     }
 
+    /// 服务器要求至少等到 `at`（`Retry-After`）：退避截止时间取两者中较晚的
+    pub fn defer_until(&self, at: i64) {
+        self.retry_after_ms.fetch_max(at, Ordering::AcqRel);
+    }
+
     /// 持续性失败：暂停自动同步
     pub fn failed_persistent(&self) {
         self.paused.store(true, Ordering::Release);
@@ -253,12 +273,16 @@ impl Debounce {
         !self.armed.swap(true, Ordering::AcqRel)
     }
 
-    /// 等到什么时候：最后一次改动之后 2 s，但从第一次改动算起不超过 10 s
-    pub fn deadline(&self) -> i64 {
+    /// 等到什么时候：最后一次改动之后 2 s，但从第一次改动算起不超过 10 s；实时同步开着时是 0.5 s / 2 s
+    pub fn deadline(&self, realtime: bool) -> i64 {
+        let (wait, max) = if realtime {
+            (REALTIME_DEBOUNCE_MS, REALTIME_DEBOUNCE_MAX_MS)
+        } else {
+            (DEBOUNCE_MS, DEBOUNCE_MAX_MS)
+        };
         let last = self.last_ms.load(Ordering::Acquire);
         let first = self.first_ms.load(Ordering::Acquire);
-        last.saturating_add(DEBOUNCE_MS)
-            .min(first.saturating_add(DEBOUNCE_MAX_MS))
+        last.saturating_add(wait).min(first.saturating_add(max))
     }
 
     /// 等待结束（触发同步之前调用）：之后的改动重新开始计时
@@ -398,13 +422,50 @@ mod tests {
     fn debounce_waits_two_seconds_but_at_most_ten() {
         let d = Debounce::default();
         assert!(d.note(1_000), "第一次改动启动等待");
-        assert_eq!(d.deadline(), 3_000);
+        assert_eq!(d.deadline(false), 3_000);
         assert!(!d.note(2_500), "等待中的改动只推迟截止时间");
-        assert_eq!(d.deadline(), 4_500);
+        assert_eq!(d.deadline(false), 4_500);
         assert!(!d.note(10_500));
-        assert_eq!(d.deadline(), 11_000, "从第一次改动算起最多 10 s");
+        assert_eq!(d.deadline(false), 11_000, "从第一次改动算起最多 10 s");
         d.fire();
         assert!(d.note(20_000));
-        assert_eq!(d.deadline(), 22_000);
+        assert_eq!(d.deadline(false), 22_000);
+    }
+
+    #[test]
+    fn realtime_debounce_is_half_a_second_but_at_most_two() {
+        let d = Debounce::default();
+        assert!(d.note(1_000));
+        assert_eq!(d.deadline(true), 1_500);
+        assert!(!d.note(1_400));
+        assert!(!d.note(2_800));
+        assert_eq!(d.deadline(true), 3_000, "从第一次改动算起最多 2 s");
+    }
+
+    #[test]
+    fn polls_are_the_weakest_trigger_and_obey_pause_and_backoff() {
+        let q = Queue::default();
+        q.push(CycleReason::Poll);
+        assert_eq!(q.take(), Some(CycleReason::Poll));
+        q.push(CycleReason::Poll);
+        q.push(CycleReason::LocalChange);
+        assert_eq!(q.take(), Some(CycleReason::LocalChange), "合并时探测让位");
+        let g = gate(true);
+        g.started(1_000);
+        assert!(g.allows(CycleReason::Poll, 1_001), "探测发现变化后的一轮不节流");
+        let at = g.failed_transient(1_000);
+        assert!(!g.allows(CycleReason::Poll, at - 1));
+        assert_eq!(g.retry_after(), Some(at));
+        g.defer_until(at + 5_000);
+        assert_eq!(g.retry_after(), Some(at + 5_000), "Retry-After 更晚时按它");
+        g.defer_until(at);
+        assert_eq!(g.retry_after(), Some(at + 5_000), "不会提前");
+        g.resume();
+        assert_eq!(g.retry_after(), None);
+        g.failed_persistent();
+        assert!(!g.allows(CycleReason::Poll, i64::MAX / 2));
+        g.resume();
+        g.set_auto(false);
+        assert!(!g.allows(CycleReason::Poll, 1));
     }
 }

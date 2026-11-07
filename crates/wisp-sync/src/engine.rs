@@ -4,6 +4,9 @@
 //! 引擎在 `spawn_blocking` 里调用）。引擎本身不起任务、不设计时器，只在调用方发起的
 //! [`Engine::sync_cycle`] 里联网；同一时刻只跑一轮（内部串行化，重叠的调用排队）。
 //!
+//! 实时同步（实验性）用 [`Engine::peek`] 做只读探测：一次列目录、不写副本；发现变化后由
+//! [`Engine::sync_cycle_with`] 复用这次的列表跑完整的一轮。
+//!
 //! 一轮的步骤：
 //! 1. 列同步根目录（一次请求拿到 vault.json 与全部 head 的 ETag）→ 复核 vault → 只取变化的 head → 取新段 →
 //!    逐 key LWW 合并进副本（标记「未应用」），游标与合并在同一个事务里提交；
@@ -16,6 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use serde_json::Value;
@@ -25,7 +29,7 @@ use crate::crypto::MasterKey;
 use crate::error::{LocalError, SyncError};
 use crate::hlc::{self, Clock};
 use crate::model::{BlobRole, DeviceInfo, Domain, SchemaVersions};
-use crate::remote::Remote;
+use crate::remote::{Entry, Remote};
 use crate::replica::{self, Journal, Replica};
 
 mod apply;
@@ -33,6 +37,7 @@ mod compact;
 mod content;
 mod cx;
 mod join;
+mod peek;
 mod pull;
 mod push;
 
@@ -53,6 +58,11 @@ pub const COMPACT_SLACK_BYTES: u64 = 256 * 1024;
 /// 已发布的本机条目中超出保留策略的达到这个数时压缩。历史到达条数上限后每次复制都会挤出一条，
 /// 逐条触发会让每次推送都整体重写一遍日志；攒够一批再裁（其他原因触发的压缩也会顺带裁掉）
 pub const COMPACT_RETENTION_BATCH: usize = 64;
+/// 只读探测拿到的列表在这么久之内交给下一轮，就直接用它，不再列一次目录；更旧的作废（期间可能又有变化，
+/// 而下一次探测会按这份列表的签名比较——用旧列表只会多跑一轮，不会漏掉改动）
+pub const LISTING_FRESH: Duration = Duration::from_secs(5);
+/// 报告里最多带这么多条其他设备的新剪贴板条目（按条目时间从新到旧）
+pub const REMOTE_CLIPS_MAX: usize = 32;
 
 // ---------------------------------------------------------------------------------------------
 // LocalStore：桌面端实现
@@ -228,12 +238,14 @@ pub enum CycleReason {
     Connect,
     /// 用户修改了同步设置（内容开关等）
     SettingsChanged,
+    /// 实时同步的只读探测发现服务器上有变化：本轮先应用 clip 域。不算用户活动
+    Poll,
 }
 
 impl CycleReason {
     /// 是否由用户活动触发（钥匙串只在这类循环里首次读取，远端 Key 也只在这类循环里写入）
     pub fn is_user_activity(self) -> bool {
-        !matches!(self, Self::LocalChange)
+        !matches!(self, Self::LocalChange | Self::Poll)
     }
 
     /// 日志用的短名
@@ -248,6 +260,7 @@ impl CycleReason {
             Self::Manual => "manual",
             Self::Connect => "connect",
             Self::SettingsChanged => "settings_changed",
+            Self::Poll => "poll",
         }
     }
 }
@@ -347,7 +360,27 @@ pub struct Progress {
 /// 进度回调；在引擎的任务里同步调用，不能阻塞
 pub type ProgressFn = dyn Fn(Progress) + Send + Sync;
 
-/// 一轮同步的结果（只含计数，不含任何内容，可以写进日志）
+/// 本轮从其他设备拿到、并已写进本机剪贴板历史的一条新条目（只有内容 hash 与时间，不含内容）。`Debug` 不输出 hash
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RemoteClip {
+    /// 剪贴板条目的内容 hash（本机剪贴板库里条目的主键）
+    pub hash: [u8; 32],
+    /// 那台设备记下这次改动的时间（记录时间戳的物理部分，Unix 毫秒）
+    pub recorded_ms: i64,
+    /// 条目自身的「最近使用」时间（Unix 毫秒）
+    pub last_used_ms: i64,
+}
+
+impl std::fmt::Debug for RemoteClip {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteClip")
+            .field("recorded_ms", &self.recorded_ms)
+            .field("last_used_ms", &self.last_used_ms)
+            .finish_non_exhaustive()
+    }
+}
+
+/// 一轮同步的结果（只含计数与时间，不含任何内容，`Debug` 输出可以写进日志）
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CycleReport {
     /// 合并进副本的远端记录数
@@ -374,6 +407,44 @@ pub struct CycleReport {
     pub device_count: u32,
     /// 检测到数据目录被复制到了另一台机器，本机换了新的 device_id：调用方写回本机运行态并在之后使用
     pub new_device_id: Option<String>,
+    /// 本轮从其他设备拿到并写进本机的新剪贴板条目（新增或内容有了新版本；按条目时间从新到旧，最多
+    /// [`REMOTE_CLIPS_MAX`] 条）。只改收藏、删除、清空的不在其中。不要写进日志
+    pub remote_clips: Vec<RemoteClip>,
+}
+
+/// [`Engine::peek`] 的结论
+#[derive(Debug)]
+pub enum Peek {
+    /// 自上一轮成功同步以来，服务器上没有别的设备的新改动
+    Unchanged,
+    /// 有变化（或本进程还没成功同步过）：把列表交给 [`Engine::sync_cycle_with`]
+    Changed(Listing),
+    /// 正在跑一轮同步或连接：这次不探测
+    Busy,
+    /// 服务器列目录时不给可比较的签名（ETag，或大小 + 修改时间）：无法判断有没有变化，不适合高频探测
+    Unsupported,
+}
+
+/// [`Engine::peek`] 列到的同步根目录。不透明；在 [`LISTING_FRESH`] 之内交给 [`Engine::sync_cycle_with`] 才会被采用。
+/// `Debug` 只输出条目数（文件名里有 vault 与设备 id）
+#[derive(Clone)]
+pub struct Listing {
+    vault_id: String,
+    entries: Vec<Entry>,
+    at: Instant,
+}
+
+impl Listing {
+    /// 列到之后过了多久
+    pub fn age(&self) -> Duration {
+        self.at.elapsed()
+    }
+}
+
+impl std::fmt::Debug for Listing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Listing({} entries)", self.entries.len())
+    }
 }
 
 /// 连接的方式（由服务器与本机状态决定，调用方不指定）
@@ -603,6 +674,52 @@ impl Engine {
         options: &CycleOptions,
         progress: &ProgressFn,
     ) -> Result<CycleReport, SyncError> {
+        self.sync_cycle_with(remote, local, reason, options, progress, None)
+            .await
+    }
+
+    /// 只读探测：列一次同步根目录，与上一轮成功同步结束时的样子比较，看别的设备有没有新改动。
+    ///
+    /// 不读写 sync.db、不改时钟与游标、不下载任何文件，可以每隔几秒调用。必须已解锁（否则 `Locked`）；正在跑一轮
+    /// 同步或连接时返回 [`Peek::Busy`]，不等待，也不与它争用连接。列目录期间开始的一轮不受影响：探测结束时它还在跑，
+    /// 同样返回 `Busy`
+    pub async fn peek<R: Remote>(&self, remote: &R) -> Result<Peek, SyncError> {
+        let session = self.session().ok_or(SyncError::Locked)?;
+        if self.cycle.try_lock().is_err() {
+            return Ok(Peek::Busy);
+        }
+        let own = self.device().id;
+        let changed = |entries: Vec<Entry>| {
+            Peek::Changed(Listing {
+                vault_id: session.vault_id.clone(),
+                entries,
+                at: Instant::now(),
+            })
+        };
+        // 根目录不存在：交给完整的一轮报告「数据已被清除」
+        let Some(entries) = remote.list("").await? else {
+            return Ok(changed(Vec::new()));
+        };
+        let Ok(mut state) = self.cycle.try_lock() else {
+            return Ok(Peek::Busy);
+        };
+        let sigs = peek::RootSigs::of(&entries, &session.vault_id, &own);
+        let verdict = peek::compare(state.snapshot.as_mut(), &sigs, &session.vault_id);
+        drop(state);
+        Ok(Option::<Peek>::from(verdict).unwrap_or_else(|| changed(entries)))
+    }
+
+    /// 同 [`Engine::sync_cycle`]；`listing` 是刚由 [`Engine::peek`] 列到的根目录，属于当前 vault、并且在
+    /// [`LISTING_FRESH`] 之内时直接用，省掉这一轮开头的列目录
+    pub async fn sync_cycle_with<R: Remote, L: LocalStore + ?Sized>(
+        &self,
+        remote: &R,
+        local: &Arc<L>,
+        reason: CycleReason,
+        options: &CycleOptions,
+        progress: &ProgressFn,
+        listing: Option<Listing>,
+    ) -> Result<CycleReport, SyncError> {
         let mut state = self.cycle.lock().await;
         let session = self.session().ok_or(SyncError::Locked)?;
         let vid = session.vault_id.clone();
@@ -616,8 +733,16 @@ impl Engine {
             return Err(SyncError::VaultReset);
         }
         let own = self.device().id;
+        // 根目录不存在时的空列表同样作废：让这一轮自己列一次，按原来的路径报告
+        let listing = listing
+            .filter(|l| l.vault_id == session.vault_id && l.age() < LISTING_FRESH && !l.entries.is_empty())
+            .map(|l| l.entries);
         let mut cx = Cx::new(self, remote, local, options, progress, session, own);
-        let result = run_cycle(&mut cx, &mut state, reason).await;
+        let result = run_cycle(&mut cx, &mut state, reason, listing).await;
+        if result.is_err() {
+            // 失败的一轮可能只做了一半：下一次探测按「有变化」处理
+            state.snapshot = None;
+        }
         cx.finish_counts();
         log::debug!(
             "sync: cycle {} finished: {} requests, {} pulled, {} applied, {} pushed",
@@ -724,8 +849,9 @@ async fn run_cycle<R: Remote, L: LocalStore + ?Sized>(
     cx: &mut Cx<'_, R, L>,
     state: &mut CycleState,
     reason: CycleReason,
+    listing: Option<Vec<Entry>>,
 ) -> Result<(), SyncError> {
-    pull::pull(cx, state).await?;
+    pull::pull(cx, state, listing).await?;
 
     // 连接时跳过的域（开关关闭、或剪贴板与识别历史留给后台）在这里加入
     for d in [
@@ -759,8 +885,8 @@ async fn run_cycle<R: Remote, L: LocalStore + ?Sized>(
         Domain::Clip,
         Domain::Ocr,
     ];
-    if reason == CycleReason::ClipboardShown {
-        // 剪贴板视图正在显示：先让剪贴板的变化出现
+    if matches!(reason, CycleReason::ClipboardShown | CycleReason::Poll) {
+        // 剪贴板视图正在显示，或实时同步发现了别的设备的改动（多半是新复制）：先让剪贴板的变化出现
         order.retain(|d| *d != Domain::Clip);
         order.insert(0, Domain::Clip);
     }
@@ -783,14 +909,16 @@ async fn run_cycle<R: Remote, L: LocalStore + ?Sized>(
     let device_count = cx.report.device_count;
     let now = i64::try_from(hlc::wall_now_ms()).unwrap_or(i64::MAX);
     let last = cx.engine.hlc().last();
-    cx.report.pending = cx
+    let (pending, own_sig) = cx
         .db(move |r| {
             r.persist_hlc(last)?;
             r.set_meta(replica::META_LAST_OK, &now.to_string())?;
             r.set_meta(replica::META_DEVICE_COUNT, &device_count.to_string())?;
-            r.has_pending(&own, &allowed)
+            Ok((r.has_pending(&own, &allowed)?, r.meta(replica::META_OWN_SIG)?))
         })
         .await?;
+    cx.report.pending = pending;
+    state.snapshot = snapshot_after(cx, own_sig);
     if cx.keychain_error {
         return Err(SyncError::Local(LocalError::Keychain));
     }
@@ -800,6 +928,29 @@ async fn run_cycle<R: Remote, L: LocalStore + ?Sized>(
         return Err(e);
     }
     Ok(())
+}
+
+/// 一轮成功结束时服务器的样子：别的设备与 vault.json 的签名取本轮开头的列表（期间又有变化的，下一次探测会看到签名
+/// 不同，保守地再跑一轮）；本轮写过本机 head 时取写入时记下的签名。本机换了 device_id 时不留快照，下一次探测重跑一轮
+fn snapshot_after<R: Remote, L: LocalStore + ?Sized>(
+    cx: &Cx<'_, R, L>,
+    own_sig: Option<String>,
+) -> Option<peek::Snapshot> {
+    let listed = cx.listed.as_ref()?;
+    if listed.own_id != cx.own {
+        return None;
+    }
+    Some(peek::Snapshot {
+        vault_id: cx.vault_id().to_string(),
+        own_id: cx.own.clone(),
+        vault: listed.vault.clone().flatten(),
+        peers: listed.peers.clone(),
+        own: if cx.head_written {
+            own_sig
+        } else {
+            listed.own.clone().flatten()
+        },
+    })
 }
 
 /// 「测试连接」：认证、确保同步根目录存在、写入并删除一个探测文件、读取服务器上已有的同步数据概况。
@@ -830,9 +981,23 @@ mod tests {
     ) {
         fn is_send<T: Send>(_: T) {}
         is_send(engine.sync_cycle(remote, local, CycleReason::Manual, options, progress));
+        is_send(engine.peek(remote));
+        is_send(engine.sync_cycle_with(remote, local, CycleReason::Poll, options, progress, None));
         is_send(engine.connect(remote, local, "passphrase", &[], options, progress));
         is_send(probe(remote, None));
         is_send(reset_remote(remote));
+    }
+
+    #[test]
+    fn remote_clip_debug_hides_the_hash() {
+        let clip = RemoteClip {
+            hash: [0xab; 32],
+            recorded_ms: 1,
+            last_used_ms: 2,
+        };
+        let text = format!("{clip:?}");
+        assert!(!text.contains("ab") && !text.contains("171"), "{text}");
+        assert!(text.contains("recorded_ms"));
     }
 
     #[test]
@@ -855,8 +1020,10 @@ mod tests {
     }
 
     #[test]
-    fn only_local_changes_are_not_user_activity() {
+    fn only_local_changes_and_polls_are_not_user_activity() {
         assert!(!CycleReason::LocalChange.is_user_activity());
+        assert!(!CycleReason::Poll.is_user_activity());
+        assert_eq!(CycleReason::Poll.as_str(), "poll");
         assert!(CycleReason::TrayOpened.is_user_activity());
         assert!(CycleReason::Manual.is_user_activity());
     }

@@ -11,7 +11,8 @@
 //! - `http://X → https://X` 的跳转报 [`RemoteError::HttpsRequired`]（不带凭据重试，提示改用 https 地址）。
 //!
 //! 超时：连接 10 s，单次读取空闲 30 s，小请求 30 s，按流传输的文件 30 s + 字节数 ÷ 64 KiB/s。
-//! 连接池空闲 30 s 释放。reqwest 的错误先 `.without_url()` 再折叠成 [`RemoteError`] 的固定词汇，
+//! 连接池空闲 30 s 释放（实时同步期间 90 s，见 [`WebDav::set_keep_alive`]）。429 / 503 带 `Retry-After` 时报
+//! [`RemoteError::Throttled`]。reqwest 的错误先 `.without_url()` 再折叠成 [`RemoteError`] 的固定词汇，
 //! 日志与错误里不出现地址、账号、路径与签名过的 CDN 链接。
 
 use std::fmt;
@@ -23,7 +24,7 @@ use bytes::{Bytes, BytesMut};
 use parking_lot::Mutex;
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use quick_xml::events::Event;
-use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, ETAG, HeaderValue, LOCATION};
+use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, ETAG, HeaderValue, LOCATION, RETRY_AFTER};
 use reqwest::{Method, Response, StatusCode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::Instant;
@@ -41,11 +42,15 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// 按流传输时假设的最低速率：文件请求的时限在 [`REQUEST_TIMEOUT`] 之上按字节数放宽
 const MIN_TRANSFER_BYTES_PER_SEC: u64 = 64 * 1024;
-/// 空闲连接在连接池里保留的时长；之后连接与连接池的计时器都释放，同步闲着时不占资源
-const POOL_IDLE: Duration = Duration::from_secs(30);
-/// 缓存的 Client 闲置超过这个时长就在下次取用时重建：连接池此时已空，重建不损失复用，
+/// 空闲连接在连接池里保留的时长；之后连接与连接池的计时器都释放，同步闲着时不占资源。
+/// 缓存的 Client 闲置超过同样的时长就在下次取用时重建：连接池此时已空，重建不损失复用，
 /// 还能读到期间变化的系统代理（reqwest 只在构建时读取）
-const CLIENT_IDLE_REBUILD: Duration = POOL_IDLE;
+const POOL_IDLE: Duration = Duration::from_secs(30);
+/// 实时同步期间的空闲保留时长（[`WebDav::set_keep_alive`]）：要覆盖最慢的探测间隔（安静档、服务商下限、限额放慢），
+/// 两次探测之间连接不被我们这一侧关掉，每次探测就不用重新握手 TLS（新握手的 CPU 与往返都是复用连接的好几倍）
+const KEEP_ALIVE_IDLE: Duration = Duration::from_secs(90);
+/// `Retry-After` 最多按这么久算：异常的服务器给出很大的值时，自动同步也不至于停上好几天
+const MAX_RETRY_AFTER_S: u64 = 3600;
 /// GET 最多跟随的重定向次数
 const MAX_REDIRECTS: usize = 3;
 /// PROPFIND 响应的上限（同步目录里只有少量文件，远小于此）
@@ -148,12 +153,12 @@ fn ensure_crypto_provider() {
     }
 }
 
-fn build_client(direct: bool) -> Result<reqwest::Client, RemoteError> {
+fn build_client(direct: bool, idle: Duration) -> Result<reqwest::Client, RemoteError> {
     ensure_crypto_provider();
     let mut builder = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .read_timeout(REQUEST_TIMEOUT)
-        .pool_idle_timeout(POOL_IDLE)
+        .pool_idle_timeout(idle)
         .pool_max_idle_per_host(2)
         // 重定向逐跳手动处理（见模块说明）；自动跟随时 reqwest 还会补 Referer，这里也关掉
         .redirect(reqwest::redirect::Policy::none())
@@ -264,6 +269,38 @@ fn status_error(status: StatusCode) -> RemoteError {
     RemoteError::Status(status.as_u16())
 }
 
+/// 非成功的响应 → 错误：429 / 503 带着可解析的 `Retry-After` 时报 [`RemoteError::Throttled`]，其余同 [`status_error`]
+fn response_error(resp: &Response) -> RemoteError {
+    let status = resp.status();
+    if matches!(status.as_u16(), 429 | 503)
+        && let Some(secs) = resp
+            .headers()
+            .get(RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| parse_retry_after(v, std::time::SystemTime::now()))
+    {
+        return RemoteError::Throttled {
+            status: status.as_u16(),
+            retry_after_s: secs,
+        };
+    }
+    status_error(status)
+}
+
+/// `Retry-After` 的两种写法：秒数，或 HTTP 日期（相对 `now`，已经过去的按 0 秒）。上限 [`MAX_RETRY_AFTER_S`]；
+/// 无法解析时为 None
+fn parse_retry_after(raw: &str, now: std::time::SystemTime) -> Option<u32> {
+    let raw = raw.trim();
+    let secs = if raw.bytes().all(|b| b.is_ascii_digit()) && !raw.is_empty() {
+        // 超出 u64 的数字串同样按上限处理
+        raw.parse::<u64>().unwrap_or(u64::MAX)
+    } else {
+        let at = httpdate::parse_http_date(raw).ok()?;
+        at.duration_since(now).map_or(0, |d| d.as_secs())
+    };
+    u32::try_from(secs.min(MAX_RETRY_AFTER_S)).ok()
+}
+
 /// 读掉并丢弃一小段响应体，让连接能放回连接池；读不完就算了（丢弃时连接被关闭）
 async fn drain(mut resp: Response) {
     let _ = tokio::time::timeout(DRAIN_TIMEOUT, async {
@@ -365,6 +402,8 @@ pub struct WebDav {
     auth: HeaderValue,
     /// 局域网服务器直连，不走系统代理（代理通常到不了局域网）
     direct: bool,
+    /// 空闲连接与缓存的 Client 保留多久（[`POOL_IDLE`]，实时同步期间 [`KEEP_ALIVE_IDLE`]）
+    idle: Mutex<Duration>,
     client: Mutex<Option<CachedClient>>,
 }
 
@@ -389,21 +428,39 @@ impl WebDav {
             auth: basic_auth(username, password)?,
             direct,
             base,
+            idle: Mutex::new(POOL_IDLE),
             client: Mutex::new(None),
         })
     }
 
+    /// 实时同步期间把空闲连接保留得更久（覆盖两次探测之间最长的间隔），关闭后恢复默认的 30 s。只有变化时才丢掉缓存的
+    /// Client（连接池的空闲时限在构建时就定下了），下一个请求按新时限重建
+    pub fn set_keep_alive(&self, long: bool) {
+        let want = if long { KEEP_ALIVE_IDLE } else { POOL_IDLE };
+        let mut idle = self.idle.lock();
+        if *idle != want {
+            *idle = want;
+            *self.client.lock() = None;
+        }
+    }
+
+    /// 当前的空闲保留时长
+    pub fn keep_alive(&self) -> Duration {
+        *self.idle.lock()
+    }
+
     /// 取出（必要时新建）HTTP 客户端
     fn client(&self) -> Result<reqwest::Client, RemoteError> {
+        let idle = self.keep_alive();
         let mut cached = self.client.lock();
         let now = std::time::Instant::now();
         if let Some(c) = cached.as_mut()
-            && now.saturating_duration_since(c.last_used) < CLIENT_IDLE_REBUILD
+            && now.saturating_duration_since(c.last_used) < idle
         {
             c.last_used = now;
             return Ok(c.client.clone());
         }
-        let client = build_client(self.direct)?;
+        let client = build_client(self.direct, idle)?;
         *cached = Some(CachedClient {
             client: client.clone(),
             last_used: now,
@@ -516,9 +573,10 @@ impl WebDav {
                 drain(resp).await;
                 return Ok(None);
             }
-            status => {
+            _ => {
+                let err = response_error(&resp);
                 drain(resp).await;
-                return Err(status_error(status));
+                return Err(err);
             }
         }
         let body = read_to_bytes(&mut resp, MAX_LISTING_BYTES)
@@ -541,14 +599,14 @@ impl WebDav {
     }
 
     async fn put_response(&self, resp: Response) -> Result<PutInfo, RemoteError> {
-        let status = resp.status();
-        if status.is_success() {
+        if resp.status().is_success() {
             let etag = etag_header(&resp);
             drain(resp).await;
             return Ok(PutInfo { etag });
         }
+        let err = response_error(&resp);
         drain(resp).await;
-        Err(status_error(status))
+        Err(err)
     }
 }
 
@@ -582,9 +640,10 @@ impl Remote for WebDav {
                 drain(resp).await;
                 return Ok(None);
             }
-            status => {
+            _ => {
+                let err = response_error(&resp);
                 drain(resp).await;
-                return Err(status_error(status));
+                return Err(err);
             }
         }
         let body = read_to_bytes(&mut resp, MAX_GET_BYTES)
@@ -601,9 +660,10 @@ impl Remote for WebDav {
                 drain(resp).await;
                 return Ok(false);
             }
-            status => {
+            _ => {
+                let err = response_error(&resp);
                 drain(resp).await;
-                return Err(status_error(status));
+                return Err(err);
             }
         }
         let mut file = tokio::fs::File::create(dest).await?;
@@ -644,13 +704,14 @@ impl Remote for WebDav {
         let url = self.url_for(path, path.ends_with('/') || path.is_empty())?;
         let resp = self.send(Method::DELETE, url, REQUEST_TIMEOUT, |r| r).await?;
         let status = resp.status();
+        let err = response_error(&resp);
         drain(resp).await;
         match status {
             // 207：目录里有成员没删掉
             StatusCode::MULTI_STATUS => Err(status_error(status)),
             s if s.is_success() => Ok(()),
             StatusCode::NOT_FOUND | StatusCode::GONE => Ok(()),
-            s => Err(status_error(s)),
+            _ => Err(err),
         }
     }
 
@@ -658,12 +719,13 @@ impl Remote for WebDav {
         let url = self.url_for(path, true)?;
         let resp = self.send(mkcol_method(), url, REQUEST_TIMEOUT, |r| r).await?;
         let status = resp.status();
+        let err = response_error(&resp);
         drain(resp).await;
         match status {
             // 405：目录已存在
             s if s.is_success() => Ok(()),
             StatusCode::METHOD_NOT_ALLOWED => Ok(()),
-            s => Err(status_error(s)),
+            _ => Err(err),
         }
     }
 }
@@ -933,6 +995,39 @@ fn merge_props(into: &mut Props, from: Props) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_after_accepts_seconds_and_dates() {
+        let now = std::time::UNIX_EPOCH + Duration::from_secs(1_760_000_000);
+        assert_eq!(parse_retry_after("120", now), Some(120));
+        assert_eq!(parse_retry_after(" 0 ", now), Some(0));
+        assert_eq!(
+            parse_retry_after("99999999999999999999999", now),
+            Some(3600),
+            "超大的值按上限"
+        );
+        let later = httpdate::fmt_http_date(now + Duration::from_secs(90));
+        assert_eq!(parse_retry_after(&later, now), Some(90));
+        let earlier = httpdate::fmt_http_date(now - Duration::from_secs(90));
+        assert_eq!(parse_retry_after(&earlier, now), Some(0), "已经过去的日期不用等");
+        for bad in ["", "-5", "1.5", "soon", "Wed, 99 Foo 2026"] {
+            assert_eq!(parse_retry_after(bad, now), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn keep_alive_switch_rebuilds_the_client_only_on_change() {
+        let dav = WebDav::new("https://dav.example.com/dav", "u", "p").unwrap();
+        assert_eq!(dav.keep_alive(), POOL_IDLE);
+        let _ = dav.client().unwrap();
+        dav.set_keep_alive(false);
+        assert!(dav.client.lock().is_some(), "没有变化时保留缓存的客户端");
+        dav.set_keep_alive(true);
+        assert_eq!(dav.keep_alive(), KEEP_ALIVE_IDLE);
+        assert!(dav.client.lock().is_none(), "时限变了：下一个请求按新时限重建");
+        dav.set_keep_alive(false);
+        assert_eq!(dav.keep_alive(), POOL_IDLE);
+    }
 
     #[test]
     fn accepts_https_and_local_http() {

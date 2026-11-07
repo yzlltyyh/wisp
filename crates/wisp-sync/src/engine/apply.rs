@@ -12,7 +12,7 @@ use std::sync::Arc;
 use super::content::{beats, clear_sig, clear_wall_ms, clip_alive, favorite, item_ms, ocr_alive, pin_value, pinned};
 use super::cx::{Cx, blocking, remove_quietly};
 use super::pull::{open_key_value, refetch};
-use super::{ApplyOutcome, KeyApply, LocalStore, RemoteChange, SpooledBlob};
+use super::{ApplyOutcome, KeyApply, LocalStore, REMOTE_CLIPS_MAX, RemoteChange, RemoteClip, SpooledBlob};
 use crate::crypto;
 use crate::error::{LocalError, SyncError};
 use crate::hlc::Hlc;
@@ -585,7 +585,7 @@ async fn run_upserts<R: Remote, L: LocalStore + ?Sized>(
             break;
         }
         let mut changes = Vec::new();
-        let mut targets: Vec<(Row, Option<Row>)> = Vec::new();
+        let mut targets: Vec<(Row, Option<Row>, Option<[u8; 32]>)> = Vec::new();
         let mut spooled = Vec::new();
         let mut evicted = Vec::new();
         let mut missing = Vec::new();
@@ -619,7 +619,7 @@ async fn run_upserts<R: Remote, L: LocalStore + ?Sized>(
                         },
                     };
                     changes.push(change);
-                    targets.push((up.item, up.pin));
+                    targets.push((up.item, up.pin, up.hash));
                 }
                 BlobFetch::Rejected => {
                     evicted.push(mark_of(&up.item));
@@ -646,11 +646,22 @@ async fn run_upserts<R: Remote, L: LocalStore + ?Sized>(
             let results = results_of(cx, &d, n, outcome);
             let mut applied = Vec::new();
             let mut pins = Vec::new();
-            for ((item, pin), result) in targets.iter().zip(results) {
+            for ((item, pin, hash), result) in targets.iter().zip(results) {
                 match result {
                     KeyApply::Applied => {
                         applied.push(mark_of(item));
                         pins.extend(pin.as_ref().filter(|p| p.is_dirty()).map(mark_of));
+                        // 其他设备的新复制：交给调用方（实时同步可能把最新的一条放进本机剪贴板）。条目已按时间从新到旧
+                        if let Some(hash) = hash
+                            && item.dev != cx.own
+                            && cx.report.remote_clips.len() < REMOTE_CLIPS_MAX
+                        {
+                            cx.report.remote_clips.push(RemoteClip {
+                                hash: *hash,
+                                recorded_ms: i64::try_from(item.t.wall_ms()).unwrap_or(i64::MAX),
+                                last_used_ms: item_ms(item),
+                            });
+                        }
                     }
                     KeyApply::Evicted => {
                         evicted.push(mark_of(item));

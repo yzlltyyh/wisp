@@ -179,7 +179,9 @@
       "images": true,
       "ocr_history": true,
       "verification_codes": true
-    }
+    },
+    "realtime": false,
+    "realtime_clipboard": false
   },
   "offline": {
     "ocr_model": null,

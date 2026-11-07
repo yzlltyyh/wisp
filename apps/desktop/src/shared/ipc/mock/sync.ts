@@ -179,6 +179,8 @@ export function installSyncDefaults(d: DefaultsDeps): void {
     error_detail: null,
     progress: null,
     device_count: devices().length,
+    realtime: 'off',
+    checked_ms: null,
   })
   const failed = (kind: SyncErrorKind, detail: string | null): SyncStatus => ({
     ...sync.status,
@@ -384,6 +386,8 @@ function connected(mock: MockHandle, status: Partial<SyncStatus> = {}): void {
     error_detail: null,
     progress: null,
     device_count: 3,
+    realtime: 'off',
+    checked_ms: null,
     ...status,
   }
 }

@@ -1282,7 +1282,7 @@ export interface SyncContent {
 }
 /**
  * 多设备同步（整组只属于本机）。`enabled` / `server_url` / `username` 只由 `sync_connect` / `sync_disconnect` /
- * `sync_reset_remote` 写入；`auto` 与 `content` 经 `settings_patch` 修改
+ * `sync_reset_remote` 写入；`auto`、`content` 与实时同步的两个开关经 `settings_patch` 修改
  */
 export interface SyncSettings {
   /** 默认 false */
@@ -1294,6 +1294,13 @@ export interface SyncSettings {
   /** 默认 true：改动后自动上传、使用 Wisp 时取回其他设备的改动 */
   auto: boolean
   content: SyncContent
+  /**
+   * 默认 false：实时同步（实验性）。使用电脑期间每隔几秒检查一次服务器；离开、锁屏、睡眠或省电模式时不联网。
+   * 只在 `auto` 开着、并且同步剪贴板或识别历史时生效
+   */
+  realtime: boolean
+  /** 默认 false：把其他设备最新的复制直接放进本机剪贴板（`realtime` 的子选项） */
+  realtime_clipboard: boolean
 }
 /**
  * 离线模型（整组只属于本机，不参与同步）。选中的离线模型优先于 `defaults` 与风格绑定；
@@ -1414,6 +1421,11 @@ export interface OfflineSummary {
 // ===== 同步 =====
 export type SyncPhase = 'off' | 'idle' | 'syncing' | 'error'
 /**
+ * 实时同步（实验性）此刻的状态：off（没开或条件不满足）/ running（运行中）/ paused（离开电脑、锁屏、睡眠或省电模式，
+ * 期间不联网）/ slowed（服务器限流、繁忙或接近服务商额度）/ unsupported（服务器不提供可比较的版本信息）
+ */
+export type SyncRealtime = 'off' | 'running' | 'paused' | 'slowed' | 'unsupported'
+/**
  * 同步失败的种类。暂时性：network / server（以及 internal）；其余为持续性（`corrupt` 只影响出问题的那台设备），
  * 自动同步暂停到用户处理为止
  */
@@ -1453,6 +1465,13 @@ export interface SyncStatus {
   progress: SyncProgress | null
   /** 服务器上参与同步的设备数（含本机；未连接时为 0） */
   device_count: number
+  /** 实时同步（实验性）的状态；变化时随 `sync:status` 推送 */
+  realtime: SyncRealtime
+  /**
+   * 实时同步最近一次成功检查服务器的时间（Unix 毫秒；没有变化的检查也算）。没有变化的检查不推送事件，
+   * 只在 `sync_status` 与之后的下一次 `sync:status` 里更新；实时同步没开过时为 null
+   */
+  checked_ms: number | null
 }
 /** 参与同步的一台设备（`sync_devices`） */
 export interface SyncDevice {

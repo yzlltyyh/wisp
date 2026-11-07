@@ -592,7 +592,8 @@ impl Default for Advanced {
 
 lenient_struct! {
     /// 多设备同步。整组只属于本机（不参与同步本身）：地址与账号指向这台设备自己的 WebDAV 凭据，开关可以每台设备不同。
-    /// `enabled` / `server_url` / `username` 只由连接、断开与清除服务器数据的命令写入；`auto` 与 `content` 由设置页修改。
+    /// `enabled` / `server_url` / `username` 只由连接、断开与清除服务器数据的命令写入；`auto`、`content` 与实时同步的
+    /// 两个开关由设置页修改。
     /// `Debug` 手写：地址与账号不进日志
     #[derive(Clone, PartialEq, Eq, Serialize)]
     pub struct SyncSettings {
@@ -605,6 +606,11 @@ lenient_struct! {
         /// true：改动后自动上传、使用 Wisp 时取回其他设备的改动；false 时只在「立即同步」时同步
         pub auto: bool,
         pub content: SyncContent,
+        /// false：实时同步（实验性）。使用电脑期间每隔几秒检查一次服务器，其他设备的新复制几秒内出现在历史里；
+        /// 离开电脑、锁屏、睡眠或省电模式时不联网。只在 `auto` 开着、并且同步剪贴板或识别历史时生效
+        pub realtime: bool,
+        /// false：把其他设备最新的复制直接放进本机剪贴板（`realtime` 的子选项，`realtime` 关闭时无效）
+        pub realtime_clipboard: bool,
     }
 }
 
@@ -616,6 +622,8 @@ impl Default for SyncSettings {
             username: String::new(),
             auto: true,
             content: SyncContent::default(),
+            realtime: false,
+            realtime_clipboard: false,
         }
     }
 }
@@ -630,6 +638,8 @@ impl std::fmt::Debug for SyncSettings {
             .field("username", &filled(&self.username))
             .field("auto", &self.auto)
             .field("content", &self.content)
+            .field("realtime", &self.realtime)
+            .field("realtime_clipboard", &self.realtime_clipboard)
             .finish()
     }
 }

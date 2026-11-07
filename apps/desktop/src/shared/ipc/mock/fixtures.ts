@@ -232,6 +232,8 @@ export function createFixtures(boot: Boot) {
           ocr_history: true,
           verification_codes: true,
         },
+        realtime: false,
+        realtime_clipboard: false,
       },
       offline: {
         ocr_model: null,
@@ -292,6 +294,8 @@ export function createFixtures(boot: Boot) {
       error_detail: null,
       progress: null,
       device_count: 0,
+      realtime: 'off',
+      checked_ms: null,
     }
   }
 

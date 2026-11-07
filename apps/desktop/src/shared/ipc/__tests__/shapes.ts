@@ -383,6 +383,13 @@ const ResolvedTheme = enumOf<T.ResolvedTheme>()('ResolvedTheme', { light: 1, dar
 const ResolvedMaterial = enumOf<T.ResolvedMaterial>()('ResolvedMaterial', { native: 1, solid: 1 })
 const PathKind = enumOf<T.PathKind>()('PathKind', { config: 1, data: 1, log: 1 })
 const SyncPhase = enumOf<T.SyncPhase>()('SyncPhase', { off: 1, idle: 1, syncing: 1, error: 1 })
+const SyncRealtime = enumOf<T.SyncRealtime>()('SyncRealtime', {
+  off: 1,
+  running: 1,
+  paused: 1,
+  slowed: 1,
+  unsupported: 1,
+})
 const SyncErrorKind = enumOf<T.SyncErrorKind>()('SyncErrorKind', {
   network: 1,
   auth: 1,
@@ -1354,10 +1361,13 @@ export const registry = {
     username: str,
     auto: bool,
     content: ref('SyncContent'),
+    realtime: bool,
+    realtime_clipboard: bool,
   }),
   // ----- 同步
   SyncPhase,
   SyncErrorKind,
+  SyncRealtime,
   SyncProgress: obj<T.SyncProgress>()('SyncProgress', { done: num, total: num }),
   SyncStatus: obj<T.SyncStatus>()('SyncStatus', {
     phase: SyncPhase,
@@ -1368,6 +1378,8 @@ export const registry = {
     error_detail: nul(str),
     progress: nul(ref('SyncProgress')),
     device_count: num,
+    realtime: SyncRealtime,
+    checked_ms: nul(num),
   }),
   SyncDevice: obj<T.SyncDevice>()('SyncDevice', {
     id: str,

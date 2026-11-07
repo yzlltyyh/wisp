@@ -12,7 +12,7 @@ use wisp_sync::{
     DeviceInfo, Domain, Engine, Hlc, Journal, JournalEntry, JournalValue, KeyApply, LocalStore, RemoteChange,
     ShadowUpdate,
 };
-use wisp_types::{OsKind, Settings, SyncErrorKind, SyncPhase, SyncStatus};
+use wisp_types::{OsKind, Settings, SyncErrorKind, SyncPhase, SyncRealtime, SyncStatus};
 
 use super::capture::{CaptureKey, Capturer, Captures, Msg};
 use super::local::DesktopStore;
@@ -77,6 +77,8 @@ async fn disabled_sync_creates_nothing() {
     assert!(!svc.sync_dir().exists(), "不创建临时目录");
     assert!(!svc.is_enabled());
     assert!(!svc.running.load(Ordering::SeqCst), "没有运行循环");
+    assert!(!svc.realtime.alive(), "没有实时同步的任务");
+    assert!(svc.remote.lock().is_none(), "不保留 WebDAV 客户端");
     assert_eq!(svc.status(), SyncStatus::off());
     assert_eq!(svc.sync_now().expect_err("未连接").message, "errors.sync.not_connected");
     assert!(svc.devices().await.expect("devices").is_empty());
@@ -636,7 +638,7 @@ async fn credentials_for_another_account_count_as_missing() {
         .expect_err("账号不匹配");
     assert_eq!(errors::kind_of(err.kind()), SyncErrorKind::CredentialsMissing);
 
-    svc.run_one(CycleReason::Manual, &mut None).await;
+    svc.run_one(CycleReason::Manual).await;
     let status = svc.status();
     assert_eq!(status.phase, SyncPhase::Error);
     assert_eq!(status.error, Some(SyncErrorKind::CredentialsMissing));
@@ -780,4 +782,111 @@ fn public_futures_are_send(svc: &Arc<SyncService>) {
     is_send(svc.disconnect());
     is_send(svc.reset_remote(None, None));
     is_send(svc.devices());
+}
+
+async fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
+    for _ in 0..300 {
+        if f() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("超时：{what}");
+}
+
+fn matching_credential() -> SyncCredential {
+    SyncCredential {
+        server_url: "https://dav.example.com/dav/".into(),
+        username: "me".into(),
+        password: "pw".into(),
+        vault_id: "0123456789abcdef".into(),
+        // 解不出主密钥：真正要联网时按「缺少凭据」失败
+        key: "AAAA".into(),
+    }
+}
+
+/// 实时同步只在设置允许、内存里有凭据时运行；没有输入信息、也没有 Wisp 活动时停在原地（不联网、不建客户端、不设
+/// 计时器）；关掉设置、关闭同步时任务退出；凭据不能用时任务结束并放掉凭据与客户端
+#[tokio::test]
+async fn realtime_runs_only_when_wanted_and_stops_cleanly() {
+    let (_dir, settings) = test_service();
+    settings
+        .update(&mut |s| {
+            s.sync.enabled = true;
+            s.sync.server_url = "https://dav.example.com/dav/".into();
+            s.sync.username = "me".into();
+        })
+        .expect("update");
+    let svc = SyncService::with_parts(Arc::clone(&settings), None, "0.0.0".into());
+    {
+        let _life = svc.lifecycle.lock().await;
+        svc.enable_locked().await;
+    }
+    assert!(svc.is_enabled());
+
+    svc.ensure_realtime();
+    assert!(!svc.realtime.alive(), "设置里没开");
+    settings.update(&mut |s| s.sync.realtime = true).expect("update");
+    svc.ensure_realtime();
+    assert!(!svc.realtime.alive(), "内存里没有凭据：不在后台读钥匙串");
+
+    *svc.creds.lock() = Some(matching_credential());
+    svc.ensure_realtime();
+    assert!(svc.realtime.alive());
+    wait_until("停在原地", || svc.status().realtime == SyncRealtime::Paused).await;
+    assert!(svc.remote.lock().is_none(), "离开时不联网，也不建客户端");
+    assert!(!svc.running.load(Ordering::SeqCst));
+
+    // 关掉实时同步：任务退出，状态回到 off
+    settings.update(&mut |s| s.sync.realtime = false).expect("update");
+    svc.follow_realtime();
+    wait_until("任务退出", || {
+        !svc.realtime.alive() && svc.status().realtime == SyncRealtime::Off
+    })
+    .await;
+    // 只同步设置时没有实时的意义
+    settings
+        .update(&mut |s| {
+            s.sync.realtime = true;
+            s.sync.content.clipboard = false;
+            s.sync.content.ocr_history = false;
+        })
+        .expect("update");
+    svc.follow_realtime();
+    assert!(!svc.realtime.alive());
+    settings
+        .update(&mut |s| {
+            s.sync.content.clipboard = true;
+            s.sync.content.ocr_history = true;
+        })
+        .expect("update");
+    svc.follow_realtime();
+    assert!(svc.realtime.alive());
+
+    // 关闭同步：等任务退出再关库
+    svc.deactivate().await;
+    assert!(!svc.realtime.alive());
+    assert!(svc.remote.lock().is_none());
+    assert!(svc.active().is_none());
+
+    // 再开启：用户活动唤醒任务，它要联网时凭据不能用 → 暂停自动同步，任务结束，凭据与客户端都放掉
+    {
+        let _life = svc.lifecycle.lock().await;
+        svc.enable_locked().await;
+    }
+    svc.ensure_realtime();
+    assert!(svc.realtime.alive());
+    svc.trigger(CycleReason::TrayOpened);
+    wait_until("凭据不能用时结束", || {
+        !svc.realtime.alive() && !svc.running.load(Ordering::SeqCst)
+    })
+    .await;
+    assert!(svc.creds.lock().is_none());
+    assert!(svc.remote.lock().is_none());
+    let status = svc.status();
+    assert_eq!(status.error, Some(SyncErrorKind::CredentialsMissing));
+    assert_eq!(status.realtime, SyncRealtime::Off);
+    svc.ensure_realtime();
+    assert!(!svc.realtime.alive(), "暂停期间不再开始");
+    svc.deactivate().await;
 }

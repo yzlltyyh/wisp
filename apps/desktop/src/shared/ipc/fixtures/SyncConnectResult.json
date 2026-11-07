@@ -11,6 +11,8 @@
       "done": 120,
       "total": 1000
     },
-    "device_count": 2
+    "device_count": 2,
+    "realtime": "running",
+    "checked_ms": 1760000004000
   }
 }

@@ -6,5 +6,7 @@
   "transient": true,
   "error_detail": "timeout",
   "progress": null,
-  "device_count": 2
+  "device_count": 2,
+  "realtime": "slowed",
+  "checked_ms": 1759999990000
 }

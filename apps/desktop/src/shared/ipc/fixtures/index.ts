@@ -1964,7 +1964,9 @@ export const SettingsSnapshot = {
         "images": true,
         "ocr_history": true,
         "verification_codes": true
-      }
+      },
+      "realtime": false,
+      "realtime_clipboard": false
     },
     "offline": {
       "ocr_model": null,
@@ -2096,7 +2098,9 @@ export const SettingsSnapshot = {
       "transient": false,
       "error_detail": null,
       "progress": null,
-      "device_count": 0
+      "device_count": 0,
+      "realtime": "off",
+      "checked_ms": null
     },
     "offline": {
       "installed": [
@@ -2198,7 +2202,9 @@ export const RuntimeInfo = {
     "transient": false,
     "error_detail": null,
     "progress": null,
-    "device_count": 0
+    "device_count": 0,
+    "realtime": "off",
+    "checked_ms": null
   },
   "offline": {
     "installed": [
@@ -2355,7 +2361,9 @@ export const SyncStatus = {
     "done": 120,
     "total": 1000
   },
-  "device_count": 2
+  "device_count": 2,
+  "realtime": "running",
+  "checked_ms": 1760000004000
 } satisfies T.SyncStatus
 
 export const SyncStatus__transient_error = {
@@ -2366,7 +2374,9 @@ export const SyncStatus__transient_error = {
   "transient": true,
   "error_detail": "timeout",
   "progress": null,
-  "device_count": 2
+  "device_count": 2,
+  "realtime": "slowed",
+  "checked_ms": 1759999990000
 } satisfies T.SyncStatus
 
 export const SyncStatus__needs_attention = {
@@ -2377,7 +2387,22 @@ export const SyncStatus__needs_attention = {
   "transient": false,
   "error_detail": "http 401",
   "progress": null,
-  "device_count": 0
+  "device_count": 0,
+  "realtime": "off",
+  "checked_ms": null
+} satisfies T.SyncStatus
+
+export const SyncStatus__realtime_paused = {
+  "phase": "idle",
+  "last_ok_ms": 1760000000000,
+  "pending": false,
+  "error": null,
+  "transient": false,
+  "error_detail": null,
+  "progress": null,
+  "device_count": 2,
+  "realtime": "paused",
+  "checked_ms": 1760000000000
 } satisfies T.SyncStatus
 
 export const SyncProgress = {
@@ -2452,7 +2477,9 @@ export const SyncConnectResult = {
       "done": 120,
       "total": 1000
     },
-    "device_count": 2
+    "device_count": 2,
+    "realtime": "running",
+    "checked_ms": 1760000004000
   }
 } satisfies T.SyncConnectResult
 
@@ -2466,7 +2493,9 @@ export const SyncConnectResult__created = {
     "transient": false,
     "error_detail": null,
     "progress": null,
-    "device_count": 1
+    "device_count": 1,
+    "realtime": "off",
+    "checked_ms": null
   }
 } satisfies T.SyncConnectResult
 
@@ -2480,7 +2509,9 @@ export const SyncConnectResult__restored = {
     "transient": false,
     "error_detail": null,
     "progress": null,
-    "device_count": 2
+    "device_count": 2,
+    "realtime": "off",
+    "checked_ms": null
   }
 } satisfies T.SyncConnectResult
 
@@ -2897,7 +2928,9 @@ export const Settings = {
       "images": true,
       "ocr_history": true,
       "verification_codes": true
-    }
+    },
+    "realtime": false,
+    "realtime_clipboard": false
   },
   "offline": {
     "ocr_model": null,
@@ -3097,7 +3130,9 @@ export const SyncSettings = {
     "images": false,
     "ocr_history": true,
     "verification_codes": true
-  }
+  },
+  "realtime": true,
+  "realtime_clipboard": false
 } satisfies T.Settings['sync']
 
 export const OfflineSettings = {

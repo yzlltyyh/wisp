@@ -8,6 +8,8 @@
     "transient": false,
     "error_detail": null,
     "progress": null,
-    "device_count": 1
+    "device_count": 1,
+    "realtime": "off",
+    "checked_ms": null
   }
 }

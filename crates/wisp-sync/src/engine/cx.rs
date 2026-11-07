@@ -26,6 +26,8 @@ pub(super) struct CycleState {
     pub own_verified: bool,
     /// 换了新的 device_id，尚未通过报告交给调用方
     pub announce_id: Option<String>,
+    /// 上一轮成功同步结束时服务器的样子（只读探测拿它比较）；失败、连接时清空
+    pub snapshot: Option<super::peek::Snapshot>,
 }
 
 /// 计数的远端包装：统计请求数与字节数，写进本轮报告
@@ -148,6 +150,8 @@ pub(super) struct Cx<'a, R: Remote, L: LocalStore + ?Sized> {
     pub own_head_listed: bool,
     /// 本轮写过本机 head
     pub head_written: bool,
+    /// 本轮开头列同步根目录时看到的签名（结束时据此刷新只读探测的快照）
+    pub listed: Option<super::peek::RootSigs>,
     /// 进度：本轮需要处理的总数与已完成数
     pub progress_total: u32,
     pub progress_done: u32,
@@ -179,6 +183,7 @@ impl<'a, R: Remote, L: LocalStore + ?Sized> Cx<'a, R, L> {
             blob_error: None,
             own_head_listed: false,
             head_written: false,
+            listed: None,
             progress_total: 0,
             progress_done: 0,
         }

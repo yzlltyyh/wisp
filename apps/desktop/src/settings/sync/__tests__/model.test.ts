@@ -34,6 +34,8 @@ const idle: SyncStatus = {
   error_detail: null,
   progress: null,
   device_count: 0,
+  realtime: 'off',
+  checked_ms: null,
 }
 
 describe('服务器地址', () => {

@@ -36,6 +36,8 @@ const idle: SyncStatus = {
   error_detail: null,
   progress: null,
   device_count: 0,
+  realtime: 'off',
+  checked_ms: null,
 }
 
 function syncSettings(over: Partial<SyncSettings> = {}): SyncSettings {

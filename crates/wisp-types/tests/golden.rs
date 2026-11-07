@@ -576,6 +576,8 @@ fn sync_status_syncing() -> SyncStatus {
         error_detail: None,
         progress: Some(SyncProgress { done: 120, total: 1000 }),
         device_count: 2,
+        realtime: SyncRealtime::Running,
+        checked_ms: Some(1_760_000_004_000),
     }
 }
 
@@ -1599,6 +1601,8 @@ fn all_samples() -> Samples {
             error_detail: Some(s("timeout")),
             progress: None,
             device_count: 2,
+            realtime: SyncRealtime::Slowed,
+            checked_ms: Some(1_759_999_990_000),
         },
     );
     x.add(
@@ -1612,6 +1616,19 @@ fn all_samples() -> Samples {
             error_detail: Some(s("http 401")),
             progress: None,
             device_count: 0,
+            realtime: SyncRealtime::Off,
+            checked_ms: None,
+        },
+    );
+    x.add(
+        "SyncStatus.realtime_paused",
+        SyncStatus {
+            phase: SyncPhase::Idle,
+            last_ok_ms: Some(1_760_000_000_000),
+            device_count: 2,
+            realtime: SyncRealtime::Paused,
+            checked_ms: Some(1_760_000_000_000),
+            ..SyncStatus::off()
         },
     );
     x.add("SyncProgress", SyncProgress { done: 3, total: 8 });
@@ -1935,6 +1952,8 @@ fn all_samples() -> Samples {
                 images: false,
                 ..SyncContent::default()
             },
+            realtime: true,
+            realtime_clipboard: false,
         },
     );
     x.add_as(
@@ -2158,7 +2177,8 @@ fn settings_default_matches_contract_example() {
       "appearance": { "theme": "system", "accent": "system", "font_size": 14, "translate_min_width": 360, "translate_max_width": 520, "clipboard_width": 420, "max_height_ratio": 0.6, "material": "system", "reduce_motion": "system" },
       "advanced": { "log_level": "info", "webview_low_memory_when_hidden": true, "unload_panel_after_idle_min": null },
       "sync": { "enabled": false, "server_url": "", "username": "", "auto": true,
-        "content": { "settings": true, "api_keys": true, "clipboard": true, "images": true, "ocr_history": true, "verification_codes": true } },
+        "content": { "settings": true, "api_keys": true, "clipboard": true, "images": true, "ocr_history": true, "verification_codes": true },
+        "realtime": false, "realtime_clipboard": false },
       "offline": { "ocr_model": null, "translate_model": null, "idle_release_min": 5, "use_gpu": true, "download_source": "auto" } });
     example["clipboard"]["excluded_apps"] =
         serde_json::to_value(wisp_types::defaults::default_excluded_apps()).expect("序列化失败");

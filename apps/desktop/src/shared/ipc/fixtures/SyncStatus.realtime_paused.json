@@ -1,0 +1,12 @@
+{
+  "phase": "idle",
+  "last_ok_ms": 1760000000000,
+  "pending": false,
+  "error": null,
+  "transient": false,
+  "error_detail": null,
+  "progress": null,
+  "device_count": 2,
+  "realtime": "paused",
+  "checked_ms": 1760000000000
+}

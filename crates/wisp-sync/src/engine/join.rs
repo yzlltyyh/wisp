@@ -113,6 +113,8 @@ pub(super) async fn connect<R: Remote, L: LocalStore + ?Sized>(
     progress: &ProgressFn,
 ) -> Result<Connected, SyncError> {
     let mut state = engine.cycle.lock().await;
+    // 连接可能换了 vault：上一份的快照不能再拿来比较
+    state.snapshot = None;
     let (mut header, mut master, mut created) = match read_vault(remote).await? {
         None => create_vault(remote, &mut state.dirs, passphrase, forbidden).await?,
         Some(header) => {
@@ -198,7 +200,7 @@ async fn connect_pipeline<R: Remote, L: LocalStore + ?Sized>(
     state: &mut CycleState,
     created: bool,
 ) -> Result<(), SyncError> {
-    pull::pull(cx, state).await?;
+    pull::pull(cx, state, None).await?;
     let config = [Domain::Cfg, Domain::Sty, Domain::Glo, Domain::Key];
     for d in &config {
         if cx.options.content.allows(d) {

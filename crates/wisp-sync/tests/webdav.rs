@@ -757,6 +757,56 @@ async fn status_codes_map_to_error_kinds() {
     }
 }
 
+/// 429 / 503 带 `Retry-After` 时报告要等多久（每种方法都一样）；不带时与其他状态码一样
+#[tokio::test]
+async fn throttling_reports_retry_after() {
+    let server = MockServer::start().await;
+    let dav = dav(&server, "/dav");
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::write(&src, b"abc").unwrap();
+    for (code, retry, expected) in [
+        (
+            429,
+            Some("120"),
+            RemoteError::Throttled {
+                status: 429,
+                retry_after_s: 120,
+            },
+        ),
+        (
+            503,
+            Some("7"),
+            RemoteError::Throttled {
+                status: 503,
+                retry_after_s: 7,
+            },
+        ),
+        (429, Some("later"), RemoteError::Status(429)),
+        (503, None, RemoteError::Status(503)),
+        // 别的状态码带了 Retry-After 也不当作限流
+        (500, Some("30"), RemoteError::Status(500)),
+    ] {
+        server.reset().await;
+        let mut resp = ResponseTemplate::new(code);
+        if let Some(v) = retry {
+            resp = resp.insert_header("Retry-After", v);
+        }
+        Mock::given(any()).respond_with(resp).mount(&server).await;
+        assert_eq!(dav.list("").await.unwrap_err(), expected, "list {code}");
+        assert_eq!(dav.get("f").await.unwrap_err(), expected, "get {code}");
+        assert_eq!(
+            dav.put("f", Bytes::from_static(b"x")).await.unwrap_err(),
+            expected,
+            "put {code}"
+        );
+        assert_eq!(dav.put_file("f", &src, 3).await.unwrap_err(), expected);
+        assert_eq!(dav.delete("f").await.unwrap_err(), expected, "delete {code}");
+        assert_eq!(dav.mkcol("d").await.unwrap_err(), expected, "mkcol {code}");
+        assert_eq!(expected.is_throttle(), code != 500);
+    }
+}
+
 #[tokio::test]
 async fn transport_errors_use_fixed_vocabulary() {
     // 绑定后立即释放，得到一个大概率没有人监听的端口

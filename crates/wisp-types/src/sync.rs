@@ -111,6 +111,24 @@ pub struct SyncProgress {
     pub total: u32,
 }
 
+/// 实时同步（实验性）此刻的状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncRealtime {
+    /// 没有在实时同步：设置里没开，或条件不满足（关闭了自动同步、剪贴板与识别历史都不同步、自动同步因需要处理的
+    /// 错误暂停、本次启动还没有可用的凭据）
+    #[default]
+    Off,
+    /// 运行中：按使用情况每隔几秒检查一次服务器
+    Running,
+    /// 暂停：离开电脑（长时间没有输入、锁屏、睡眠）或开着省电模式，期间不联网；回来后立即恢复
+    Paused,
+    /// 已放慢：服务器限制了请求频率、繁忙，或接近服务商的请求额度
+    Slowed,
+    /// 服务器不支持：列目录时不提供可比较的版本信息（ETag 或大小 + 修改时间），无法判断有没有变化
+    Unsupported,
+}
+
 /// 同步状态（`sync_status`、`sync:status` 事件、`RuntimeInfo.sync`）。不含地址、账号与设备名
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct SyncStatus {
@@ -130,6 +148,13 @@ pub struct SyncStatus {
     pub progress: Option<SyncProgress>,
     /// 服务器上参与同步的设备数（含本机；未连接时为 0）
     pub device_count: u32,
+    /// 实时同步（实验性）的状态；状态变化时随 `sync:status` 推送
+    #[serde(default)]
+    pub realtime: SyncRealtime,
+    /// 实时同步最近一次成功检查服务器的时间（Unix 毫秒；没有变化的检查也算）。没有变化的检查不推送事件，这个值只在
+    /// `sync_status` 与之后的下一次 `sync:status` 里更新；实时同步没开过时为 null
+    #[serde(default)]
+    pub checked_ms: Option<i64>,
 }
 
 impl SyncStatus {
@@ -286,5 +311,27 @@ mod tests {
         assert_eq!(s.phase, SyncPhase::Off);
         assert_eq!(s, SyncStatus::default());
         assert!(s.error.is_none() && s.progress.is_none() && !s.pending);
+        assert_eq!(s.realtime, SyncRealtime::Off);
+        assert!(s.checked_ms.is_none());
+    }
+
+    #[test]
+    fn realtime_states_are_snake_case_and_optional_in_old_payloads() {
+        for (state, name) in [
+            (SyncRealtime::Off, "off"),
+            (SyncRealtime::Running, "running"),
+            (SyncRealtime::Paused, "paused"),
+            (SyncRealtime::Slowed, "slowed"),
+            (SyncRealtime::Unsupported, "unsupported"),
+        ] {
+            assert_eq!(serde_json::to_value(state).expect("serialize"), serde_json::json!(name));
+        }
+        // 旧版本写出的状态没有这两个字段
+        let old = serde_json::json!({
+            "phase": "idle", "last_ok_ms": null, "pending": false, "error": null, "transient": false,
+            "error_detail": null, "progress": null, "device_count": 1
+        });
+        let s: SyncStatus = serde_json::from_value(old).expect("deserialize");
+        assert_eq!((s.realtime, s.checked_ms), (SyncRealtime::Off, None));
     }
 }

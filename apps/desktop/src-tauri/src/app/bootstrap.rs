@@ -212,13 +212,14 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // 9. 异步预热 Panel；完成后在空闲时刻依次：剪贴板缓存预加载、Overlay 预建（是否预建由 WindowManager 按平台决定）、
     //    编排器的空闲预热（例如 Windows 的 UIA 冷启动）。这几步都是阻塞调用（创建 WebView 时等主线程、
-    //    打开 SQLite 并加载缓存、建 UIA 对象），放到阻塞线程池，不占 tokio worker
+    //    打开 SQLite 并加载缓存、建 UIA 对象），放到阻塞线程池，不占 tokio worker。最后：开着实时同步时在后台读一次同步凭据
     {
         let windows = Arc::clone(&windows);
         let clipboard = Arc::clone(&clipboard);
         let orchestrator = Arc::clone(&orchestrator);
         let models = Arc::clone(&models);
         let perf = Arc::clone(&perf);
+        let sync = Arc::clone(&sync);
         tauri::async_runtime::spawn(async move {
             let w = Arc::clone(&windows);
             let prewarmed = tauri::async_runtime::spawn_blocking(move || w.prewarm_panel()).await;
@@ -263,16 +264,21 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
                     // 读一次库存（面板的模型菜单据此知道装了哪些）；没用过离线模型时什么也不做
                     tokio::time::sleep(IDLE_GAP).await;
                     models.spawn_startup();
+                    // 实时同步：开机后不必先操作 Wisp 就开始（没开实时同步时什么也不做）
+                    tokio::time::sleep(IDLE_GAP).await;
+                    sync.after_startup();
                 }
                 Ok(Err(e)) => {
                     perf.record_startup("panel_prewarm_failed", runtime::since_process_start());
                     log::info!("panel prewarm skipped: {}", e.message);
                     models.spawn_startup();
+                    sync.after_startup();
                 }
                 Err(e) => {
                     perf.record_startup("panel_prewarm_failed", runtime::since_process_start());
                     log::warn!("panel prewarm failed: {e}");
                     models.spawn_startup();
+                    sync.after_startup();
                 }
             }
         });

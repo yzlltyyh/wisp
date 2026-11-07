@@ -6,6 +6,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use super::cx::{Cx, CycleState, blocking, sig_of};
+use super::peek::RootSigs;
 use super::{LocalStore, Session};
 use crate::crypto::{self, FileKind};
 use crate::error::SyncError;
@@ -152,13 +153,19 @@ pub(super) async fn merge_into<R: Remote, L: LocalStore + ?Sized>(
     Ok(stats)
 }
 
-/// 第一步：列目录、复核 vault、核对本机 head、读取变化的远端 head 与新段
+/// 第一步：列目录、复核 vault、核对本机 head、读取变化的远端 head 与新段。`listing` 是调用方刚刚（只读探测时）
+/// 列到的根目录，有就直接用，省掉一次列目录
 pub(super) async fn pull<R: Remote, L: LocalStore + ?Sized>(
     cx: &mut Cx<'_, R, L>,
     state: &mut CycleState,
+    listing: Option<Vec<Entry>>,
 ) -> Result<(), SyncError> {
-    let entries = cx.remote.list("").await?.ok_or(SyncError::VaultReset)?;
+    let entries = match listing {
+        Some(entries) => entries,
+        None => cx.remote.list("").await?.ok_or(SyncError::VaultReset)?,
+    };
     state.dirs.mark("");
+    cx.listed = Some(RootSigs::of(&entries, cx.vault_id(), &cx.own));
     let vault = entries
         .iter()
         .find(|e| !e.is_dir && e.name == VAULT_FILE)

@@ -6,5 +6,7 @@
   "transient": false,
   "error_detail": "http 401",
   "progress": null,
-  "device_count": 0
+  "device_count": 0,
+  "realtime": "off",
+  "checked_ms": null
 }

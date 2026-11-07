@@ -84,6 +84,10 @@ pub enum RemoteError {
     /// 非成功的 HTTP 状态码（成功语义已由各方法处理，例如 GET 的 404 返回 `None`）
     #[error("http status {0}")]
     Status(u16),
+    /// 429 / 503 并带着可解析的 `Retry-After`：服务器要求至少等这么多秒再来（上限一小时）。没有这个头的 429 / 503
+    /// 仍是 [`Status`](Self::Status)
+    #[error("http status {status}")]
+    Throttled { status: u16, retry_after_s: u32 },
     #[error("request timed out")]
     Timeout,
     #[error("dns lookup failed")]
@@ -116,7 +120,7 @@ impl RemoteError {
             Self::Status(403) => ErrorKind::Forbidden,
             Self::Status(404 | 409 | 410) => ErrorKind::NotFound,
             Self::Status(413 | 507) => ErrorKind::Quota,
-            Self::Status(_) => ErrorKind::Server,
+            Self::Status(_) | Self::Throttled { .. } => ErrorKind::Server,
             Self::Timeout | Self::Dns | Self::Tls | Self::Connect => ErrorKind::Network,
             Self::Redirect | Self::Protocol => ErrorKind::Server,
             Self::HttpsRequired => ErrorKind::HttpsRequired,
@@ -129,10 +133,23 @@ impl RemoteError {
         !self.kind().is_persistent()
     }
 
+    /// 服务器在限流或繁忙（429 / 503，带不带 `Retry-After` 都算）：调用方应当明显放慢，而不只是按普通失败退避
+    pub fn is_throttle(&self) -> bool {
+        matches!(self, Self::Status(429 | 503) | Self::Throttled { .. })
+    }
+
+    /// 服务器要求等待的时长（毫秒，来自 `Retry-After`）；没有时为 None
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        match self {
+            Self::Throttled { retry_after_s, .. } => Some(u64::from(*retry_after_s) * 1000),
+            _ => None,
+        }
+    }
+
     /// 给界面「详情」用的短描述，只由固定词汇组成
     pub fn detail(&self) -> String {
         match self {
-            Self::Status(code) => format!("http {code}"),
+            Self::Status(code) | Self::Throttled { status: code, .. } => format!("http {code}"),
             Self::Timeout => "timeout".into(),
             Self::Dns => "dns".into(),
             Self::Tls => "tls".into(),
@@ -299,6 +316,19 @@ impl SyncError {
         !self.kind().is_persistent()
     }
 
+    /// 服务器在限流或繁忙（见 [`RemoteError::is_throttle`]）
+    pub fn is_throttle(&self) -> bool {
+        matches!(self, Self::Remote(e) if e.is_throttle())
+    }
+
+    /// 服务器要求等待的时长（毫秒，来自 `Retry-After`）
+    pub fn retry_after_ms(&self) -> Option<u64> {
+        match self {
+            Self::Remote(e) => e.retry_after_ms(),
+            _ => None,
+        }
+    }
+
     /// 给界面「详情」用的短描述，只由固定词汇组成；没有可补充的信息时为 `None`
     pub fn detail(&self) -> Option<String> {
         match self {
@@ -360,6 +390,27 @@ mod tests {
         assert!(!SyncError::Local(LocalError::Keychain).is_transient());
         assert!(SyncError::Remote(RemoteError::Connect).is_transient());
         assert!(!SyncError::Locked.is_transient());
+    }
+
+    #[test]
+    fn throttling_is_recognized_with_and_without_retry_after() {
+        let busy = RemoteError::Throttled {
+            status: 429,
+            retry_after_s: 90,
+        };
+        assert_eq!(busy.kind(), ErrorKind::Server);
+        assert!(busy.is_transient() && busy.is_throttle());
+        assert_eq!(busy.retry_after_ms(), Some(90_000));
+        assert_eq!(busy.detail(), "http 429");
+        assert_eq!(busy.to_string(), "http status 429");
+        assert!(RemoteError::Status(503).is_throttle());
+        assert_eq!(RemoteError::Status(503).retry_after_ms(), None);
+        assert!(!RemoteError::Status(500).is_throttle());
+        assert!(!RemoteError::Timeout.is_throttle());
+        let e = SyncError::from(busy);
+        assert!(e.is_throttle());
+        assert_eq!(e.retry_after_ms(), Some(90_000));
+        assert!(!SyncError::VaultReset.is_throttle());
     }
 
     #[test]

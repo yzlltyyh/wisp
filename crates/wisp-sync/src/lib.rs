@@ -24,11 +24,12 @@
 //! | [`remote`] | [`Remote`] trait、[`WebDav`] 实现、测试用的 [`MemoryRemote`] |
 //! | [`replica`] | 本机副本 sync.db 与改动日志写入接口 [`Journal`] |
 //! | [`projection`] | settings / styles / glossary 的投影与反投影 |
-//! | [`engine`] | 连接、同步循环、清除服务器数据；桌面端实现的 [`LocalStore`] |
+//! | [`engine`] | 连接、同步循环、只读探测、清除服务器数据；桌面端实现的 [`LocalStore`] |
+//! | [`realtime`] | 实时同步（实验性）的探测规划：分档、服务商下限、请求额度、抖动与退避（纯函数） |
 //!
 //! ## 资源与隐私
 //!
-//! 引擎不起常驻任务、不设计时器，只在调用方发起的操作里联网；可能阻塞的工作（SQLite、文件读写、
+//! 引擎不起常驻任务、不设计时器，只在调用方发起的操作里联网（实时同步的探测节奏由调用方按 [`realtime::plan`] 安排）；可能阻塞的工作（SQLite、文件读写、
 //! 密钥派生、本机存储读写）在工作线程里完成。错误与日志只含固定词汇（错误种类、HTTP 状态码、计数），
 //! 不含服务器地址、账号、口令、密钥、远端路径、设备名与任何记录内容。
 //!
@@ -55,6 +56,9 @@
 //! 6. 应用远端值时，跳过「已经在本机改了、但还在日志写入线程队列里」的 key（或先把队列写完再应用）：
 //!    副本只认识已写入的改动。
 //! 7. 断开：[`Engine::close`] 后删除 sync.db（含 `-wal` / `-shm`）与 spool 目录。
+//! 8. 实时同步（实验性，用户开启时）：按 [`realtime::plan`] 的节奏调用 [`Engine::peek`]（只读，一个请求）；
+//!    [`Peek::Changed`] 时把列表交给 [`Engine::sync_cycle_with`]（[`CycleReason::Poll`]）。报告的
+//!    [`CycleReport::remote_clips`] 是本轮从其他设备拿到的新剪贴板条目。
 
 pub mod crypto;
 pub mod engine;
@@ -63,14 +67,15 @@ pub mod hlc;
 pub mod layout;
 pub mod model;
 pub mod projection;
+pub mod realtime;
 pub mod remote;
 pub mod replica;
 
 pub use crypto::{Keys, MasterKey};
 pub use engine::{
     ApplyOutcome, ConnectOutcome, Connected, ContentSwitches, CycleOptions, CycleReason, CycleReport, DeviceSummary,
-    Engine, EngineStatus, Exported, KeyApply, LocalBlob, LocalEntry, LocalStore, ProbeReport, Progress, ProgressFn,
-    RemoteChange, RetentionPolicy, SpooledBlob, VaultSummary, probe, reset_remote,
+    Engine, EngineStatus, Exported, KeyApply, Listing, LocalBlob, LocalEntry, LocalStore, Peek, ProbeReport, Progress,
+    ProgressFn, RemoteChange, RemoteClip, RetentionPolicy, SpooledBlob, VaultSummary, probe, reset_remote,
 };
 pub use error::{ErrorKind, LocalError, PassphraseIssue, RemoteError, ServerUrlError, SyncError};
 pub use hlc::{Clock, Hlc};

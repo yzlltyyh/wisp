@@ -10,5 +10,7 @@
     "images": false,
     "ocr_history": true,
     "verification_codes": true
-  }
+  },
+  "realtime": true,
+  "realtime_clipboard": false
 }
