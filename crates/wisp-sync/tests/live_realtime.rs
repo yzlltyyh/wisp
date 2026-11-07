@@ -302,6 +302,10 @@ async fn soak(b_account: Account, a_account: Account, server_url: String, phases
     };
     let mut all_latency = Vec::new();
     let mut summary = Vec::new();
+    // 没有人在改的段里探测一律应当是「没有变化」；不然这个服务器的文件签名不稳定（每次列目录都变），桌面端会在
+    // 连续几次空转之后按「服务器不支持」停下实时同步。紧跟在 traffic 后面的那一段可能还看到 A 最后一次推送
+    let mut unstable = Vec::new();
+    let mut previous = None;
     for (name, start, end) in &windows {
         tokio::time::sleep_until((*start).into()).await;
         let secs = end.duration_since(*start).as_secs();
@@ -316,6 +320,11 @@ async fn soak(b_account: Account, a_account: Account, server_url: String, phases
         let line = tally.json(*name, secs, cpu);
         println!("SOAK phase {line}");
         summary.push(line);
+        let allowed = u32::from(previous == Some(Name::Traffic));
+        if *name != Name::Traffic && tally.changed > allowed {
+            unstable.push(format!("{}={}", name.as_str(), tally.changed));
+        }
+        previous = Some(*name);
     }
     let a_tally = rx.await.expect("A 的结果");
     let mut latency = all_latency;
@@ -333,6 +342,11 @@ async fn soak(b_account: Account, a_account: Account, server_url: String, phases
         a_tally["copies"].as_u64().unwrap_or(0),
         a_tally["pushed_ok"].as_u64().unwrap_or(0),
         "A 的推送应当全部成功：{a_tally}"
+    );
+    assert!(
+        unstable.is_empty(),
+        "没有改动的段里探测报告了变化（{}）：服务器的文件签名不稳定，实时同步在它上面会退回自动同步",
+        unstable.join(", ")
     );
     let expected = a_tally["copies"].as_u64().unwrap_or(0);
     assert!(
@@ -441,6 +455,8 @@ impl Poller {
             slow_until_ms: None,
             // macOS 上剪贴板记录开着时有「回到电脑前」事件：安静与离开档不必本机复查
             return_events: true,
+            unlock_events: true,
+            power_events: true,
             jitter: self.jitter,
         }
     }

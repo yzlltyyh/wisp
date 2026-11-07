@@ -10,7 +10,8 @@
 //! 用电池时放慢（热 3 s、活跃 10 s，安静档不超过 25 s），省电 / 低电量模式下暂停，按流量计费的网络上再放慢一倍。
 //! 在这之上还有：服务商的最小间隔（坚果云的请求额度按账号计、所有设备共享，间隔随设备数放宽）、30 分钟滑动窗口里的
 //! 请求额度（[`QuotaWindow`]）、±15% 的抖动（几台设备不会齐步请求）、探测失败的退避（5 s 起翻倍，最多 5 分钟），
-//! 以及服务器限流（429 / 503）之后 30 分钟只用安静档。
+//! 以及服务器限流（429 / 503）之后 30 分钟只用安静档。自动同步在退避期间（同步失败、限流）不探测，比档位慢时标为
+//! 「已放慢」。
 //!
 //! 这里只有纯函数：不读时钟、不联网、不起任务。时间一律是调用方给的毫秒（同一个单调时钟），随机数也由调用方给出，
 //! 桌面端的任务与对真实服务器的测试共用同一份规则。
@@ -52,6 +53,10 @@ pub const BACKOFF_BASE_MS: u64 = 5_000;
 pub const BACKOFF_MAX_MS: u64 = 5 * 60_000;
 /// 服务器限流（429 / 503）之后只用安静档的时长
 pub const SLOW_AFTER_THROTTLE_MS: u64 = 30 * 60_000;
+/// 连续这么多次「探测说有变化、跑完一轮却什么都没拿到也没推送」，就当这个服务器的文件签名不稳定（有些代理型、网盘型
+/// WebDAV 每次列目录都给出不同的 ETag）：再探测下去每次都是完整的一轮、每次都写本机数据库，调用方应当按「服务器
+/// 不支持」停下实时同步。别的设备压缩日志、新设备加入这类没有新记录的变化偶尔一次，不会连续出现
+pub const NOOP_CHANGES_LIMIT: u32 = 3;
 
 /// 请求额度的滑动窗口
 pub const WINDOW_MS: u64 = 30 * 60_000;
@@ -211,6 +216,10 @@ pub struct Inputs {
     pub slow_until_ms: Option<i64>,
     /// 平台会在「回到电脑前 / 解锁 / 唤醒」时通知调用方：离开档不必在本机复查
     pub return_events: bool,
+    /// 平台会在屏幕解锁时通知调用方：锁屏期间（`screen_idle`）不必在本机复查
+    pub unlock_events: bool,
+    /// 平台会在省电模式开关时通知调用方：省电模式下不必定时复查电源状态
+    pub power_events: bool,
     /// [-1, 1] 之间的随机数（每次探测之后换一个，同一段等待里保持不变）
     pub jitter: f64,
 }
@@ -325,8 +334,9 @@ pub fn plan(i: &Inputs) -> Plan {
         return Plan::Stop;
     }
     if i.low_power {
+        // 省电模式关掉时有通知的平台（macOS）等通知即可；其余每分钟在本机复查一次电源状态
         return Plan::Park {
-            recheck_ms: Some(LOW_POWER_RECHECK_MS),
+            recheck_ms: (!i.power_events).then_some(LOW_POWER_RECHECK_MS),
             reason: ParkReason::LowPower,
         };
     }
@@ -334,8 +344,10 @@ pub fn plan(i: &Inputs) -> Plan {
     // 本机复查只对能取到输入空闲的平台有意义；取不到时只能等 Wisp 自己的活动
     let recheck = (!i.return_events && i.input_idle_ms.is_some()).then_some(RECHECK_MS);
     if tier == Tier::Away {
+        // 锁着屏时人不可能回来：解锁会经事件通知的平台（Windows 的会话通知）不必每 10 s 醒一次
+        let locked_with_event = i.screen_idle && i.unlock_events;
         return Plan::Park {
-            recheck_ms: recheck,
+            recheck_ms: recheck.filter(|_| !locked_with_event),
             reason: ParkReason::Away,
         };
     }
@@ -365,8 +377,12 @@ pub fn plan(i: &Inputs) -> Plan {
     let step = i64::try_from(jittered(interval, i.jitter).max(i.floor_ms)).unwrap_or(i64::MAX);
 
     let mut due = i.last_poll_ms.map_or(i.now_ms, |t| t.saturating_add(step));
-    if let Some(t) = i.retry_after_ms {
-        due = due.max(t);
+    if let Some(t) = i.retry_after_ms
+        && t > due
+    {
+        due = t;
+        // 自动同步在退避（同步失败或服务器限流）：比档位慢得多，界面上不能还显示「正在实时同步」
+        slowed |= t > i.now_ms;
     }
     if exhausted {
         due = due.max(
@@ -415,6 +431,8 @@ mod tests {
             retry_after_ms: None,
             slow_until_ms: None,
             return_events: true,
+            unlock_events: false,
+            power_events: false,
             jitter: 0.0,
         }
     }
@@ -642,11 +660,45 @@ mod tests {
             Plan::Wait {
                 ms: 90_000,
                 tier: Tier::Active,
+                slowed: true
+            },
+            "退避比档位慢：界面显示「已放慢」"
+        );
+        // 退避比档位的下一次还早结束：照常按档位走，不算放慢
+        let soon = Inputs {
+            last_poll_ms: Some(i.now_ms),
+            retry_after_ms: Some(i.now_ms + 1_000),
+            ..i.clone()
+        };
+        assert_eq!(
+            plan(&soon),
+            Plan::Wait {
+                ms: ACTIVE_MS,
+                tier: Tier::Active,
                 slowed: false
             }
         );
         i.retry_after_ms = Some(i.now_ms - 1);
-        assert!(matches!(plan(&i), Plan::Poll { .. }));
+        assert_eq!(
+            plan(&i),
+            Plan::Poll {
+                tier: Tier::Active,
+                slowed: false
+            }
+        );
+        // 退避早已结束、上一次探测更早：立即探测，也不算放慢
+        let stale = Inputs {
+            last_poll_ms: Some(i.now_ms - 3_600_000),
+            retry_after_ms: Some(i.now_ms - 60_000),
+            ..i.clone()
+        };
+        assert_eq!(
+            plan(&stale),
+            Plan::Poll {
+                tier: Tier::Active,
+                slowed: false
+            }
+        );
         // 限流之后 30 分钟只用安静档
         i.hot_view = true;
         i.slow_until_ms = Some(i.now_ms + 1);
@@ -672,6 +724,52 @@ mod tests {
         );
         i.input_idle_ms = Some(1_000);
         assert_eq!(wait_after_poll(&i), ACTIVE_MS, "活跃档不需要复查");
+    }
+
+    #[test]
+    fn locked_screens_and_low_power_wait_for_events_where_the_platform_sends_them() {
+        let mut i = base();
+        i.return_events = false;
+        i.screen_idle = true;
+        assert_eq!(
+            plan(&i),
+            Plan::Park {
+                recheck_ms: Some(RECHECK_MS),
+                reason: ParkReason::Away
+            },
+            "不知道什么时候解锁：本机复查"
+        );
+        i.unlock_events = true;
+        assert_eq!(
+            plan(&i),
+            Plan::Park {
+                recheck_ms: None,
+                reason: ParkReason::Away
+            },
+            "锁着屏、解锁有通知：不设计时器"
+        );
+        // 解锁之后输入空闲仍然很长（还没碰键鼠）：没有「回来」事件可等，照常复查
+        i.screen_idle = false;
+        i.input_idle_ms = Some(AWAY_INPUT_MS);
+        assert_eq!(
+            plan(&i),
+            Plan::Park {
+                recheck_ms: Some(RECHECK_MS),
+                reason: ParkReason::Away
+            }
+        );
+
+        let mut p = base();
+        p.low_power = true;
+        p.power_events = true;
+        assert_eq!(
+            plan(&p),
+            Plan::Park {
+                recheck_ms: None,
+                reason: ParkReason::LowPower
+            },
+            "省电模式关掉时有通知：不设计时器"
+        );
     }
 
     #[test]

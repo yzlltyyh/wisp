@@ -968,7 +968,12 @@ impl SyncService {
         });
         let now = clock_ms();
         self.realtime.note_activity(now);
-        if !self.gate.debounce_allowed(now) || !self.debounce.note(now) {
+        if !self.gate.debounce_allowed(now) {
+            // 退避期间不安排上传；实时同步在跑时，退避结束后的第一次探测会补上（没有它时等下一次用户活动）
+            self.realtime.defer_upload();
+            return;
+        }
+        if !self.debounce.note(now) {
             return;
         }
         let svc = Arc::clone(self);
@@ -1007,10 +1012,8 @@ impl SyncService {
                 self.run_one(reason).await;
                 continue;
             }
-            if !self.realtime.alive() {
-                self.release_remote();
-            }
             self.running.store(false, Ordering::Release);
+            self.release_remote_if_idle();
             // 放下标记的同时又有触发排进来、而它的 kick 因为标记还在没有启动新循环：接着处理
             if self.queue.is_empty()
                 || self
@@ -1108,6 +1111,21 @@ impl SyncService {
     /// 放掉保留的 WebDAV 客户端（连同里面的密码与连接池）
     fn release_remote(&self) {
         self.remote.lock().take();
+    }
+
+    /// 同步循环与实时同步都不在跑时放掉客户端；实时同步停了而一轮还在跑时只收短连接的保留时长（循环结束时再放）。
+    /// 两边各自先放下自己的标记、再在客户端的锁里看对方的标记：不管谁先结束，后结束的那一方一定看得到，不会两边都以为
+    /// 对方还在而把客户端（里面有密码）留下
+    fn release_remote_if_idle(&self) {
+        let mut slot = self.remote.lock();
+        if self.realtime.alive() {
+            return;
+        }
+        if !self.running.load(Ordering::Acquire) {
+            slot.take();
+        } else if let Some(s) = slot.as_ref() {
+            s.remote.set_keep_alive(false);
+        }
     }
 
     /// 本轮用的凭据。缓存里没有时只在用户活动触发的轮次里读钥匙串（`Ok(None)` = 这一轮不同步）；与设置里的地址、账号
@@ -1227,8 +1245,13 @@ impl SyncService {
             report.bytes_down
         );
         let now = now_ms();
-        self.realtime
-            .note_cycle(clock_ms(), report.pushed > 0, report.pulled > 0, report.requests);
+        self.realtime.note_cycle(
+            clock_ms(),
+            report.pushed > 0,
+            report.pulled > 0,
+            report.requests,
+            report.pending,
+        );
         self.set_status(|s| {
             *s = SyncStatus {
                 phase: SyncPhase::Idle,
@@ -1254,6 +1277,7 @@ impl SyncService {
         if report.again && self.gate.allows_continuation(reason, clock_ms()) {
             self.queue.push(reason);
         }
+        self.after_poll_cycle(reason, report.pulled, report.pushed);
         self.hand_off_remote_clips(reason, &report.remote_clips);
         // 这一轮读到了凭据（或者条件刚满足）：实时同步该开始就开始；在跑的话按新的情况重新规划
         self.ensure_realtime();
