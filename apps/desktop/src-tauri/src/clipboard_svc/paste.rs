@@ -888,6 +888,7 @@ impl Engine {
             reason,
             paste_key: self.paste_key_label(target),
             queue: None,
+            queue_note: None,
         });
     }
 

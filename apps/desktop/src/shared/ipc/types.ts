@@ -515,6 +515,11 @@ export interface QueueStatus {
   index: number
   total: number
 }
+/**
+ * 连续粘贴这一次进度变化的说明（只随这一次的 toast 出现，不进 QueueStatus）：kept = 判断这一下没有粘贴进去、这一条留到
+ * 下一次；back = 用户退回了一条；skipped = 用户跳过了一条
+ */
+export type QueueNote = 'kept' | 'back' | 'skipped'
 /** 平台读到的原始剪贴板内容（platform → clipboard，不跨 IPC；`Vec<u8>` 序列化为数字数组） */
 export interface RawClipboard {
   change_id: number
@@ -735,12 +740,13 @@ export interface InputPayload {
 }
 /**
  * paste_key：当前平台 / 目标应用实际的粘贴键显示串，如 "⌘V"、"Ctrl+Shift+V"；queue：连续粘贴的进度（给出时显示
- * 「连续粘贴 · 2 / 5」，reason 不再显示），普通的粘贴结果省略
+ * 「连续粘贴 · 2 / 5」，reason 不再显示），普通的粘贴结果省略；queue_note：这一次进度的说明，没有时省略
  */
 export interface ToastPayload {
   reason: CopiedReason
   paste_key: string
   queue?: QueueStatus | null
+  queue_note?: QueueNote | null
 }
 export type PanelPayload =
   | ({ kind: 'translate' } & TranslatePayload)

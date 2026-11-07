@@ -14,9 +14,10 @@ use std::time::{Duration, Instant};
 
 use parking_lot::{Mutex, RwLock};
 use wisp_clipboard::{BlobKind, ClipStore};
+use wisp_platform::common::keymap::KeyChoice;
 use wisp_platform::{
-    AppInfo, ClipSnapshot, ClipboardAccess, FocusTracker, HookHandle, Paste, PasteError, PlatformError, ReadLimits,
-    SuppressRange, WriteOpts,
+    AppInfo, ClipSnapshot, ClipboardAccess, FocusFacts, FocusTracker, HookHandle, Paste, PasteError, PlatformError,
+    ReadLimits, SuppressRange, WriteOpts,
 };
 use wisp_types::{
     AppRef, Capability, ClipFilter, ClipItemMeta, ClipKind, ClipPayload, ClipboardChanged, CopiedReason,
@@ -61,6 +62,8 @@ pub(super) enum Call {
     Replay(&'static str),
     /// 连续粘贴期间的全局 Esc
     EscGuard(bool),
+    /// 连续粘贴重放粘贴键之后读了一次焦点事实
+    Probe,
     Toast(CopiedReason),
     Perf(String),
 }
@@ -133,6 +136,10 @@ pub(super) struct MockPaste {
     pub(super) paste_result: Mutex<Result<(), PasteError>>,
     /// 写入进行中执行一次（模拟 Windows 写剪贴板期间用户的操作）
     pub(super) during_write: Hook,
+    /// 前台应用的粘贴键（`foreground_paste_key`；默认取不到）
+    pub(super) foreground_key: Mutex<Option<KeyChoice>>,
+    /// `foreground_paste_key` 的调用次数
+    pub(super) foreground_queries: AtomicUsize,
 }
 
 impl Paste for MockPaste {
@@ -151,6 +158,11 @@ impl Paste for MockPaste {
         self.log.lock().push(Call::PasteInto { plain });
         self.paste_result.lock().clone()
     }
+
+    fn foreground_paste_key(&self) -> Option<KeyChoice> {
+        self.foreground_queries.fetch_add(1, Ordering::SeqCst);
+        self.foreground_key.lock().clone()
+    }
 }
 
 pub(super) struct MockFocus {
@@ -158,6 +170,8 @@ pub(super) struct MockFocus {
     pub(super) activate_result: Mutex<Result<(), PlatformError>>,
     /// 当前的前台应用（悬浮窗与队列的粘贴目标）
     pub(super) frontmost: Mutex<Option<AppRef>>,
+    /// 之后每次读焦点事实依次给出的结果（用完之后取不到：判断不了）
+    pub(super) facts: Mutex<VecDeque<FocusFacts>>,
 }
 
 impl FocusTracker for MockFocus {
@@ -172,6 +186,11 @@ impl FocusTracker for MockFocus {
 
     fn is_elevated(&self, _app: &AppRef) -> bool {
         false
+    }
+
+    fn focus_facts(&self, _deadline: Duration) -> Option<FocusFacts> {
+        self.log.lock().push(Call::Probe);
+        self.facts.lock().pop_front()
     }
 }
 
@@ -212,6 +231,8 @@ pub(super) struct MockHooks {
     pub(super) install_error: Mutex<Option<wisp_platform::HookError>>,
     pub(super) replay_error: Mutex<Option<wisp_platform::HookError>>,
     pub(super) unavailable: Mutex<Option<String>>,
+    /// 重放过的粘贴键（含修饰键；调用序列里的 `Call::Replay` 只记主键名）
+    pub(super) replayed: Mutex<Vec<wisp_platform::KeyChord>>,
 }
 
 impl MockHooks {
@@ -261,6 +282,7 @@ impl super::port::PasteKeyHooks for MockHooks {
 
     fn replay(&self, chord: wisp_platform::KeyChord) -> Result<(), wisp_platform::HookError> {
         self.log.lock().push(Call::Replay(chord.code));
+        self.replayed.lock().push(chord);
         self.replay_error.lock().clone().map_or(Ok(()), Err)
     }
 
@@ -383,6 +405,10 @@ pub(super) struct MockHost {
     pub(super) float_events: Mutex<Vec<ClipboardChanged>>,
     /// 连续粘贴的进度推送（状态, 是否带 toast）
     pub(super) queue_events: Mutex<Vec<(wisp_types::QueueStatus, bool)>>,
+    /// 连续粘贴进度推送里带的 toast（按顺序）
+    pub(super) queue_toasts: Mutex<Vec<ToastPayload>>,
+    /// Wisp 自己的某个窗口持有键盘焦点
+    pub(super) keyboard_in_wisp: AtomicBool,
 }
 
 impl MockHost {
@@ -457,6 +483,11 @@ impl Host for MockHost {
             assert_eq!(t.queue, Some(*status), "进度 toast 带的就是这次的进度");
         }
         self.queue_events.lock().push((*status, toast.is_some()));
+        self.queue_toasts.lock().extend(toast);
+    }
+
+    fn keyboard_in_wisp(&self) -> bool {
+        self.keyboard_in_wisp.load(Ordering::SeqCst)
     }
 
     fn queue_escape_guard(&self, active: bool) {
@@ -627,11 +658,14 @@ pub(super) fn mock_port(log: &Log) -> Arc<MockPort> {
             write_error: Mutex::default(),
             paste_result: Mutex::new(Ok(())),
             during_write: Mutex::default(),
+            foreground_key: Mutex::default(),
+            foreground_queries: AtomicUsize::new(0),
         },
         focus: MockFocus {
             log: Arc::clone(log),
             activate_result: Mutex::new(Ok(())),
             frontmost: Mutex::default(),
+            facts: Mutex::default(),
         },
         apps: MockApps {
             icon: AtomicBool::new(true),
@@ -645,6 +679,7 @@ pub(super) fn mock_port(log: &Log) -> Arc<MockPort> {
             install_error: Mutex::default(),
             replay_error: Mutex::default(),
             unavailable: Mutex::default(),
+            replayed: Mutex::default(),
         },
         target_check: Mutex::new(Ok(())),
         paste_inject: Mutex::new(Capability::yes()),
@@ -678,6 +713,8 @@ pub(super) fn mock_host(log: &Log) -> Arc<MockHost> {
         float_ready: AtomicBool::new(false),
         float_events: Mutex::default(),
         queue_events: Mutex::default(),
+        queue_toasts: Mutex::default(),
+        keyboard_in_wisp: AtomicBool::new(false),
     })
 }
 

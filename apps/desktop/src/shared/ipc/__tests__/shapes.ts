@@ -276,6 +276,7 @@ const CopiedReason = enumOf<T.CopiedReason>()('CopiedReason', {
   no_permission: 1,
   manual: 1,
 })
+const QueueNote = enumOf<T.QueueNote>()('QueueNote', { kept: 1, back: 1, skipped: 1 })
 const HotkeyAction = enumOf<T.HotkeyAction>()('HotkeyAction', {
   translate_selection: 1,
   translate_input: 1,
@@ -522,6 +523,7 @@ const ToastPayloadFields: Fields<T.ToastPayload> = {
   reason: CopiedReason,
   paste_key: str,
   queue: opt(nul(ref('QueueStatus'))),
+  queue_note: opt(nul(QueueNote)),
 }
 const capability = ref('Capability')
 const modelRef = ref('ModelRef')

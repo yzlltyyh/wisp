@@ -664,6 +664,7 @@ fn toast_payload() -> ToastPayload {
         reason: CopiedReason::FocusTimeout,
         paste_key: s("⌘V"),
         queue: None,
+        queue_note: None,
     }
 }
 
@@ -1185,6 +1186,21 @@ fn all_samples() -> Samples {
                 index: 2,
                 total: 5,
             }),
+            queue_note: None,
+        },
+    );
+    // 判断这一下没有粘贴进去：第 3 条留到下一次（进度仍是 2 / 5）
+    x.add(
+        "ToastPayload.queue_kept",
+        ToastPayload {
+            reason: CopiedReason::CopyOnly,
+            paste_key: s("⌘V"),
+            queue: Some(QueueStatus {
+                active: true,
+                index: 2,
+                total: 5,
+            }),
+            queue_note: Some(QueueNote::Kept),
         },
     );
     x.add(
@@ -2258,6 +2274,15 @@ fn optional_fields_are_omitted_by_default() {
     // ToastPayload：普通的粘贴结果没有队列进度，旧载荷照常解析
     let plain = serde_json::to_value(toast_payload()).expect("json");
     assert!(plain.get("queue").is_none());
+    assert!(plain.get("queue_note").is_none());
+    // 连续粘贴说明的线上取值
+    for (note, wire) in [
+        (QueueNote::Kept, "kept"),
+        (QueueNote::Back, "back"),
+        (QueueNote::Skipped, "skipped"),
+    ] {
+        assert_eq!(serde_json::to_value(note).expect("json"), wire);
+    }
     assert_eq!(roundtrip_value(&toast_payload()), toast_payload());
     let collapsed = ClipboardPayload {
         favorites_collapsed: true,

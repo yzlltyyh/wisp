@@ -15,7 +15,7 @@
  * - 收藏、芯片、多选、「粘贴为…」、命名：`clipboard.favorites-*`、`clipboard.chips`（选中行右侧的芯片小条，浏览器级
  *   用例从这里开始）、`clipboard.chips-otp`（⌘E 展开）、`clipboard.multi-select`、`clipboard.paste-as`、`clipboard.rename`；
  * - 悬浮剪贴板与连续粘贴：`clipboard.float`、`clipboard.float-queue`（clipfloat 入口）、`clipboard.queue-start`、
- *   `clipboard.queue-toast`。
+ *   `clipboard.queue-toast`、`clipboard.queue-kept`。
  */
 import { matchesFilter, startOfDay } from '../../../../views/clipboard/model'
 import { mockInspect } from '../smart'
@@ -1236,6 +1236,26 @@ export const scenarios: readonly Scenario[] = [
           reason: 'copy_only',
           paste_key: pasteKey,
           queue: { active: true, index: 2, total: 5 },
+        },
+        { width: 300, placement: 'below', focused: false },
+      )
+      ctx.after(700, () => ctx.settled())
+    },
+  },
+  {
+    id: 'clipboard.queue-kept',
+    label: 'toast · 连续粘贴判断没粘贴进去（第 3 条留到下一次）',
+    view: 'toast',
+    manualSettle: true,
+    setup(ctx) {
+      const pasteKey = ctx.fixtures.os === 'macos' ? '⌘V' : 'Ctrl+V'
+      ctx.preparePanel(
+        {
+          kind: 'toast',
+          reason: 'copy_only',
+          paste_key: pasteKey,
+          queue: { active: true, index: 2, total: 5 },
+          queue_note: 'kept',
         },
         { width: 300, placement: 'below', focused: false },
       )

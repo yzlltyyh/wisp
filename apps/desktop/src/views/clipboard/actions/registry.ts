@@ -51,16 +51,20 @@ import {
   Play,
   ScanText,
   Settings,
+  SkipForward,
   Star,
   StarOff,
   TextQuote,
   Trash2,
   Type,
+  Undo2,
   WandSparkles,
   WholeWord,
   X,
 } from 'lucide-react'
 import { copyText } from '../../../shared/hooks/useCopy'
+import { t as translate } from '../../../shared/i18n/i18n'
+import { api } from '../../../shared/ipc'
 import type {
   ClipItemMeta,
   ClipKind,
@@ -69,6 +73,7 @@ import type {
   PasteMode,
 } from '../../../shared/ipc/types'
 import { entityText, ENTITY_SPECS, TRANSFORM_SPECS } from '../../../shared/smart/specs'
+import { queueNoteText } from '../copied'
 import { plainNthCombo } from '../keys'
 import { allFilesMissing, hasTextBody, isTextual } from '../kinds'
 import { cycleFilter, firstItemIndex, indexOfId, lastItemIndex, nthItem, stepItem } from '../model'
@@ -160,6 +165,20 @@ function pasteNth(x: ActionEnv, n: number | undefined, mode: 'normal' | 'plain')
 function pasteTargets(c: ActionCtx, x: ActionEnv, mode: PasteMode): void {
   if (many(c)) x.cmd.pasteMany(c.marked, mode)
   else x.cmd.paste(mode, c.target?.id)
+}
+
+/**
+ * 连续粘贴退回 / 跳过一条。进度经 `clipboard:queue` 推送（悬浮窗随之轻提示进度）；命令返回之后再轻提示这一次的说明
+ * （「已退回到第 2 条」），盖过进度那一句。没有改动（粘贴进行中、已经退到第一条之前）时什么都不提示
+ */
+function queueRemedy(x: ActionEnv, note: 'back' | 'skipped'): void {
+  const run = note === 'back' ? api.clipboardQueueBack : api.clipboardQueueSkip
+  run().then(
+    (status) => {
+      if (status) x.cmd.showStatus(queueNoteText(note, status, translate), 'info')
+    },
+    () => undefined,
+  )
 }
 
 type ActionDef<A> = Omit<ClipAction<A>, 'id'>
@@ -537,6 +556,31 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
     keys: [{ combo: 'Mod+KeyP' }],
     surfaces: { ...VIEW_MENUS, toolbar: {} },
     run: (_c, x) => x.cmd.openFloat(),
+  },
+  // 连续粘贴的补救：判断不了的失误（网页里点到正文、点到不接收焦点的地方）由用户退回 / 跳过。悬浮窗的工具栏按钮不抢
+  // 目标应用的键盘焦点，点完直接回去按粘贴键；进度由 Rust 推送，这里只在命令返回后轻提示这一次的说明
+  queue_back: {
+    group: 'view',
+    arity: 'none',
+    when: (c) => c.s.queue?.active === true,
+    label: () => 'clipboard.action.queue_back',
+    icon: Undo2,
+    surfaces: {
+      // 头部的按钮只随「进行中」重新渲染，不跟着序号变：一直列出，退到第一条之前时 Rust 什么都不做
+      toolbar: {},
+      more: { when: (c) => (c.s.queue?.index ?? 0) > 0 },
+      command: { when: (c) => (c.s.queue?.index ?? 0) > 0 },
+    },
+    run: (_c, x) => queueRemedy(x, 'back'),
+  },
+  queue_skip: {
+    group: 'view',
+    arity: 'none',
+    when: (c) => c.s.queue?.active === true,
+    label: () => 'clipboard.action.queue_skip',
+    icon: SkipForward,
+    surfaces: VIEW_MENUS,
+    run: (_c, x) => queueRemedy(x, 'skipped'),
   },
   queue_cancel: {
     group: 'view',

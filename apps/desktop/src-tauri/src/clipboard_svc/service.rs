@@ -237,6 +237,17 @@ impl ClipboardService {
         self.blocking(|e| e.queue_end(QueueEnd::Cancelled)).await
     }
 
+    /// 连续粘贴退回一条（下一次粘贴键重新粘贴刚粘贴的那一条）。返回新的进度；没有队列、粘贴进行中、已经在第一条之前时
+    /// 为 None
+    pub async fn queue_back(&self) -> Result<Option<QueueStatus>, IpcError> {
+        self.blocking(|e| e.queue_back()).await
+    }
+
+    /// 连续粘贴跳过一条（下一次粘贴键直接粘贴再下一条；跳过最后一条时结束）。返回新的进度；没有队列、粘贴进行中时为 None
+    pub async fn queue_skip(&self) -> Result<Option<QueueStatus>, IpcError> {
+        self.blocking(|e| e.queue_skip()).await
+    }
+
     /// 结束连续粘贴，不等它卸载完（托盘菜单：在主线程上调用，不能阻塞）
     pub fn queue_cancel_later(&self) {
         let engine = Arc::clone(&self.engine);

@@ -1,19 +1,22 @@
 //! 连续粘贴（`queue.rs`）的单测：开始（第一条经调用窗口的宿主粘贴、之后才装钩子）、每次粘贴键写入下一条再重放、
 //! 第一条只复制时不跳过它、各种结束（用完、取消、Esc、锁屏、无操作超时、重放失败、新队列替换）都卸载钩子与全局 Esc、
-//! 不可用时不开始。平台与宿主都是 `tests.rs` 的测试替身，按键由 [`MockHooks::press`] 模拟。
+//! 不可用时不开始；判断落空时这一条留到下一次、Wisp 自己的窗口里按的粘贴键只重放、期间复制过别的就重新写入、
+//! 按下的不是前台应用的粘贴键时换键或留住、退回 / 跳过一条。平台与宿主都是 `tests.rs` 的测试替身，按键由
+//! [`MockHooks::press`] 模拟，焦点事实由 `MockFocus::facts` 按次给出。
 
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
 use wisp_platform::common::combo::{Combo, KeyChord};
-use wisp_platform::{HookError, InputSignal, PasteError};
-use wisp_types::{AppKeymap, OsKind, QueueStatus};
+use wisp_platform::common::keymap::KeyChoice;
+use wisp_platform::{FocusFacts, FocusSurface, HookError, InputSignal, PasteError};
+use wisp_types::{AppKeymap, OsKind, QueueNote, QueueStatus};
 
 use crate::error::IpcErrorCode;
 
 use super::paste::PasteHost;
-use super::queue::{QUEUE_IDLE, QueueEnd, paste_keys};
-use super::tests::{Call, Rig, app, rig};
+use super::queue::{QUEUE_IDLE, QueueEnd, ReplayKey, paste_keys, replay_key};
+use super::tests::{Call, Rig, app, rig, rig_with};
 
 fn chord(s: &str) -> KeyChord {
     KeyChord::of(&Combo::parse(s).expect("combo")).expect("chord")
@@ -37,6 +40,16 @@ fn start(r: &Rig, ids: Vec<i64>) -> Result<QueueStatus, crate::error::IpcError> 
 
 fn status(active: bool, index: u32, total: u32) -> QueueStatus {
     QueueStatus { active, index, total }
+}
+
+/// 之后的一次焦点查询给出这一类焦点
+fn focus_next(r: &Rig, surface: FocusSurface) {
+    r.port.focus.facts.lock().push_back(FocusFacts { surface });
+}
+
+/// 最近一次进度 toast 的说明
+fn last_note(r: &Rig) -> Option<QueueNote> {
+    r.host.queue_toasts.lock().last().and_then(|t| t.queue_note)
 }
 
 fn three(r: &Rig) -> [i64; 3] {
@@ -76,8 +89,11 @@ fn each_paste_key_writes_the_next_item_then_replays_the_key() {
     assert_eq!(last_written(&r).as_deref(), Some("second"));
     let calls = r.calls();
     assert!(
-        matches!(calls.as_slice(), [Call::Write, Call::Suppress(_), Call::Replay("KeyV")]),
-        "写入 → 抑制 → 重放，不再隐藏面板、不经 paste_into：{calls:?}"
+        matches!(
+            calls.as_slice(),
+            [Call::Write, Call::Suppress(_), Call::Replay("KeyV"), Call::Probe]
+        ),
+        "写入 → 抑制 → 重放 → 读焦点（判断不了时照常前进），不再隐藏面板、不经 paste_into：{calls:?}"
     );
     assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
 
@@ -124,7 +140,7 @@ fn a_first_item_that_was_only_copied_is_pasted_by_the_next_key() {
     r.calls();
     // 下一次按键只重放：粘贴的正是第一条，不跳过它
     assert!(r.port.hooks.press(cmd_v()));
-    assert_eq!(r.calls(), vec![Call::Replay("KeyV")]);
+    assert_eq!(r.calls(), vec![Call::Replay("KeyV"), Call::Probe]);
     assert_eq!(last_written(&r).as_deref(), Some("first"));
     assert_eq!(r.engine.queue_status(), Some(status(true, 1, 2)));
     // 再按：第二条，粘贴完结束
@@ -388,4 +404,314 @@ fn progress_replaces_the_previous_progress_toast() {
     // 用户打开的面板不被 toast 换掉；悬浮剪贴板开着时进度在它里面
     assert!(!queue_toast_shown(Some(PanelView::Clipboard), false));
     assert!(!queue_toast_shown(None, true));
+}
+
+#[test]
+fn a_rejected_target_keeps_the_item_for_the_next_paste_key() {
+    let r = rig();
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    r.calls();
+    r.host.queue_events.lock().clear();
+    // 第二条写入并重放之后，焦点在 Finder 的文件视图上：照常重放了，但这一条留到下一次
+    focus_next(&r, FocusSurface::FileView);
+    assert!(r.port.hooks.press(cmd_v()));
+    let calls = r.calls();
+    assert!(
+        matches!(
+            calls.as_slice(),
+            [Call::Write, Call::Suppress(_), Call::Replay("KeyV"), Call::Probe]
+        ),
+        "判定在重放之后（按键照常交给应用）：{calls:?}"
+    );
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 3)), "不消耗序号");
+    assert_eq!(
+        r.host.queue_events.lock().as_slice(),
+        &[(status(true, 1, 3), true)],
+        "照样提示（说明这一条留到下一次）"
+    );
+    assert_eq!(last_note(&r), Some(QueueNote::Kept));
+    // 下一次按键：剪贴板里就是第二条，只重放
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.calls(), vec![Call::Replay("KeyV"), Call::Probe]);
+    assert_eq!(last_written(&r).as_deref(), Some("second"));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
+    assert_eq!(last_note(&r), None, "说明只出现一次");
+}
+
+#[test]
+fn a_rejected_last_item_does_not_end_the_queue() {
+    let r = rig();
+    let [a, b, _] = three(&r);
+    start(&r, vec![a, b]).expect("开始");
+    focus_next(&r, FocusSurface::Menu);
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 2)));
+    assert!(r.port.hooks.installed(), "最后一条留着：钩子仍在");
+    r.calls();
+    // 再按一次：判断不了，照常前进并结束
+    assert!(r.port.hooks.press(cmd_v()));
+    let calls = r.calls();
+    assert!(calls.starts_with(&[Call::Replay("KeyV"), Call::Probe]), "{calls:?}");
+    assert!(calls.contains(&Call::HookRemove));
+    assert_eq!(r.engine.queue_status(), None);
+}
+
+#[test]
+fn a_kept_item_is_rewritten_when_the_clipboard_changed_meanwhile() {
+    let r = rig();
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    focus_next(&r, FocusSurface::Control);
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 3)));
+    // 留着的这一条还没粘贴出去，用户在别处复制了别的东西
+    r.port.clipboard.change.fetch_add(1, Ordering::SeqCst);
+    r.calls();
+    assert!(r.port.hooks.press(cmd_v()));
+    let calls = r.calls();
+    assert!(
+        matches!(
+            calls.as_slice(),
+            [Call::Write, Call::Suppress(_), Call::Replay("KeyV"), Call::Probe]
+        ),
+        "先重新写入第二条再重放：{calls:?}"
+    );
+    assert_eq!(last_written(&r).as_deref(), Some("second"));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
+}
+
+#[test]
+fn a_first_item_copied_only_is_rewritten_when_the_clipboard_changed_meanwhile() {
+    let r = rig();
+    let [a, b, _] = three(&r);
+    *r.port.paste.paste_result.lock() = Err(PasteError::FocusTimeout);
+    start(&r, vec![a, b]).expect("开始");
+    *r.port.paste.paste_result.lock() = Ok(());
+    r.port.clipboard.change.fetch_add(1, Ordering::SeqCst);
+    r.calls();
+    assert!(r.port.hooks.press(cmd_v()));
+    let calls = r.calls();
+    assert!(
+        matches!(
+            calls.as_slice(),
+            [Call::Write, Call::Suppress(_), Call::Replay("KeyV"), Call::Probe]
+        ),
+        "不粘贴期间别处复制的内容：{calls:?}"
+    );
+    assert_eq!(last_written(&r).as_deref(), Some("first"));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 2)));
+}
+
+#[test]
+fn a_first_item_on_a_rejected_target_is_kept() {
+    let r = rig();
+    let [a, b, c] = three(&r);
+    focus_next(&r, FocusSurface::FileView);
+    let s = start(&r, vec![a, b, c]).expect("开始");
+    assert_eq!(s, status(true, 0, 3));
+    let calls = r.calls();
+    let install = calls.iter().position(|c| *c == Call::HookInstall).expect("装钩子");
+    let probe = calls.iter().position(|c| *c == Call::Probe).expect("读焦点");
+    assert!(
+        install < probe,
+        "先装钩子再判断：判断期间再按的粘贴键不会漏给应用 {calls:?}"
+    );
+    assert_eq!(
+        r.host.queue_events.lock().as_slice(),
+        &[(status(true, 0, 3), true)],
+        "没有只复制的原因说明，要提示这一条留着"
+    );
+    assert_eq!(last_note(&r), Some(QueueNote::Kept));
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.calls(), vec![Call::Replay("KeyV"), Call::Probe]);
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 3)));
+}
+
+#[test]
+fn paste_keys_in_wisp_windows_pass_through_without_advancing() {
+    let r = rig();
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    r.calls();
+    r.host.queue_events.lock().clear();
+    // 用户在悬浮窗的搜索框（或设置窗口）里按了粘贴键：只重放，不写入、不读焦点、不记账、不提示
+    r.host.keyboard_in_wisp.store(true, Ordering::SeqCst);
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.calls(), vec![Call::Replay("KeyV")]);
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 3)));
+    assert!(r.host.queue_events.lock().is_empty());
+    // 回到目标应用：照常写入第二条
+    r.host.keyboard_in_wisp.store(false, Ordering::SeqCst);
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(last_written(&r).as_deref(), Some("second"));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
+}
+
+#[test]
+fn file_items_are_not_judged() {
+    let r = rig();
+    let first = r.copy_text(101, "first");
+    let (files, _) = r.copy_files(102, ["a.txt", "b.txt"]);
+    let last = r.copy_text(103, "third");
+    r.calls();
+    start(&r, vec![first.id, files.id, last.id]).expect("开始");
+    r.calls();
+    // 文件条目在 Finder / 资源管理器里照样能粘贴：不读焦点，照常前进
+    focus_next(&r, FocusSurface::FileView);
+    assert!(r.port.hooks.press(cmd_v()));
+    let calls = r.calls();
+    assert!(!calls.contains(&Call::Probe), "{calls:?}");
+    assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
+}
+
+#[test]
+fn queue_back_puts_the_last_pasted_item_up_again() {
+    let r = rig();
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    r.calls();
+    // 刚粘贴的第一条没进去：退回一条，剪贴板里还是它，下一次只重放
+    assert_eq!(r.engine.queue_back(), Some(status(true, 0, 3)));
+    assert_eq!(last_note(&r), Some(QueueNote::Back));
+    assert!(r.calls().is_empty(), "纯状态变更，不写剪贴板");
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.calls(), vec![Call::Replay("KeyV"), Call::Probe]);
+    assert_eq!(last_written(&r).as_deref(), Some("first"));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 3)));
+
+    // 连退两次：再往前的那一条要重新写入
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
+    assert_eq!(r.engine.queue_back(), Some(status(true, 1, 3)));
+    assert_eq!(r.engine.queue_back(), Some(status(true, 0, 3)));
+    // 已经退到第一条之前：什么都不做
+    assert_eq!(r.engine.queue_back(), None);
+    r.calls();
+    assert!(r.port.hooks.press(cmd_v()));
+    let calls = r.calls();
+    assert!(
+        matches!(
+            calls.as_slice(),
+            [Call::Write, Call::Suppress(_), Call::Replay("KeyV"), Call::Probe]
+        ),
+        "{calls:?}"
+    );
+    assert_eq!(last_written(&r).as_deref(), Some("first"));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 3)));
+}
+
+#[test]
+fn queue_back_and_skip_do_nothing_while_a_step_is_in_progress_or_without_a_queue() {
+    let r = rig();
+    assert_eq!(r.engine.queue_back(), None);
+    assert_eq!(r.engine.queue_skip(), None);
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    // 写入第二条的过程中点了「退回 / 跳过」：忽略（这一步结束时会改写进度）
+    let engine = r.engine.clone();
+    let seen = std::sync::Arc::new(parking_lot::Mutex::new(None));
+    let out = std::sync::Arc::clone(&seen);
+    *r.port.paste.during_write.lock() = Some(Box::new(move || {
+        *out.lock() = Some((engine.queue_back(), engine.queue_skip()));
+    }));
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(*seen.lock(), Some((None, None)));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
+}
+
+#[test]
+fn queue_skip_moves_past_the_next_item() {
+    let r = rig();
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    assert_eq!(r.engine.queue_skip(), Some(status(true, 2, 3)));
+    assert_eq!(last_note(&r), Some(QueueNote::Skipped));
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(last_written(&r).as_deref(), Some("third"), "第二条被跳过");
+    assert_eq!(r.engine.queue_status(), None);
+
+    // 留着的那一条其实已经进去了（误判）：跳过它，下一次写入再下一条
+    let r = rig();
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    focus_next(&r, FocusSurface::FileView);
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 1, 3)));
+    assert_eq!(r.engine.queue_skip(), Some(status(true, 2, 3)));
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(last_written(&r).as_deref(), Some("third"));
+    assert_eq!(r.engine.queue_status(), None);
+
+    // 跳过最后一条：队列结束，钩子卸载，结束提示带着说明
+    let r = rig();
+    let [a, b, _] = three(&r);
+    start(&r, vec![a, b]).expect("开始");
+    r.calls();
+    r.host.queue_events.lock().clear();
+    assert_eq!(r.engine.queue_skip(), Some(status(false, 2, 2)));
+    assert!(r.calls().contains(&Call::HookRemove));
+    assert_eq!(r.engine.queue_status(), None);
+    assert_eq!(r.host.queue_events.lock().as_slice(), &[(status(false, 2, 2), true)]);
+    assert_eq!(last_note(&r), Some(QueueNote::Skipped));
+}
+
+#[test]
+fn replay_keys_follow_the_front_app() {
+    let ctrl_v = chord("Ctrl+KeyV");
+    let ctrl_shift_v = chord("Ctrl+Shift+KeyV");
+    let shift_insert = chord("Shift+Insert");
+    let send = |s: &str| Some(KeyChoice::Send(Combo::parse(s).expect("combo")));
+    // 前台应用就用这个键、取不到前台应用、映射表要求不发键：原样重放
+    assert_eq!(replay_key(ctrl_v, ctrl_v, send("Ctrl+KeyV")), ReplayKey::Pressed);
+    assert_eq!(replay_key(ctrl_v, ctrl_v, None), ReplayKey::Pressed);
+    assert_eq!(replay_key(ctrl_v, ctrl_v, Some(KeyChoice::Skip)), ReplayKey::Pressed);
+    // 终端里按了 Ctrl+V：改发终端的 Ctrl+Shift+V（用户可能还按着 Ctrl，它正是新组合需要的）
+    assert_eq!(
+        replay_key(ctrl_v, ctrl_v, send("Ctrl+Shift+KeyV")),
+        ReplayKey::Mapped(ctrl_shift_v)
+    );
+    // xterm 的 Shift+Insert 不含 Ctrl：仍按着的 Ctrl 会让它变成别的组合，不换键、这一条留住
+    assert_eq!(replay_key(ctrl_v, ctrl_v, send("Shift+Insert")), ReplayKey::Mismatch);
+    // 按下的是映射表里别的应用的粘贴键（浏览器里的 Ctrl+Shift+V 是纯文本粘贴）：原样重放
+    assert_eq!(replay_key(ctrl_shift_v, ctrl_v, send("Ctrl+KeyV")), ReplayKey::Pressed);
+    assert_eq!(replay_key(shift_insert, ctrl_v, send("Ctrl+KeyV")), ReplayKey::Pressed);
+}
+
+#[test]
+fn a_paste_key_the_front_app_does_not_use_is_replaced_or_keeps_the_item() {
+    let ctrl_v = chord("Ctrl+KeyV");
+    let r = rig_with(OsKind::Linux, tempfile::tempdir().expect("临时目录"));
+    // 内置表按编译平台取（测试在哪个平台上跑都一样）：用一条用户条目让 Linux 有第二种粘贴键
+    r.set_settings(|s| {
+        s.hotkeys.app_keymaps = vec![AppKeymap {
+            os: OsKind::Linux,
+            app_id: "kitty".into(),
+            copy: None,
+            paste: Some("Ctrl+Shift+V".into()),
+        }];
+    });
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    // 终端：改发 Ctrl+Shift+V，照常前进
+    *r.port.paste.foreground_key.lock() = Some(KeyChoice::Send(Combo::parse("Ctrl+Shift+KeyV").expect("combo")));
+    assert!(r.port.hooks.press(ctrl_v));
+    assert_eq!(r.port.hooks.replayed.lock().last(), Some(&chord("Ctrl+Shift+KeyV")));
+    assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
+    // xterm：按键原样交给它，但这一条留住，不读焦点
+    *r.port.paste.foreground_key.lock() = Some(KeyChoice::Send(Combo::parse("Shift+Insert").expect("combo")));
+    r.calls();
+    assert!(r.port.hooks.press(ctrl_v));
+    assert_eq!(r.port.hooks.replayed.lock().last(), Some(&ctrl_v));
+    let calls = r.calls();
+    assert!(!calls.contains(&Call::Probe), "{calls:?}");
+    assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
+    assert_eq!(last_note(&r), Some(QueueNote::Kept));
+
+    // 只拦下一种粘贴键时（macOS 默认）不查前台应用
+    let r = rig();
+    let [a, b, c] = three(&r);
+    start(&r, vec![a, b, c]).expect("开始");
+    assert!(r.port.hooks.press(cmd_v()));
+    assert_eq!(r.port.paste.foreground_queries.load(Ordering::SeqCst), 0);
 }

@@ -922,6 +922,7 @@ async fn memory_step(app: &tauri::AppHandle, wm: &Arc<WindowManager>, step_name:
                 reason: CopiedReason::CopyOnly,
                 paste_key: "⌘V".to_owned(),
                 queue: None,
+                queue_note: None,
             });
             tokio::time::sleep(Duration::from_millis(1600)).await;
             if let Some(s) = wm.panel_state().filter(|s| s.view == PanelView::Toast) {
@@ -2665,6 +2666,7 @@ pub fn spawn(app: tauri::AppHandle) {
             reason: CopiedReason::CopyOnly,
             paste_key: "⌘V".to_owned(),
             queue: None,
+            queue_note: None,
         });
         tokio::time::sleep(Duration::from_millis(600)).await;
         let toast = wm.panel_state();

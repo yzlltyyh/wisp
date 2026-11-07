@@ -25,6 +25,7 @@ use crate::settings::watcher::SettingsWatcher;
 use crate::state::{AppState, Deps};
 use crate::sync_svc::SyncService;
 use crate::windows::WindowManager;
+use crate::windows::key_focus::KEY_FOCUS;
 use crate::windows::settings_window::{ONBOARDING_LABEL, SETTINGS_LABEL};
 
 /// Panel 预热完成后、做下一件空闲工作之前的间隔（避开启动时的 CPU 高峰）
@@ -364,7 +365,8 @@ fn forward_sync_status(app: &tauri::AppHandle, sync: &Arc<SyncService>) {
 /// - 设置 / 引导窗口获焦：刷新权限、惰性检查更新、发起一轮同步（有节流），state.json 被重置过时核对钥匙串索引；
 ///   引导窗口关闭：停止权限轮询；
 /// - 固定窗口出现 / 销毁：刷新托盘的「显示固定窗口」；任一窗口的缩放变化：刷新托盘（按新尺寸选图）；
-/// - 窗口获焦 / 失焦 / 销毁：告诉更新器「有动静」（Windows 等待空闲安装时重新计时）。
+/// - 窗口获焦 / 失焦 / 销毁：记下 Wisp 是否持有键盘焦点（连续粘贴），告诉更新器「有动静」（Windows 等待空闲安装时
+///   重新计时）。
 pub fn on_run_event(app: &tauri::AppHandle, ev: tauri::RunEvent) {
     use tauri::RunEvent;
     match ev {
@@ -420,6 +422,12 @@ fn on_window_event(app: &tauri::AppHandle, label: &str, event: &tauri::WindowEve
         // 缩放变化（改系统缩放、窗口换到另一块缩放不同的显示器）：Windows 托盘图标按通知区域的新尺寸重新选图
         // （见 `tray` 模块说明；尺寸没变时刷新不会重新设置图标）
         tauri::WindowEvent::ScaleFactorChanged { .. } => crate::tray::refresh(app),
+        _ => {}
+    }
+    // 任一 Wisp 窗口持有键盘焦点时，连续粘贴拦下的粘贴键只重放、不前进（见 `windows::key_focus`）
+    match event {
+        tauri::WindowEvent::Focused(focused) => KEY_FOCUS.on_focus(label, *focused),
+        tauri::WindowEvent::Destroyed => KEY_FOCUS.on_destroyed(label),
         _ => {}
     }
     // 获焦 / 失焦 / 销毁是用户活动（Windows 等待空闲安装更新时据此重新计时；没有在等时只是一次原子读）。

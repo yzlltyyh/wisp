@@ -235,4 +235,27 @@ describe('连续粘贴的进度', () => {
     expect(screen.getByTestId('toast-title').textContent).toBe(t('clipboard.queue.done'))
     expect(screen.queryByTestId('toast-detail')).toBeNull()
   })
+
+  it.each([
+    // 判断这一下没粘贴进去：进度仍是 2 / 5，第 3 条留到下一次
+    ['kept', { active: true, index: 2, total: 5 }, 'clipboard.queue.kept', 3],
+    // 退回之后下一次粘贴第 2 条
+    ['back', { active: true, index: 1, total: 5 }, 'clipboard.queue.back', 2],
+    // 跳过了第 3 条
+    ['skipped', { active: true, index: 3, total: 5 }, 'clipboard.queue.skipped', 3],
+    // 跳过最后一条时队列结束，结束提示同样带着说明
+    ['skipped', { active: false, index: 5, total: 5 }, 'clipboard.queue.skipped', 5],
+  ] as const)('这一次的说明（%s）换掉下一次按键的提示', (note, queue, message, n) => {
+    const props = viewProps<'toast'>(
+      { kind: 'toast', reason: 'copy_only', paste_key: '⌘V', queue, queue_note: note },
+      { focused: false },
+    )
+    renderIn(<ToastView {...props} />)
+    expect(screen.getByTestId('toast-title').textContent).toBe(
+      queue.active
+        ? t('clipboard.queue.progress', { index: queue.index, total: queue.total })
+        : t('clipboard.queue.done'),
+    )
+    expect(screen.getByTestId('toast-detail').textContent).toBe(t(message, { n }))
+  })
 })

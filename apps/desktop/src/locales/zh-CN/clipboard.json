@@ -129,6 +129,8 @@
     "queue": "连续粘贴",
     "queue_unavailable": "连续粘贴（当前会话不支持）",
     "queue_cancel": "结束连续粘贴",
+    "queue_back": "退回一条",
+    "queue_skip": "跳过一条",
     "on_top": "置顶",
     "close": "关闭"
   },
@@ -221,7 +223,10 @@
     "progress": "连续粘贴 · {index} / {total}",
     "next": "按 {key} 粘贴下一条 · Esc 结束",
     "done": "连续粘贴完成",
-    "stopped": "连续粘贴已结束"
+    "stopped": "连续粘贴已结束",
+    "kept": "没检测到输入框，第 {n} 条留到下一次",
+    "back": "已退回到第 {n} 条",
+    "skipped": "已跳过第 {n} 条"
   },
   "float": {
     "unavailable": "悬浮剪贴板已关闭"

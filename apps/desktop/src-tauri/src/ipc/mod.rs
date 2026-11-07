@@ -146,6 +146,8 @@ commands![
     cmd_clipboard::clipboard_drag_data,
     cmd_clipboard::clipboard_queue_start,
     cmd_clipboard::clipboard_queue_cancel,
+    cmd_clipboard::clipboard_queue_back,
+    cmd_clipboard::clipboard_queue_skip,
     cmd_clipboard::clipboard_float_open,
     cmd_clipboard::clipboard_float_close,
     cmd_clipboard::clipboard_float_ready,

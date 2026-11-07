@@ -1550,6 +1550,7 @@ mod tests {
             reason: CopiedReason::CopyOnly,
             paste_key: "⌘V".to_owned(),
             queue: None,
+            queue_note: None,
         });
         let w = view_width(PanelView::Toast, &toast, &s);
         assert!((placement::TOAST_MIN_WIDTH..=placement::TOAST_MAX_WIDTH).contains(&w));

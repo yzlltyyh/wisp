@@ -1207,6 +1207,17 @@ export const ToastPayload__queue = {
   }
 } satisfies T.ToastPayload
 
+export const ToastPayload__queue_kept = {
+  "reason": "copy_only",
+  "paste_key": "⌘V",
+  "queue": {
+    "active": true,
+    "index": 2,
+    "total": 5
+  },
+  "queue_note": "kept"
+} satisfies T.ToastPayload
+
 export const TranslatePayload = {
   "source_text": "The quick brown fox jumps over the lazy dog.",
   "request_id": null,

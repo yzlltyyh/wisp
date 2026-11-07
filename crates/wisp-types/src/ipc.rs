@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{OsKind, PlatformInfo};
-use crate::clip::{ClipFilter, ClipPage, CopiedReason, QueueStatus};
+use crate::clip::{ClipFilter, ClipPage, CopiedReason, QueueNote, QueueStatus};
 use crate::geom::{MonitorId, MonitorInfo, PhysSize, Rect};
 use crate::hotkey::{ExtTriggerStatus, HotkeyAction, HotkeyStatus, HotkeyTarget};
 use crate::lang::Lang;
@@ -81,6 +81,9 @@ pub struct ToastPayload {
     /// 普通的粘贴结果省略（TS：`queue?: QueueStatus | null`）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue: Option<QueueStatus>,
+    /// 这一次连续粘贴进度的说明（这一条留到下一次 / 已退回 / 已跳过）；没有时省略（TS：`queue_note?: QueueNote | null`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_note: Option<QueueNote>,
 }
 
 /// 翻译视图

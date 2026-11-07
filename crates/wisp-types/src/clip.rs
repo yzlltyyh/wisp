@@ -288,6 +288,18 @@ pub struct QueueStatus {
     pub total: u32,
 }
 
+/// 连续粘贴这一次进度变化的说明（只随这一次的 toast 出现，不进 [`QueueStatus`]：进度会被前端存下来，说明只该显示一次）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueueNote {
+    /// 这一下判断为没有粘贴进去（焦点不在能收文本的地方、或按下的不是前台应用的粘贴键）：这一条留到下一次粘贴键
+    Kept,
+    /// 用户退回了一条：下一次粘贴键重新粘贴它
+    Back,
+    /// 用户跳过了一条
+    Skipped,
+}
+
 /// `clipboard:changed` 事件载荷
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "change", rename_all = "snake_case")]

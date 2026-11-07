@@ -246,6 +246,20 @@ pub async fn clipboard_queue_cancel(app_state: State<'_, AppState>) -> Result<()
     app_state.clipboard.queue_cancel().await
 }
 
+/// 连续粘贴退回一条：下一次粘贴键重新粘贴刚粘贴的那一条（它本来就还没粘贴出去时再往前一条）。返回新的进度（同时经
+/// `clipboard:queue` 推送）；没有队列、粘贴进行中、已经在第一条之前时为 null
+#[tauri::command(rename_all = "snake_case")]
+pub async fn clipboard_queue_back(app_state: State<'_, AppState>) -> Result<Option<QueueStatus>, IpcError> {
+    app_state.clipboard.queue_back().await
+}
+
+/// 连续粘贴跳过一条：下一次粘贴键直接粘贴再下一条（跳过最后一条时结束）。返回新的进度（同时经 `clipboard:queue`
+/// 推送）；没有队列、粘贴进行中时为 null
+#[tauri::command(rename_all = "snake_case")]
+pub async fn clipboard_queue_skip(app_state: State<'_, AppState>) -> Result<Option<QueueStatus>, IpcError> {
+    app_state.clipboard.queue_skip().await
+}
+
 /// 只有悬浮剪贴板窗口能调用的命令
 fn require_float(window: &WebviewWindow) -> Result<(), IpcError> {
     if window.label() == FLOAT_LABEL {

@@ -29,7 +29,7 @@ import { useT } from '../../shared/i18n/useT'
 import { usePreset } from '../../shared/motion/presets'
 import { ms, timing } from '../../shared/motion/tokens'
 import { Icon } from '../../shared/ui'
-import { copiedReasonText, queueNotice } from '../clipboard/copied'
+import { copiedReasonText, queueNoteText, queueNotice } from '../clipboard/copied'
 import { loadClipboardMessages } from '../clipboard/i18n'
 
 loadClipboardMessages()
@@ -57,15 +57,19 @@ export function ToastView(props: ViewProps<'toast'>) {
   const enter = usePreset('toast')
   const [hovered, setHovered] = useState(false)
   const visible = phase === 'entering' || phase === 'shown'
-  // 连续粘贴的进度：主文案是进度，说明是下一次要按的键（不写只复制的原因）
+  // 连续粘贴的进度：主文案是进度，说明是下一次要按的键（不写只复制的原因）；这一次有说明（留到下一次 / 已退回 /
+  // 已跳过）时换成说明
   const queue = payload.queue ?? null
+  const queueNote = payload.queue_note ?? null
   const copyOnly = payload.reason === 'copy_only' || queue !== null
   // 面板持有焦点：剪贴板视图在原位切过来的前端退路（正常情况下 Rust 不激活地显示 toast，focused 为 false）
   const inPlace = focused
   const detail = queue
-    ? queue.active
-      ? t('clipboard.queue.next', { key: payload.paste_key })
-      : null
+    ? queueNote
+      ? queueNoteText(queueNote, queue, t)
+      : queue.active
+        ? t('clipboard.queue.next', { key: payload.paste_key })
+        : null
     : toastReason(payload.reason, os, t)
   const openSettings = !queue && payload.reason === 'no_permission' && os === 'macos'
   const action = openSettings ? t('clipboard.toast.action.allow_accessibility') : null

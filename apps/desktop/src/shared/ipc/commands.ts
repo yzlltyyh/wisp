@@ -85,6 +85,8 @@ export interface CommandMap extends OverlayCommandMap {
   clipboard_drag_data: { args: { ids: number[] }; ret: T.ClipDragData }
   clipboard_queue_start: { args: { ids: number[] }; ret: T.QueueStatus }
   clipboard_queue_cancel: { args: NoArgs; ret: void }
+  clipboard_queue_back: { args: NoArgs; ret: T.QueueStatus | null }
+  clipboard_queue_skip: { args: NoArgs; ret: T.QueueStatus | null }
   clipboard_float_open: {
     args: { query: string; filter: T.ClipFilter; selected_id: number | null }
     ret: void
@@ -252,6 +254,8 @@ export const COMMAND_NAMES = [
   'clipboard_drag_data',
   'clipboard_queue_start',
   'clipboard_queue_cancel',
+  'clipboard_queue_back',
+  'clipboard_queue_skip',
   'clipboard_float_open',
   'clipboard_float_close',
   'clipboard_float_ready',
@@ -528,6 +532,17 @@ export function clipboardQueueStart(ids: readonly number[]) {
 }
 export function clipboardQueueCancel() {
   return call('clipboard_queue_cancel', none)
+}
+/**
+ * 连续粘贴退回一条：下一次粘贴键重新粘贴刚粘贴的那一条。返回新的进度（同时经 `clipboard:queue` 推送）；没有队列、
+ * 粘贴进行中、已经在第一条之前时为 null
+ */
+export function clipboardQueueBack() {
+  return call('clipboard_queue_back', none)
+}
+/** 连续粘贴跳过一条：下一次粘贴键直接粘贴再下一条（跳过最后一条时结束）。返回新的进度；没有队列、粘贴进行中时为 null */
+export function clipboardQueueSkip() {
+  return call('clipboard_queue_skip', none)
 }
 /** 从面板交接到悬浮剪贴板（继承查询、筛选与光标） */
 export function clipboardFloatOpen(

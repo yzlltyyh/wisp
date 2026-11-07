@@ -19,6 +19,7 @@ import type {
   PasteOutcome,
   PermissionSet,
   Provider,
+  QueueStatus,
   SettingsSnapshot,
   Style,
   UpdateStatus,
@@ -344,15 +345,29 @@ export function installDefaults(d: DefaultsDeps): void {
       uri: one?.kind === 'link' ? one.preview : null,
     }
   })
+  // 连续粘贴的进度（退回 / 跳过据此改；mock 不拦粘贴键，进度只随这几个命令变化）
+  let queue: QueueStatus | null = null
+  const queueChanged = (next: QueueStatus) => {
+    queue = next.active ? next : null
+    bus.emit('clipboard:queue', next)
+    return next
+  }
   r.handle('clipboard_queue_start', ({ ids }) => {
     if (ids.length === 0) throw mockError('invalid_argument', 'ids must not be empty')
-    const status = { active: ids.length > 1, index: 1, total: ids.length }
     pasted(ids.slice(0, 1), 'normal')
-    bus.emit('clipboard:queue', status)
-    return status
+    return queueChanged({ active: ids.length > 1, index: 1, total: ids.length })
   })
   r.handle('clipboard_queue_cancel', () => {
+    queue = null
     bus.emit('clipboard:queue', { active: false, index: 0, total: 0 })
+  })
+  r.handle('clipboard_queue_back', () =>
+    queue && queue.index > 0 ? queueChanged({ ...queue, index: queue.index - 1 }) : null,
+  )
+  r.handle('clipboard_queue_skip', () => {
+    if (!queue) return null
+    const index = queue.index + 1
+    return queueChanged({ active: index < queue.total, index, total: queue.total })
   })
   r.handle('clipboard_float_open', () => {
     if (d.panel?.currentSession != null) d.panel.hide(d.panel.currentSession, 'pin')

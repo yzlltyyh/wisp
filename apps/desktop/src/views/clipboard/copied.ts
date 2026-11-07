@@ -1,8 +1,23 @@
 /**
  * 粘贴只复制成功、连续粘贴进度的文案：面板的 toast 视图与悬浮剪贴板的轻提示共用，同一个原因在两处说法一致。
  */
-import type { CopiedReason, OsKind, QueueStatus } from '../../shared/ipc/types'
+import type { CopiedReason, OsKind, QueueNote, QueueStatus } from '../../shared/ipc/types'
 import type { TFunction } from '../../shared/i18n/useT'
+
+/**
+ * 连续粘贴这一次进度的说明（toast 的第二行、退回 / 跳过之后的轻提示）。条目序号从 1 数：留着的、退回到的是下一次要粘贴
+ * 的那一条（index + 1）；跳过的是刚越过的那一条（index）
+ */
+export function queueNoteText(note: QueueNote, q: QueueStatus, t: TFunction): string {
+  switch (note) {
+    case 'kept':
+      return t('clipboard.queue.kept', { n: q.index + 1 })
+    case 'back':
+      return t('clipboard.queue.back', { n: q.index + 1 })
+    case 'skipped':
+      return t('clipboard.queue.skipped', { n: q.index })
+  }
+}
 
 /** 原因说明（仅复制、`manual`——只提示按键、不写原因——没有说明） */
 export function copiedReasonText(reason: CopiedReason, os: OsKind, t: TFunction): string | null {

@@ -129,6 +129,8 @@
     "queue": "Paste in sequence",
     "queue_unavailable": "Paste in sequence (not supported in this session)",
     "queue_cancel": "Stop pasting in sequence",
+    "queue_back": "Back one item",
+    "queue_skip": "Skip one item",
     "on_top": "Keep on top",
     "close": "Close"
   },
@@ -221,7 +223,10 @@
     "progress": "Pasting in sequence · {index} / {total}",
     "next": "Press {key} for the next one · Esc to stop",
     "done": "Finished pasting in sequence",
-    "stopped": "Stopped pasting in sequence"
+    "stopped": "Stopped pasting in sequence",
+    "kept": "No text field detected — item {n} stays for your next paste",
+    "back": "Back to item {n}",
+    "skipped": "Skipped item {n}"
   },
   "float": {
     "unavailable": "The floating clipboard was closed"

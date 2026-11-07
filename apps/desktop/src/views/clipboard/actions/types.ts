@@ -72,6 +72,10 @@ export interface ActionArgs {
   float_close: undefined
   /** 结束进行中的连续粘贴 */
   queue_cancel: undefined
+  /** 连续粘贴退回一条（刚粘贴的那一条没进去：下一次粘贴键重新粘贴它） */
+  queue_back: undefined
+  /** 连续粘贴跳过一条（下一次粘贴键直接粘贴再下一条） */
+  queue_skip: undefined
   /** 折叠 / 展开列表顶部的「收藏」分组 */
   favorites_toggle: undefined
   /** 「查看全部 N 个收藏」：切到收藏视图 */
@@ -121,7 +125,7 @@ export type MenuSurface =
   | 'preview_actions'
   /** 条目里派生出的片段（颜色的 HEX / RGB / HSL 值） */
   | 'fragment'
-  /** 视图头部的图标按钮（面板：交接到悬浮窗的钉子；悬浮窗：置顶、关闭、结束连续粘贴） */
+  /** 视图头部的图标按钮（面板：交接到悬浮窗的钉子；悬浮窗：置顶、关闭；连续粘贴进行中两者都多出退回一条与结束） */
   | 'toolbar'
 
 /** 构造上下文时的来源：界面之外还有快捷键、指针（单击 / 双击行）、提示条与横幅 / 确认条上的按钮 */

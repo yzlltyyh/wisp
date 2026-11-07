@@ -198,6 +198,9 @@ pub(crate) trait Host: Send + Sync {
     /// 连续粘贴的进度变了：推送 `clipboard:queue`（面板与悬浮剪贴板）、刷新托盘；`toast` 给出时（每粘贴一条）在原面板
     /// 位置以 toast 视图提示进度——面板正显示着、或悬浮剪贴板开着（它自己显示进度）时不弹。**会阻塞**（toast 要主线程往返）
     fn queue_changed(&self, status: &QueueStatus, toast: Option<ToastPayload>);
+    /// Wisp 自己的某个窗口此刻持有键盘焦点（原子读，在粘贴键路径上调用；生产实现读窗口获焦事件维护的标志，见
+    /// `windows::key_focus`）：这时拦下的粘贴键是给 Wisp 自己的，连续粘贴只重放、不前进
+    fn keyboard_in_wisp(&self) -> bool;
     /// 连续粘贴期间的全局 Esc（按下即结束队列）。**会阻塞**（注册全局快捷键要与主线程往返）
     fn queue_escape_guard(&self, active: bool);
     /// 面板会话结束的通知（值只是信号）；拿不到时返回 None，空闲清理退回按静默期重新检查
@@ -374,6 +377,10 @@ impl Host for AppHost {
         if queue_toast_shown(windows.panel_state().map(|s| s.view), windows.float_ready()) {
             windows.panel_show_toast(toast);
         }
+    }
+
+    fn keyboard_in_wisp(&self) -> bool {
+        crate::windows::key_focus::KEY_FOCUS.held()
     }
 
     fn queue_escape_guard(&self, active: bool) {

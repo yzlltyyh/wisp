@@ -10,6 +10,7 @@
 //! | outside_click.rs | 外部点击 / 鼠标离开 / 全局 Esc / 失焦 |
 //! | pinned.rs | Pinned 固定窗口与交接 |
 //! | float.rs | 悬浮剪贴板（单例、不抢焦点、关闭即销毁）与面板到它的交接 |
+//! | key_focus.rs | Wisp 自己的某个窗口是否持有键盘焦点（连续粘贴据此不前进） |
 //! | overlay.rs | Overlay 截图覆盖层与预建复用 |
 //! | settings_window.rs | 设置 / 引导窗口（无白闪首显、位置记忆、ActivationPolicy） |
 //! | protocol.rs | `wisp://` 协议分发 |
@@ -18,6 +19,7 @@
 pub mod float;
 #[cfg(any(debug_assertions, feature = "fake-llm"))]
 pub mod frame_lab;
+pub mod key_focus;
 pub mod manager;
 pub mod native;
 pub mod outside_click;
@@ -83,6 +85,7 @@ mod tests {
                 reason: wisp_types::CopiedReason::CopyOnly,
                 paste_key: "Ctrl+V".to_owned(),
                 queue: None,
+                queue_note: None,
             }),
             geometry,
             focused: false,
