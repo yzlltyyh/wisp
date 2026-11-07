@@ -85,7 +85,7 @@ import {
   type Row,
 } from './model'
 import { preloadPreview, usePreviewModule } from './previewModule'
-import { isSearching, rowsOf, visibleHits, type ClipStore } from './store'
+import { isSearching, rowsOf, visibleHits, type ClipStore, type Inspected } from './store'
 import type { ClipCommands } from './useClipboard'
 
 export interface ClipListProps {
@@ -1115,37 +1115,48 @@ export function ClipList({
     page: ClipActionId | null
     /** 换页的方向（进入子页 1，返回 -1） */
     direction: 1 | -1
+    /**
+     * 打开时这一条的检视结果（快照）：菜单里的「粘贴为」「提取」与它们的子页按它生成，不跟着光标——菜单开着时光标
+     * 换到别的条目（或检视结果作废重算），菜单作用的仍是这一条，子页不会变空、也不会换成别的条目的内容
+     */
+    inspect: Inspected | null
   } | null>(null)
   // 第一次打开时才挂载菜单（之后保留，退出动画照常播放）；焦点由组件库的 Menu 在定位完成后移进菜单、关闭后还给搜索框
   const [menuUsed, setMenuUsed] = useState(false)
   if (menu !== null && !menuUsed) setMenuUsed(true)
+  /** 菜单的上下文：作用于打开菜单的那一条，检视结果用打开时的快照 */
+  const menuCtx = useCallback(
+    (id: number, via: 'pointer' | 'keyboard', snapshot: Inspected | null) => ({
+      ...runner.ctx(surfaceOf(via), id),
+      inspect: snapshot,
+    }),
+    [runner],
+  )
   const itemsFor = useCallback(
-    (id: number, via: 'pointer' | 'keyboard'): MenuEntry[] => {
-      const surface = surfaceOf(via)
-      const c = runner.ctx(surface, id)
+    (id: number, via: 'pointer' | 'keyboard', snapshot: Inspected | null): MenuEntry[] => {
+      const c = menuCtx(id, via, snapshot)
       // 条目已不在列表里（刚被删除 / 同步移走）：没有可做的操作
-      return c.target ? runner.menu(surface, c, t) : []
+      return c.target ? runner.menu(surfaceOf(via), c, t) : []
     },
-    // rows / paused / marks / inspect：菜单项随列表、暂停状态、多选与检视结果更新（上下文在调用时从 store 读）
+    // rows / paused / marks：菜单项随列表、暂停状态与多选更新（上下文在调用时从 store 读）；检视结果用菜单自己的快照
     // oxlint-disable-next-line react/exhaustive-deps
-    [rows, paused, marks, inspect, t, runner],
+    [rows, paused, marks, t, runner, menuCtx],
   )
   const menuPage = useMemo<MenuPage>(() => {
     const root: MenuPage = {
       key: 'root',
       label: t('clipboard.a11y.actions'),
-      items: menu ? itemsFor(menu.id, menu.via) : [],
+      items: menu ? itemsFor(menu.id, menu.via, menu.inspect) : [],
       'data-testid': 'clip-context-menu',
     }
     if (!menu?.page) return root
-    const surface = surfaceOf(menu.via)
     const back = () => setMenu((cur) => (cur ? { ...cur, page: null, direction: -1 } : cur))
-    const sub = runner.page(menu.page, runner.ctx(surface, menu.id), t, back)
+    const sub = runner.page(menu.page, menuCtx(menu.id, menu.via, menu.inspect), t, back)
     // 子页没有项（例如这一条没有可用的变换）：留在操作菜单本身
     return sub && sub.items.length > 0 ? { ...sub, 'data-testid': `clip-menu-${menu.page}` } : root
-    // inspect / marks：子页的项来自检视结果与多选
+    // marks：子页的项来自检视快照与多选
     // oxlint-disable-next-line react/exhaustive-deps
-  }, [menu, itemsFor, inspect, marks, runner, t])
+  }, [menu, itemsFor, menuCtx, marks, runner, t])
   /** 最近一次打开菜单的请求（检视结果到达之前又打开了别的，旧的作废） */
   const menuSeq = useRef(0)
   const openMenu = (
@@ -1177,12 +1188,17 @@ export function ClipList({
     // 菜单里的操作先做准备（⌘K 操作菜单的最后一项是「清空历史…」：先读清空会不会同步到其他设备）
     const surface = surfaceOf(via)
     runner.prepare(surface, runner.ctx(surface, id))
+    // 检视结果此刻属于这一条（openMenu 等它落进 store 之后才来这里）：取下快照，菜单开着期间都按它
+    const current = store.getState().inspect
+    const snapshot = current?.id === id ? current : null
     const card = wrapRef.current?.closest('.clip')?.getBoundingClientRect()
     // 直接打开到子页（⌥⇧↩）时按子页估算：返回行 + 分隔线 + 子页的项
-    const sub = page ? runner.page(page, runner.ctx(surface, id), t, () => {}) : null
+    const sub = page ? runner.page(page, menuCtx(id, via, snapshot), t, () => {}) : null
     const need =
       menuHeight(
-        sub && sub.items.length > 0 ? [{}, { type: 'separator' }, ...sub.items] : itemsFor(id, via),
+        sub && sub.items.length > 0
+          ? [{}, { type: 'separator' }, ...sub.items]
+          : itemsFor(id, via, snapshot),
       ) + 8
     let side: 'top' | 'bottom' = 'bottom'
     let align: 'start' | 'end' = 'start'
@@ -1217,6 +1233,7 @@ export function ClipList({
       via,
       page,
       direction: 1,
+      inspect: snapshot,
     })
   }
   const onContextMenu = (e: ReactMouseEvent) => {

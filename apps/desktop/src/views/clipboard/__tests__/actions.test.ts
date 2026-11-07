@@ -26,7 +26,7 @@ import {
 import { SMART_MESSAGES } from '../../../shared/smart/i18n'
 import { ENTITY_SPECS, TRANSFORM_SPECS } from '../../../shared/smart/specs'
 import { CLIPBOARD_MESSAGES, loadClipboardMessages } from '../i18n'
-import { initialState } from '../store'
+import { initialState, type Inspected } from '../store'
 import { meta, NOW, payload } from './helpers'
 
 loadClipboardMessages()
@@ -368,6 +368,61 @@ describe('操作注册表', () => {
         expect(new Set(calls.map((x) => x.id))).toEqual(new Set([want]))
       }
     }
+  })
+
+  it('操作菜单的检视快照：「粘贴为」「提取」按快照（菜单作用的那一条）生成与执行，不看 store 里光标所在条目的检视', () => {
+    const one = meta(1, { preview: 'one' })
+    const two = meta(2, { preview: 'two' })
+    const s = initialState(payload([one, two]), NOW)
+    // 光标已经换到第 2 条，store 里是第 2 条的检视结果（只有一个变换、没有片段）
+    const cursor: Inspected = { id: 2, result: { entities: [], transforms: ['upper'] } }
+    const base: ActionCtx = {
+      os: 'macos',
+      host: 'panel',
+      caps: { float: true, queueUnavailable: null, escapeCloses: true },
+      onTop: null,
+      source: 'context',
+      target: one,
+      marked: [],
+      s: { ...s, selectedId: 2, inspect: cursor },
+      repeat: false,
+    }
+    const paged = (c: ActionCtx) => {
+      const { calls, exec } = recorder()
+      const entries = actionEntries('context', c, t, () => {}).map((e) => e.id)
+      const pages = ACTIONS.filter((a) => a.page).map((a) => {
+        const page = subPage(a, c, t, exec, { label: 'x', back: 'x', backAria: 'x' }, () => {})
+        for (const item of page?.items ?? []) {
+          if (item.type === undefined || item.type === 'item') item.onSelect?.()
+        }
+        return [a.id, page?.items.length ?? 0] as const
+      })
+      return { entries, pages: Object.fromEntries(pages), calls }
+    }
+    // 没有快照：store 里的检视不属于作用对象，两个子页都没有项、根页也不列它们
+    const bare = paged(base)
+    expect(bare.entries).not.toContain('paste_as')
+    expect(bare.entries).not.toContain('extract')
+    expect(bare.pages).toEqual({ paste_as: 0, extract: 0 })
+    // 有快照（菜单打开时第 1 条的检视结果）：按它生成，执行的变换与片段也来自它
+    const pinned = paged({ ...base, inspect: { id: 1, result: INSPECT } })
+    expect(pinned.entries).toEqual(expect.arrayContaining(['paste_as', 'extract']))
+    expect(pinned.pages).toEqual({
+      paste_as: INSPECT.transforms.length,
+      extract: INSPECT.entities.length,
+    })
+    expect(pinned.calls.filter((x) => x.id === 'paste_transform').map((x) => x.arg)).toEqual(
+      INSPECT.transforms,
+    )
+    // 快照不属于作用对象时同样不用（不会把别的条目的检视结果套到这一条上）
+    expect(paged({ ...base, inspect: cursor }).pages).toEqual({ paste_as: 0, extract: 0 })
+    // 快照为 null（图片 / 文件、打开时没有检视结果）：不回落到 store
+    const none = paged({
+      ...base,
+      s: { ...base.s, selectedId: 1, inspect: { id: 1, result: INSPECT } },
+      inspect: null,
+    })
+    expect(none.pages).toEqual({ paste_as: 0, extract: 0 })
   })
 
   it('多选：菜单只列能作用于多条的操作；提示条换成多选的一组，按提示里的键执行的就是提示的操作', () => {

@@ -10,7 +10,7 @@ import type { MessageKey } from '../../../shared/i18n/i18n'
 import type { TFunction } from '../../../shared/i18n/useT'
 import type { ClipCaps, ClipHost } from '../host'
 import type { Row } from '../model'
-import type { ClipState } from '../store'
+import type { ClipState, Inspected } from '../store'
 import type { ClipCommands } from '../useClipboard'
 
 /** 全文预览的开关方式：菜单里是打开，Space 是切换，预览里的 Space / Esc 是关闭 */
@@ -166,6 +166,12 @@ export interface ActionCtx {
    */
   readonly marked: readonly ClipItemMeta[]
   readonly s: ClipState
+  /**
+   * 作用对象的检视结果，操作菜单打开时取下的快照：给出时「粘贴为」「提取」按它生成子页并执行，不看 store 里的检视
+   * （那一份只属于光标所在的条目，菜单开着时光标换了条目、或检视结果作废重算，子页就会变空或换成别的条目的内容，
+   * 而菜单仍作用于打开它的那一条）。省略时按 store
+   */
+  readonly inspect?: Inspected | null
   /** 按住不放时的重复按键（只有允许重复的快捷键会收到 true） */
   readonly repeat: boolean
   /** 全文预览提供的本地状态：等宽开关跟随预览本身（换条目时回到该类型的默认值），不进 store */

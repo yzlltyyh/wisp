@@ -120,9 +120,12 @@ function targets(c: ActionCtx): readonly ClipItemMeta[] {
   if (c.marked.length > 0) return c.marked
   return c.target ? [c.target] : []
 }
-/** 作用对象的检视结果（只对光标所在的那一条有；还没检视完时为 null） */
+/**
+ * 作用对象的检视结果：操作菜单给出的快照优先（菜单打开时取下，属于菜单作用的那一条）；否则按 store（只对光标所在的
+ * 那一条有）。还没检视完、或检视结果不属于作用对象时为 null
+ */
 function inspected(c: ActionCtx): ClipInspect | null {
-  const r = c.s.inspect
+  const r = c.inspect === undefined ? c.s.inspect : c.inspect
   return r && c.target && r.id === c.target.id ? r.result : null
 }
 const entitiesOf = (c: ActionCtx) => inspected(c)?.entities ?? []

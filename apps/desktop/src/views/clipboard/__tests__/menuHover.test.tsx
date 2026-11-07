@@ -1,12 +1,13 @@
 /**
  * 剪贴板的操作菜单与指针（组件库的 PagedMenu / Menu 在真实视图里的效果）：
  * - 指针停在「粘贴为 ›」上进入子页；紧接着在原处点击（含 1–3 px 抖动）不粘贴、菜单仍开着，离开原处之后照常粘贴；
- * - 菜单开着时点另一行只关菜单、不粘贴它（右键菜单与 ⋯ 菜单都是）；再点一次才粘贴。
+ * - 菜单开着时点另一行只关菜单、不粘贴它（右键菜单与 ⋯ 菜单都是）；再点一次才粘贴；
+ * - 「粘贴为 / 提取」的子页按打开菜单时那一条的检视结果生成：之后 store 里的检视结果被作废重算，子页不变、不退回操作菜单。
  */
 import { act, fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setTransport } from '../../../shared/ipc'
-import type { ClipInspect } from '../../../shared/ipc/types'
+import type { ClipInspect, SettingsSnapshot } from '../../../shared/ipc/types'
 import { ms, timing } from '../../../shared/motion/tokens'
 import { ClipboardView } from '../ClipboardView'
 import { INSPECT_DEBOUNCE_MS } from '../model'
@@ -93,7 +94,7 @@ describe('操作菜单：悬停进入「粘贴为」', () => {
     press(current('clip-menu-paste_as-item-transform-upper'), 43, 53)
     expect(ipc.called('clipboard_paste')).toEqual([])
     expect(screen.getByTestId('clip-menu-paste_as')).toBeTruthy()
-    // 子页变矮、指针落到下面的列表上：列表的光标不跟着走（否则菜单作用的那一条与子页内容会变）
+    // 子页变矮、指针落到下面的列表上：列表的光标不跟着走（菜单开着时界面不跟随悬停，选中仍指着菜单作用的那一条）
     move(row(2), 44, 54)
     move(row(2), 45, 56)
     await wait(INSPECT_DEBOUNCE_MS + 40)
@@ -127,5 +128,39 @@ describe('菜单开着时点另一行：只关菜单', () => {
     press(row(2), 10, 60)
     expect(ipc.called('clipboard_paste')).toEqual([])
     expect(screen.getByTestId('clip-more')).toHaveAttribute('aria-expanded', 'false')
+  })
+})
+
+describe('子页按打开菜单时那一条的检视结果生成', () => {
+  it('菜单开着时检视结果作废重算（识别设置变了）：子页不变、不退回操作菜单，执行的仍是打开它的那一条', async () => {
+    mount()
+    await settleInspect()
+    fireEvent.contextMenu(row(1), { clientX: 10, clientY: 10 })
+    await screen.findByTestId('clip-context-menu')
+    press(current('clip-context-menu-item-paste_as'), 40, 50)
+    expect(await screen.findByTestId('clip-menu-paste_as')).toBeTruthy()
+    // store 里的检视结果被清掉、过一会儿再按新设置重新检视：菜单作用的那一条没变，子页也不该跟着变空
+    ipc.results.clipboard_inspect = { entities: [], transforms: ['trim'] }
+    act(() =>
+      ipc.emit('settings:changed', {
+        settings: {
+          clipboard: {
+            smart: {
+              contacts: true,
+              codes: true,
+              numbers: true,
+              identity: false,
+              otp_auto_delete: true,
+            },
+          },
+        },
+      } as unknown as SettingsSnapshot),
+    )
+    expect(current('clip-menu-paste_as-item-transform-upper')).toBeTruthy()
+    await settleInspect()
+    expect(ipc.called('clipboard_inspect')).toEqual([{ id: 1 }, { id: 1 }])
+    expect(current('clip-menu-paste_as-item-transform-upper')).toBeTruthy()
+    press(current('clip-menu-paste_as-item-transform-upper'), 40, 70)
+    expect(ipc.called('clipboard_paste')).toEqual([{ id: 1, mode: 'normal', transform: 'upper' }])
   })
 })
