@@ -61,6 +61,18 @@
     box-shadow: inset 0 1px 0 var(--hairline);
   }
 
+  /* 实时同步的子选项（写入剪贴板）是子行里的子行：再缩进一级；底色已由外层子行铺上，不再叠一层 */
+  .st-subrows .st-subrows {
+    background: none;
+  }
+  .st-subrows .st-subrows .ui-fieldrow {
+    padding-left: 44px;
+  }
+  /* 子行里的说明（坚果云的额度）与子行的文字对齐 */
+  .st-subrows > .st-sync-note {
+    padding-left: 28px;
+  }
+
   /* ------------------------------------------------ 卡片底部的说明（只属于本机的设置、忘记同步密码的后果、钥匙串提示） */
   .st-sync-note {
     display: flex;

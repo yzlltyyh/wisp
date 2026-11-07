@@ -6,6 +6,7 @@ import type {
   SyncErrorKind,
   SyncProbe,
   SyncProgress,
+  SyncSettings,
   SyncStatus,
   SyncVaultInfo,
 } from '../../shared/ipc/types'
@@ -232,4 +233,34 @@ export function errorAction(kind: SyncErrorKind): 'update' | 'reconnect' | null 
   if (kind === 'auth' || kind === 'passphrase' || kind === 'credentials_missing') return 'update'
   if (kind === 'vault_reset') return 'reconnect'
   return null
+}
+
+// ---------------------------------------------------------------------------
+// 实时同步（实验性）
+
+/** 实时同步为什么不能打开：需要自动同步；只同步设置时没有「实时」可言（与 Rust 的 `wanted_by_settings` 同一条件） */
+export type RealtimeBlocker = 'auto' | 'content'
+
+export function realtimeBlocker(s: SyncSettings): RealtimeBlocker | null {
+  if (!s.auto) return 'auto'
+  if (!s.content.clipboard && !s.content.ocr_history) return 'content'
+  return null
+}
+
+/** 「把其他设备最新的复制直接放进本机剪贴板」为什么不能打开：先要实时同步开着，并且同步剪贴板历史 */
+export type RealtimeClipboardBlocker = 'realtime' | 'clipboard'
+
+export function realtimeClipboardBlocker(s: SyncSettings): RealtimeClipboardBlocker | null {
+  if (realtimeBlocker(s) || !s.realtime) return 'realtime'
+  if (!s.content.clipboard) return 'clipboard'
+  return null
+}
+
+/**
+ * 地址是不是坚果云（`jianguoyun.com` 及其子域，忽略大小写与结尾的点；与 Rust 的 `Provider::from_host` 同一判断）。
+ * 坚果云按账号限制请求次数，实时同步要多一行说明
+ */
+export function isJianguoyun(url: string): boolean {
+  const host = parseUrl(url)?.hostname.toLowerCase().replace(/\.+$/, '')
+  return !!host && (host === 'jianguoyun.com' || host.endsWith('.jianguoyun.com'))
 }

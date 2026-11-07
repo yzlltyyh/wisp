@@ -1,10 +1,11 @@
 /**
  * 同步页的纯逻辑：地址规则（与 Rust 的账号校验一致：http 只给局域网地址）、预设、同步密码规则（NFC、码点计数、
- * 不与应用密码 / 账号 / 主机名相同）、状态行归类、错误对应的操作与测试报告的分步归属；以及 `errors.sync.*` 能被翻译。
+ * 不与应用密码 / 账号 / 主机名相同）、状态行归类、错误对应的操作与测试报告的分步归属、实时同步与它的子选项能否打开、
+ * 坚果云的识别；以及 `errors.sync.*` 能被翻译。
  */
 import { describe, expect, it } from 'vitest'
 import { WispIpcError } from '../../../shared/ipc'
-import type { SyncStatus } from '../../../shared/ipc/types'
+import type { SyncSettings, SyncStatus } from '../../../shared/ipc/types'
 import { ipcErrorText, isKeyLike } from '../../lib/errors'
 import { loadSettingsMessages } from '../../i18n'
 import {
@@ -12,6 +13,7 @@ import {
   errorAction,
   failedStep,
   hostOf,
+  isJianguoyun,
   isLocalHost,
   normalizePassphrase,
   passModeOf,
@@ -19,6 +21,8 @@ import {
   passphraseIssue,
   presetFor,
   progressRatio,
+  realtimeBlocker,
+  realtimeClipboardBlocker,
   statusView,
   urlForPreset,
 } from '../model'
@@ -218,5 +222,61 @@ describe('同步命令的错误消息', () => {
     )
     expect(text).not.toBe(key)
     expect(text).not.toMatch(/errors\.sync/)
+  })
+})
+
+describe('实时同步（实验性）', () => {
+  const base: SyncSettings = {
+    enabled: true,
+    server_url: 'https://dav.example.com/',
+    username: 'me',
+    auto: true,
+    realtime: true,
+    realtime_clipboard: false,
+    content: {
+      settings: true,
+      api_keys: true,
+      clipboard: true,
+      verification_codes: true,
+      images: true,
+      ocr_history: true,
+    },
+  }
+  const content = (over: Partial<SyncSettings['content']>) => ({
+    ...base,
+    content: { ...base.content, ...over },
+  })
+
+  it('需要自动同步，并且同步剪贴板历史或识别历史（与 Rust 的条件一致）', () => {
+    expect(realtimeBlocker(base)).toBeNull()
+    expect(realtimeBlocker({ ...base, auto: false })).toBe('auto')
+    expect(realtimeBlocker(content({ clipboard: false }))).toBeNull()
+    expect(realtimeBlocker(content({ ocr_history: false }))).toBeNull()
+    expect(realtimeBlocker(content({ clipboard: false, ocr_history: false }))).toBe('content')
+    // 自动同步关着时先说它
+    expect(
+      realtimeBlocker({ ...content({ clipboard: false, ocr_history: false }), auto: false }),
+    ).toBe('auto')
+  })
+
+  it('写入剪贴板的子选项：实时同步要开着、还要同步剪贴板历史', () => {
+    expect(realtimeClipboardBlocker(base)).toBeNull()
+    expect(realtimeClipboardBlocker({ ...base, realtime: false })).toBe('realtime')
+    expect(realtimeClipboardBlocker({ ...base, auto: false })).toBe('realtime')
+    expect(realtimeClipboardBlocker(content({ clipboard: false }))).toBe('clipboard')
+    expect(realtimeClipboardBlocker(content({ clipboard: false, ocr_history: false }))).toBe(
+      'realtime',
+    )
+  })
+
+  it('坚果云：jianguoyun.com 及其子域，忽略大小写与结尾的点', () => {
+    expect(isJianguoyun('https://dav.jianguoyun.com/dav/')).toBe(true)
+    expect(isJianguoyun('https://DAV.JianGuoYun.com./dav/')).toBe(true)
+    expect(isJianguoyun('https://jianguoyun.com/dav/')).toBe(true)
+    expect(isJianguoyun('https://notjianguoyun.com/dav/')).toBe(false)
+    expect(isJianguoyun('https://jianguoyun.com.example.net/')).toBe(false)
+    expect(isJianguoyun('https://webdav.123pan.cn/webdav')).toBe(false)
+    expect(isJianguoyun('')).toBe(false)
+    expect(isJianguoyun('not a url')).toBe(false)
   })
 })

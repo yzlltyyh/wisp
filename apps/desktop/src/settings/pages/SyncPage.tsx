@@ -3,7 +3,8 @@
  *
  * 根视图按 `settings.sync.enabled` 分两种：
  * - 未连接：一张卡片——一句说明 + 主按钮「连接 WebDAV…」；
- * - 已连接：服务器（`主机 · 账号` + 状态行 + 立即同步 + 更新密码…）、自动同步、同步内容（改动即时写入设置）、设备、
+ * - 已连接：服务器（`主机 · 账号` + 状态行 + 立即同步 + 更新密码…）、自动同步（下面是实时同步与它的子选项，
+ *   sync/RealtimeRows）、同步内容（改动即时写入设置）、设备、
  *   危险操作（断开同步 / 清除服务器上的数据，原地变形确认）。
  * 连接与更新密码是同一个草稿子视图（sync/ConnectView，单独的 chunk：只在点开时加载，悬停按钮时预取），切换方式与
  * 「模型与服务」的编辑器相同（lib/subview.ts：新视图进入、旧视图立即卸载，返回时恢复滚动位置与焦点）。
@@ -27,6 +28,7 @@ import { useSubviewNav } from '../lib/subview'
 import { applySnapshot, notify, patchSettings, useRuntime, useSettings } from '../store'
 import { ContentRows } from '../sync/ContentRows'
 import { Devices } from '../sync/Devices'
+import { RealtimeRows } from '../sync/RealtimeRows'
 import { ServerSection } from '../sync/ServerSection'
 import { useNow } from '../sync/useNow'
 import type { ConnectMode } from '../sync/ConnectView'
@@ -170,6 +172,7 @@ function Connected({ onUpdate }: { onUpdate: () => void }) {
           ariaLabel={t('settings.sync.auto.label')}
           data-testid="sync-auto"
         />
+        <RealtimeRows sync={sync} state={status.realtime} />
       </Section>
 
       <Section title={t('settings.sync.content.title')} data-testid="sync-content">

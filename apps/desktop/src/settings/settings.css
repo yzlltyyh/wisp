@@ -500,6 +500,11 @@
   .st-subrows .ui-fieldrow {
     padding-left: 28px;
   }
+  /* 子行在卡片最后时，底色跟着卡片的圆角收住（卡片本身不裁剪子元素） */
+  .ui-section-card > .st-subrows:last-child {
+    border-bottom-left-radius: var(--r-card);
+    border-bottom-right-radius: var(--r-card);
+  }
   .st-card-note {
     display: flex;
     align-items: center;

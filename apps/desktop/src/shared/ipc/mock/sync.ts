@@ -491,6 +491,15 @@ export function syncScenarios(page: PageFn, click: ClickFn): Scenario[] {
       connected(mock, { pending: true })
       mock.state.settings.sync.auto = false
     }),
+    page('sync-realtime', '设置 · 同步（实时同步运行中、写入剪贴板开着）', 'sync', (_ctx, mock) => {
+      connected(mock, { realtime: 'running' })
+      mock.state.settings.sync.realtime = true
+      mock.state.settings.sync.realtime_clipboard = true
+    }),
+    page('sync-realtime-paused', '设置 · 同步（实时同步：离开时暂停）', 'sync', (_ctx, mock) => {
+      connected(mock, { realtime: 'paused' })
+      mock.state.settings.sync.realtime = true
+    }),
     page('sync-update', '设置 · 同步 · 更新密码（地址与账号只读）', 'sync', (ctx, mock) => {
       connected(mock)
       click(ctx, '[data-testid="sync-update"]')

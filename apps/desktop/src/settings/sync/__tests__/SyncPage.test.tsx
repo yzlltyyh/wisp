@@ -1,7 +1,8 @@
 /**
  * 设置 → 同步：未连接 → 连接子视图（测试连接决定同步密码一节：设置 / 输入并合并 / 重新连接；就地校验；NFC；
  * 忘记同步密码时原地确认清除并重新测试；改了连接信息需要重新测试）→ 已连接（状态行的各种状态与 `sync:status` 推送、
- * 错误的原因 + 建议与操作、立即同步、自动同步与同步内容、设备、断开与清除的原地确认）。成功从不弹提示，应用密码不进钥匙串命令。
+ * 错误的原因 + 建议与操作、立即同步、自动同步与实时同步（实验性子开关、写入剪贴板的子选项、禁用条件、状态行、坚果云
+ * 的额度说明）、同步内容、设备、断开与清除的原地确认）。成功从不弹提示，应用密码不进钥匙串命令。
  */
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -554,6 +555,170 @@ describe('已连接', () => {
     expect(screen.getByTestId('sync-content-verification_codes')).toHaveTextContent(
       '需要先同步剪贴板历史',
     )
+  })
+
+  it('实时同步是「自动同步」下的实验性子开关：写入 sync.realtime；子选项写入 sync.realtime_clipboard', async () => {
+    const h = installHarness(connectedSnapshot())
+    renderSync(h)
+    await screen.findByTestId('sync-connected')
+    const row = screen.getByTestId('sync-realtime')
+    expect(row).toHaveTextContent('实时同步')
+    expect(row).toHaveTextContent('实验性')
+    expect(row).toHaveTextContent('每隔几秒检查一次服务器')
+    const realtime = () => screen.getByTestId('sync-realtime-switch')
+    const clip = () => screen.getByTestId('sync-realtime-clipboard-switch')
+    expect(realtime()).toBeEnabled()
+    expect(realtime()).not.toBeChecked()
+    // 实时同步关着：子选项禁用并说明依赖
+    expect(clip()).toBeDisabled()
+    expect(screen.getByTestId('sync-realtime-clipboard')).toHaveTextContent(
+      '需要先打开「实时同步」',
+    )
+
+    await userEvent.click(realtime())
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
+    expect(h.callsOf('settings_patch')[0]?.patch).toEqual({ sync: { realtime: true } })
+    expect(realtime()).toBeChecked()
+    expect(clip()).toBeEnabled()
+    expect(clip()).not.toBeChecked()
+    expect(screen.getByTestId('sync-realtime-clipboard')).toHaveTextContent('1 分钟内')
+
+    await userEvent.click(clip())
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(2))
+    expect(h.callsOf('settings_patch')[1]?.patch).toEqual({ sync: { realtime_clipboard: true } })
+    expect(clip()).toBeChecked()
+    expect(useSettingsStore.getState().notice).toBeNull()
+  })
+
+  it('实时同步的状态行跟随 sync:status；关着时不显示', async () => {
+    const h = installHarness(
+      snapshot(
+        {
+          sync: syncSettings({
+            enabled: true,
+            server_url: URL_NUTSTORE,
+            username: ACCOUNT,
+            realtime: true,
+          }),
+        },
+        { sync: { ...idle, last_ok_ms: Date.now(), device_count: 2, realtime: 'running' } },
+      ),
+    )
+    renderSync(h)
+    await screen.findByTestId('sync-connected')
+    const row = () => screen.getByTestId('sync-realtime')
+    expect(row()).toHaveTextContent('正在实时同步')
+    const states: Array<[SyncStatus['realtime'], string]> = [
+      ['paused', '离开电脑、锁屏或省电模式时暂停'],
+      ['slowed', '已放慢'],
+      ['unsupported', '这个服务器不支持实时检查'],
+      ['off', '下一次同步成功后开始'],
+    ]
+    for (const [realtime, text] of states) {
+      act(() => h.emit('sync:status', { ...idle, last_ok_ms: Date.now(), realtime }))
+      // oxlint-disable-next-line no-await-in-loop -- 有意串行：逐个推送状态，每次等界面跟上
+      await waitFor(() => expect(row()).toHaveTextContent(text))
+    }
+    expect(row().querySelector('[data-tone="warning"]')).toBeNull()
+    act(() => h.emit('sync:status', { ...idle, last_ok_ms: Date.now(), realtime: 'unsupported' }))
+    await waitFor(() =>
+      expect(row().querySelector('.ui-fieldrow-message')).toHaveAttribute('data-tone', 'warning'),
+    )
+
+    // 关掉实时同步：状态行收起
+    await userEvent.click(screen.getByTestId('sync-realtime-switch'))
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
+    expect(row().querySelector('.ui-fieldrow-message')).toBeNull()
+  })
+
+  it('自动同步关闭、或剪贴板与识别历史都不同步时，实时同步与子选项禁用并显示为关', async () => {
+    const h = installHarness(
+      snapshot(
+        {
+          sync: syncSettings({
+            enabled: true,
+            server_url: URL_NUTSTORE,
+            username: ACCOUNT,
+            realtime: true,
+            realtime_clipboard: true,
+          }),
+        },
+        { sync: { ...idle, last_ok_ms: Date.now(), device_count: 2, realtime: 'running' } },
+      ),
+    )
+    renderSync(h)
+    await screen.findByTestId('sync-connected')
+    const realtime = () => screen.getByTestId('sync-realtime-switch')
+    const clip = () => screen.getByTestId('sync-realtime-clipboard-switch')
+    expect(realtime()).toBeChecked()
+    expect(clip()).toBeChecked()
+
+    await userEvent.click(screen.getByTestId('sync-auto-switch'))
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(1))
+    expect(realtime()).toBeDisabled()
+    expect(realtime()).not.toBeChecked()
+    expect(clip()).toBeDisabled()
+    expect(clip()).not.toBeChecked()
+    expect(screen.getByTestId('sync-realtime')).toHaveTextContent('需要先打开「自动同步」')
+    expect(screen.queryByTestId('sync-realtime-quota')).toBeNull()
+    // 用户的选择保留在设置里，条件满足后恢复
+    await userEvent.click(screen.getByTestId('sync-auto-switch'))
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(2))
+    expect(realtime()).toBeChecked()
+
+    // 只同步识别历史：实时同步可用，写入剪贴板的子选项不可用
+    await userEvent.click(screen.getByTestId('sync-content-clipboard-switch'))
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(3))
+    expect(realtime()).toBeEnabled()
+    expect(clip()).toBeDisabled()
+    expect(screen.getByTestId('sync-realtime-clipboard')).toHaveTextContent('需要同步剪贴板历史')
+    await userEvent.click(screen.getByTestId('sync-content-ocr_history-switch'))
+    await waitFor(() => expect(h.callsOf('settings_patch')).toHaveLength(4))
+    expect(realtime()).toBeDisabled()
+    expect(screen.getByTestId('sync-realtime')).toHaveTextContent('需要同步剪贴板历史或识别历史')
+    // 每一次都只写自己那一项
+    expect(h.callsOf('settings_patch').map((c) => c.patch)).toEqual([
+      { sync: { auto: false } },
+      { sync: { auto: true } },
+      { sync: { content: { clipboard: false } } },
+      { sync: { content: { ocr_history: false } } },
+    ])
+  })
+
+  it('坚果云多一行额度说明（其他服务没有）', async () => {
+    renderSync(installHarness(connectedSnapshot()))
+    await screen.findByTestId('sync-connected')
+    expect(screen.getByTestId('sync-realtime-quota')).toHaveTextContent(
+      '坚果云按账号限制请求次数，额度与同一账号下的其他应用共享',
+    )
+  })
+
+  it('其他服务没有坚果云的额度说明；英文文案齐全', async () => {
+    setAppearance({ ...appearance, os: 'macos', uiLanguage: 'en-US' })
+    renderSync(
+      installHarness(
+        snapshot(
+          {
+            sync: syncSettings({
+              enabled: true,
+              server_url: 'https://webdav.123pan.cn/webdav',
+              username: ACCOUNT,
+            }),
+          },
+          { sync: { ...idle, last_ok_ms: Date.now(), device_count: 2 } },
+        ),
+      ),
+    )
+    await screen.findByTestId('sync-connected')
+    expect(screen.queryByTestId('sync-realtime-quota')).toBeNull()
+    expect(screen.getByTestId('sync-realtime')).toHaveTextContent('Real-time sync')
+    expect(screen.getByTestId('sync-realtime')).toHaveTextContent('Experimental')
+    expect(screen.getByTestId('sync-realtime-clipboard')).toHaveTextContent(
+      'Turn on “Real-time sync” first',
+    )
+    for (const state of ['off', 'running', 'paused', 'slowed', 'unsupported'] as const) {
+      expect(tKey(`settings.sync.realtime.state.${state}`), state).toBeTruthy()
+    }
   })
 
   it('设备：本机在前并标「本机」，其余显示系统与最近同步时间', async () => {

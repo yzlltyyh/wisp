@@ -927,6 +927,25 @@
       "label": "Sync automatically",
       "desc": "Uploads your changes as you make them and picks up changes from your other devices while you use Wisp"
     },
+    "realtime": {
+      "label": "Real-time sync",
+      "badge": "Experimental",
+      "desc": "New copies from your other devices show up here within seconds. While you’re using this computer, Wisp checks the server every few seconds, which adds network requests and battery use. It pauses while you’re away, the screen is locked, or power saving is on.",
+      "needs_auto": "Turn on “Sync automatically” first",
+      "needs_content": "Needs clipboard history or recognition history",
+      "state": {
+        "off": "Starts after the next successful sync",
+        "running": "Syncing in real time",
+        "paused": "Paused while you’re away, the screen is locked, or power saving is on",
+        "slowed": "Slowed down: the server is limiting requests or is busy",
+        "unsupported": "This server doesn’t support real-time checks. Wisp keeps syncing automatically as before."
+      },
+      "jianguoyun": "{name} limits requests per account, shared with other apps on the same account. The more devices you have, the less often Wisp checks.",
+      "clipboard": "Put the latest copy from another device on this clipboard",
+      "clipboard_desc": "A copy made on another device in the last minute, newer than anything copied here, replaces this computer’s clipboard so you can paste it right away. Verification codes are left out, and nothing is replaced right after you copy or while you paste here.",
+      "clipboard_needs_realtime": "Turn on “Real-time sync” first",
+      "clipboard_needs_history": "Needs clipboard history"
+    },
     "content": {
       "title": "What to sync",
       "settings": "Settings and model services",
