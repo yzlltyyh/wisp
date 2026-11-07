@@ -25,6 +25,7 @@ import { MotionRoot } from '../shared/motion/MotionRoot'
 import { presets } from '../shared/motion/presets'
 import { useReducedMotionPref } from '../shared/motion/useReducedMotionPref'
 import { IconButton } from '../shared/ui'
+import { pinnedReading } from '../panel/reading'
 import type { PanelPhase, ViewHost } from '../panel/types'
 import { OcrView } from '../views/ocr'
 import { TranslateView } from '../views/translate'
@@ -248,6 +249,15 @@ function PinnedWindow({ pinnedId, state }: { pinnedId: string; state: PinState }
   // 浮起：首帧停在起点（与窗口出现的那一帧一致），交接之后动画到 0；减少动效时不位移（阴影层照常淡入）
   const liftFrom = reduced ? 0 : presets.pinLift.y[0]
   const payload = useMemo(() => payloadOf(state), [state])
+  // 窗口够宽时自动用阅读版式（从展开阅读的面板固定出来的窗口就是阅读尺寸）：翻译开着原文时两栏，OCR 按截图选并排 / 堆叠。
+  // 展开过渡期间按卡片的目标宽度判断（首帧按它测量）
+  const reading =
+    state.kind === 'translate' || state.kind === 'ocr'
+      ? pinnedReading(state.kind, expandWidth ?? cardWidth, {
+          showSource: true,
+          shot: state.image_size,
+        })
+      : null
   const viewProps = {
     sessionId: 0,
     phase,
@@ -256,6 +266,7 @@ function PinnedWindow({ pinnedId, state }: { pinnedId: string; state: PinState }
     frame: boot.frame_mode,
     placement: 'center' as const,
     maxHeight,
+    reading,
     requestHide: closeWindow,
     switchView: () => undefined,
     activate: () => undefined,
