@@ -324,8 +324,9 @@ fn view_width(view: PanelView, payload: &PanelPayload, s: &wisp_types::Settings)
 }
 
 /// 面板放置的输入：视图宽度与初始高度之外，按载荷估计内容高度（只用来选放在哪一侧，见 [`PlaceOpts::expected`]），
-/// OCR 的宽度随框选。`real_rect`：锚点是真实的选区 / 框选矩形（锚点所在显示器断开、退回光标锚点时为 false），只有
-/// 这时才允许侧放、OCR 才随框选变宽。未就绪与长文本确认的视图很矮，预计高度就是初始高度
+/// OCR 的宽度随框选。`real_rect`：锚点是真实的选区 / 框选矩形（锚点所在显示器断开、退回光标锚点，或者锚点只是一个点时
+/// 为 false，见 [`located_rect_anchor`]），只有这时才允许侧放、OCR 才随框选变宽。未就绪与长文本确认的视图很矮，预计高度
+/// 就是初始高度
 fn place_opts(
     payload: &PanelPayload,
     anchor: PlaceAnchor,
@@ -360,6 +361,15 @@ fn place_opts(
         _ => {}
     }
     opts
+}
+
+/// 选区 / 框选锚点所在的屏幕与放置锚点（显示器已经断开时 None，由调用方退回光标锚点），以及它是不是真实的矩形。
+/// 面积为零的锚点只是一个点——Linux X11 拿不到选区的边界，取词锚点是松开鼠标时的指针位置（0×0）：卡片仍以它为锚点放在
+/// 下方，但不算真实矩形。侧放的卡片顶边会上移到锚点上方，拖选时指针经过的那几行原文就被盖住了
+fn located_rect_anchor(a: &Anchor, screens: &[Screen]) -> Option<(Screen, PlaceAnchor, bool)> {
+    let screen = screens.iter().find(|s| s.id == a.monitor_id)?;
+    let real = a.rect.width > 0.0 && a.rect.height > 0.0;
+    Some((screen.clone(), PlaceAnchor::Rect(a.rect), real))
 }
 
 /// toast 的几何。连续粘贴的进度（`queue` 有值）放在 `corner`（光标所在屏，取不到时主屏）的 [`native::NOTICE_CORNER`]，
@@ -624,11 +634,10 @@ impl WindowManager {
     fn resolve_anchor(&self, anchor: &AnchorSource, screens: &[Screen]) -> Option<(Screen, PlaceAnchor, bool)> {
         let fallback = |located: Option<(Screen, PlaceAnchor)>| located.map(|(s, a)| (s, a, false));
         match anchor {
-            AnchorSource::Selection(a) | AnchorSource::Rect(a) => match screens.iter().find(|s| s.id == a.monitor_id) {
-                Some(s) => Some((s.clone(), PlaceAnchor::Rect(a.rect), true)),
-                // 锚点所在显示器已经断开（取词与显示之间拔掉了外接屏）：按锚点的优先级退回光标锚点
-                None => fallback(self.cursor_anchor(screens)),
-            },
+            // 锚点所在显示器已经断开（取词与显示之间拔掉了外接屏）：按锚点的优先级退回光标锚点
+            AnchorSource::Selection(a) | AnchorSource::Rect(a) => {
+                located_rect_anchor(a, screens).or_else(|| fallback(self.cursor_anchor(screens)))
+            }
             AnchorSource::Cursor => fallback(self.cursor_anchor(screens)),
             AnchorSource::Center => self
                 .cursor_screen(screens)
@@ -1826,5 +1835,76 @@ mod tests {
         let plain = toast_geometry(&toast_payload(None), Some(s.clone()), Some(at), 0.6).expect("plain");
         assert_eq!((plain.x, plain.edge_y), (600.0, 300.0));
         assert_eq!(plain.max_height, placement::height_cap(&s, 0.6));
+    }
+
+    /// 1920×1080、底部面板 44 的单屏（Linux 桌面的常见布局）
+    fn linux_screen() -> Screen {
+        Screen {
+            id: "x11:0".to_owned(),
+            frame: Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            work: Rect::new(0.0, 0.0, 1920.0, 1036.0),
+            scale: 1.0,
+            physical_origin: wisp_types::PhysPoint { x: 0, y: 0 },
+            primary: true,
+        }
+    }
+
+    /// 面积为零的选区锚点只是一个点（Linux X11 拿不到选区的边界，取词锚点是松开鼠标时的指针位置），不算真实矩形：
+    /// 长译文不侧放——侧放的卡片会上移，盖住指针上方选中的原文。有面积的选区 / 框选照旧
+    #[test]
+    fn a_point_selection_anchor_is_not_a_real_rect() {
+        let s = linux_screen();
+        let screens = [s.clone()];
+        let at = |rect: Rect| Anchor {
+            monitor_id: s.id.clone(),
+            rect,
+        };
+        let point = Rect::new(700.0, 500.0, 0.0, 0.0);
+        let (screen, anchor, real) = located_rect_anchor(&at(point), &screens).expect("located");
+        assert_eq!(screen.id, s.id);
+        assert_eq!(anchor, PlaceAnchor::Rect(point), "卡片仍以这个点为锚点");
+        assert!(!real);
+        for rect in [
+            Rect::new(700.0, 500.0, 0.0, 18.0),
+            Rect::new(700.0, 500.0, 120.0, 0.0),
+            Rect::new(700.0, 500.0, f64::NAN, 18.0),
+        ] {
+            assert!(
+                !located_rect_anchor(&at(rect), &screens).expect("located").2,
+                "{rect:?}"
+            );
+        }
+        let selection = Rect::new(400.0, 440.0, 300.0, 60.0);
+        assert!(located_rect_anchor(&at(selection), &screens).expect("located").2);
+        // 锚点所在的显示器已经断开：交给调用方退回光标锚点
+        let gone = Anchor {
+            monitor_id: "gone".to_owned(),
+            rect: selection,
+        };
+        assert!(located_rect_anchor(&gone, &screens).is_none());
+
+        // 比例 0.8，约 600 字的中文译成英文，在 (700, 500) 松开鼠标：预计高度到上限、上下都放不下，右侧多出 300 多 px。
+        // 当成真实矩形时卡片会放到 x = 712、顶边上移到 200
+        let mut settings = wisp_types::Settings::default();
+        settings.appearance.max_height_ratio = 0.8;
+        let mut payload = translate(&"这是一段用来测试长译文放在哪里的中文句子，".repeat(30), false);
+        if let PanelPayload::Translate(t) = &mut payload {
+            t.target_lang = Lang::En;
+        }
+        let cap = placement::height_cap(&s, f64::from(settings.appearance.max_height_ratio));
+        let width = view_width(PanelView::Translate, &payload, &settings);
+        let opts = place_opts(&payload, anchor, real, &settings, width, initial_height::TRANSLATE, cap);
+        assert!(opts.expected >= cap, "{opts:?}");
+        assert!(!opts.side_ok);
+        let g = placement::place_panel_with(&s, anchor, opts);
+        assert!(
+            g.x <= point.x && point.x <= g.x + g.width,
+            "卡片仍在指针所在的一列：{g:?}"
+        );
+        let side = placement::place_panel_with(&s, anchor, PlaceOpts { side_ok: true, ..opts });
+        assert!(
+            side.x > point.x,
+            "同一个点当成真实矩形会侧放（这条用例防的就是它）：{side:?}"
+        );
     }
 }
