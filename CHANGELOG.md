@@ -4,6 +4,57 @@
 
 Each version ends with an English summary.
 
+## 0.3.0（2026-11-07）
+
+### 新功能
+
+- 实时同步（实验性，默认关闭）：在「设置 → 同步」的「自动同步」下面打开后，Wisp 在你使用电脑期间按活跃程度每隔几秒到二十几秒检查一次服务器，其他设备新复制的内容几秒内就出现在剪贴板历史里，不必先打开 Wisp；本机的复制约半秒后上传。剪贴板面板开着、刚用过悬浮剪贴板或刚收到其他设备的改动时检查得最快（约 2 秒一次），用电池时放慢；离开电脑、锁屏、睡眠或开启省电模式时完全不联网，回来时马上检查一次。没有变化的检查只是一个很小的请求，不写本机数据库。开关下方的状态行显示正在实时同步、已暂停、已放慢（服务器限制了请求频率或暂时繁忙），或者这个服务器不支持（一些代理型、网盘型 WebDAV 服务，这时仍按「自动同步」的方式同步）。坚果云按账号限制请求次数、额度与同一账号下的其他应用共享，Wisp 只用其中约三成，并随设备数放慢，设置页里会写明。关掉实时同步后，同步与以前完全一样，不在后台定时联网。
+- 实时同步的子选项「把其他设备最新的复制直接放进本机剪贴板」（默认关闭）：其他设备 1 分钟内复制、比本机最近的复制更新的内容直接替换本机剪贴板，可以马上粘贴。验证码与过长被截断的文本不放入；本机 10 秒内复制或粘贴过、正在粘贴或连续粘贴、暂停了剪贴板记录时不替换，你在那一刻恰好复制的内容总是保留；替换不会在历史里多出一条，也不会传回其他设备。只在实时同步真正运行时生效。
+- 展开阅读：翻译与 OCR 面板头部新增展开按钮，也可以按 ⌘⇧E（Windows / Linux：Ctrl+Shift+E）。面板在原处变宽：翻译左右两栏显示原文与译文，两栏同步滚动，方便逐句核对；OCR 把完整的截图放在识别文字旁边（较高的截图）或上方（一两行的横条，按框选时的大小显示），方便逐行对照。展开后可以直接用方向键、空格与翻页键滚动，Esc 先收起、再按一次才关闭；从输入框提交的翻译同样可以展开。
+- 在展开阅读里按 ⌘P 固定，得到同样大小、继续两栏的固定窗口；固定窗口拉宽到约 680 px 以上时，翻译（开着原文对照时）与 OCR 也自动改用这种版式。原来翻译底栏的「展开」大窗移进了「⋯」菜单，叫「在大窗中打开」。
+- 长结果放到空间更大的一侧：预计较长的译文与识别结果在选区下方放不下、而上方明显更宽敞时，面板改放在选区上方；上下都放不下时放在选区或框选旁边，不盖住原文。短内容的位置与以前相同。
+- OCR 面板的宽度随框选变化（440–600 px，正文字号越大越宽），宽的截图识别出来每行不再折行。
+- 连续粘贴新增「退回一条」与「跳过一条」：粘偏了时退回，下一次按粘贴键重新粘贴上一条；不想要的那一条可以跳过，跳过最后一条即结束。悬浮剪贴板头部有「退回一条」按钮（不抢焦点），⌘K 与「⋯」菜单里两项都有。
+- 连续粘贴明显没粘上时留住这一条：Windows 上焦点在对话框按钮、激活的菜单栏、资源管理器的文件列表或桌面，macOS 上焦点在访达的文件列表或桌面时，这一条留到下一次粘贴，并提示「没检测到输入框」。在 Wisp 自己的窗口里（例如悬浮剪贴板的搜索框）按粘贴键是普通粘贴，不再算用掉一条。在网页里点到正文等情形判断不了，粘偏时用「退回一条」。
+- 连续粘贴自动换用目标应用的粘贴键：在 Linux 的 GNOME Terminal、kitty 等终端里按 Ctrl+V，会替你改按 Ctrl+Shift+V；换不了的（例如 xterm 与 Windows 上的 mintty 用 Shift+Insert）这一条留住，提示会写出这个应用的粘贴键。
+- 连续粘贴的进度提示移到屏幕右上角（Windows 是右下角），不再挡住刚粘贴的地方，也不接收点击，鼠标可以直接点到它下面；第一条之后只显示一行，约 1.6 秒后消失。
+- 识别出的电话、邮箱、链接、验证码等改到选中条目的右侧显示：鼠标横着移过去就能点，不用再穿过别的行；最多显示两个，更多时点「+N」打开「提取」。⌘E 展开显示全部，有两个以上时按数字 1–9 直接粘贴第几个。芯片刚好出现在静止的鼠标下时，单击仍是粘贴整条，稍微动一下再点才是芯片。
+- 剪贴板的空格预览更顺手：输入搜索词之后，用 ↑↓ 或鼠标移到条目上，按空格就能预览全文或大图，继续打字又回到输入；⇧空格任何时候都能预览，macOS 上也可以按 ⌘Y。
+- 菜单里带「›」的项（剪贴板的「粘贴为」「提取」、OCR 的「识别模型」）把鼠标停在上面片刻就进入下一页；刚这样进入时原地单击不会生效，避免误选刚换上来的项。
+
+### 修复
+
+- 放不下的菜单（例如模型很多时的 OCR 模型下拉与「识别模型」页）可以正常滚动，不再弹回顶部；重新打开时勾选的项在可视范围里；换页时不再闪出滚动条。
+- 菜单开着时，点菜单外面只关闭菜单，不会同时粘贴下面那一行或点到别的控件（要打开另一个菜单时再点一次）。
+- 剪贴板操作菜单里的「粘贴为」「提取」始终针对打开菜单的那一条：菜单开着时鼠标移到列表上、或者改了识别设置，子页不再变空或跳回。
+- 单击「›」进入子页后，方向键照常可以在菜单里移动。
+- 连续粘贴期间又复制了别的内容时，下一次按粘贴键仍然粘贴队列里的那一条，不会粘出刚复制的内容。
+- 在剪贴板搜索框里只输入或删掉空格时，选中的条目不再跳回第一条。
+- 长译文获得键盘焦点时，焦点框的上下两边不再被边缘的渐隐淡掉。
+
+### English summary
+
+- Real-time sync (experimental, off by default): turn it on under Sync automatically in Settings → Sync, and while you're using the computer Wisp checks the server every few seconds to every 20 or so seconds depending on how active you are, so new copies from your other devices appear in the clipboard history within seconds without opening Wisp first; copies made here go up in about half a second. It checks fastest (about every 2 seconds) while the clipboard panel is open, right after you use the floating clipboard, or right after changes arrive, and slows down on battery; it doesn't go online at all while you're away, the screen is locked, the computer sleeps, or power saving is on, and checks right away when you come back. A check that finds nothing is one small request and doesn't write the local database. A status line under the switch shows whether it's running, paused, slowed down (the server is limiting requests or busy), or not supported by the server (some proxy-style or cloud-drive WebDAV services, which keep syncing automatically as before). Nutstore limits requests per account, shared with other apps on the same account; Wisp uses only about a third of that and checks less often the more devices you have, as the settings page explains. With real-time sync off, sync works exactly as before and never goes online on a timer.
+- Real-time sync has an option to put the latest copy from another device on this clipboard (off by default): a copy made on another device in the last minute that is newer than anything copied here replaces this computer's clipboard, so you can paste it right away. Verification codes and texts cut short for being too long are left out; nothing is replaced within 10 seconds of copying or pasting here, during a paste or a paste in sequence, or while clipboard recording is paused, and something you copy at that very moment is always kept. The history doesn't gain a duplicate and nothing is sent back to your other devices. The option only takes effect while real-time sync is actually running.
+- Reading view: the translation and OCR panels have a new expand button in the header, or press ⌘⇧E (Ctrl+Shift+E on Windows and Linux). The panel widens in place: translations show the source and translation side by side in two columns that scroll together, and OCR results put the whole screenshot next to the recognized text (tall captures) or above it at the size you captured it (one- or two-line strips), so you can check it line by line. Arrow keys, Space, and Page Up / Page Down scroll right away; Esc collapses the view first and closes the panel on a second press. Translations typed into the input box can be expanded too.
+- Pinning from the reading view with ⌘P gives a pinned window of the same size that keeps the columns, and pinned windows wider than about 680 px switch to this layout automatically (for translations, when the source is shown). The translation footer's expand-to-a-larger-window button has moved into the ⋯ menu as Open in a larger window.
+- Long results go where there is room: when a long translation or OCR result won't fit below the selection and there is clearly more room above, the panel opens above it; when neither fits, it opens beside the selection or capture without covering it. Short results open exactly where they used to.
+- The OCR panel's width now follows the region you capture (440–600 px, wider with a larger text size), so lines from wide captures no longer wrap.
+- Paste in sequence gains Back one item and Skip one item: step back when an item lands in the wrong place, so the next paste key pastes it again, or skip one you don't want (skipping the last item ends the sequence). The floating clipboard header has a Back one item button that doesn't take focus, and both actions are in the ⌘K and ⋯ menus.
+- When a paste in sequence clearly misses, the item waits for your next paste instead of being used up: on Windows when the focus is on a dialog button, an active menu bar, or a File Explorer file list or the desktop, and on macOS when it is on a Finder file list or the desktop; the notice says no text field was found. Pressing the paste key inside Wisp's own windows (such as the floating clipboard's search box) now pastes normally without using up an item. Clicking a web page's body text instead of a text field can't be detected, so use Back one item when that happens.
+- Paste in sequence switches to the front app's own paste key: pressing Ctrl+V in Linux terminals such as GNOME Terminal and kitty sends Ctrl+Shift+V for you. Where that isn't possible (xterm, and mintty on Windows, which use Shift+Insert), the item waits and the notice names that app's paste key.
+- Paste-in-sequence progress now appears in the top-right corner of the screen (bottom-right on Windows), out of the way of what you just pasted, and lets clicks through to whatever is underneath; after the first item it shows a single line that fades after about 1.6 seconds.
+- Detected phone numbers, email addresses, links, verification codes, and more now appear to the right of the selected item, so you can move straight across to click one without crossing other rows. Up to two are shown, with +N opening Extract. ⌘E expands them all, and with two or more you can press 1–9 to paste one directly. If a chip appears right under a resting pointer, a click still pastes the whole item; move slightly and click to paste the chip.
+- Space preview in the clipboard is easier to reach: after typing a search, move to an item with ↑↓ or the pointer and press Space to preview the full text or image; keep typing to return to the search. ⇧Space always previews, and ⌘Y also works on macOS.
+- Menu items with a › (Paste as and Extract in the clipboard, Recognition model in OCR) open their page when you rest the pointer on them for a moment; right after that, a click in place is ignored so you don't pick an item that just appeared under the pointer.
+- Menus that don't fit (such as the OCR model list when you have many models) scroll normally instead of jumping back to the top, show the checked item when reopened, and no longer flash scrollbars when switching pages.
+- With a menu open, clicking outside it only closes the menu; it no longer also pastes the row underneath or clicks another control (click again to open another menu).
+- Paste as and Extract in the clipboard's action menu always act on the item the menu was opened for; moving the pointer over the list or changing detection settings while the menu is open no longer empties or resets the page.
+- After clicking a › item to open its page, the arrow keys keep working in the menu.
+- If you copy something else during a paste in sequence, the next paste key still pastes the queued item rather than what you just copied.
+- Typing or deleting only spaces in the clipboard search box no longer moves the selection back to the first item.
+- When a long translation has keyboard focus, the top and bottom edges of its focus ring are no longer faded out.
+
 ## 0.2.0（2026-10-18）
 
 ### 新功能
