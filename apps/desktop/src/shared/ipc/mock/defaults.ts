@@ -29,6 +29,7 @@ import type {
 import type { MockAssets } from './assets'
 import type { MockBus } from './bus'
 import type { MockDesktop } from './desktop'
+import { ocrPanelWidth } from './geometry'
 import { HOTKEY_ACTIONS, SAMPLE, type MockFixtures } from './fixtures'
 import {
   createOfflineState,
@@ -243,11 +244,12 @@ export function installDefaults(d: DefaultsDeps): void {
   // Windows 用真实形状的 MonitorId（含反斜杠），覆盖「id 不能原样进资源路径」这条约束
   r.handle('overlay_init', () => overlayInit(d, d.boot.os === 'windows' ? '\\\\.\\DISPLAY1' : '1'))
   r.handle('overlay_ready', () => undefined)
+  // 面板卡片的落点：宽度随框选（与 Rust 的 panel_prepare 同一规则），放在框选下方
   r.handle('overlay_commit', ({ commit }) => ({
     fly_to: {
       x: commit.rect.x,
       y: Math.min(commit.rect.y + commit.rect.height + 12, innerHeight - 220),
-      width: 440,
+      width: ocrPanelWidth(commit.rect.width, state.settings.appearance.font_size),
       height: 220,
     },
   }))

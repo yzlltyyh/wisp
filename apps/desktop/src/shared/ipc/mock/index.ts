@@ -15,6 +15,7 @@ import { MockBus } from './bus'
 import { createState, installDefaults, type MockState } from './defaults'
 import { mountDesktop } from './desktop'
 import { createFixtures, SAMPLE, type MockFixtures } from './fixtures'
+import { OCR_WIDTH } from './geometry'
 import { mountHud } from './hud'
 import { MockRouter } from './router'
 import { errorStream, MockStreams, streamRate, textStream } from './streams'
@@ -253,8 +254,9 @@ const CJK = /[぀-ヿ㐀-鿿가-힯＀-￯]/
 /** 面板宽度规则（mock 近似 Rust 的取值） */
 function viewWidth(view: PanelView, payload: PanelPayload, settings: Settings): number {
   switch (view) {
+    // 框选锚点的 OCR 随框选变宽（geometry.ts 的 ocrPanelWidth，在 overlay_commit 里按框选算）；这里没有框选，取默认宽度
     case 'ocr':
-      return 440
+      return OCR_WIDTH
     case 'input':
       return 420
     case 'clipboard':

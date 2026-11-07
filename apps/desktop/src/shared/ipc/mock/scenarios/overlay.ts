@@ -11,6 +11,7 @@
  */
 /* oxlint-disable no-await-in-loop -- 逐帧驱动指针（每帧一个事件）必须串行 */
 import type { OverlayCommitAck, OverlayInit, Rect } from '../../types'
+import { ocrPanelWidth } from '../geometry'
 import type { MockContext, Scenario } from '../types'
 
 /** 合成桌面上的窗口（逻辑坐标，按 z 序，最上层在前），随视口按比例摆放 */
@@ -280,7 +281,8 @@ function rig(ctx: MockContext, opts: RigOptions = {}): OverlayRig {
   ctx.handle('overlay_commit', ({ commit }): OverlayCommitAck => {
     ctx.log('overlay_commit', commit.kind, commit.rect)
     const r = commit.rect
-    const pwid = 440
+    // 宽度随框选（Rust 的 panel_prepare 同一规则）
+    const pwid = ocrPanelWidth(r.width, ctx.boot.font_size)
     const below = r.y + r.height + 8
     const to = {
       x: Math.min(Math.max(8, r.x), w - pwid - 8),
