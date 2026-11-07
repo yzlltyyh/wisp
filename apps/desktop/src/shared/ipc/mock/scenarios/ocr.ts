@@ -20,6 +20,7 @@ import type {
   Provider,
   StreamEvent,
 } from '../../types'
+import { OCR_WIDTH } from '../geometry'
 import type { MockContext, PrepareOptions, Scenario, StreamScript } from '../types'
 
 const OCR_TEXT = `性能预算
@@ -303,8 +304,9 @@ function scenario({ id, label, run, motion }: Spec): Scenario {
   }
 }
 
+/** 场景没有框选矩形（相当于光标锚点的 OCR），卡片取默认宽度；随框选变宽的规则见 `overlay_commit` */
 const show = (ctx: MockContext, payload: PanelPayload, options: PrepareOptions = {}) =>
-  ctx.preparePanel(payload, { width: 440, ...options })
+  ctx.preparePanel(payload, { width: OCR_WIDTH, ...options })
 
 /** 打开并等识别完成 */
 async function recognized(
