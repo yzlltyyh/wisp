@@ -47,7 +47,7 @@ use wisp_types::{FrameMode, Placement, Rect};
 use super::{CardSurface, ClickRegion, Fade, ShowAlpha, ShowOpts, ShowTicket, VerticalBound, WidthSwitch};
 use crate::error::IpcError;
 use crate::windows::panel::ShellEscape;
-use crate::windows::placement::DesktopUnit;
+use crate::windows::placement::{DesktopUnit, ScreenCorner};
 use crate::windows::sizing::{self, CubicBezier, PANEL_RADIUS, Spring, SpringParams};
 
 /// 桌面坐标单位：全局逻辑坐标（与 `MonitorInfo.frame` 一致）
@@ -79,6 +79,8 @@ pub const PANEL_RECYCLE_AFTER: Option<Duration> = Some(Duration::from_secs(45));
 pub const HAS_WINDOW_CENSUS: bool = true;
 /// 非激活面板从不激活应用，隐藏后键盘焦点自然回到原应用
 pub const RESTORE_FOCUS_ON_HIDE: bool = false;
+/// 连续粘贴的进度提示放在右上角（菜单栏下方），与系统通知的位置一致
+pub const NOTICE_CORNER: ScreenCorner = ScreenCorner::TopRight;
 /// Pinned 用系统窗口的圆角与阴影（`titleBarStyle: Overlay`），不透明，不需要 CSS 阴影边距
 pub fn pinned_css_shadow() -> bool {
     false
@@ -418,8 +420,9 @@ pub fn panel_show(
             ShowAlpha::Opaque => 1.0,
             ShowAlpha::Transparent | ShowAlpha::FadeIn(_) => 0.0,
         });
-        // ready 超时后的 alpha 0 显示：用户看不到它，也不能让它吞掉点击（迟到的 ready 在 panel_reveal 里恢复）
-        ns.setIgnoresMouseEvents(opts.alpha == ShowAlpha::Transparent);
+        // ready 超时后的 alpha 0 显示：用户看不到它，也不能让它吞掉点击（迟到的 ready 在 panel_reveal 里恢复）；
+        // 连续粘贴的进度提示整窗穿透（其余显示路径都显式设回 false，不会带进别的视图）
+        ns.setIgnoresMouseEvents(opts.alpha == ShowAlpha::Transparent || opts.passive);
         ns.orderFrontRegardless();
         if opts.key {
             make_key_next_turn(ns, ticket.clone());
@@ -450,12 +453,14 @@ fn make_key_next_turn(ns: &NSWindow, ticket: ShowTicket) {
     unsafe { NSRunLoop::mainRunLoop().performBlock(&block) };
 }
 
-/// 已经在屏幕上（alpha 0，ready 超时后）的面板改到 `rect` 并淡入；票已作废（期间开始了隐藏）时什么都不做
+/// 已经在屏幕上（alpha 0，ready 超时后）的面板改到 `rect` 并淡入（`passive` 时保持整窗穿透，见 `ShowOpts::passive`）；
+/// 票已作废（期间开始了隐藏）时什么都不做
 pub fn panel_reveal(
     window: &tauri::WebviewWindow,
     rect: Rect,
     fade: Option<Fade>,
     key: bool,
+    passive: bool,
     ticket: &ShowTicket,
 ) -> Result<(), IpcError> {
     let ticket = ticket.clone();
@@ -468,7 +473,8 @@ pub fn panel_reveal(
         driver.reset_content(ns);
         ns.setFrame_display(to_cocoa(rect, mtm), true);
         ns.invalidateShadow();
-        ns.setIgnoresMouseEvents(false);
+        // ready 超时后的透明显示一直穿透；淡入后恢复接收鼠标，连续粘贴的进度提示（`passive`）保持穿透
+        ns.setIgnoresMouseEvents(passive);
         if key {
             ns.makeKeyWindow();
         }

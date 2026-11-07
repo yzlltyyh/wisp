@@ -7,7 +7,7 @@
 //!   （`MonitorInfo.frame` 在这两个平台上只用于排序与命中判断），所以按「显示器物理原点 + 本屏逻辑坐标 × 本屏缩放」换算，
 //!   窗口落在哪块屏上就按哪块屏的缩放比摆放，不会在跨 DPI 的屏幕上偏移或变形。
 
-use wisp_types::{MonitorId, MonitorInfo, PhysPoint, Placement, Point, Rect};
+use wisp_types::{Lang, MonitorId, MonitorInfo, PhysPoint, Placement, Point, Rect, TaskKind};
 
 /// 面板与锚点的间距（锚点下方 12 px）
 pub const ANCHOR_GAP: f64 = 12.0;
@@ -19,9 +19,23 @@ pub const CURSOR_HEIGHT: f64 = 16.0;
 pub const PREFER_BELOW_MIN: f64 = 240.0;
 /// 卡片最小高度（逻辑 px）：前端测量异常（0）时不把窗口缩成一条线
 pub const MIN_CARD_HEIGHT: f64 = 32.0;
+/// 长内容换到上方或侧面至少要多出这么高（约 4 行正文）：只多一两行时不值得让卡片离开最常见的「选区下方」
+pub const SIDE_GAIN_MIN: f64 = 96.0;
 
-/// OCR 视图宽度
+/// 角落提示离工作区边缘的距离
+pub const CORNER_INSET: f64 = 16.0;
+/// 角落提示（连续粘贴的进度）的卡片高度上限：标题一行 + 说明至多三行（toast.css：上下各 10、标题 18、间距 2、说明每行
+/// 16）。Css 帧模式 Above 放置的窗口恒为上限高，按普通会话的上限（工作区 × 比例）会在屏幕角落生成一个几百 px 高的透明窗口
+pub const NOTICE_MAX_HEIGHT: f64 = 88.0;
+
+/// OCR 视图宽度（框选较窄、光标锚点与未就绪时的宽度）
 pub const OCR_WIDTH: f64 = 440.0;
+/// OCR 视图随框选变宽的上限（内容宽 568 ≈ 80 个拉丁字符 / 40 个汉字一行，再宽就难读了）
+pub const OCR_MAX_WIDTH: f64 = 600.0;
+/// 默认正文字号（`--text-body`）：框选里的屏幕文字按这个字号近似，正文字号调大时卡片相应变宽
+const BODY_FONT: f64 = 14.0;
+/// 卡片左右内边距之和（`--pad-panel-x` 16 × 2）
+const CONTENT_INSET: f64 = 32.0;
 /// 输入视图宽度
 pub const INPUT_WIDTH: f64 = 420.0;
 /// toast 视图宽度下限（内容宽度，夹在 220–360）
@@ -250,6 +264,173 @@ pub fn translate_width(source_text: &str, min: f64, max: f64, dict_mode: bool) -
     (min + (max - min) * t).round()
 }
 
+/// OCR 视图宽度随框选：`clamp(round(框选宽 × 字号 / 14 + 32), 440, 600)`。逐行模式要与原图逐行对照，框选比 408 px
+/// 宽时 440 的卡片会把每一行折成两行；框选里的屏幕文字按默认正文字号近似，正文字号调大时同样的一行需要更宽的卡片。
+/// 框选宽度不是有限正数时取 [`OCR_WIDTH`]。超过工作区时由 `place_panel` 照常夹回
+pub fn ocr_width(capture_width: f64, font_size: f64) -> f64 {
+    if !(capture_width.is_finite() && capture_width > 0.0) {
+        return OCR_WIDTH;
+    }
+    (capture_width * body_font(font_size) / BODY_FONT + CONTENT_INSET)
+        .round()
+        .clamp(OCR_WIDTH, OCR_MAX_WIDTH)
+}
+
+/// 设置里的正文字号（validate 已夹到 12–18）；非法值按默认 14
+fn body_font(font_size: f64) -> f64 {
+    if font_size.is_finite() && font_size > 0.0 {
+        font_size
+    } else {
+        BODY_FONT
+    }
+}
+
+/// 预计内容高度（只用来选放在哪一侧，见 [`PlaceOpts::expected`]）的版式常量。OCR 的头部 / 底栏 / 内边距直接用前端
+/// `views/ocr/model.ts` 的 `LAYOUT`（测试 `ocr_layout_matches_frontend` 读 model.ts 核对）
+pub mod expected_layout {
+    /// 正文行高 = 字号 × 1.6（`--lh-body`）
+    pub const LINE_HEIGHT: f64 = 1.6;
+    /// 卡片上下内边距（`--pad-panel-y` 12 × 2）
+    pub const CARD_PAD: f64 = 24.0;
+    /// 翻译视图除正文以外的高度：头部 34 + 底栏 38 + 卡片上下内边距 24
+    pub const TRANSLATE_CHROME: f64 = 96.0;
+    /// 原文对照一行的高度：UI 字号 13 px × 1.6
+    pub const SOURCE_LINE: f64 = 20.8;
+    /// 原文对照的框架（与正文之间的分隔与留白，translate.css 的 21 px）
+    pub const SOURCE_CHROME: f64 = 21.0;
+    /// 原文对照最多占视图高度的比例（translate.css：`--tv-max × 0.4 − 21px`）
+    pub const SOURCE_SHARE: f64 = 0.4;
+    /// 原文对照的字号（每个显示宽度单位约半个字号宽）
+    pub const SOURCE_FONT: f64 = 13.0;
+    /// 词典式结果的预计高度（释义、例句的卡片，与原文长度无关）
+    pub const DICT: f64 = 280.0;
+    /// 估计到这么高就停：远超任何会话上限，超长文本不必整篇扫描
+    pub const STOP: f64 = 2000.0;
+    /// 截图里一行文字的高度：屏幕常见正文 13–14 px × 行高 1.3–1.4
+    pub const CAPTURE_LINE: f64 = 18.0;
+
+    /// 前端 `views/ocr/model.ts` 的 `LAYOUT`（只取预计高度用到的几项）
+    pub mod ocr {
+        /// 头部缩略图的高度上限
+        pub const THUMB: f64 = 72.0;
+        /// 头部除缩略图外的高度
+        pub const HEAD_EXTRA: f64 = 12.0;
+        /// 直接翻译的语言条
+        pub const SUBHEAD: f64 = 40.0;
+        pub const FOOTER: f64 = 40.0;
+        /// 卡片上下内边距
+        pub const PAD: f64 = 24.0;
+    }
+}
+
+/// 译文显示宽度与原文之比。一个汉字译成英文约 3.5 个字母：中日韩原文译成拉丁文字时显示宽度单位（汉字计 2）约 ×1.8，
+/// 反过来约 ×0.6；同一种文字体系、目标语言不明（`other`）、润色 / 校对这类不换语言的任务为 1。原文的文字体系按开头
+/// 至多 400 个字符里宽字符与其他可见字符的显示宽度谁多来判断
+pub fn translation_ratio(source: &str, target: Lang, task: TaskKind) -> f64 {
+    const CJK_TO_LATIN: f64 = 1.8;
+    const LATIN_TO_CJK: f64 = 0.6;
+    if task != TaskKind::Translate {
+        return 1.0;
+    }
+    let target_wide = match target {
+        Lang::ZhCn | Lang::Ja | Lang::Ko => true,
+        Lang::En => false,
+        Lang::Other => return 1.0,
+    };
+    let (mut wide, mut narrow) = (0usize, 0usize);
+    for c in source.chars().filter(|c| !c.is_whitespace()).take(400) {
+        if is_wide(c) {
+            wide += 2;
+        } else {
+            narrow += 1;
+        }
+    }
+    if wide + narrow == 0 {
+        return 1.0;
+    }
+    match (wide >= narrow, target_wide) {
+        (true, false) => CJK_TO_LATIN,
+        (false, true) => LATIN_TO_CJK,
+        _ => 1.0,
+    }
+}
+
+/// [`translate_expected_height`] 的输入
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TranslateEstimate<'a> {
+    pub source: &'a str,
+    /// 卡片宽度
+    pub width: f64,
+    /// 正文字号（`appearance.font_size`）
+    pub font_size: f64,
+    /// 译文显示宽度与原文之比（[`translation_ratio`]）
+    pub ratio: f64,
+    /// 默认显示原文对照（`translate.show_source_by_default`）
+    pub show_source: bool,
+    pub dict_mode: bool,
+    /// 本次会话的高度上限（原文对照最多占视图的 40%）
+    pub cap: f64,
+}
+
+/// 翻译视图的预计卡片高度：`96 + Σ 段落 ceil(段落显示单位 × 比例 / 每行单位) × 行高`，每行单位 = (宽 − 32) / (字号 / 2)；
+/// 默认显示原文时加上原文对照（13 px，最多占视图的 40%）；词典式固定 280。估计到 [`expected_layout::STOP`] 就停。
+/// 只用来选侧：译文的真实长度要到流式输出时才知道，估计偏差只影响卡片放在哪一侧，高度仍跟随真实内容
+pub fn translate_expected_height(e: &TranslateEstimate<'_>) -> f64 {
+    use expected_layout as l;
+    if e.dict_mode {
+        return l::DICT;
+    }
+    let font = body_font(e.font_size);
+    let lh = font * l::LINE_HEIGHT;
+    let inner = (e.width - CONTENT_INSET).max(1.0);
+    let per_line = (inner / (font / 2.0)).max(1.0);
+    let per_source_line = (inner / (l::SOURCE_FONT / 2.0)).max(1.0);
+    let ratio = if e.ratio.is_finite() && e.ratio > 0.0 {
+        e.ratio
+    } else {
+        1.0
+    };
+    let mut body = 0.0;
+    let mut source_lines = 0.0;
+    for para in e.source.split('\n') {
+        // 这一段最多数到让正文到达 STOP 所需的单位（超长的一段不整段扫描）
+        let budget = ((l::STOP - body) / lh).ceil().max(1.0) * per_line / ratio;
+        let units = display_units(para, budget.ceil() as usize + 1) as f64;
+        // 空行（段落之间的空白）按一行计
+        body += (units * ratio / per_line).ceil().max(1.0) * lh;
+        source_lines += (units / per_source_line).ceil().max(1.0);
+        if body >= l::STOP {
+            break;
+        }
+    }
+    let source = if e.show_source {
+        let view = (e.cap - l::CARD_PAD).max(0.0);
+        (source_lines * l::SOURCE_LINE).min((view * l::SOURCE_SHARE - l::SOURCE_CHROME).max(0.0)) + l::SOURCE_CHROME
+    } else {
+        0.0
+    };
+    (l::TRANSLATE_CHROME + body + source).min(l::STOP)
+}
+
+/// OCR 视图的预计卡片高度：头部 + 底栏 + 内边距（前端 `LAYOUT`）+ 源行数 × 折行数 × 行高。源行数 = 框选高 / 18；
+/// 折行数按与 [`ocr_width`] 同一口径（框选里的一行按设置字号重排后需要的宽度 / 卡片内容宽）。图片多、字少的截图会被
+/// 高估——只影响选侧，可以接受
+pub fn ocr_expected_height(capture: Rect, width: f64, font_size: f64, direct: bool) -> f64 {
+    use expected_layout as l;
+    let font = body_font(font_size);
+    let chrome =
+        l::ocr::PAD + l::ocr::THUMB + l::ocr::HEAD_EXTRA + l::ocr::FOOTER + if direct { l::ocr::SUBHEAD } else { 0.0 };
+    if !(capture.width.is_finite() && capture.height.is_finite()) {
+        return chrome;
+    }
+    let lines = (capture.height / l::CAPTURE_LINE).round().max(1.0);
+    let needed = capture.width.max(0.0) * font / BODY_FONT;
+    let inner = (width - CONTENT_INSET).max(1.0);
+    // 留一点余量：框选刚好等于卡片内容宽时不算折行（浮点误差）
+    let wraps = (needed / inner - 1e-6).ceil().max(1.0);
+    (chrome + lines * wraps * font * l::LINE_HEIGHT).min(l::STOP)
+}
+
 /// toast 视图宽度（内容宽度，夹在 220–360）。toast 文案由前端按 `CopiedReason` 本地化，Rust 只知道粘贴键，
 /// 这里按「一行提示 + 粘贴键徽标」估算；卡片在这个宽度内按内容排版
 pub fn toast_width(paste_key: &str) -> f64 {
@@ -385,6 +566,50 @@ pub enum PlaceAnchor {
     Center,
     /// 记住的卡片左上角（「记住上次位置」），超出工作区时夹回
     At(Point),
+    /// 工作区的一个角（离边 [`CORNER_INSET`]）：连续粘贴的进度提示，远离用户正在填写的输入框
+    Corner(ScreenCorner),
+}
+
+/// 屏幕角落（各平台用哪个角见 `native::NOTICE_CORNER`）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenCorner {
+    /// 右上：贴顶边向下长（macOS 菜单栏下、Linux 桌面的通知位置）
+    TopRight,
+    /// 右下：贴底边向上长（Windows 任务栏上方的通知位置）
+    BottomRight,
+}
+
+/// [`place_panel_with`] 的输入
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaceOpts {
+    /// 卡片宽度
+    pub width: f64,
+    /// 初始估计高度：ready 之前窗口按它显示，也只有它决定要不要压住选区
+    pub initial: f64,
+    /// 预计内容高度（翻译按原文长度、OCR 按框选尺寸估计）：**只用来选放在哪一侧**，不作为窗口高度。不超过
+    /// `max(min(上限, 240), initial)` 时与 `initial` 完全等价
+    pub expected: f64,
+    /// 本次会话的高度上限
+    pub cap: f64,
+    /// 允许放到锚点左右两侧：锚点是真实的选区 / 框选矩形时才允许（光标锚点、锚点所在显示器断开后退回的光标锚点
+    /// 不允许——那时卡片放在侧面并不挨着用户在看的东西）
+    pub side_ok: bool,
+    /// 侧放时按 `width` 两侧都放不下，可以退回的较窄宽度（OCR 随框选变宽时退回默认的 440）
+    pub narrow_width: Option<f64>,
+}
+
+impl PlaceOpts {
+    /// 只按初始高度放置（预计高度 = 初始高度、不侧放）
+    pub fn new(width: f64, initial: f64, cap: f64) -> Self {
+        Self {
+            width,
+            initial,
+            expected: initial,
+            cap,
+            side_ok: false,
+            narrow_width: None,
+        }
+    }
 }
 
 /// 粘贴反馈 toast 的锚点（左上角）：与上一次面板**水平居中**、顶边对齐（若用面板左上角，420 宽的剪贴板面板
@@ -553,20 +778,57 @@ impl PanelGeometry {
 ///   工作区内、至少留出 `want` 的高度（宁可盖住一部分原文，也不出屏、不缩成一条）。水平夹紧到工作区内（留 [`EDGE_INSET`]）。
 ///   锚点在工作区之外（例如被菜单栏遮住的选区）时先把它夹回工作区；
 /// - `Center`：水平居中，卡片中心在工作区高度 1/3 处（按初始高度），向下生长；
-/// - `At`：记住的左上角，夹回工作区，向下生长。
+/// - `At`：记住的左上角，夹回工作区，向下生长；
+/// - `Corner`：工作区的右上角（向下长）或右下角（底边固定、向上长），离边 [`CORNER_INSET`]，变换原点在右缘。
 ///
-/// 返回的 `max_height` 已扣除所选一侧的可用空间，卡片怎么长都留在工作区内
+/// 返回的 `max_height` 已扣除所选一侧的可用空间，卡片怎么长都留在工作区内。等价于预计高度 = 初始高度、不侧放的
+/// [`place_panel_with`]
 pub fn place_panel(screen: &Screen, anchor: PlaceAnchor, width: f64, initial_height: f64, cap: f64) -> PanelGeometry {
+    place_panel_with(screen, anchor, PlaceOpts::new(width, initial_height, cap))
+}
+
+/// 锚点旁边的一个落点（本屏逻辑坐标）
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Spot {
+    x: f64,
+    /// 固定边的 y（Below 为顶边，Above 为底边）
+    edge_y: f64,
+    placement: Placement,
+    /// 固定边到工作区边缘（留 [`EDGE_INSET`]）的可用高度
+    avail: f64,
+    /// 锚点的 x（变换原点）
+    origin: f64,
+    width: f64,
+}
+
+/// 按锚点放置面板，`Rect` 锚点额外考虑预计内容高度（[`PlaceOpts::expected`]）。先按 [`place_panel`] 的规则（只看初始
+/// 高度）得到竖直落点；记 `wish = clamp(预计高度, want, 上限)`，只有 `wish > want`（长译文 / 长识别结果）时才可能换落点，
+/// 每一侧的「能用的高度」按 `min(该侧空间, wish)` 计：
+/// 1. 竖直落点是选区下方、而上方比下方至少多出 [`SIDE_GAIN_MIN`]：翻到上方（底边固定）；
+/// 2. `side_ok` 时，锚点右侧（放不下再试左侧，仍放不下再按 `narrow_width` 试一次）比上一步选定的落点至少多出
+///    [`SIDE_GAIN_MIN`]：放到侧面——顶边与锚点顶边对齐（锚点太靠下时上移到放得下 `wish`），向下长，不盖住锚点。
+///
+/// 预计高度不会让卡片压住选区（是否压住只由初始高度决定）；`wish ≤ want` 时结果与 [`place_panel`] 逐字段相同
+pub fn place_panel_with(screen: &Screen, anchor: PlaceAnchor, opts: PlaceOpts) -> PanelGeometry {
     let work = screen.work;
-    let width = width.min(work.width - 2.0 * EDGE_INSET).max(MIN_CARD_HEIGHT).round();
-    let initial = initial_height.max(MIN_CARD_HEIGHT);
+    let cap = opts.cap;
+    let width = fit_width(opts.width, work);
+    let initial = opts.initial.max(MIN_CARD_HEIGHT);
     let min_x = work.x + EDGE_INSET;
     let max_x = (work.right() - EDGE_INSET - width).max(min_x);
     let clamp_x = |x: f64| x.clamp(min_x, max_x).round();
     let top_limit = work.y + EDGE_INSET;
     let bottom_limit = work.bottom() - EDGE_INSET;
+    let spot = |x: f64, edge_y: f64, placement: Placement, avail: f64, origin: f64| Spot {
+        x,
+        edge_y,
+        placement,
+        avail,
+        origin,
+        width,
+    };
 
-    let (x, edge_y, placement, avail, origin) = match anchor {
+    let chosen = match anchor {
         PlaceAnchor::Rect(a) => {
             let a = clamp_anchor(a, work);
             let below_top = a.bottom() + ANCHOR_GAP;
@@ -576,25 +838,49 @@ pub fn place_panel(screen: &Screen, anchor: PlaceAnchor, width: f64, initial_hei
             let fit = initial.min(cap);
             let want = cap.min(PREFER_BELOW_MIN).max(fit);
             let x = clamp_x(a.x);
-            if space_below >= want || (space_below >= fit && space_below >= space_above) {
-                (x, below_top.round(), Placement::Below, space_below, a.x)
+            let below = spot(x, below_top.round(), Placement::Below, space_below, a.x);
+            let above = spot(x, above_bottom.round(), Placement::Above, space_above, a.x);
+            let prefer_below = space_below >= want || (space_below >= fit && space_below >= space_above);
+            let vertical = if prefer_below {
+                below
             } else if space_above >= fit {
-                (x, above_bottom.round(), Placement::Above, space_above, a.x)
+                above
             } else if space_below >= space_above {
                 // 压住选区（下侧）：顶边上移到「工作区底 − want」，仍不高于工作区顶
                 let top = below_top.min(bottom_limit - want).max(top_limit).round();
-                (x, top, Placement::Below, (bottom_limit - top).max(0.0), a.x)
+                spot(x, top, Placement::Below, (bottom_limit - top).max(0.0), a.x)
             } else {
                 // 压住选区（上侧）：底边下移到「工作区顶 + want」，仍不低于工作区底
                 let bottom = above_bottom.max(top_limit + want).min(bottom_limit).round();
-                (x, bottom, Placement::Above, (bottom - top_limit).max(0.0), a.x)
+                spot(x, bottom, Placement::Above, (bottom - top_limit).max(0.0), a.x)
+            };
+            // NaN 的预计高度按 want（max 会丢掉 NaN）
+            let wish = opts.expected.max(want).min(cap);
+            if wish <= want {
+                vertical
+            } else {
+                let room = |s: &Spot| s.avail.min(wish);
+                let mut best = if prefer_below && room(&above) - room(&below) >= SIDE_GAIN_MIN {
+                    above
+                } else {
+                    vertical
+                };
+                if opts.side_ok {
+                    let widths = std::iter::once(width).chain(opts.narrow_width.map(|w| fit_width(w, work)));
+                    if let Some(side) = widths.filter_map(|w| side_spot(work, a, w, wish)).next()
+                        && room(&side) - room(&best) >= SIDE_GAIN_MIN
+                    {
+                        best = side;
+                    }
+                }
+                best
             }
         }
         PlaceAnchor::Center => {
             let x = clamp_x(work.x + (work.width - width) / 2.0);
             let center_y = work.y + work.height / 3.0;
             let top = (center_y - initial.min(cap) / 2.0).clamp(top_limit, (bottom_limit - initial).max(top_limit));
-            (
+            spot(
                 x,
                 top.round(),
                 Placement::Center,
@@ -605,20 +891,65 @@ pub fn place_panel(screen: &Screen, anchor: PlaceAnchor, width: f64, initial_hei
         PlaceAnchor::At(p) => {
             let x = clamp_x(p.x);
             let top = p.y.clamp(top_limit, (bottom_limit - initial).max(top_limit));
-            (x, top.round(), Placement::Below, (bottom_limit - top).max(0.0), x)
+            spot(x, top.round(), Placement::Below, (bottom_limit - top).max(0.0), x)
+        }
+        PlaceAnchor::Corner(corner) => {
+            let x = clamp_x(work.right() - CORNER_INSET - width);
+            match corner {
+                ScreenCorner::TopRight => {
+                    let top = (work.y + CORNER_INSET).min(bottom_limit).max(top_limit).round();
+                    spot(x, top, Placement::Below, (bottom_limit - top).max(0.0), x + width)
+                }
+                ScreenCorner::BottomRight => {
+                    let bottom = (work.bottom() - CORNER_INSET).max(top_limit).min(bottom_limit).round();
+                    spot(x, bottom, Placement::Above, (bottom - top_limit).max(0.0), x + width)
+                }
+            }
         }
     };
-    let max_height = cap.min(avail).max(MIN_CARD_HEIGHT).floor();
+    let max_height = cap.min(chosen.avail).max(MIN_CARD_HEIGHT).floor();
     PanelGeometry {
         screen: screen.clone(),
-        x,
-        edge_y,
-        placement,
-        width,
+        x: chosen.x,
+        edge_y: chosen.edge_y,
+        placement: chosen.placement,
+        width: chosen.width,
         max_height,
         cap,
-        origin_x: (origin - x).clamp(0.0, width),
+        origin_x: (chosen.origin - chosen.x).clamp(0.0, chosen.width),
     }
+}
+
+/// 卡片宽度夹到工作区内（两侧各留 [`EDGE_INSET`]），取整
+fn fit_width(width: f64, work: Rect) -> f64 {
+    width.min(work.width - 2.0 * EDGE_INSET).max(MIN_CARD_HEIGHT).round()
+}
+
+/// 锚点（已夹回工作区）右侧、放不下时左侧的侧放落点：与锚点隔 [`ANCHOR_GAP`]、整张卡片在工作区内（留 [`EDGE_INSET`]）。
+/// 顶边与锚点顶边对齐，锚点太靠下时上移到放得下 `wish`（侧放不和锚点重叠，可以上移）。变换原点贴着锚点一侧的边。
+/// 两侧都放不下这个宽度时为 None
+fn side_spot(work: Rect, a: Rect, width: f64, wish: f64) -> Option<Spot> {
+    let top_limit = work.y + EDGE_INSET;
+    let bottom_limit = work.bottom() - EDGE_INSET;
+    // 向远离锚点的方向取整：取整之后与锚点的间距仍不小于 ANCHOR_GAP
+    let right = (a.right() + ANCHOR_GAP).ceil();
+    let left = (a.x - ANCHOR_GAP - width).floor();
+    let (x, origin) = if right + width <= work.right() - EDGE_INSET {
+        (right, right)
+    } else if left >= work.x + EDGE_INSET {
+        (left, left + width)
+    } else {
+        return None;
+    };
+    let top = a.y.min(bottom_limit - wish).max(top_limit).round();
+    Some(Spot {
+        x,
+        edge_y: top,
+        placement: Placement::Below,
+        avail: (bottom_limit - top).max(0.0),
+        origin,
+        width,
+    })
 }
 
 /// 把锚点矩形夹回工作区（选区可能部分在菜单栏 / 任务栏下面或屏幕外）
@@ -1420,5 +1751,538 @@ mod tests {
         let s = Screen::from_info(&info);
         assert_eq!(s.scale, 1.0);
         assert_eq!(s.work, Rect::new(0.0, 0.0, 100.0, 100.0));
+    }
+
+    // ---- 角落提示（连续粘贴的进度）
+
+    #[test]
+    fn corner_top_right_hugs_the_work_area() {
+        let s = mac_screen();
+        let g = place_panel(
+            &s,
+            PlaceAnchor::Corner(ScreenCorner::TopRight),
+            260.0,
+            40.0,
+            NOTICE_MAX_HEIGHT,
+        );
+        assert_eq!(g.placement, Placement::Below);
+        // 菜单栏下 16 px、右缘 16 px，向下长
+        assert_eq!(g.edge_y, s.work.y + CORNER_INSET);
+        assert_eq!(g.x + g.width, s.work.right() - CORNER_INSET);
+        assert_eq!(g.card_rect(40.0).y, g.card_rect(72.0).y, "顶边固定");
+        assert_eq!(g.max_height, NOTICE_MAX_HEIGHT);
+        // 变换原点在右缘（进入动画从角落长出来）
+        assert_eq!(g.origin_x, g.width);
+        assert_inside_work(&s, &g, "右上角");
+    }
+
+    #[test]
+    fn corner_bottom_right_grows_upward() {
+        let s = mac_screen();
+        let g = place_panel(
+            &s,
+            PlaceAnchor::Corner(ScreenCorner::BottomRight),
+            288.0,
+            40.0,
+            NOTICE_MAX_HEIGHT,
+        );
+        assert_eq!(g.placement, Placement::Above);
+        assert_eq!(g.edge_y, s.work.bottom() - CORNER_INSET);
+        assert_eq!(g.x + g.width, s.work.right() - CORNER_INSET);
+        // 底边固定：第一条两行、之后一行，都贴着同一条底边
+        assert_eq!(g.card_rect(56.0).bottom(), g.card_rect(38.0).bottom());
+        assert_eq!(g.max_height, NOTICE_MAX_HEIGHT);
+        assert_eq!(g.origin_x, g.width);
+        assert_inside_work(&s, &g, "右下角");
+    }
+
+    #[test]
+    fn corner_on_a_secondary_screen_and_a_narrow_work_area() {
+        // 副屏（1.5×）：本屏逻辑坐标里算，换成物理像素后仍在这块屏里、尺寸按缩放换算
+        let s = win_secondary();
+        let g = place_panel(
+            &s,
+            PlaceAnchor::Corner(ScreenCorner::BottomRight),
+            288.0,
+            40.0,
+            NOTICE_MAX_HEIGHT,
+        );
+        let card = g.card_rect(56.0);
+        assert_eq!(card.right(), s.work.right() - CORNER_INSET);
+        assert_eq!(card.bottom(), s.work.bottom() - CORNER_INSET);
+        let desk = s.to_desktop(card, DesktopUnit::Physical);
+        assert_eq!((desk.width, desk.height), (432.0, 84.0));
+        let frame = s.desktop_frame(DesktopUnit::Physical);
+        assert!(
+            desk.x >= frame.x && desk.right() <= frame.right(),
+            "{desk:?} 在 {frame:?} 里"
+        );
+        assert!(
+            desk.y >= frame.y && desk.bottom() <= frame.bottom(),
+            "{desk:?} 在 {frame:?} 里"
+        );
+        // 极窄的工作区：卡片夹到工作区内，不越过左边
+        let mut narrow = mac_screen();
+        narrow.work = Rect::new(0.0, 25.0, 200.0, 805.0);
+        let g = place_panel(
+            &narrow,
+            PlaceAnchor::Corner(ScreenCorner::TopRight),
+            260.0,
+            40.0,
+            NOTICE_MAX_HEIGHT,
+        );
+        assert_inside_work(&narrow, &g, "窄工作区");
+    }
+
+    // ---- 按预计内容高度选侧、侧放、OCR 宽度
+
+    /// 改动之前的 `place_panel`（`Rect` 锚点）的逐行副本：短内容的等价性测试拿它作对照
+    fn legacy_rect(screen: &Screen, a: Rect, width: f64, initial: f64, cap: f64) -> PanelGeometry {
+        let work = screen.work;
+        let width = width.min(work.width - 2.0 * EDGE_INSET).max(MIN_CARD_HEIGHT).round();
+        let initial = initial.max(MIN_CARD_HEIGHT);
+        let min_x = work.x + EDGE_INSET;
+        let max_x = (work.right() - EDGE_INSET - width).max(min_x);
+        let clamp_x = |x: f64| x.clamp(min_x, max_x).round();
+        let top_limit = work.y + EDGE_INSET;
+        let bottom_limit = work.bottom() - EDGE_INSET;
+        let a = clamp_anchor(a, work);
+        let below_top = a.bottom() + ANCHOR_GAP;
+        let above_bottom = a.y - ANCHOR_GAP;
+        let space_below = (bottom_limit - below_top).max(0.0);
+        let space_above = (above_bottom - top_limit).max(0.0);
+        let fit = initial.min(cap);
+        let want = cap.min(PREFER_BELOW_MIN).max(fit);
+        let x = clamp_x(a.x);
+        let (edge_y, placement, avail) = if space_below >= want || (space_below >= fit && space_below >= space_above) {
+            (below_top.round(), Placement::Below, space_below)
+        } else if space_above >= fit {
+            (above_bottom.round(), Placement::Above, space_above)
+        } else if space_below >= space_above {
+            let top = below_top.min(bottom_limit - want).max(top_limit).round();
+            (top, Placement::Below, (bottom_limit - top).max(0.0))
+        } else {
+            let bottom = above_bottom.max(top_limit + want).min(bottom_limit).round();
+            (bottom, Placement::Above, (bottom - top_limit).max(0.0))
+        };
+        PanelGeometry {
+            screen: screen.clone(),
+            x,
+            edge_y,
+            placement,
+            width,
+            max_height: cap.min(avail).max(MIN_CARD_HEIGHT).floor(),
+            cap,
+            origin_x: (a.x - x).clamp(0.0, width),
+        }
+    }
+
+    /// 几种常见屏幕的工作区（本屏逻辑坐标）：Mac 1440×900 Dock 在底部、Mac 1512×982 Dock 隐藏、Windows 1080p@150%
+    /// （逻辑 1280×720、任务栏 48）、Windows 1440p@150% 副屏
+    fn screens() -> Vec<Screen> {
+        let mut mac_hidden_dock = mac_screen();
+        mac_hidden_dock.frame = Rect::new(0.0, 0.0, 1512.0, 982.0);
+        mac_hidden_dock.work = Rect::new(0.0, 41.0, 1512.0, 941.0);
+        vec![mac_screen(), mac_hidden_dock, win_small(), win_secondary()]
+    }
+
+    /// Windows 1080p@150%：逻辑 1280×720，任务栏 48
+    fn win_small() -> Screen {
+        let mut s = win_secondary();
+        s.frame = Rect::new(0.0, 0.0, 1280.0, 720.0);
+        s.work = Rect::new(0.0, 0.0, 1280.0, 672.0);
+        s.physical_origin = PhysPoint { x: 0, y: 0 };
+        s
+    }
+
+    fn intersects(a: Rect, b: Rect) -> bool {
+        a.x < b.right() && b.x < a.right() && a.y < b.bottom() && b.y < a.bottom()
+    }
+
+    #[test]
+    fn short_content_is_unchanged() {
+        // 预计高度不超过 want（短内容）时，无论是否允许侧放，结果与改动前逐字段相同
+        for s in screens() {
+            let cap = height_cap(&s, 0.6);
+            for pct in (0..=100).step_by(5) {
+                let top = s.work.y + s.work.height * f64::from(pct) / 100.0;
+                for height in [0.0, 18.0, 200.0, 500.0, 900.0] {
+                    for left in [-40.0, 0.0, 300.0, s.work.right() - 60.0] {
+                        let a = Rect::new(left, top, 120.0, height);
+                        for initial in [initial_height::TOAST, initial_height::TRANSLATE, initial_height::OCR] {
+                            let want = cap.min(PREFER_BELOW_MIN).max(initial.min(cap));
+                            for expected in [initial, want, f64::NAN] {
+                                for side_ok in [false, true] {
+                                    let opts = PlaceOpts {
+                                        width: 420.0,
+                                        initial,
+                                        expected,
+                                        cap,
+                                        side_ok,
+                                        narrow_width: Some(OCR_WIDTH),
+                                    };
+                                    assert_eq!(
+                                        place_panel_with(&s, PlaceAnchor::Rect(a), opts),
+                                        legacy_rect(&s, a, 420.0, initial, cap),
+                                        "{} {a:?} initial={initial} expected={expected} side_ok={side_ok}",
+                                        s.id
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn long(width: f64, cap: f64) -> PlaceOpts {
+        PlaceOpts {
+            expected: 9999.0,
+            ..PlaceOpts::new(width, initial_height::TRANSLATE, cap)
+        }
+    }
+
+    #[test]
+    fn long_content_prefers_the_roomier_side() {
+        let s = mac_screen();
+        let cap = height_cap(&s, 0.6);
+        // 一行选区在 y = 470：下方 322（够放下短内容）、上方 425
+        let a = Rect::new(300.0, 470.0, 200.0, 18.0);
+        assert_eq!(
+            place_panel(&s, PlaceAnchor::Rect(a), 420.0, 120.0, cap).placement,
+            Placement::Below
+        );
+        let g = place_panel_with(&s, PlaceAnchor::Rect(a), long(420.0, cap));
+        assert_eq!(g.placement, Placement::Above);
+        assert_eq!(g.edge_y, a.y - ANCHOR_GAP);
+        assert_eq!(g.max_height, 425.0);
+        assert_eq!(g.x, a.x, "仍与选区左对齐");
+        // 上方只多 78 px（< 96）：保持下方
+        let near = PlaceOpts {
+            expected: 400.0,
+            ..long(420.0, cap)
+        };
+        let g = place_panel_with(&s, PlaceAnchor::Rect(a), near);
+        assert_eq!(g, place_panel(&s, PlaceAnchor::Rect(a), 420.0, 120.0, cap));
+        // 下方本来就放得下预计高度：不动
+        let high = Rect::new(300.0, 120.0, 200.0, 18.0);
+        assert_eq!(
+            place_panel_with(&s, PlaceAnchor::Rect(high), long(420.0, cap)),
+            place_panel(&s, PlaceAnchor::Rect(high), 420.0, 120.0, cap)
+        );
+    }
+
+    #[test]
+    fn side_placement_when_vertical_room_is_short() {
+        let s = mac_screen();
+        let cap = height_cap(&s, 0.6);
+        // 520×260 的框选在屏幕中部：上下都只有约 250
+        let a = Rect::new(200.0, 300.0, 520.0, 260.0);
+        let opts = PlaceOpts {
+            side_ok: true,
+            narrow_width: Some(OCR_WIDTH),
+            ..long(552.0, cap)
+        };
+        let g = place_panel_with(&s, PlaceAnchor::Rect(a), opts);
+        assert_eq!(g.placement, Placement::Below);
+        assert_eq!(g.x, a.right() + ANCHOR_GAP, "右侧，与框选隔 12");
+        assert_eq!(g.edge_y, a.y, "顶边与框选对齐");
+        assert_eq!(g.max_height, cap);
+        assert_eq!(g.width, 552.0);
+        assert_eq!(g.origin_x, 0.0, "变换原点贴着框选一侧");
+        assert!(!intersects(g.card_rect(g.max_height), a));
+        assert_inside_work(&s, &g, "右侧");
+        // 不允许侧放（光标锚点）：仍在下方
+        let below = place_panel_with(&s, PlaceAnchor::Rect(a), PlaceOpts { side_ok: false, ..opts });
+        assert_eq!(below.placement, Placement::Below);
+        assert_eq!(below.edge_y, a.bottom() + ANCHOR_GAP);
+        // 右侧放不下：左侧，变换原点在卡片右缘
+        let right_side = Rect::new(800.0, 300.0, 520.0, 260.0);
+        let g = place_panel_with(&s, PlaceAnchor::Rect(right_side), opts);
+        assert_eq!(g.x + g.width, right_side.x - ANCHOR_GAP);
+        assert_eq!(g.origin_x, g.width);
+        assert!(!intersects(g.card_rect(g.max_height), right_side));
+        assert_inside_work(&s, &g, "左侧");
+        // 框选又高又靠下（下方没有空间、上方 355）：侧放，顶边上移到放得下上限，仍不与框选重叠
+        let low = Rect::new(200.0, 400.0, 520.0, 410.0);
+        let g = place_panel_with(&s, PlaceAnchor::Rect(low), opts);
+        assert_eq!(g.x, low.right() + ANCHOR_GAP);
+        assert_eq!(g.max_height, cap);
+        assert!(g.edge_y < low.y);
+        assert!(!intersects(g.card_rect(g.max_height), low));
+        assert_inside_work(&s, &g, "上移");
+        // 两侧都放不下（宽框选）：竖直逻辑
+        let wide = Rect::new(400.0, 300.0, 640.0, 260.0);
+        let g = place_panel_with(&s, PlaceAnchor::Rect(wide), PlaceOpts { width: 600.0, ..opts });
+        assert_eq!(g.x, wide.x);
+        assert_eq!(g.edge_y, wide.bottom() + ANCHOR_GAP);
+    }
+
+    #[test]
+    fn side_placement_needs_a_real_gain() {
+        let s = mac_screen();
+        let cap = height_cap(&s, 0.6);
+        // 下方 400、侧面 483：只多 83 px，保持下方
+        let a = Rect::new(200.0, 150.0, 300.0, 260.0);
+        let opts = PlaceOpts {
+            side_ok: true,
+            ..long(420.0, cap)
+        };
+        let g = place_panel_with(&s, PlaceAnchor::Rect(a), opts);
+        assert_eq!(g.placement, Placement::Below);
+        assert_eq!(g.edge_y, a.bottom() + ANCHOR_GAP);
+        assert_eq!(g.max_height, 400.0);
+    }
+
+    #[test]
+    fn side_placement_falls_back_to_narrow_width() {
+        // Windows 1080p@150%（逻辑 1280×672 的工作区）：600 宽两侧都放不下，退回 440 放在右侧
+        let s = win_small();
+        let cap = height_cap(&s, 0.6);
+        let a = Rect::new(300.0, 150.0, 520.0, 260.0);
+        let opts = PlaceOpts {
+            side_ok: true,
+            narrow_width: Some(OCR_WIDTH),
+            ..long(600.0, cap)
+        };
+        let g = place_panel_with(&s, PlaceAnchor::Rect(a), opts);
+        assert_eq!((g.width, g.x, g.edge_y), (OCR_WIDTH, a.right() + ANCHOR_GAP, a.y));
+        assert_eq!(g.max_height, cap);
+        assert_inside_work(&s, &g, "退回 440");
+        // 物理像素：宽 = 440 × 1.5，仍在这块屏里
+        let desk = s.to_desktop(g.card_rect(g.max_height), DesktopUnit::Physical);
+        assert_eq!(desk.width, 660.0);
+        assert!(desk.right() <= s.desktop_frame(DesktopUnit::Physical).right());
+        // 没有可退回的宽度：竖直逻辑（下方 242）
+        let g = place_panel_with(
+            &s,
+            PlaceAnchor::Rect(a),
+            PlaceOpts {
+                narrow_width: None,
+                ..opts
+            },
+        );
+        assert_eq!(
+            (g.width, g.placement, g.edge_y),
+            (600.0, Placement::Below, a.bottom() + ANCHOR_GAP)
+        );
+    }
+
+    #[test]
+    fn expected_never_overlaps_the_anchor_and_stays_inside() {
+        // 网格扫一遍：长内容的落点始终在工作区内；改动前不压住锚点的，现在也不压住；上限不会比改动前小
+        for s in screens() {
+            let cap = height_cap(&s, 0.6);
+            for pct in (0..=100).step_by(4) {
+                let top = s.work.y + s.work.height * f64::from(pct) / 100.0;
+                for height in [0.0, 18.0, 120.0, 260.0, 500.0, 900.0] {
+                    for (left, w) in [
+                        (-30.0, 120.0),
+                        (40.0, 300.0),
+                        (300.0, 520.0),
+                        (s.work.right() - 500.0, 480.0),
+                    ] {
+                        let a = Rect::new(left, top, w, height);
+                        for expected in [300.0, 400.0, 9999.0] {
+                            for width in [420.0, 600.0] {
+                                let opts = PlaceOpts {
+                                    expected,
+                                    side_ok: true,
+                                    narrow_width: Some(OCR_WIDTH),
+                                    ..PlaceOpts::new(width, initial_height::OCR, cap)
+                                };
+                                let what = format!("{} {a:?} expected={expected} width={width}", s.id);
+                                let g = place_panel_with(&s, PlaceAnchor::Rect(a), opts);
+                                let old = legacy_rect(&s, a, width, initial_height::OCR, cap);
+                                assert_inside_work(&s, &g, &what);
+                                assert!(g.max_height >= old.max_height, "{what}: {g:?} vs {old:?}");
+                                let clamped = clamp_anchor(a, s.work);
+                                if !intersects(old.card_rect(old.max_height), clamped) {
+                                    assert!(!intersects(g.card_rect(g.max_height), clamped), "{what}: {g:?}");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ocr_width_follows_capture() {
+        assert_eq!(ocr_width(300.0, 14.0), OCR_WIDTH);
+        assert_eq!(ocr_width(408.0, 14.0), OCR_WIDTH);
+        assert_eq!(ocr_width(520.0, 14.0), 552.0);
+        assert_eq!(ocr_width(900.0, 14.0), OCR_MAX_WIDTH);
+        // 字号调大：同样的框选需要更宽的卡片
+        assert_eq!(ocr_width(420.0, 18.0), 572.0);
+        assert_eq!(ocr_width(f64::NAN, 14.0), OCR_WIDTH);
+        assert_eq!(ocr_width(-5.0, 14.0), OCR_WIDTH);
+        assert_eq!(ocr_width(520.0, f64::NAN), 552.0);
+        // 窄工作区：place_panel 夹到工作区宽 − 16
+        let mut s = mac_screen();
+        s.work = Rect::new(0.0, 25.0, 590.0, 805.0);
+        let g = place_panel(
+            &s,
+            PlaceAnchor::Rect(Rect::new(10.0, 100.0, 560.0, 40.0)),
+            600.0,
+            220.0,
+            483.0,
+        );
+        assert_eq!(g.width, 590.0 - 2.0 * EDGE_INSET);
+    }
+
+    #[test]
+    fn translation_ratio_follows_scripts_and_task() {
+        let zh = "这是一段需要翻译的中文原文，用来估计译文的长度。";
+        let en = "This is an English paragraph that needs translating.";
+        assert_eq!(translation_ratio(zh, Lang::En, TaskKind::Translate), 1.8);
+        assert_eq!(translation_ratio(en, Lang::ZhCn, TaskKind::Translate), 0.6);
+        assert_eq!(translation_ratio(en, Lang::Ja, TaskKind::Translate), 0.6);
+        assert_eq!(translation_ratio(zh, Lang::Ja, TaskKind::Translate), 1.0);
+        assert_eq!(translation_ratio(en, Lang::En, TaskKind::Translate), 1.0);
+        assert_eq!(translation_ratio(zh, Lang::Other, TaskKind::Translate), 1.0);
+        // 润色 / 校对不换语言
+        assert_eq!(translation_ratio(zh, Lang::En, TaskKind::Polish), 1.0);
+        assert_eq!(translation_ratio("   ", Lang::En, TaskKind::Translate), 1.0);
+        // 夹杂少量英文的中文仍算中文
+        assert_eq!(
+            translation_ratio("用 Rust 写的 Tauri 应用", Lang::En, TaskKind::Translate),
+            1.8
+        );
+    }
+
+    fn estimate(source: &str) -> TranslateEstimate<'_> {
+        TranslateEstimate {
+            source,
+            width: 520.0,
+            font_size: 14.0,
+            ratio: 1.0,
+            show_source: false,
+            dict_mode: false,
+            cap: 483.0,
+        }
+    }
+
+    #[test]
+    fn translate_expected_height_grows_with_content() {
+        use expected_layout as l;
+        let lh = 14.0 * l::LINE_HEIGHT;
+        // 520 宽：每行 (520 − 32) / 7 ≈ 69.7 个单位
+        assert_eq!(translate_expected_height(&estimate("hello")), l::TRANSLATE_CHROME + lh);
+        let one = "a".repeat(140);
+        assert_eq!(
+            translate_expected_height(&estimate(&one)),
+            l::TRANSLATE_CHROME + 3.0 * lh
+        );
+        // 多段：每段各自折行，空行算一行
+        let paras = format!("{one}\n\n{one}");
+        assert_eq!(
+            translate_expected_height(&estimate(&paras)),
+            l::TRANSLATE_CHROME + 7.0 * lh
+        );
+        // 比例：拉丁 → 中文约 0.6
+        let shorter = TranslateEstimate {
+            ratio: 0.6,
+            ..estimate(&one)
+        };
+        assert_eq!(translate_expected_height(&shorter), l::TRANSLATE_CHROME + 2.0 * lh);
+        // 词典式固定
+        let dict = TranslateEstimate {
+            dict_mode: true,
+            ..estimate(&one)
+        };
+        assert_eq!(translate_expected_height(&dict), l::DICT);
+        // 默认显示原文：加上原文对照（13 px）
+        let with_source = TranslateEstimate {
+            show_source: true,
+            ..estimate(&one)
+        };
+        let src_lines = (140.0f64 / ((520.0 - 32.0) / 6.5)).ceil();
+        assert_eq!(
+            translate_expected_height(&with_source),
+            l::TRANSLATE_CHROME + 3.0 * lh + src_lines * l::SOURCE_LINE + l::SOURCE_CHROME
+        );
+        // 原文对照最多占视图的 40%
+        let long_source = "a".repeat(1400);
+        let huge_source = TranslateEstimate {
+            show_source: true,
+            ..estimate(&long_source)
+        };
+        let source_max = (483.0 - l::CARD_PAD) * l::SOURCE_SHARE;
+        assert_eq!(
+            translate_expected_height(&huge_source),
+            l::TRANSLATE_CHROME + 21.0 * lh + source_max
+        );
+        // 超长文本：到 STOP 就停，不整篇扫描
+        let big = "字".repeat(100_000);
+        let started = std::time::Instant::now();
+        assert_eq!(translate_expected_height(&estimate(&big)), l::STOP);
+        let lines = "line\n".repeat(100_000);
+        assert_eq!(translate_expected_height(&estimate(&lines)), l::STOP);
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(50),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn ocr_expected_height_follows_the_capture() {
+        use expected_layout as l;
+        let chrome = l::ocr::PAD + l::ocr::THUMB + l::ocr::HEAD_EXTRA + l::ocr::FOOTER;
+        let lh = 14.0 * l::LINE_HEIGHT;
+        // 一行字的框选：短内容（不超过 240，放下方）
+        let line = ocr_expected_height(Rect::new(0.0, 0.0, 300.0, 18.0), OCR_WIDTH, 14.0, false);
+        assert_eq!(line, chrome + lh);
+        assert!(line < PREFER_BELOW_MIN);
+        // 卡片随框选变宽时不折行：520×260 ≈ 14 行
+        let w = ocr_width(520.0, 14.0);
+        assert_eq!(
+            ocr_expected_height(Rect::new(0.0, 0.0, 520.0, 260.0), w, 14.0, false),
+            chrome + 14.0 * lh
+        );
+        // 宽于 600 的框选：每行折成两行
+        let wide = ocr_expected_height(Rect::new(0.0, 0.0, 900.0, 180.0), ocr_width(900.0, 14.0), 14.0, false);
+        assert_eq!(wide, chrome + 10.0 * 2.0 * lh);
+        // 直接翻译多一条语言条；大框选封顶
+        assert_eq!(
+            ocr_expected_height(Rect::new(0.0, 0.0, 300.0, 18.0), OCR_WIDTH, 14.0, true),
+            chrome + l::ocr::SUBHEAD + lh
+        );
+        assert_eq!(
+            ocr_expected_height(Rect::new(0.0, 0.0, 600.0, 4000.0), 600.0, 14.0, false),
+            l::STOP
+        );
+        assert_eq!(
+            ocr_expected_height(Rect::new(0.0, 0.0, f64::NAN, 18.0), 600.0, 14.0, false),
+            chrome
+        );
+    }
+
+    /// OCR 的版式常量直接对照前端 model.ts 的 LAYOUT（唯一来源）：前端改了缩略图、底栏或内边距而这里没跟上时失败
+    #[test]
+    fn ocr_layout_matches_frontend() {
+        use expected_layout as l;
+        let model = include_str!("../../../src/views/ocr/model.ts");
+        let compact: String = model.chars().filter(|c| !c.is_whitespace()).collect();
+        let start = compact.find("exportconstLAYOUT={").expect("model.ts 里找不到 LAYOUT");
+        let block = &compact[start..start + compact[start..].find("}asconst").expect("LAYOUT 的结尾")];
+        for decl in [
+            format!("thumb:{},", l::ocr::THUMB),
+            format!("headExtra:{},", l::ocr::HEAD_EXTRA),
+            format!("subhead:{},", l::ocr::SUBHEAD),
+            format!("footer:{},", l::ocr::FOOTER),
+            format!("pad:{},", l::ocr::PAD),
+        ] {
+            assert!(block.contains(&decl), "LAYOUT 里找不到 `{decl}`");
+        }
+        let line = format!(
+            "exportconstlineHeight=(fontSize:number):number=>fontSize*{}",
+            l::LINE_HEIGHT
+        );
+        assert!(compact.contains(&line), "model.ts 里找不到 `{line}`");
+        assert_eq!(l::ocr::PAD, l::CARD_PAD);
     }
 }

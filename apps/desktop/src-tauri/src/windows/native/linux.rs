@@ -23,7 +23,7 @@ use wisp_types::{FrameMode, Placement, Rect};
 
 use super::{CardSurface, ClickRegion, Fade, ShowAlpha, ShowOpts, ShowTicket, VerticalBound, WidthSwitch};
 use crate::error::IpcError;
-use crate::windows::placement::DesktopUnit;
+use crate::windows::placement::{DesktopUnit, ScreenCorner};
 
 /// 桌面坐标单位：虚拟桌面物理像素
 pub const DESKTOP_UNIT: DesktopUnit = DesktopUnit::Physical;
@@ -41,6 +41,8 @@ pub const PANEL_RECYCLE_AFTER: Option<std::time::Duration> = None;
 pub const HAS_WINDOW_CENSUS: bool = false;
 /// 输入 / 剪贴板视图取得了键盘焦点，隐藏后由平台层 `_NET_ACTIVE_WINDOW` 把焦点还给原窗口
 pub const RESTORE_FOCUS_ON_HIDE: bool = true;
+/// 连续粘贴的进度提示放在右上角：GNOME / KDE 等桌面的通知都从顶部出现，任务栏 / 面板在底部时也不与它重叠
+pub const NOTICE_CORNER: ScreenCorner = ScreenCorner::TopRight;
 
 /// Pinned 无装饰：能透明时由 CSS 画圆角与阴影（boot 带阴影边距），不能透明时铺满窗口
 pub fn pinned_css_shadow() -> bool {
@@ -204,6 +206,7 @@ pub fn panel_show_shell(
     let opts = ShowOpts {
         alpha: fade.map_or(ShowAlpha::Opaque, ShowAlpha::FadeIn),
         key,
+        passive: false,
     };
     panel_show(window, rect, opts, ticket)
 }
@@ -224,7 +227,7 @@ pub fn panel_reveal_shell(
     ticket: &ShowTicket,
 ) -> Result<(), IpcError> {
     let _ = (placement, animate);
-    panel_reveal(window, rect, Some(fade), key, ticket)
+    panel_reveal(window, rect, Some(fade), key, false, ticket)
 }
 
 /// 已经在屏幕上的面板（ready 超时后）改到 `rect`；票已作废时什么都不做
@@ -233,9 +236,11 @@ pub fn panel_reveal(
     rect: Rect,
     fade: Option<Fade>,
     key: bool,
+    passive: bool,
     ticket: &ShowTicket,
 ) -> Result<(), IpcError> {
-    let _ = fade;
+    // 穿透由控制器的 ClickRegion 负责（整窗放行），这里不用 `passive`
+    let _ = (fade, passive);
     let ticket = ticket.clone();
     let w = window.clone();
     on_main_sync(window, move || -> Result<(), IpcError> {

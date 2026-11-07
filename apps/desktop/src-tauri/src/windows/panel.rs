@@ -130,6 +130,15 @@ pub struct PanelOpen {
     pub guards: GuardSpec,
 }
 
+impl PanelOpen {
+    /// 连续粘贴的进度提示（`ToastPayload.queue` 有值）：放在屏幕角落（`WindowManager::panel_show_toast`）、整窗点击穿透
+    /// （macOS `ShowOpts.passive`，Windows / Linux 整窗放行的 [`ClickRegion`]），隐藏后不记为「上一张卡片」——之后的普通
+    /// toast、悬浮剪贴板与固定窗口都以上一张卡片为起点，不能落到角落里
+    pub fn corner_notice(&self) -> bool {
+        matches!(&self.payload, PanelPayload::Toast(t) if t.queue.is_some())
+    }
+}
+
 /// 运行期可变的选项（来自设置与外观）
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct PanelOptions {
@@ -277,8 +286,15 @@ pub trait PanelHost: Send + Sync + 'static {
     fn emit_focus_changed(&self, f: PanelFocusChanged);
     /// 同步显示；主线程执行前 `ticket` 已作废时跳过并返回 [`ShowTicket::superseded`]
     fn show(&self, rect: Rect, opts: ShowOpts, ticket: &ShowTicket) -> Result<(), IpcError>;
-    /// 已在屏幕上（alpha 0）的窗口改到 `rect` 并淡入（`ticket` 同上）
-    fn reveal(&self, rect: Rect, fade: Option<Fade>, key: bool, ticket: &ShowTicket) -> Result<(), IpcError>;
+    /// 已在屏幕上（alpha 0）的窗口改到 `rect` 并淡入（`ticket` 同上）；`passive` 同 [`ShowOpts::passive`]
+    fn reveal(
+        &self,
+        rect: Rect,
+        fade: Option<Fade>,
+        key: bool,
+        passive: bool,
+        ticket: &ShowTicket,
+    ) -> Result<(), IpcError>;
     /// 冷唤出的原生首帧（只在 Native 帧模式下调用）：页面还在加载时，在**同一次**主线程往返里把窗口放到 `rect`、
     /// WebView 固定为 `max_height` 高，不激活地显示卡片外壳（原生材质 + 着色层 + 阴影，窗口 alpha 按 `fade` 淡入），WebView
     /// 内容保持透明。外壳期间（直到 [`Self::reveal_shell`] / 隐藏）：
@@ -302,6 +318,7 @@ pub trait PanelHost: Send + Sync + 'static {
         let opts = ShowOpts {
             alpha: fade.map_or(ShowAlpha::Opaque, ShowAlpha::FadeIn),
             key,
+            passive: false,
         };
         self.show(rect, opts, ticket)
     }
@@ -324,7 +341,7 @@ pub trait PanelHost: Send + Sync + 'static {
         ticket: &ShowTicket,
     ) -> Result<(), IpcError> {
         let _ = (placement, animate);
-        self.reveal(rect, Some(fade), key, ticket)
+        self.reveal(rect, Some(fade), key, false, ticket)
     }
     /// Native 帧模式的高度变化
     /// 原生逐帧弹簧（保留速度重定目标）。`spring`：`panel_resize` 指定的弹簧，其余调用方用 gentle。
@@ -544,7 +561,13 @@ enum ReadyPlan {
     /// 窗口还没显示：同步显示
     Show { rect: Rect, opts: ShowOpts },
     /// 超时后已以 alpha 0 显示：改到最终矩形并淡入
-    Reveal { rect: Rect, fade: Option<Fade>, key: bool },
+    Reveal {
+        rect: Rect,
+        fade: Option<Fade>,
+        key: bool,
+        /// 连续粘贴的进度提示：ready 超时后的透明显示本来就整窗穿透，淡入时保持穿透
+        passive: bool,
+    },
     /// 冷唤出的原生外壳已在屏幕上：内容淡入、高度弹到实测值
     RevealShell {
         rect: Rect,
@@ -992,10 +1015,13 @@ impl PanelController {
         g.screen.to_desktop(local, self.unit)
     }
 
-    /// Css 帧模式且窗口带透明富余区时的点击穿透区域
+    /// Css 帧模式且窗口带透明富余区时的点击穿透区域。连续粘贴的进度提示整窗放行（卡片也不接收点击与悬停）
     fn click_region(&self, s: &Session) -> Option<ClickRegion> {
         if !self.css_with_margin() {
             return None;
+        }
+        if s.open.corner_notice() {
+            return self.passthrough_region(self.desktop_window_rect(s));
         }
         let g = &s.open.geometry;
         Some(ClickRegion {
@@ -1270,7 +1296,11 @@ impl PanelController {
                 Some(s) if s.phase == Phase::Hiding => PrepareRoute::FinishExitFirst,
                 // ready 超时后以 alpha 0 显示着的会话：用户什么都没看到，按全新会话准备（之后正常淡入）
                 Some(s) if visible && s.phase != Phase::TimedOut => {
-                    if open.transition == PanelTransition::Crossfade || s.open.geometry.same_position(&open.geometry) {
+                    // 点击穿透只跟着显示走（macOS 的 `ShowOpts.passive`）：连续粘贴的进度提示与别的视图之间不原地替换，
+                    // 否则穿透会被带进可点的视图，或进度提示变得可点
+                    let reuse =
+                        open.transition == PanelTransition::Crossfade || s.open.geometry.same_position(&open.geometry);
+                    if reuse && s.open.corner_notice() == open.corner_notice() {
                         PrepareRoute::InPlace
                     } else {
                         let old = s.open.session_id;
@@ -1766,6 +1796,7 @@ impl PanelController {
                     rect,
                     fade,
                     key: focused,
+                    passive: s.open.corner_notice(),
                 }
             } else {
                 ReadyPlan::Show {
@@ -1773,6 +1804,7 @@ impl PanelController {
                     opts: ShowOpts {
                         alpha: fade.map_or(ShowAlpha::Opaque, ShowAlpha::FadeIn),
                         key: focused,
+                        passive: s.open.corner_notice(),
                     },
                 }
             };
@@ -1791,7 +1823,12 @@ impl PanelController {
         };
         let shown = match plan {
             ReadyPlan::Show { rect, opts } => self.host.show(rect, opts, &ticket),
-            ReadyPlan::Reveal { rect, fade, key } => self.host.reveal(rect, fade, key, &ticket),
+            ReadyPlan::Reveal {
+                rect,
+                fade,
+                key,
+                passive,
+            } => self.host.reveal(rect, fade, key, passive, &ticket),
             ReadyPlan::RevealShell {
                 rect,
                 placement,
@@ -1995,6 +2032,7 @@ impl PanelController {
             let opts = ShowOpts {
                 alpha: ShowAlpha::Transparent,
                 key: false,
+                passive: false,
             };
             if let Err(e) = self.host.show(rect, opts, &ticket)
                 && ticket.valid()
@@ -2672,7 +2710,9 @@ impl PanelController {
                 self.ended([session_id]);
                 return;
             }
-            if let Some(s) = g.session.take() {
+            if let Some(s) = g.session.take()
+                && !s.open.corner_notice()
+            {
                 let geometry = &s.open.geometry;
                 g.last_card = Some(LastCard {
                     screen: geometry.screen.clone(),
@@ -3267,11 +3307,11 @@ impl PanelController {
         )
     }
 
-    /// 最近一次显示过的卡片（toast 定位）
+    /// 最近一次显示过的卡片（toast 定位、悬浮剪贴板与固定窗口的起点）。连续粘贴的进度提示不算（它在屏幕角落）
     pub fn last_card(&self) -> Option<LastCard> {
         let g = self.inner.lock();
         match g.session.as_ref() {
-            Some(s) if s.phase != Phase::Preparing => {
+            Some(s) if s.phase != Phase::Preparing && !s.open.corner_notice() => {
                 let geometry = &s.open.geometry;
                 Some(LastCard {
                     screen: geometry.screen.clone(),
@@ -3716,9 +3756,16 @@ impl PanelHost for TauriPanelHost {
         Ok(())
     }
 
-    fn reveal(&self, rect: Rect, fade: Option<Fade>, key: bool, ticket: &ShowTicket) -> Result<(), IpcError> {
+    fn reveal(
+        &self,
+        rect: Rect,
+        fade: Option<Fade>,
+        key: bool,
+        passive: bool,
+        ticket: &ShowTicket,
+    ) -> Result<(), IpcError> {
         let win = self.window().ok_or_else(|| IpcError::not_found("panel window"))?;
-        native::panel_reveal(&win, rect, fade, key, ticket)
+        native::panel_reveal(&win, rect, fade, key, passive, ticket)
     }
 
     fn animate_height(
@@ -3910,6 +3957,8 @@ pub(crate) mod mock {
         /// 主线程执行到显示时票已作废，跳过
         ShowSkipped,
         Reveal(Rect),
+        /// 紧接着的 `Reveal` 保持整窗穿透（连续粘贴的进度提示）
+        RevealPassive,
         AnimateHeight(f64, bool),
         /// `panel_resize` 指定了 snappy 的高度弹簧：(高度, 是否动画)
         AnimateSnappy(f64, bool),
@@ -4106,7 +4155,14 @@ pub(crate) mod mock {
             self.push(Call::Show(rect, opts));
             Ok(())
         }
-        fn reveal(&self, rect: Rect, fade: Option<Fade>, key: bool, ticket: &ShowTicket) -> Result<(), IpcError> {
+        fn reveal(
+            &self,
+            rect: Rect,
+            fade: Option<Fade>,
+            key: bool,
+            passive: bool,
+            ticket: &ShowTicket,
+        ) -> Result<(), IpcError> {
             let _ = (fade, key);
             let before = self.before_show.lock().take();
             if let Some(f) = before {
@@ -4118,6 +4174,9 @@ pub(crate) mod mock {
             }
             *self.frame.lock() = Some(rect);
             self.push(Call::Reveal(rect));
+            if passive {
+                self.push(Call::RevealPassive);
+            }
             Ok(())
         }
         fn animate_height(
@@ -7589,5 +7648,164 @@ mod tests {
         assert!(host.take().iter().any(|c| matches!(c, Call::Reveal(_))));
         host.run_timers(READY_WATCHDOG);
         assert!(!host.take().contains(&Call::Destroy));
+    }
+
+    // ---- 连续粘贴的进度提示（角落、点击穿透、不记为上一张卡片）
+
+    /// toast 会话：`queue` 时是连续粘贴的进度（放在屏幕右上角，高度上限很小），否则是普通的粘贴结果（上一张卡片的位置）。
+    /// 载荷经 JSON 构造：ToastPayload 以后加的可选字段不影响这里
+    fn toast_open(session_id: u64, queue: bool) -> PanelOpen {
+        let s = screen();
+        let geometry = if queue {
+            place_panel(
+                &s,
+                PlaceAnchor::Corner(placement::ScreenCorner::TopRight),
+                260.0,
+                40.0,
+                placement::NOTICE_MAX_HEIGHT,
+            )
+        } else {
+            place_panel(&s, PlaceAnchor::At(Point { x: 400.0, y: 300.0 }), 260.0, 40.0, 483.0)
+        };
+        let mut payload = serde_json::json!({ "reason": "copy_only", "paste_key": "⌘V" });
+        if queue {
+            payload["queue"] = serde_json::json!({ "active": true, "index": 1, "total": 3 });
+        }
+        PanelOpen {
+            session_id,
+            view: PanelView::Toast,
+            payload: PanelPayload::Toast(serde_json::from_value(payload).expect("toast payload")),
+            geometry,
+            focused: false,
+            transition: PanelTransition::Enter,
+            estimated_height: 40.0,
+            prev_app: None,
+            guards: GuardSpec::default(),
+        }
+    }
+
+    fn shown_opts(calls: &[Call]) -> Option<ShowOpts> {
+        calls.iter().find_map(|c| match c {
+            Call::Show(_, o) => Some(*o),
+            _ => None,
+        })
+    }
+
+    /// Native：进度提示整窗穿透（`ShowOpts.passive`），下一条进度原地替换、不重新显示；同一位置的普通 toast 与剪贴板视图
+    /// 先退出再进入、显示时不穿透（穿透只跟着显示走，原地替换会把它带过去）
+    #[test]
+    fn corner_notice_is_passive_only_for_itself_native() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        let first = toast_open(1, true);
+        assert!(first.corner_notice());
+        c.prepare(first);
+        c.ready(1, 56.0).expect("shown");
+        assert!(shown_opts(&host.take()).expect("show").passive);
+        // 下一条进度：同一位置、同一宽度，原地替换
+        c.prepare(toast_open(2, true));
+        c.ready(2, 38.0).expect("in place");
+        let calls = host.take();
+        assert!(
+            !calls.iter().any(|c| matches!(c, Call::Show(..) | Call::Hide(_))),
+            "{calls:?}"
+        );
+        // 同一位置的普通 toast：先淡出进度提示，再进入，显示时不穿透
+        let mut plain = toast_open(3, false);
+        assert!(!plain.corner_notice());
+        plain.geometry = toast_open(3, true).geometry;
+        c.prepare(plain);
+        let calls = host.take();
+        let hide = calls.iter().position(|c| *c == Call::Hide(true)).expect("exit first");
+        let emit = calls
+            .iter()
+            .position(|c| *c == Call::EmitPrepare(3))
+            .expect("prepare 3");
+        assert!(hide < emit, "{calls:?}");
+        c.ready(3, 40.0).expect("shown");
+        assert!(!shown_opts(&host.take()).expect("show").passive);
+        // 剪贴板视图从不穿透
+        c.prepare(open(4, PanelView::Clipboard, anchor_b()));
+        c.ready(4, 300.0).expect("shown");
+        assert!(!shown_opts(&host.take()).expect("show").passive);
+    }
+
+    /// Css：进度提示的点击穿透区域整窗放行（卡片也穿透），原地替换与改高度都保持；之后的剪贴板视图回到「卡片外穿透」
+    #[test]
+    fn corner_notice_passes_clicks_through_only_for_itself_css() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Css, 24.0);
+        c.prepare(toast_open(1, true));
+        c.ready(1, 56.0).expect("shown");
+        // Windows / Linux 的原生层不看 ShowOpts.passive，穿透全靠这里的整窗放行区域
+        let region = last_region(&host.take()).expect("click-through armed");
+        let card = c.snapshot().expect("snapshot").rect;
+        assert_eq!((region.card.width, region.card.height), (0.0, 0.0));
+        assert!(region.passes_through(card.x + card.width / 2.0, card.y + card.height / 2.0));
+        // 下一条进度原地替换：仍整窗放行
+        c.prepare(toast_open(2, true));
+        c.ready(2, 38.0).expect("in place");
+        let region = last_region(&host.take()).expect("region after in-place ready");
+        assert_eq!((region.card.width, region.card.height), (0.0, 0.0));
+        c.resize(2, 56.0, ResizeSpring::Gentle);
+        if let Some(region) = last_region(&host.take()) {
+            assert_eq!((region.card.width, region.card.height), (0.0, 0.0));
+        }
+        // 剪贴板视图：先退出再进入，卡片接收点击
+        c.prepare(open(3, PanelView::Clipboard, anchor_b()));
+        assert!(host.take().contains(&Call::EmitHideRequest(2, HideReason::Retrigger)));
+        c.hide_now(2, HideReason::Retrigger);
+        host.take();
+        c.ready(3, 300.0).expect("shown");
+        let region = last_region(&host.take()).expect("clipboard region");
+        let card = c.snapshot().expect("snapshot").rect;
+        assert_eq!(region.card, card);
+        assert!(!region.passes_through(card.x + 10.0, card.y + 10.0));
+    }
+
+    /// ready 超时后（整窗穿透的透明显示）迟到的 ready：进度提示淡入时保持穿透，别的视图恢复接收鼠标
+    #[test]
+    fn corner_notice_stays_passive_after_a_late_ready() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(toast_open(1, true));
+        host.run_timers(READY_TIMEOUT);
+        host.take();
+        c.ready(1, 56.0).expect("revealed");
+        let calls = host.take();
+        let reveal = calls.iter().position(|c| matches!(c, Call::Reveal(_))).expect("reveal");
+        assert_eq!(calls.get(reveal + 1), Some(&Call::RevealPassive), "{calls:?}");
+        c.hide_now(1, HideReason::Other);
+        host.take();
+        c.prepare(open(2, PanelView::Translate, anchor_a()));
+        host.run_timers(READY_TIMEOUT);
+        host.take();
+        c.ready(2, 120.0).expect("revealed");
+        let calls = host.take();
+        assert!(calls.iter().any(|c| matches!(c, Call::Reveal(_))));
+        assert!(!calls.contains(&Call::RevealPassive), "{calls:?}");
+    }
+
+    /// 进度提示在屏幕角落：显示期间与隐藏之后都不算「上一张卡片」（普通 toast、悬浮剪贴板、固定窗口以它为起点）；
+    /// 普通 toast 照旧更新
+    #[test]
+    fn corner_notice_does_not_become_the_last_card() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(open(1, PanelView::Clipboard, anchor_a()));
+        c.ready(1, 300.0).expect("shown");
+        c.hide_now(1, HideReason::Paste);
+        let clipboard = c.last_card().expect("clipboard card");
+        c.prepare(toast_open(2, true));
+        c.ready(2, 56.0).expect("shown");
+        assert_eq!(c.last_card(), Some(clipboard.clone()), "显示期间");
+        c.hide_now(2, HideReason::Other);
+        assert_eq!(c.last_card(), Some(clipboard.clone()), "隐藏之后");
+        c.prepare(toast_open(3, false));
+        c.ready(3, 40.0).expect("shown");
+        c.hide_now(3, HideReason::Other);
+        let plain = c.last_card().expect("plain toast card");
+        assert_ne!(plain, clipboard);
+        assert_eq!(plain.rect.width, 260.0);
     }
 }

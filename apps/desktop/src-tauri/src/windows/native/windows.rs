@@ -57,7 +57,7 @@ use wisp_types::{FrameMode, Placement, Rect};
 
 use super::{CardSurface, ClickRegion, Fade, ShowAlpha, ShowOpts, ShowTicket, VerticalBound, WidthSwitch};
 use crate::error::{IpcError, IpcErrorCode};
-use crate::windows::placement::DesktopUnit;
+use crate::windows::placement::{DesktopUnit, ScreenCorner};
 
 /// 桌面坐标单位：虚拟桌面物理像素
 pub const DESKTOP_UNIT: DesktopUnit = DesktopUnit::Physical;
@@ -75,6 +75,8 @@ pub const PANEL_RECYCLE_AFTER: Option<std::time::Duration> = None;
 pub const HAS_WINDOW_CENSUS: bool = false;
 /// 输入 / 剪贴板视图激活了面板，隐藏后要把前台还给原窗口
 pub const RESTORE_FOCUS_ON_HIDE: bool = true;
+/// 连续粘贴的进度提示放在右下角（任务栏上方），与系统通知的位置一致
+pub const NOTICE_CORNER: ScreenCorner = ScreenCorner::BottomRight;
 
 /// Pinned 用 DWM 的圆角与阴影（无装饰 + `shadow: true`），不透明，不需要 CSS 阴影边距
 pub fn pinned_css_shadow() -> bool {
@@ -410,6 +412,7 @@ pub fn panel_show_shell(
     let opts = ShowOpts {
         alpha: fade.map_or(ShowAlpha::Opaque, ShowAlpha::FadeIn),
         key,
+        passive: false,
     };
     panel_show(window, rect, opts, ticket)
 }
@@ -430,7 +433,7 @@ pub fn panel_reveal_shell(
     ticket: &ShowTicket,
 ) -> Result<(), IpcError> {
     let _ = (placement, animate);
-    panel_reveal(window, rect, Some(fade), key, ticket)
+    panel_reveal(window, rect, Some(fade), key, false, ticket)
 }
 
 /// 已经在屏幕上的面板（ready 超时后）改到 `rect`；Css 帧模式没有窗口淡入。票已作废时什么都不做
@@ -439,9 +442,11 @@ pub fn panel_reveal(
     rect: Rect,
     fade: Option<Fade>,
     key: bool,
+    passive: bool,
     ticket: &ShowTicket,
 ) -> Result<(), IpcError> {
-    let _ = fade;
+    // 穿透由控制器的 ClickRegion 负责（整窗放行），这里不用 `passive`
+    let _ = (fade, passive);
     let r = px(rect);
     let ticket = ticket.clone();
     on_main_sync(window, move |hwnd| -> Result<(), IpcError> {

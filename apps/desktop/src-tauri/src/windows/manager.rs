@@ -12,9 +12,9 @@ use parking_lot::{Mutex, RwLock};
 use tauri::{Emitter, Manager};
 pub use wisp_types::FrameMode;
 use wisp_types::{
-    Anchor, AppRef, AppearanceState, Boot, HideReason, MonitorId, MonitorInfo, OsKind, OverlayMode, PanelPayload,
-    PanelShown, PanelTransition, PanelView, PinState, Point, Rect, ReduceMotionPref, ToastPayload, TranslateSettings,
-    WindowTarget, event,
+    Anchor, AppRef, AppearanceState, Boot, HideReason, MonitorId, MonitorInfo, OcrMode, OsKind, OverlayMode,
+    PanelPayload, PanelShown, PanelTransition, PanelView, PinState, Point, Rect, ReduceMotionPref, ToastPayload,
+    TranslateSettings, WindowTarget, event,
 };
 
 use super::native::{self, CardSurface, TemplateKind};
@@ -24,7 +24,7 @@ use super::panel::{
     BootProvider, PANEL_LABEL, PanelController, PanelHost, PanelOpen, PanelOptions, PerfHook, PerfNote, TauriPanelHost,
 };
 use super::pinned::{self, PinRequest, PinnedRegistry};
-use super::placement::{self, PlaceAnchor, Screen, initial_height};
+use super::placement::{self, PlaceAnchor, PlaceOpts, Screen, TranslateEstimate, initial_height};
 use super::sizing::SHADOW_MARGIN;
 use crate::app::perf::PerfMarks;
 use crate::error::IpcError;
@@ -311,6 +311,7 @@ fn view_width(view: PanelView, payload: &PanelPayload, s: &wisp_types::Settings)
             a.translate_min_width
                 .clamp(TRANSLATE_MIN_RANGE.0, TRANSLATE_MIN_RANGE.1),
         ),
+        // 框选锚点的 OCR 随框选变宽，只在 `panel_prepare` 里按锚点算（`place_opts`）；编排器的 `StartAck.width` 只用于翻译
         (PanelView::Ocr, _) => placement::OCR_WIDTH,
         (PanelView::Input, _) => placement::INPUT_WIDTH,
         (PanelView::Clipboard, _) => f64::from(
@@ -320,6 +321,74 @@ fn view_width(view: PanelView, payload: &PanelPayload, s: &wisp_types::Settings)
         (PanelView::Toast, PanelPayload::Toast(t)) => placement::toast_width(&t.paste_key),
         (PanelView::Toast, _) => placement::TOAST_MIN_WIDTH,
     }
+}
+
+/// 面板放置的输入：视图宽度与初始高度之外，按载荷估计内容高度（只用来选放在哪一侧，见 [`PlaceOpts::expected`]），
+/// OCR 的宽度随框选。`real_rect`：锚点是真实的选区 / 框选矩形（锚点所在显示器断开、退回光标锚点时为 false），只有
+/// 这时才允许侧放、OCR 才随框选变宽。未就绪与长文本确认的视图很矮，预计高度就是初始高度
+fn place_opts(
+    payload: &PanelPayload,
+    anchor: PlaceAnchor,
+    real_rect: bool,
+    s: &wisp_types::Settings,
+    width: f64,
+    initial: f64,
+    cap: f64,
+) -> PlaceOpts {
+    let font = f64::from(s.appearance.font_size);
+    let mut opts = PlaceOpts {
+        side_ok: real_rect,
+        ..PlaceOpts::new(width, initial, cap)
+    };
+    match (payload, anchor) {
+        (PanelPayload::Ocr(o), PlaceAnchor::Rect(capture)) if real_rect && o.not_ready.is_none() => {
+            opts.width = placement::ocr_width(capture.width, font);
+            opts.narrow_width = Some(placement::OCR_WIDTH);
+            opts.expected = placement::ocr_expected_height(capture, opts.width, font, o.mode == OcrMode::Translate);
+        }
+        (PanelPayload::Translate(t), _) if t.not_ready.is_none() && t.long_text.is_none() => {
+            opts.expected = placement::translate_expected_height(&TranslateEstimate {
+                source: &t.source_text,
+                width,
+                font_size: font,
+                ratio: placement::translation_ratio(&t.source_text, t.target_lang, t.task),
+                show_source: s.translate.show_source_by_default,
+                dict_mode: t.dict_mode,
+                cap,
+            });
+        }
+        _ => {}
+    }
+    opts
+}
+
+/// toast 的几何。连续粘贴的进度（`queue` 有值）放在 `corner`（光标所在屏，取不到时主屏）的 [`native::NOTICE_CORNER`]，
+/// 远离用户正在填写的输入框，高度上限 [`placement::NOTICE_MAX_HEIGHT`]；其余 toast 放在 `other`（上一张卡片的位置，
+/// 没有时光标下方）。宽度只取决于粘贴键：连续两条进度的位置与宽度相同，原地替换
+fn toast_geometry(
+    toast: &ToastPayload,
+    corner: Option<Screen>,
+    other: Option<(Screen, PlaceAnchor)>,
+    max_height_ratio: f64,
+) -> Option<placement::PanelGeometry> {
+    let width = placement::toast_width(&toast.paste_key);
+    let notice = toast.queue.is_some();
+    let (screen, anchor) = if notice {
+        (corner?, PlaceAnchor::Corner(native::NOTICE_CORNER))
+    } else {
+        other?
+    };
+    let mut cap = placement::height_cap(&screen, max_height_ratio);
+    if notice {
+        cap = cap.min(placement::NOTICE_MAX_HEIGHT);
+    }
+    Some(placement::place_panel(
+        &screen,
+        anchor,
+        width,
+        initial_height::TOAST,
+        cap,
+    ))
 }
 
 /// 视图的初始估计高度
@@ -551,20 +620,21 @@ impl WindowManager {
             .or_else(|| primary_screen(screens).map(|s| (s, PlaceAnchor::Center)))
     }
 
-    /// 锚点 → 屏幕与放置锚点
-    fn resolve_anchor(&self, anchor: &AnchorSource, screens: &[Screen]) -> Option<(Screen, PlaceAnchor)> {
+    /// 锚点 → 屏幕、放置锚点，以及锚点是不是真实的选区 / 框选矩形（只有这时才允许侧放、OCR 随框选变宽）
+    fn resolve_anchor(&self, anchor: &AnchorSource, screens: &[Screen]) -> Option<(Screen, PlaceAnchor, bool)> {
+        let fallback = |located: Option<(Screen, PlaceAnchor)>| located.map(|(s, a)| (s, a, false));
         match anchor {
             AnchorSource::Selection(a) | AnchorSource::Rect(a) => match screens.iter().find(|s| s.id == a.monitor_id) {
-                Some(s) => Some((s.clone(), PlaceAnchor::Rect(a.rect))),
+                Some(s) => Some((s.clone(), PlaceAnchor::Rect(a.rect), true)),
                 // 锚点所在显示器已经断开（取词与显示之间拔掉了外接屏）：按锚点的优先级退回光标锚点
-                None => self.cursor_anchor(screens),
+                None => fallback(self.cursor_anchor(screens)),
             },
-            AnchorSource::Cursor => self.cursor_anchor(screens),
+            AnchorSource::Cursor => fallback(self.cursor_anchor(screens)),
             AnchorSource::Center => self
                 .cursor_screen(screens)
                 .map(|(s, _)| s)
                 .or_else(|| primary_screen(screens))
-                .map(|s| (s, PlaceAnchor::Center)),
+                .map(|s| (s, PlaceAnchor::Center, false)),
             AnchorSource::Remembered => self
                 .cursor_screen(screens)
                 .map(|(s, _)| s)
@@ -572,8 +642,8 @@ impl WindowManager {
                 .map(|s| {
                     let saved = self.settings.state().get().clipboard_positions.get(&s.id).copied();
                     match saved {
-                        Some(p) => (s, PlaceAnchor::At(Point { x: p.x, y: p.y })),
-                        None => (s, PlaceAnchor::Center),
+                        Some(p) => (s, PlaceAnchor::At(Point { x: p.x, y: p.y }), false),
+                        None => (s, PlaceAnchor::Center, false),
                     }
                 }),
         }
@@ -590,7 +660,7 @@ impl WindowManager {
     pub fn panel_prepare(&self, req: PanelShowRequest) -> Option<u64> {
         let settings = self.settings.get();
         let screens = self.refresh_screens();
-        let Some((screen, anchor)) = self.resolve_anchor(&req.anchor, &screens) else {
+        let Some((screen, anchor, real_rect)) = self.resolve_anchor(&req.anchor, &screens) else {
             log::error!("panel_prepare view={:?}: no monitor available", req.view);
             return None;
         };
@@ -605,14 +675,16 @@ impl WindowManager {
             PanelPayload::Clipboard(c) => placement::clipboard_estimated_height(c, cap),
             _ => view_initial_height(req.view),
         };
-        let geometry = placement::place_panel(&screen, anchor, width, initial, cap);
+        let opts = place_opts(&req.payload, anchor, real_rect, &settings, width, initial, cap);
+        let geometry = placement::place_panel_with(&screen, anchor, opts);
         let view = req.view;
         log::debug!(
-            "panel_prepare session={session_id} view={:?} placement={:?} width={} max_height={}",
+            "panel_prepare session={session_id} view={:?} placement={:?} width={} max_height={} expected={}",
             req.view,
             geometry.placement,
             geometry.width,
-            geometry.max_height
+            geometry.max_height,
+            opts.expected.round()
         );
         self.panel.prepare(PanelOpen {
             session_id,
@@ -705,6 +777,7 @@ impl WindowManager {
     }
 
     /// 以 toast 视图不激活地显示在上次面板位置（没有上次位置时在光标下方），1.6 s 后由前端淡出并 panel_hide。
+    /// 连续粘贴的进度改放在光标所在屏的角落（[`toast_geometry`]），整张卡片点击穿透（见 `PanelOpen::corner_notice`）。
     ///
     /// **会阻塞**（与 [`Self::panel_prepare`] 相同的主线程往返），在阻塞线程上调用
     pub fn panel_show_toast(&self, toast: ToastPayload) {
@@ -712,23 +785,32 @@ impl WindowManager {
         let settings = self.settings.get();
         let screens = self.refresh_screens();
         let width = placement::toast_width(&toast.paste_key);
-        let located = match self.panel.last_card() {
-            Some(last) => {
-                let screen = screens
-                    .iter()
-                    .find(|s| s.id == last.screen.id)
-                    .cloned()
-                    .unwrap_or(last.screen);
-                Some((screen, PlaceAnchor::At(placement::toast_anchor(last.rect, width))))
-            }
-            None => self.cursor_anchor(&screens),
+        let (corner, other) = if toast.queue.is_some() {
+            // 用户点进下一个输入框时光标就在那块屏上
+            let screen = self
+                .cursor_screen(&screens)
+                .map(|(s, _)| s)
+                .or_else(|| primary_screen(&screens));
+            (screen, None)
+        } else {
+            let other = match self.panel.last_card() {
+                Some(last) => {
+                    let screen = screens
+                        .iter()
+                        .find(|s| s.id == last.screen.id)
+                        .cloned()
+                        .unwrap_or(last.screen);
+                    Some((screen, PlaceAnchor::At(placement::toast_anchor(last.rect, width))))
+                }
+                None => self.cursor_anchor(&screens),
+            };
+            (None, other)
         };
-        let Some((screen, anchor)) = located else {
+        let ratio = f64::from(settings.appearance.max_height_ratio);
+        let Some(geometry) = toast_geometry(&toast, corner, other, ratio) else {
             log::error!("panel_show_toast: no monitor available");
             return;
         };
-        let cap = placement::height_cap(&screen, f64::from(settings.appearance.max_height_ratio));
-        let geometry = placement::place_panel(&screen, anchor, width, initial_height::TOAST, cap);
         self.panel.prepare(PanelOpen {
             session_id,
             view: PanelView::Toast,
@@ -1586,5 +1668,163 @@ mod tests {
         assert!(!panel_options(&s, true).reduce_motion);
         s.advanced.unload_panel_after_idle_min = Some(30);
         assert_eq!(panel_options(&s, false).unload_after, Some(Duration::from_secs(1800)));
+    }
+
+    /// 1440×900 的主屏，菜单栏 25、Dock 70
+    fn mac_screen() -> Screen {
+        Screen {
+            id: "1".to_owned(),
+            frame: Rect::new(0.0, 0.0, 1440.0, 900.0),
+            work: Rect::new(0.0, 25.0, 1440.0, 805.0),
+            scale: 2.0,
+            physical_origin: wisp_types::PhysPoint { x: 0, y: 0 },
+            primary: true,
+        }
+    }
+
+    fn ocr(not_ready: bool, mode: OcrMode) -> PanelPayload {
+        PanelPayload::Ocr(wisp_types::OcrPayload {
+            capture_id: "c1".to_owned(),
+            request_id: None,
+            mode,
+            thumb_url: String::new(),
+            image_size: wisp_types::PhysSize {
+                width: 1040,
+                height: 520,
+            },
+            target_lang: Lang::ZhCn,
+            not_ready: not_ready.then_some(wisp_types::NotReady::NoProvider),
+            layout: wisp_types::OcrLayout::default(),
+        })
+    }
+
+    /// OCR 的宽度与预计高度只在真实的框选矩形、且已就绪时随框选；翻译按原文估计（长文本确认 / 未就绪除外）；
+    /// 侧放只给真实的选区 / 框选矩形
+    #[test]
+    fn place_opts_follow_payload_and_anchor() {
+        let s = wisp_types::Settings::default();
+        let font = f64::from(s.appearance.font_size);
+        let capture = Rect::new(200.0, 300.0, 520.0, 260.0);
+        let o = place_opts(
+            &ocr(false, OcrMode::Lines),
+            PlaceAnchor::Rect(capture),
+            true,
+            &s,
+            440.0,
+            220.0,
+            483.0,
+        );
+        assert_eq!(o.width, 552.0);
+        assert_eq!(o.narrow_width, Some(placement::OCR_WIDTH));
+        assert_eq!(o.expected, placement::ocr_expected_height(capture, 552.0, font, false));
+        assert!(o.side_ok);
+        // 直接翻译多一条语言条
+        let direct = place_opts(
+            &ocr(false, OcrMode::Translate),
+            PlaceAnchor::Rect(capture),
+            true,
+            &s,
+            440.0,
+            220.0,
+            483.0,
+        );
+        assert_eq!(
+            direct.expected,
+            placement::ocr_expected_height(capture, 552.0, font, true)
+        );
+        // 锚点所在显示器断开、退回光标锚点：440，按初始高度、不侧放
+        let cursor = PlaceAnchor::Rect(placement::cursor_rect(Point { x: 400.0, y: 300.0 }));
+        let o = place_opts(&ocr(false, OcrMode::Lines), cursor, false, &s, 440.0, 220.0, 483.0);
+        assert_eq!(o, PlaceOpts::new(440.0, 220.0, 483.0));
+        // 未就绪：同上（但真实矩形照样允许侧放——预计高度等于初始高度，侧放不会发生）
+        let o = place_opts(
+            &ocr(true, OcrMode::Lines),
+            PlaceAnchor::Rect(capture),
+            true,
+            &s,
+            440.0,
+            220.0,
+            483.0,
+        );
+        assert_eq!((o.width, o.expected, o.narrow_width), (440.0, 220.0, None));
+        // 翻译：按原文长度估计，宽度不变；光标锚点也估计（只是不侧放）
+        let long = "a".repeat(2000);
+        let o = place_opts(&translate(&long, false), cursor, false, &s, 520.0, 120.0, 483.0);
+        assert_eq!(o.width, 520.0);
+        assert!(o.expected > 483.0, "{}", o.expected);
+        assert!(!o.side_ok);
+        // 长文本确认 / 未就绪：按初始高度
+        let mut confirm = translate(&long, false);
+        if let PanelPayload::Translate(t) = &mut confirm {
+            t.long_text = Some(wisp_types::LongTextInfo {
+                chars: 2000,
+                est_tokens: 600,
+                est_seconds: None,
+            });
+        }
+        assert_eq!(
+            place_opts(&confirm, PlaceAnchor::Rect(capture), true, &s, 520.0, 120.0, 483.0).expected,
+            120.0
+        );
+        // 剪贴板 / 输入：按初始高度
+        let clip = PanelPayload::Clipboard(ClipboardPayload {
+            page: ClipPage::empty(wisp_types::ClipFilter::All),
+            paused: false,
+            hint_bar: true,
+            paste_on_double_click: false,
+            unavailable: None,
+            recording: wisp_types::ClipboardRecording::Recording,
+            favorites_collapsed: false,
+            queue_unavailable: None,
+        });
+        assert_eq!(
+            place_opts(&clip, PlaceAnchor::Center, false, &s, 420.0, 300.0, 483.0),
+            PlaceOpts::new(420.0, 300.0, 483.0)
+        );
+    }
+
+    /// 载荷经 JSON 构造：ToastPayload 以后加的可选字段不影响这里
+    fn toast_payload(queue: Option<(u32, u32)>) -> ToastPayload {
+        let mut v = serde_json::json!({ "reason": "copy_only", "paste_key": "⌘V" });
+        if let Some((index, total)) = queue {
+            v["queue"] = serde_json::json!({ "active": index < total, "index": index, "total": total });
+        }
+        serde_json::from_value(v).expect("toast payload")
+    }
+
+    /// 连续粘贴的进度在光标所在屏的角落（各平台的 NOTICE_CORNER）、高度上限很小；进度变化时位置与宽度不变（原地替换）；
+    /// 普通 toast 仍在给定的位置（上一张卡片）
+    #[test]
+    fn queue_toasts_go_to_the_corner() {
+        let s = mac_screen();
+        let at = (s.clone(), PlaceAnchor::At(Point { x: 600.0, y: 300.0 }));
+        let first = toast_geometry(&toast_payload(Some((1, 5))), Some(s.clone()), None, 0.6).expect("corner");
+        assert!(first.max_height <= placement::NOTICE_MAX_HEIGHT);
+        assert_eq!(first.x + first.width, s.work.right() - placement::CORNER_INSET);
+        match native::NOTICE_CORNER {
+            placement::ScreenCorner::TopRight => {
+                assert_eq!(first.placement, wisp_types::Placement::Below);
+                assert_eq!(first.edge_y, s.work.y + placement::CORNER_INSET);
+            }
+            placement::ScreenCorner::BottomRight => {
+                assert_eq!(first.placement, wisp_types::Placement::Above);
+                assert_eq!(first.edge_y, s.work.bottom() - placement::CORNER_INSET);
+            }
+        }
+        // 角落提示不看「上一张卡片」
+        let ignored = toast_geometry(&toast_payload(Some((1, 5))), Some(s.clone()), Some(at.clone()), 0.6);
+        assert_eq!(ignored.as_ref(), Some(&first));
+        let next = toast_geometry(&toast_payload(Some((2, 5))), Some(s.clone()), None, 0.6).expect("corner");
+        assert!(next.same_position(&first));
+        let done = toast_geometry(&toast_payload(Some((5, 5))), Some(s.clone()), None, 0.6).expect("corner");
+        assert!(done.same_position(&first), "「连续粘贴完成」也在角落");
+        assert_eq!(
+            toast_geometry(&toast_payload(Some((1, 5))), None, Some(at.clone()), 0.6),
+            None
+        );
+        // 普通 toast：给定的位置，普通上限
+        let plain = toast_geometry(&toast_payload(None), Some(s.clone()), Some(at), 0.6).expect("plain");
+        assert_eq!((plain.x, plain.edge_y), (600.0, 300.0));
+        assert_eq!(plain.max_height, placement::height_cap(&s, 0.6));
     }
 }
