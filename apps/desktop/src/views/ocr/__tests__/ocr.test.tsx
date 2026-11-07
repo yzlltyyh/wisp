@@ -2155,3 +2155,132 @@ describe('拖动', () => {
     expect(callsOf('panel_drag_start')).toHaveLength(0)
   })
 })
+
+describe('展开阅读', () => {
+  const shiftMod = (code: string) =>
+    key(
+      code,
+      boot.os === 'macos' ? { metaKey: true, shiftKey: true } : { ctrlKey: true, shiftKey: true },
+    )
+
+  it('外壳给了 toggleReading：⋯ 与 ✕ 之间有展开按钮（不带 data-keep-focus：展开时要键盘），点它与 ⌘⇧E 都交给外壳', async () => {
+    const toggleReading = vi.fn<() => void>()
+    const { rerender, props } = view({ toggleReading })
+    await recognize()
+    const button = screen.getByTestId('ocr-reading')
+    expect(button).toHaveAccessibleName('展开阅读')
+    expect(button.closest('[data-keep-focus]')).toBeNull()
+    const order = (a: Element, b: Element) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING
+    expect(order(screen.getByTestId('ocr-more'), button)).toBeTruthy()
+    expect(order(button, screen.getByTestId('ocr-close'))).toBeTruthy()
+    fireEvent.click(button)
+    expect(toggleReading).toHaveBeenCalledTimes(1)
+    // 文本框里同样生效
+    ;(screen.getByTestId('ocr-text') as HTMLTextAreaElement).focus()
+    act(() => shiftMod('KeyE'))
+    expect(toggleReading).toHaveBeenCalledTimes(2)
+    rerender(
+      <MotionRoot>
+        <OcrView {...props} toggleReading={undefined} />
+      </MotionRoot>,
+    )
+    expect(screen.queryByTestId('ocr-reading')).toBeNull()
+    act(() => shiftMod('KeyE'))
+    expect(toggleReading).toHaveBeenCalledTimes(2)
+  })
+
+  it('高截图左右并排（columns）：头部不画缩略图，截图在左栏、文字栏在右；收起后回到普通布局，文字区不重新挂载', async () => {
+    const tall = payload({ image_size: { width: 600, height: 900 } })
+    const { rerender, props } = view({ toggleReading: vi.fn<() => void>() }, tall)
+    await recognize()
+    const text = screen.getByTestId('ocr-text')
+    expect(screen.getByTestId('ocr-thumbnail')).toBeInTheDocument()
+    expect(screen.queryByTestId('ocr-shot')).toBeNull()
+    const again = (extra: Partial<OcrViewProps>) =>
+      rerender(
+        <MotionRoot>
+          <OcrView {...props} {...extra} />
+        </MotionRoot>,
+      )
+    again({ reading: 'columns' })
+    const root = screen.getByTestId('view-ocr')
+    expect(root).toHaveAttribute('data-reading', 'columns')
+    expect(screen.queryByTestId('ocr-thumbnail')).toBeNull()
+    const shot = screen.getByTestId('ocr-shot')
+    expect(shot).toHaveAttribute('data-layout', 'columns')
+    expect(shot).toHaveAttribute('tabindex', '0')
+    expect(shot.querySelector('img')).toHaveAttribute('src', expect.stringContaining('cap-1'))
+    const stage = shot.parentElement
+    expect(stage).toHaveClass('ocr-stage')
+    expect(stage?.lastElementChild).toHaveClass('ocr-col')
+    expect(stage?.lastElementChild).toContainElement(text)
+    expect(screen.getByTestId('ocr-text')).toBe(text)
+    expect(screen.getByTestId('ocr-reading')).toHaveAccessibleName('收起')
+    again({ reading: null })
+    expect(root).not.toHaveAttribute('data-reading')
+    expect(screen.queryByTestId('ocr-shot')).toBeNull()
+    expect(screen.getByTestId('ocr-thumbnail')).toBeInTheDocument()
+    expect(screen.getByTestId('ocr-text')).toBe(text)
+  })
+
+  it('宽截图上下堆叠（stacked）：截图 1:1（逻辑尺寸）在上，截图区高度上限按视图的 45%', async () => {
+    const wide = payload({ image_size: { width: 1600, height: 200 } })
+    view({ toggleReading: vi.fn<() => void>(), reading: 'stacked', maxHeight: 700 }, wide)
+    await recognize()
+    const shot = screen.getByTestId('ocr-shot')
+    expect(shot).toHaveAttribute('data-layout', 'stacked')
+    const img = shot.querySelector('img') as HTMLImageElement
+    const dpr = window.devicePixelRatio || 1
+    expect(img.style.width).toBe(`${Math.round(1600 / dpr)}px`)
+    expect(img.style.height).toBe(`${Math.round(200 / dpr)}px`)
+    // 截图比上限矮：截图区按截图的高度
+    expect(shot.style.maxHeight).toBe(`${Math.round(200 / dpr)}px`)
+  })
+
+  it('版式：展开阅读时头部不算缩略图；上下堆叠时截图区先占去高度（不超过视图的 45%）', () => {
+    const lh = lineHeight(14)
+    const columns = layoutFor({ maxHeight: 800, fontSize: 14, direct: false, reading: 'columns' })
+    expect(columns.thumb).toBe(0)
+    expect(columns.shotMax).toBe(0)
+    expect(columns.mainFloor).toBeCloseTo(Math.max(3 * lh, (776 - 36 - 40 - 56 - 30) * 0.4))
+    const tall = layoutFor({
+      maxHeight: 800,
+      fontSize: 14,
+      direct: false,
+      reading: 'stacked',
+      shotHeight: 2000,
+    })
+    expect(tall.shotMax).toBe(Math.round(776 * 0.45))
+    const short = layoutFor({
+      maxHeight: 800,
+      fontSize: 14,
+      direct: false,
+      reading: 'stacked',
+      shotHeight: 120.4,
+    })
+    expect(short.shotMax).toBe(121)
+    expect(short.mainFloor).toBeGreaterThan(tall.mainFloor)
+  })
+
+  it('未就绪卡片：不显示展开按钮，给了 reading 也按普通布局', async () => {
+    const toggleReading = vi.fn<() => void>()
+    view(
+      { toggleReading, reading: 'columns' },
+      payload({ request_id: null, not_ready: { reason: 'no_provider' } }),
+    )
+    await settle()
+    expect(screen.queryByTestId('ocr-reading')).toBeNull()
+    expect(screen.queryByTestId('ocr-shot')).toBeNull()
+    expect(screen.getByTestId('view-ocr')).not.toHaveAttribute('data-reading')
+    act(() => shiftMod('KeyE'))
+    expect(toggleReading).not.toHaveBeenCalled()
+  })
+
+  it('固定窗口宿主给了 reading：同样摆出截图区（没有展开按钮）', async () => {
+    view({ host: 'pinned', reading: 'stacked' })
+    await settle()
+    expect(screen.getByTestId('ocr-shot')).toHaveAttribute('data-layout', 'stacked')
+    expect(screen.queryByTestId('ocr-reading')).toBeNull()
+  })
+})

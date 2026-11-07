@@ -34,11 +34,90 @@
     flex: 0 1000 auto;
     contain: layout;
   }
-  .ocr-view[data-host='pinned'] > .ocr-body {
+  .ocr-view[data-host='pinned'] .ocr-body {
     flex-grow: 1;
   }
-  .ocr-view[data-host='pinned'] > .ocr-body > .ocr-text {
+  .ocr-view[data-host='pinned'] .ocr-body > .ocr-text {
     flex-grow: 1;
+  }
+  /*
+   * 截图区与文字的外层（.ocr-stage）、文字那一列（.ocr-col）：普通布局里没有盒子（data-contents → display: contents），
+   * 正文与底栏照常是视图这一列的 flex 子项
+   */
+  .ocr-stage[data-contents],
+  .ocr-col[data-contents] {
+    display: contents;
+  }
+
+  /*
+   * ---- 展开阅读（data-reading）：头部不画缩略图，整张截图在截图区里 ----
+   * - columns：[截图 | 识别文本]，文字栏约 440（与普通布局的卡片同宽），截图栏取其余宽度；一行的高度 = 视图收缩之后的
+   *   高度，截图栏比它高时在栏内滚动，文字栏照常按 flex 权重分给正文与展开区；
+   * - stacked：截图 1:1 在上（截图区高度上限由视图内联给出，放不下时横向 / 纵向滚动），文字在下、与截图同宽逐行对照
+   */
+  .ocr-view[data-reading] > .ocr-stage {
+    display: grid;
+    flex: 0 1 auto;
+    min-height: 0;
+  }
+  .ocr-view[data-reading='columns'] > .ocr-stage {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 440px);
+    grid-template-rows: minmax(0, 1fr);
+    column-gap: 16px;
+  }
+  .ocr-view[data-reading='stacked'] > .ocr-stage {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .ocr-view[data-reading] .ocr-col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+  .ocr-view[data-reading='stacked'] .ocr-col {
+    flex: 0 1 auto;
+  }
+  .ocr-view[data-host='pinned'][data-reading] > .ocr-stage,
+  .ocr-view[data-host='pinned'][data-reading='stacked'] .ocr-col {
+    flex-grow: 1;
+  }
+  .ocr-shot {
+    min-width: 0;
+    min-height: 0;
+    max-width: 100%;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border-radius: var(--r-control);
+    background: var(--fill-control);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+  }
+  .ocr-shot[data-layout='columns'] {
+    justify-self: start;
+    align-self: start;
+    max-height: 100%;
+  }
+  .ocr-shot[data-layout='stacked'] {
+    flex: none;
+    align-self: flex-start;
+  }
+  .ocr-shot img {
+    display: block;
+    border-radius: var(--r-control);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .ocr-shot[data-layout='columns'] img {
+    width: 100%;
+    height: auto;
+  }
+  .ocr-shot[data-layout='stacked'] img {
+    max-width: none;
+  }
+  .ocr-shot:focus-visible {
+    outline: var(--focus-ring-width) solid var(--accent);
+    outline-offset: 2px;
   }
   /* 流式区与它的滚动容器跟着外层收缩（骨架、错误卡片、空状态不收缩） */
   .ocr-run {

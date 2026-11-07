@@ -7,10 +7,12 @@ import type {
   ModelRef,
   OcrMode,
   Provider,
+  ReadingLayout,
   SettingsSection,
   SettingsSnapshot,
   Style,
 } from '../../shared/ipc'
+import { READING } from '../../panel/reading'
 import { isOcrService } from '../../shared/offline/catalog'
 import { stripUrlBreaks } from '../../shared/stream/urlBreaks'
 
@@ -140,6 +142,10 @@ export const LAYOUT = {
   compactBelow: 440,
   /** 头部除缩略图外的高度（上下边距） */
   headExtra: 12,
+  /** 展开阅读时头部不画缩略图（整张截图在截图区里）：只剩尺寸 / 模式 · 模型两行（2 × 16 + 2 + 下边距 2） */
+  bareHead: 36,
+  /** 上下堆叠时截图区与下方文字之间的间距 */
+  shotGap: 12,
   /** 直接翻译的语言条（36 + 下边距） */
   subhead: 40,
   footer: 40,
@@ -161,34 +167,49 @@ export interface LayoutInput {
   fontSize: number
   /** 直接翻译（多一条语言条） */
   direct: boolean
+  /** 展开阅读的版式（null / 缺省 = 普通布局） */
+  reading?: ReadingLayout | null
+  /** 截图的逻辑高度（上下堆叠时截图区按它与上限取较小者；未知时按上限） */
+  shotHeight?: number
 }
 
 export interface Layout {
   /** 视图内容的高度上限（卡片上限减去上下内边距） */
   viewMax: number
-  /** 头部缩略图的高度上限 */
+  /** 头部缩略图的高度上限（展开阅读时为 0：不画缩略图） */
   thumb: number
   /** 内容放不下时正文区至少保留的高度（px）：共享空间的 40%，且不少于 3 行 */
   mainFloor: number
+  /** 上下堆叠时截图区的高度上限（视图上限 × READING.shotShare，截图更矮时按截图）；其余版式为 0 */
+  shotMax: number
 }
 
 /**
  * 版式：卡片上限低时头部缩略图收成 48 px（把空间留给正文），正文区在两区都放不下时至少保留 40% / 3 行。展开区不设
  * 单独的上限：它按内容排版，正文区收缩到 mainFloor 之后它才开始收缩（flex-shrink 权重，见 ocr.css）。
+ * 展开阅读时头部不画缩略图；左右并排时文字栏与截图栏等高（截图栏不占文字的高度），上下堆叠时截图区先占去它的高度
  */
 export function layoutFor(o: LayoutInput): Layout {
   const lh = lineHeight(o.fontSize)
-  const thumb = o.maxHeight < LAYOUT.compactBelow ? LAYOUT.thumbCompact : LAYOUT.thumb
+  const reading = o.reading ?? null
+  const thumb =
+    reading !== null ? 0 : o.maxHeight < LAYOUT.compactBelow ? LAYOUT.thumbCompact : LAYOUT.thumb
   const viewMax = Math.max(0, o.maxHeight - LAYOUT.pad)
+  const shotCap = Math.round(viewMax * READING.shotShare)
+  const shotMax =
+    reading === 'stacked'
+      ? Math.min(shotCap, o.shotHeight && o.shotHeight > 0 ? Math.ceil(o.shotHeight) : shotCap)
+      : 0
+  const head = reading !== null ? LAYOUT.bareHead : thumb + LAYOUT.headExtra
   const shared =
     viewMax -
-    thumb -
-    LAYOUT.headExtra -
+    head -
+    (shotMax > 0 ? shotMax + LAYOUT.shotGap : 0) -
     (o.direct ? LAYOUT.subhead : 0) -
     LAYOUT.footer -
     LAYOUT.section -
     LAYOUT.status
-  return { viewMax, thumb, mainFloor: Math.max(3 * lh, shared * LAYOUT.mainShare) }
+  return { viewMax, thumb, mainFloor: Math.max(3 * lh, shared * LAYOUT.mainShare), shotMax }
 }
 
 /**

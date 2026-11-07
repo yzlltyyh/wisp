@@ -27,8 +27,13 @@
  * 键盘：⌘C 先复制选区，没有选区时译文区存在就复制译文、否则复制 OCR 文本；⌘↩（Windows / Linux：Ctrl+Enter）把同一段
  * 文字粘贴回截图前的应用（面板随之收起；固定窗口里退回复制）；⌘R 作用于最近一次
  * 交互的区域（OCR 文本 → 重新识别；译文 → 重新翻译）；编辑后再 ⌘R 先确认（会覆盖修改，再按一次 ⌘R 即确认）；
- * ⌘P 固定整个面板；有文字时 ⌘1–9 按该风格翻译（译文区收起时展开它）；⌘L 在「原样」与最近用过的整理方式之间切换排版。
- * Esc 先收起放大的截图与菜单，其余由外壳处理。
+ * ⌘P 固定整个面板；有文字时 ⌘1–9 按该风格翻译（译文区收起时展开它）；⌘L 在「原样」与最近用过的整理方式之间切换排版；
+ * ⌘⇧E 展开 / 收起阅读。Esc 先收起放大的截图与菜单，其余由外壳处理（展开阅读时外壳先收起、再按一次才关闭）。
+ *
+ * 展开阅读（头部 ⋯ 与 ✕ 之间的按钮；外壳在内容完全透明的那一帧提交 `reading`）：头部不画缩略图，整张截图在截图区里——
+ * 高截图左右并排（截图 | 识别文本，截图按栏宽缩小、栏内滚动），宽截图上下堆叠（截图 1:1 在上、放不下时在框内滚动，文字
+ * 与截图同宽逐行对照）。截图区与文字外面的两层包装（`.ocr-stage` / `.ocr-col`）在普通布局里没有盒子，切换版式时文字区
+ * 不重新挂载。按钮不带 `data-keep-focus`：展开时面板取得键盘焦点。固定窗口够宽时同样摆出截图区。
  * 面板里 Tab 在视图内循环（最后一个控件之后回到第一个）。
  *
  * 焦点：面板默认不抢键盘。按下视图时让面板成为 key（`activate`），只有「点一下就完成、不需要键盘」的控件例外——复制、
@@ -62,6 +67,8 @@ import {
 } from 'lucide-react'
 import { m } from 'motion/react'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { READING_SHORTCUT } from '../../panel/reading'
+import { ReadingButton } from '../../panel/ReadingButton'
 import type { ViewProps } from '../../panel/types'
 import { usePinnedHost, usePinnedReadyHold } from '../../pinned/context'
 import { useAppearance } from '../../shared/hooks/useAppearance'
@@ -166,6 +173,8 @@ import {
   RunBody,
   Section,
   SectionFoot,
+  ShotPane,
+  shotSize,
   SmoothBox,
   Split,
   SplitCaret,
@@ -240,7 +249,9 @@ const keepsFocus = (target: EventTarget | null): boolean =>
   target instanceof Element && target.closest('[data-keep-focus]') !== null
 
 export function OcrView(props: OcrViewProps) {
-  const { payload, sessionId, host, maxHeight, requestHide, activate } = props
+  const { payload, sessionId, host, maxHeight, requestHide, activate, toggleReading } = props
+  /** 展开阅读的版式（面板：外壳在透明帧提交；固定窗口：按窗口宽度）。null = 普通布局 */
+  const reading = props.reading ?? null
   // 面板宿主：从头部（缩略图旁）、状态行与卡片空白处拖动（shared/hooks/usePanelDrag）；识别结果的文本框、按钮、菜单
   // 不触发。固定窗口由 PinnedApp 的头部拖动
   const panelDrag = usePanelDrag(sessionId, host === 'panel')
@@ -842,6 +853,13 @@ export function OcrView(props: OcrViewProps) {
     { combo: 'Mod+KeyP', allowInInput: true, when: () => host === 'panel', run: pin },
     // 排版控件在底栏时：⌘L 等同点左半按钮（不能切换时什么也不做）
     { combo: 'Mod+KeyL', allowInInput: true, when: () => layoutShown, run: () => content.toggle() },
+    // 展开 / 收起阅读（面板宿主、这次显示能展开时；文本框里同样生效）。收起也可以按 Esc（外壳：先收起、再按一次才关闭）
+    {
+      combo: READING_SHORTCUT,
+      allowInInput: true,
+      when: () => toggleReading !== undefined && !blocked,
+      run: () => toggleReading?.(),
+    },
   ]
   styles.slice(0, 9).forEach((st, i) => {
     bindings.push({
@@ -857,7 +875,15 @@ export function OcrView(props: OcrViewProps) {
   // ---- 布局（flex，见 ocr.css；这里只给出上限与下限，并在内容变矮时让下方的块贴着卡片底边）----
 
   const lh = lineHeight(fontSize)
-  const layout = layoutFor({ maxHeight, fontSize, direct })
+  /** 展开阅读、而且有截图可以摆出来（未就绪的卡片、没有截图时仍按普通布局排） */
+  const shotShown = reading !== null && shown.thumb_url !== '' && (pinned !== null || !blocked)
+  const layout = layoutFor({
+    maxHeight,
+    fontSize,
+    direct,
+    reading: shotShown ? reading : null,
+    shotHeight: shotSize(shown)?.height,
+  })
   const sectionOpen = direct ? srcOpen : trOpen
   const viewRef = useRef<HTMLElement>(null)
   const topRef = useRef<HTMLDivElement>(null)
@@ -1454,6 +1480,7 @@ export function OcrView(props: OcrViewProps) {
       data-session={sessionId}
       data-phase={notReady ? 'not_ready' : s.phase}
       data-mode={direct ? 'translate' : mode}
+      data-reading={shotShown ? reading : undefined}
       aria-label={t('ocr.a11y.view')}
       style={host === 'panel' ? { maxHeight: layout.viewMax } : undefined}
       onPointerDown={
@@ -1478,8 +1505,18 @@ export function OcrView(props: OcrViewProps) {
           onToggleImage={() => setZoom((z) => !z)}
           thumbMaxWidth={thumbMaxWidth(topWidth)}
           thumbHeight={layout.thumb}
+          bare={shotShown}
           onClose={host === 'panel' ? () => requestHide('close_button') : null}
           more={host === 'panel' ? moreMenu : null}
+          actions={
+            toggleReading && !notReady ? (
+              <ReadingButton
+                reading={reading !== null}
+                onToggle={toggleReading}
+                data-testid="ocr-reading"
+              />
+            ) : null
+          }
           mediaRef={mediaRef}
         />
         {direct && !notReady ? (
@@ -1498,322 +1535,333 @@ export function OcrView(props: OcrViewProps) {
           </div>
         ) : null}
       </div>
-      {shown.thumb_url !== '' ? (
+      {shown.thumb_url !== '' && !shotShown ? (
         <ZoomImage payload={shown} open={zoom} anchor={mediaRef} onClose={() => setZoom(false)} />
       ) : null}
-      {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- 只记录最近一次交互的区域 */}
-      <div
-        ref={mainBox}
-        className="ocr-body"
-        data-shrink={shrinkable || undefined}
-        style={mainMin !== undefined ? { minHeight: mainMin } : undefined}
-        onPointerDown={markOcr}
-      >
-        {body}
-      </div>
-      <FlipBox handle={tailRef} className="ocr-tail">
-        <InlineConfirm
-          open={confirm !== null}
-          // 按钮由这里放进条内：警示语调；重新识别的确认按钮带上 ⌘R 提示（再按一次 ⌘R 也能确认）
-          message={
-            <span className="ocr-confirm-row">
-              <span className="ocr-confirm-text">
-                {t(discarding ? 'ocr.layout.discard_confirm' : 'ocr.confirm.overwrite')}
-              </span>
-              <ConfirmActions
-                onCancel={() => setConfirm(null)}
-                onConfirm={confirmNow}
-                label={t(discarding ? 'ocr.layout.discard_action' : 'ocr.confirm.overwrite_action')}
-                combo={discarding ? null : 'Mod+KeyR'}
-              />
-            </span>
-          }
-          buttons={false}
-          tone="warning"
-          className="ocr-confirm"
-          onConfirm={confirmNow}
-          onCancel={() => setConfirm(null)}
-          data-testid="ocr-confirm"
-        />
-        {footerOn && settledStatus && hasText && !direct ? (
-          <OcrChips
-            text={ocrText}
-            raw={main.text()}
-            editing={content.edit !== null}
-            os={os}
-            onPick={pasteFragment}
-            onInspect={content.inspected}
-          />
+      {/* 截图区与文字的外层：普通布局里没有盒子（display: contents，正文与底栏照常是视图这一列的 flex 子项）；展开阅读
+          时左右并排或上下堆叠。文字那一列（.ocr-col）始终在同一个位置，切换版式时不重新挂载（流式文字、编辑都保留） */}
+      <div className="ocr-stage" data-contents={shotShown ? undefined : ''}>
+        {shotShown && reading ? (
+          <ShotPane payload={shown} layout={reading} maxHeight={layout.shotMax || undefined} />
         ) : null}
-        {footerOn ? (
-          <Footer data-testid="ocr-footer">
-            <StatusLine
-              model={settledStatus ? s.start?.model_label || null : null}
-              elapsedMs={settledStatus ? elapsedOf(s.done) : null}
-              usage={settledStatus ? (s.done?.usage ?? null) : null}
-              state={cancelled ? 'cancelled' : null}
-              // 「已复制」只停留一两秒：显示期间由它占住提示的位置，之后提示（部分区域未能识别、来自缓存……）再回来——
-              // 两者并排时底栏放不下，「已复制」会被裁掉一半
-              note={toast.visible ? null : note}
-              trailing={toast.node}
-              className="ocr-status"
+        <div className="ocr-col" data-contents={shotShown ? undefined : ''}>
+          {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- 只记录最近一次交互的区域 */}
+          <div
+            ref={mainBox}
+            className="ocr-body"
+            data-shrink={shrinkable || undefined}
+            style={mainMin !== undefined ? { minHeight: mainMin } : undefined}
+            onPointerDown={markOcr}
+          >
+            {body}
+          </div>
+          <FlipBox handle={tailRef} className="ocr-tail">
+            <InlineConfirm
+              open={confirm !== null}
+              // 按钮由这里放进条内：警示语调；重新识别的确认按钮带上 ⌘R 提示（再按一次 ⌘R 也能确认）
+              message={
+                <span className="ocr-confirm-row">
+                  <span className="ocr-confirm-text">
+                    {t(discarding ? 'ocr.layout.discard_confirm' : 'ocr.confirm.overwrite')}
+                  </span>
+                  <ConfirmActions
+                    onCancel={() => setConfirm(null)}
+                    onConfirm={confirmNow}
+                    label={t(
+                      discarding ? 'ocr.layout.discard_action' : 'ocr.confirm.overwrite_action',
+                    )}
+                    combo={discarding ? null : 'Mod+KeyR'}
+                  />
+                </span>
+              }
+              buttons={false}
+              tone="warning"
+              className="ocr-confirm"
+              onConfirm={confirmNow}
+              onCancel={() => setConfirm(null)}
+              data-testid="ocr-confirm"
             />
-            <span className="ocr-actions">
-              {structured && structuredMod ? (
-                <IconButton
-                  icon={showSource ? Table2 : Code}
-                  label={t(showSource ? 'ocr.preview.show_preview' : 'ocr.preview.show_source')}
-                  active={showSource}
-                  onClick={() => setShowSource((v) => !v)}
-                  data-testid="ocr-source-toggle"
-                />
-              ) : layoutShown ? (
-                <LayoutSplit
-                  text={content}
-                  mode={mode}
-                  disabled={!hasText}
-                  onDiscard={() => setConfirm({ discard: true })}
-                />
-              ) : null}
-              {noText ? null : (
-                <CopyButton
-                  text={() => (direct ? main.text() : ocrText)}
-                  label={copyLabel}
-                  shortcut="Mod+KeyC"
-                  // 面板里 ⌘↩ 能把同一段文字直接粘贴回原应用：写在复制的 tooltip 里（不另加按钮）
-                  tooltip={
-                    host === 'panel' ? (
-                      <span className="ocr-tip">
-                        <span>{copyLabel}</span>
-                        <Kbd combo="Mod+KeyC" tone="inverted" />
-                        <span>{t('ocr.action.paste_back')}</span>
-                        <Kbd combo="Mod+Enter" tone="inverted" />
-                      </span>
-                    ) : undefined
-                  }
-                  keepFocus={keepFocus}
-                  disabled={!hasText}
-                  data-testid="ocr-copy"
-                />
-              )}
-              {direct ? (
-                noText ? null : (
-                  <Split selected={srcOpen} data-testid="ocr-show-source-split">
-                    <Chip
-                      variant="subtle"
-                      icon={ScanText}
-                      selected={srcOpen}
-                      // 底栏太挤时只留图标（ocr.css 的 data-compact），名称仍要读得出来
-                      aria-label={t('ocr.action.source')}
-                      aria-pressed={srcOpen}
-                      aria-expanded={srcOpen}
-                      onClick={toggleSource}
-                      data-testid="ocr-show-source"
-                    >
-                      {t('ocr.action.source')}
-                    </Chip>
-                  </Split>
-                )
-              ) : noText ? null : (
-                <Split selected={trOpen} data-testid="ocr-translate">
-                  <Chip
-                    variant="subtle"
-                    icon={Languages}
-                    selected={trOpen}
-                    aria-label={t('common.action.translate')}
-                    disabled={!hasText}
-                    onClick={toggleTranslate}
-                    aria-expanded={trOpen}
-                    data-testid="ocr-translate-toggle"
-                  >
-                    {t('common.action.translate')}
-                  </Chip>
-                  {styleMenu(
-                    'ocr-style-list',
-                    (p) => (
-                      <SplitCaret
-                        {...p}
-                        label={styleMenuLabel}
-                        disabled={!hasText}
-                        data-testid="ocr-translate-menu"
-                      />
-                    ),
-                    'top',
-                  )}
-                </Split>
-              )}
-              <Split ref={recognizeRef} open={recognizeOpen} data-testid="ocr-recognize">
-                <IconButton
-                  icon={RotateCw}
-                  label={t(direct ? 'common.action.regenerate' : 'ocr.action.recognize_again')}
-                  shortcut="Mod+KeyR"
-                  onClick={() => recognize()}
-                  data-testid="ocr-recognize-again"
-                />
-                <SplitCaret
-                  ref={recognizeCaret}
-                  label={t('ocr.a11y.recognize_menu')}
-                  aria-haspopup="menu"
-                  aria-expanded={recognizeOpen}
-                  data-open={recognizeOpen || undefined}
-                  onClick={() => (recognizeOpen ? closeMenu() : openMenu('footer', 'main'))}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-                    e.preventDefault()
-                    openMenu('footer', 'main')
-                  }}
-                  data-testid="ocr-recognize-menu"
-                />
-              </Split>
-              {host === 'panel' ? (
-                <IconButton
-                  icon={Pin}
-                  label={t('common.action.pin')}
-                  shortcut="Mod+KeyP"
-                  onClick={pin}
-                  data-testid="ocr-pin"
-                />
-              ) : null}
-            </span>
-          </Footer>
-        ) : null}
-
-        {direct ? (
-          <Section
-            open={srcOpen}
-            expand={willMax}
-            collapse={atMax}
-            label={t('ocr.a11y.source')}
-            data-testid="ocr-source"
-          >
-            <div className="ocr-section-head">
-              <span className="ocr-section-title">{t('ocr.translation.source_title')}</span>
-              <span className="ocr-spacer" />
-              <CopyButton
-                text={() => src.text()}
-                label={t('ocr.a11y.copy_source')}
-                keepFocus={keepFocus}
-                disabled={!src.state.hasText}
-                data-testid="ocr-source-copy"
+            {footerOn && settledStatus && hasText && !direct ? (
+              <OcrChips
+                text={ocrText}
+                raw={main.text()}
+                editing={content.edit !== null}
+                os={os}
+                onPick={pasteFragment}
+                onInspect={content.inspected}
               />
-            </div>
-            <SmoothBox
-              ref={sectionBox}
-              animate={atMax}
-              stream={live(src)}
-              streamKey={src.state.key}
-            >
-              {src.state.phase === 'error' ? (
-                errorCard(src, () => transcribe(model), false)
-              ) : (
-                <RunBody
-                  run={src}
-                  format="plain"
-                  skeleton={atMax ? 1 : 2}
-                  label={t('ocr.a11y.source')}
-                  data-testid="ocr-source-body"
-                />
-              )}
-            </SmoothBox>
-          </Section>
-        ) : (
-          <Section
-            open={trOpen}
-            expand={willMax}
-            collapse={atMax}
-            label={t('ocr.a11y.translation')}
-            data-testid="ocr-translation"
-          >
-            {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- 只记录最近一次交互的区域 */}
-            <div className="ocr-section-head" onPointerDown={markTranslation}>
-              <LangBar
-                source={ts.meta?.detected_source_lang ?? null}
-                detecting={live(tr) && !ts.meta}
-                lowConfidence={ts.meta?.low_confidence === true}
-                target={target ?? ts.meta?.target_lang ?? payload.target_lang}
-                onPickTarget={pickTarget}
-              />
-              <span className="ocr-spacer" />
-              {styleMenu('ocr-section-style-list', (p) => (
-                <StyleChip {...p} name={currentStyleName} data-testid="ocr-style-chip" />
-              ))}
-              <CopyButton
-                text={() => tr.text()}
-                label={t('ocr.a11y.copy_translation')}
-                keepFocus={keepFocus}
-                disabled={!ts.hasText}
-                data-testid="ocr-translation-copy"
-              />
-            </div>
-            <SmoothBox
-              ref={sectionBox}
-              animate={atMax}
-              stream={live(tr)}
-              streamKey={tr.state.key}
-              onPointerDown={markTranslation}
-            >
-              {ts.phase === 'error' ? (
-                errorCard(tr, () => translate({ bypass: true }), false)
-              ) : ts.phase === 'confirm' && ts.longText ? (
-                // 长文本：确认之后才翻译（与翻译视图同一张卡片；Esc 照常关闭面板）
-                <LongTextPrompt
-                  info={ts.longText}
-                  onContinue={() => translate({ confirm: true })}
-                  onCancel={() => {
-                    tr.clear()
-                    setTrOpen(false)
-                  }}
-                />
-              ) : (
-                <RunBody
-                  run={tr}
-                  format={
-                    styles.find((x) => x.id === effStyle)?.output === 'markdown_lite' ||
-                    ts.meta?.dict_mode
-                      ? 'mdlite'
-                      : 'plain'
-                  }
-                  // 卡片已到上限时骨架只占一行：结果至少一行，展开区在这一次操作里只会长高、不会先高后矮
-                  skeleton={atMax ? 1 : 2}
-                  ghost={trGhost}
-                  label={t('ocr.a11y.translation')}
-                  data-testid="ocr-translation-body"
-                />
-              )}
-            </SmoothBox>
-            {ts.phase !== 'error' ? (
-              // 状态行从展开起就占位（翻译中…），结束时结果淡入：不会在完成时再长出一行
-              <SectionFoot handle={footRef} data-testid="ocr-translation-foot">
-                {settled(tr) ? (
-                  <m.div key={ts.key} className="ocr-foot-row" {...footerIn}>
-                    <StatusLine
-                      model={ts.start?.model_label ?? null}
-                      elapsedMs={elapsedOf(ts.done)}
-                      usage={ts.done?.usage ?? null}
-                      state={ts.phase === 'cancelled' ? 'cancelled' : null}
-                      note={trNote}
-                      className="ocr-status"
-                    />
-                    {stale ? (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        icon={Languages}
-                        onClick={() => translate()}
-                        data-testid="ocr-retranslate"
-                      >
-                        {t('ocr.action.retranslate')}
-                      </Button>
-                    ) : null}
-                  </m.div>
-                ) : live(tr) ? (
-                  <span className="ocr-foot-wait">{t('common.state.translating')}</span>
-                ) : null}
-              </SectionFoot>
             ) : null}
-          </Section>
-        )}
-      </FlipBox>
+            {footerOn ? (
+              <Footer data-testid="ocr-footer">
+                <StatusLine
+                  model={settledStatus ? s.start?.model_label || null : null}
+                  elapsedMs={settledStatus ? elapsedOf(s.done) : null}
+                  usage={settledStatus ? (s.done?.usage ?? null) : null}
+                  state={cancelled ? 'cancelled' : null}
+                  // 「已复制」只停留一两秒：显示期间由它占住提示的位置，之后提示（部分区域未能识别、来自缓存……）再回来——
+                  // 两者并排时底栏放不下，「已复制」会被裁掉一半
+                  note={toast.visible ? null : note}
+                  trailing={toast.node}
+                  className="ocr-status"
+                />
+                <span className="ocr-actions">
+                  {structured && structuredMod ? (
+                    <IconButton
+                      icon={showSource ? Table2 : Code}
+                      label={t(showSource ? 'ocr.preview.show_preview' : 'ocr.preview.show_source')}
+                      active={showSource}
+                      onClick={() => setShowSource((v) => !v)}
+                      data-testid="ocr-source-toggle"
+                    />
+                  ) : layoutShown ? (
+                    <LayoutSplit
+                      text={content}
+                      mode={mode}
+                      disabled={!hasText}
+                      onDiscard={() => setConfirm({ discard: true })}
+                    />
+                  ) : null}
+                  {noText ? null : (
+                    <CopyButton
+                      text={() => (direct ? main.text() : ocrText)}
+                      label={copyLabel}
+                      shortcut="Mod+KeyC"
+                      // 面板里 ⌘↩ 能把同一段文字直接粘贴回原应用：写在复制的 tooltip 里（不另加按钮）
+                      tooltip={
+                        host === 'panel' ? (
+                          <span className="ocr-tip">
+                            <span>{copyLabel}</span>
+                            <Kbd combo="Mod+KeyC" tone="inverted" />
+                            <span>{t('ocr.action.paste_back')}</span>
+                            <Kbd combo="Mod+Enter" tone="inverted" />
+                          </span>
+                        ) : undefined
+                      }
+                      keepFocus={keepFocus}
+                      disabled={!hasText}
+                      data-testid="ocr-copy"
+                    />
+                  )}
+                  {direct ? (
+                    noText ? null : (
+                      <Split selected={srcOpen} data-testid="ocr-show-source-split">
+                        <Chip
+                          variant="subtle"
+                          icon={ScanText}
+                          selected={srcOpen}
+                          // 底栏太挤时只留图标（ocr.css 的 data-compact），名称仍要读得出来
+                          aria-label={t('ocr.action.source')}
+                          aria-pressed={srcOpen}
+                          aria-expanded={srcOpen}
+                          onClick={toggleSource}
+                          data-testid="ocr-show-source"
+                        >
+                          {t('ocr.action.source')}
+                        </Chip>
+                      </Split>
+                    )
+                  ) : noText ? null : (
+                    <Split selected={trOpen} data-testid="ocr-translate">
+                      <Chip
+                        variant="subtle"
+                        icon={Languages}
+                        selected={trOpen}
+                        aria-label={t('common.action.translate')}
+                        disabled={!hasText}
+                        onClick={toggleTranslate}
+                        aria-expanded={trOpen}
+                        data-testid="ocr-translate-toggle"
+                      >
+                        {t('common.action.translate')}
+                      </Chip>
+                      {styleMenu(
+                        'ocr-style-list',
+                        (p) => (
+                          <SplitCaret
+                            {...p}
+                            label={styleMenuLabel}
+                            disabled={!hasText}
+                            data-testid="ocr-translate-menu"
+                          />
+                        ),
+                        'top',
+                      )}
+                    </Split>
+                  )}
+                  <Split ref={recognizeRef} open={recognizeOpen} data-testid="ocr-recognize">
+                    <IconButton
+                      icon={RotateCw}
+                      label={t(direct ? 'common.action.regenerate' : 'ocr.action.recognize_again')}
+                      shortcut="Mod+KeyR"
+                      onClick={() => recognize()}
+                      data-testid="ocr-recognize-again"
+                    />
+                    <SplitCaret
+                      ref={recognizeCaret}
+                      label={t('ocr.a11y.recognize_menu')}
+                      aria-haspopup="menu"
+                      aria-expanded={recognizeOpen}
+                      data-open={recognizeOpen || undefined}
+                      onClick={() => (recognizeOpen ? closeMenu() : openMenu('footer', 'main'))}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+                        e.preventDefault()
+                        openMenu('footer', 'main')
+                      }}
+                      data-testid="ocr-recognize-menu"
+                    />
+                  </Split>
+                  {host === 'panel' ? (
+                    <IconButton
+                      icon={Pin}
+                      label={t('common.action.pin')}
+                      shortcut="Mod+KeyP"
+                      onClick={pin}
+                      data-testid="ocr-pin"
+                    />
+                  ) : null}
+                </span>
+              </Footer>
+            ) : null}
+
+            {direct ? (
+              <Section
+                open={srcOpen}
+                expand={willMax}
+                collapse={atMax}
+                label={t('ocr.a11y.source')}
+                data-testid="ocr-source"
+              >
+                <div className="ocr-section-head">
+                  <span className="ocr-section-title">{t('ocr.translation.source_title')}</span>
+                  <span className="ocr-spacer" />
+                  <CopyButton
+                    text={() => src.text()}
+                    label={t('ocr.a11y.copy_source')}
+                    keepFocus={keepFocus}
+                    disabled={!src.state.hasText}
+                    data-testid="ocr-source-copy"
+                  />
+                </div>
+                <SmoothBox
+                  ref={sectionBox}
+                  animate={atMax}
+                  stream={live(src)}
+                  streamKey={src.state.key}
+                >
+                  {src.state.phase === 'error' ? (
+                    errorCard(src, () => transcribe(model), false)
+                  ) : (
+                    <RunBody
+                      run={src}
+                      format="plain"
+                      skeleton={atMax ? 1 : 2}
+                      label={t('ocr.a11y.source')}
+                      data-testid="ocr-source-body"
+                    />
+                  )}
+                </SmoothBox>
+              </Section>
+            ) : (
+              <Section
+                open={trOpen}
+                expand={willMax}
+                collapse={atMax}
+                label={t('ocr.a11y.translation')}
+                data-testid="ocr-translation"
+              >
+                {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- 只记录最近一次交互的区域 */}
+                <div className="ocr-section-head" onPointerDown={markTranslation}>
+                  <LangBar
+                    source={ts.meta?.detected_source_lang ?? null}
+                    detecting={live(tr) && !ts.meta}
+                    lowConfidence={ts.meta?.low_confidence === true}
+                    target={target ?? ts.meta?.target_lang ?? payload.target_lang}
+                    onPickTarget={pickTarget}
+                  />
+                  <span className="ocr-spacer" />
+                  {styleMenu('ocr-section-style-list', (p) => (
+                    <StyleChip {...p} name={currentStyleName} data-testid="ocr-style-chip" />
+                  ))}
+                  <CopyButton
+                    text={() => tr.text()}
+                    label={t('ocr.a11y.copy_translation')}
+                    keepFocus={keepFocus}
+                    disabled={!ts.hasText}
+                    data-testid="ocr-translation-copy"
+                  />
+                </div>
+                <SmoothBox
+                  ref={sectionBox}
+                  animate={atMax}
+                  stream={live(tr)}
+                  streamKey={tr.state.key}
+                  onPointerDown={markTranslation}
+                >
+                  {ts.phase === 'error' ? (
+                    errorCard(tr, () => translate({ bypass: true }), false)
+                  ) : ts.phase === 'confirm' && ts.longText ? (
+                    // 长文本：确认之后才翻译（与翻译视图同一张卡片；Esc 照常关闭面板）
+                    <LongTextPrompt
+                      info={ts.longText}
+                      onContinue={() => translate({ confirm: true })}
+                      onCancel={() => {
+                        tr.clear()
+                        setTrOpen(false)
+                      }}
+                    />
+                  ) : (
+                    <RunBody
+                      run={tr}
+                      format={
+                        styles.find((x) => x.id === effStyle)?.output === 'markdown_lite' ||
+                        ts.meta?.dict_mode
+                          ? 'mdlite'
+                          : 'plain'
+                      }
+                      // 卡片已到上限时骨架只占一行：结果至少一行，展开区在这一次操作里只会长高、不会先高后矮
+                      skeleton={atMax ? 1 : 2}
+                      ghost={trGhost}
+                      label={t('ocr.a11y.translation')}
+                      data-testid="ocr-translation-body"
+                    />
+                  )}
+                </SmoothBox>
+                {ts.phase !== 'error' ? (
+                  // 状态行从展开起就占位（翻译中…），结束时结果淡入：不会在完成时再长出一行
+                  <SectionFoot handle={footRef} data-testid="ocr-translation-foot">
+                    {settled(tr) ? (
+                      <m.div key={ts.key} className="ocr-foot-row" {...footerIn}>
+                        <StatusLine
+                          model={ts.start?.model_label ?? null}
+                          elapsedMs={elapsedOf(ts.done)}
+                          usage={ts.done?.usage ?? null}
+                          state={ts.phase === 'cancelled' ? 'cancelled' : null}
+                          note={trNote}
+                          className="ocr-status"
+                        />
+                        {stale ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            icon={Languages}
+                            onClick={() => translate()}
+                            data-testid="ocr-retranslate"
+                          >
+                            {t('ocr.action.retranslate')}
+                          </Button>
+                        ) : null}
+                      </m.div>
+                    ) : live(tr) ? (
+                      <span className="ocr-foot-wait">{t('common.state.translating')}</span>
+                    ) : null}
+                  </SectionFoot>
+                ) : null}
+              </Section>
+            )}
+          </FlipBox>
+        </div>
+      </div>
 
       <PagedMenu
         open={menu.open}

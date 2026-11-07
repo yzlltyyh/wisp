@@ -28,7 +28,7 @@ import {
 import { useViewActive } from '../../shared/hooks/useViewActive'
 import { usePlatform } from '../../shared/hooks/usePlatform'
 import { useT } from '../../shared/i18n/useT'
-import { resolveAssetUrl, type OcrPayload } from '../../shared/ipc'
+import { resolveAssetUrl, type OcrPayload, type ReadingLayout } from '../../shared/ipc'
 import { presets, usePreset } from '../../shared/motion/presets'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
 import type { StreamFormat, StreamHandle } from '../../shared/stream/StreamView'
@@ -70,6 +70,12 @@ function imageSizeOf(payload: OcrPayload): { width: number; height: number } | n
   return width > 0 && height > 0 ? payload.image_size : null
 }
 
+/** 截图的逻辑尺寸（与截图时看到的大小一致）；尺寸未知时 null */
+export function shotSize(payload: OcrPayload): { width: number; height: number } | null {
+  const size = imageSizeOf(payload)
+  return size ? logicalSize(size) : null
+}
+
 export interface MediaHeadProps {
   payload: OcrPayload
   /** 第二行：「纯文本 · qwen3-vl-plus」/「识别中…」 */
@@ -79,10 +85,14 @@ export interface MediaHeadProps {
   thumbMaxWidth: number
   /** 缩略图的高度上限（卡片上限低时更细） */
   thumbHeight: number
+  /** 不画缩略图（展开阅读：整张截图在截图区里），只留尺寸 / 模式 · 模型 */
+  bare?: boolean
   /** 面板宿主才有关闭按钮（固定窗口用 PinnedApp 的标题栏） */
   onClose?: (() => void) | null
   /** 关闭按钮之前的 ⋯ 菜单（面板宿主：重新截图 / 识别历史… / OCR 设置…） */
   more?: ReactNode
+  /** ⋯ 与关闭按钮之间的按钮（面板宿主：展开阅读 / 收起） */
+  actions?: ReactNode
   /** 缩略图与说明那一块（放大的截图以它为锚点） */
   mediaRef?: Ref<HTMLDivElement>
 }
@@ -94,14 +104,16 @@ export function MediaHead({
   onToggleImage,
   thumbMaxWidth,
   thumbHeight,
+  bare = false,
   onClose,
   more,
+  actions,
   mediaRef,
 }: MediaHeadProps) {
   const t = useT()
   const os = usePlatform()
   const size = imageSizeOf(payload)
-  const hasThumb = payload.thumb_url !== ''
+  const hasThumb = payload.thumb_url !== '' && !bare
   // 极端长宽比：整行文字的细条显示成一条 32 px 高的横条（等比、左对齐、右侧渐隐），看得出截的是哪一行；
   // 长截图显示成 0.6 比例的竖条（顶端对齐、底部渐隐）。点击后弹出完整截图
   const aspect = size ? size.width / size.height : 1
@@ -170,6 +182,7 @@ export function MediaHead({
       </div>
       <span className="ocr-spacer" />
       {more}
+      {actions}
       {onClose ? (
         <IconButton
           icon={X}
@@ -225,6 +238,54 @@ export function ZoomImage({
         />
       </button>
     </Popover>
+  )
+}
+
+/**
+ * 展开阅读里的整张截图（头部不再画缩略图）。按逻辑尺寸显示（原图物理像素 / 屏幕缩放，与截图时看到的大小一致）：
+ * - 左右并排（columns）：按栏宽缩小、不放大超过 1:1，比视图高时在栏内滚动；
+ * - 上下堆叠（stacked）：1:1 显示，宽于卡片时横向滚动、高于截图区上限（`maxHeight`）时纵向滚动——识别文本与截图同宽、
+ *   逐行对照。
+ * 截图区可以 Tab 聚焦（键盘滚动）；图片隐藏后随其他图片一起释放（`data-releasable`）
+ */
+export function ShotPane({
+  payload,
+  layout,
+  maxHeight,
+}: {
+  payload: OcrPayload
+  layout: ReadingLayout
+  maxHeight?: number
+}) {
+  const t = useT()
+  const size = shotSize(payload)
+  const stacked = layout === 'stacked'
+  return (
+    <section
+      className="ocr-shot"
+      data-layout={layout}
+      aria-label={t('ocr.a11y.thumbnail')}
+      // oxlint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- 截图比框大时要能用键盘滚动
+      tabIndex={0}
+      style={stacked && maxHeight !== undefined ? { maxHeight } : undefined}
+      data-testid="ocr-shot"
+    >
+      <img
+        src={resolveAssetUrl(payload.thumb_url)}
+        alt={t('ocr.a11y.thumbnail')}
+        width={size?.width}
+        height={size?.height}
+        draggable={false}
+        data-releasable=""
+        style={
+          size
+            ? stacked
+              ? { width: size.width, height: size.height }
+              : { maxWidth: size.width }
+            : undefined
+        }
+      />
+    </section>
   )
 }
 
