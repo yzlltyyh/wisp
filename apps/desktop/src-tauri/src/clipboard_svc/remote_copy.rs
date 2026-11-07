@@ -2,7 +2,8 @@
 //!
 //! 同步服务每轮成功之后（实时同步开着时）把本轮从**其他设备**拿到、已经写进本机历史的新条目交过来（只有 hash 与时间，
 //! [`RemoteCopy`]），这里在阻塞线程上判断要不要把其中最新的一条写进系统剪贴板。条件（[`decide`]，逐条有单测）：
-//! - 子选项开着，并且本机正在记录剪贴板历史（暂停、关闭记录时什么都不写：那是用户不想让 Wisp 碰剪贴板的时候；
+//! - 子选项此刻真的可用（[`remote_copy_wanted`]：与设置页的禁用条件一致，关掉自动同步、只同步识别历史时不写），
+//!   并且本机正在记录剪贴板历史（暂停、关闭记录时什么都不写：那是用户不想让 Wisp 碰剪贴板的时候；
 //!   监听装不上时同样不写——看不到本机的复制，就没法避开它）；
 //! - 它在那台设备上产生不超过 [`FRESH_MS`]：长时间离开后补拉的旧复制不该突然替换剪贴板。对方时钟比本机快时按 0 算
 //!   （本轮刚拿到，本身就是新的）；
@@ -12,7 +13,8 @@
 //! - 本机历史里有这一条、而且是最近使用的一条：比本机任何别的条目都新；
 //! - 能在本机粘贴：不是文件（文件不同步）、内容没有因为超长被截断（写进去的会是半截）；
 //! - 不是验证码：自动替换剪贴板会把它交给本机任何读剪贴板的程序，而验证码正是会自动删除的敏感条目；
-//! - 剪贴板里不已经是它（上一次写进去的就是这一条、之后没有别的变化）。
+//! - 剪贴板里不已经是它（上一次写进去的就是这一条、之后没有别的变化）；
+//! - 判断之后、真正写入之前剪贴板没有再变（写入时再核对一次序号）。
 //!
 //! 写入走 Wisp 自己写剪贴板的同一条路：带 `from_wisp` 标记并登记自写抑制，监听方看到后跳过——不会被当成新的本机复制
 //! 记进历史、再经同步上传回去（防乒乓）。也不 touch：它已经是历史里最新的一条（同步写入时就排到了最上面），历史里
@@ -22,15 +24,21 @@
 
 use std::time::{Duration, Instant};
 
-use wisp_types::{ClipKind, ClipPayload};
+use wisp_types::{ClipKind, ClipPayload, SyncSettings};
 
 use super::engine::Engine;
-use super::paste::paste_payload;
+use super::paste::{QuietWrite, paste_payload};
 
 /// 其他设备上的复制产生之后，多久之内还算「刚复制的」
 pub(crate) const FRESH_MS: i64 = 60_000;
 /// 本机复制过之后，这么久之内不替换本机剪贴板
 pub(crate) const LOCAL_QUIET: Duration = Duration::from_secs(10);
+
+/// 设置层面这个子选项是否可用：实时同步可以运行（自动同步开着、同步剪贴板或识别历史），并且同步剪贴板历史、子选项
+/// 开着。与设置页把它显示为关的条件一致：设置里的开关可能还开着，界面上却是灰的
+pub(crate) fn remote_copy_wanted(s: &SyncSettings) -> bool {
+    crate::sync_svc::realtime::wanted_by_settings(s) && s.content.clipboard && s.realtime_clipboard
+}
 
 /// 同步拉来的一条其他设备的新复制（只有身份与时间，不含内容）。`Debug` 不输出 hash
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -55,7 +63,7 @@ impl std::fmt::Debug for RemoteCopy {
 /// 为什么没有写（只进 debug 日志与单测）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Skip {
-    /// 子选项或实时同步关着
+    /// 子选项不可用（它或实时同步关着、自动同步关着、不同步剪贴板历史）
     Off,
     /// 暂停记录、关闭了剪贴板历史、历史停用、监听没装上或数据库还没打开
     NotRecording,
@@ -151,8 +159,7 @@ pub(crate) fn decide(f: &Facts) -> Result<(), Skip> {
 impl Engine {
     /// 同步拉来了其他设备的新复制（最新的在前）：子选项开着时交给阻塞线程判断并写入。在同步任务上调用，不阻塞
     pub(crate) fn offer_remote_copies(&self, copies: Vec<RemoteCopy>) {
-        let s = self.host.settings();
-        if copies.is_empty() || !(s.sync.realtime && s.sync.realtime_clipboard) {
+        if copies.is_empty() || !remote_copy_wanted(&self.host.settings().sync) {
             return;
         }
         self.spawn(move |e| match e.place_remote_copy(&copies) {
@@ -163,8 +170,7 @@ impl Engine {
 
     /// 判断并把最新的一条写进系统剪贴板，返回写入后的剪贴板序号。**会阻塞**（数据库、平台写入）
     pub(crate) fn place_remote_copy(&self, copies: &[RemoteCopy]) -> Result<u64, Skip> {
-        let settings = self.host.settings();
-        if !(settings.sync.realtime && settings.sync.realtime_clipboard) {
+        if !remote_copy_wanted(&self.host.settings().sync) {
             return Err(Skip::Off);
         }
         let Some(copy) = copies.iter().copied().max_by_key(|c| c.last_used_ms) else {
@@ -220,12 +226,14 @@ impl Engine {
             }
         };
         let payload: ClipPayload = paste_payload(payload, false).map_err(|_| Skip::Kind)?;
-        match self.write_quietly(&payload) {
-            Ok(Some(change)) => {
+        match self.write_quietly(&payload, clipboard_now) {
+            Ok(QuietWrite::Written(change)) => {
                 self.set_remote_written(change, copy.hash);
                 Ok(change)
             }
-            Ok(None) => Err(Skip::Pasting),
+            Ok(QuietWrite::Busy) => Err(Skip::Pasting),
+            // 判断之后用户又复制了别的：和「本机刚复制过」一样，不替换
+            Ok(QuietWrite::Changed) => Err(Skip::LocalCopy),
             Err(e) => {
                 log::info!("clipboard: writing the copy from another device failed: {e}");
                 Err(Skip::WriteFailed)

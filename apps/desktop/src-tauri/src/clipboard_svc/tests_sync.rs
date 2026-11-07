@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use wisp_clipboard::{ClipStore, RemoteItem, RemoteOcr, SyncSource, ocr_key};
-use wisp_types::{ClipKind, ClipboardChanged, OcrHistoryChanged, OcrMode, PasteMode, RawClipboard};
+use wisp_types::{ClipKind, ClipPayload, ClipboardChanged, OcrHistoryChanged, OcrMode, PasteMode, RawClipboard};
 
+use super::paste::QuietWrite;
 use super::port::ClipView;
 use super::remote_copy::{LOCAL_QUIET, RemoteCopy, Skip};
 use super::sync::{ClipRemoteChange, ClipRemoteClear, ClipSyncSink, OcrRemoteChange, RemoteOutcome, Superseded};
@@ -933,11 +934,12 @@ fn remote_codes_follow_the_local_switch_and_expire_here_too() {
 
 // ---------- 实时同步：把其他设备最新的复制放进本机剪贴板 ----------
 
-/// 开着实时同步与写剪贴板子选项、本机已有一条较早的复制（库已打开）；本机的复制算作 11 s 之前，剪贴板序号与最近处理的
-/// 一致（没有未处理的本机变化）
+/// 开着同步、实时同步与写剪贴板子选项、本机已有一条较早的复制（库已打开）；本机的复制算作 11 s 之前，剪贴板序号与
+/// 最近处理的一致（没有未处理的本机变化）
 fn realtime_rig() -> Rig {
     let r = rig();
     r.set_settings(|s| {
+        s.sync.enabled = true;
         s.sync.realtime = true;
         s.sync.realtime_clipboard = true;
     });
@@ -1039,6 +1041,15 @@ fn nothing_is_placed_when_the_option_or_recording_is_off() {
     });
     assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::Off));
     r.set_settings(|s| s.sync.realtime = true);
+    // 开关都开着、但设置页把它显示为关的情形：关掉了自动同步、不同步剪贴板历史
+    r.set_settings(|s| s.sync.auto = false);
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::Off));
+    r.set_settings(|s| {
+        s.sync.auto = true;
+        s.sync.content.clipboard = false;
+    });
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::Off));
+    r.set_settings(|s| s.sync.content.clipboard = true);
     r.engine.set_paused(true);
     assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::NotRecording));
     r.engine.set_paused(false);
@@ -1059,7 +1070,13 @@ fn nothing_is_placed_when_the_option_or_recording_is_off() {
     r.exec.queue(true);
     r.engine.offer_remote_copies(vec![copy]);
     assert_eq!(r.exec.pending_jobs(), 0);
-    r.set_settings(|s| s.sync.realtime_clipboard = true);
+    r.set_settings(|s| {
+        s.sync.realtime_clipboard = true;
+        s.sync.auto = false;
+    });
+    r.engine.offer_remote_copies(vec![copy]);
+    assert_eq!(r.exec.pending_jobs(), 0, "自动同步关着：同样不排");
+    r.set_settings(|s| s.sync.auto = true);
     r.engine.offer_remote_copies(vec![copy]);
     assert_eq!(r.exec.pending_jobs(), 1, "在阻塞线程上判断与写入");
     r.exec.run_jobs();
@@ -1151,6 +1168,33 @@ fn settle_clipboard_only(r: &Rig) {
     if let Some(seen) = r.engine.last_seen_change() {
         r.port.clipboard.change.store(seen, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// 判断之后、写入之前用户又复制了别的：不写（否则那次复制被盖掉，监听随后读到的是带自写标记的内容，连历史里都没有）
+#[test]
+fn a_copy_made_after_the_decision_is_never_overwritten() {
+    let r = realtime_rig();
+    let copy = arrive_text(&r, "另一台设备的复制");
+    let decided = r.port.clipboard.change.load(std::sync::atomic::Ordering::SeqCst);
+    let payload = ClipPayload {
+        text: Some("另一台设备的复制".into()),
+        ..ClipPayload::default()
+    };
+    // 用户在判断与写入之间复制了一段
+    r.port
+        .clipboard
+        .change
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        r.engine.write_quietly(&payload, decided).expect("write"),
+        QuietWrite::Changed
+    );
+    assert!(written_texts(&r).is_empty(), "没有写");
+    assert!(!r.engine.paste_busy(), "放开了单飞闸门");
+    // 序号一致时照常写入
+    settle_local(&r);
+    assert!(r.engine.place_remote_copy(&[copy]).is_ok());
+    assert_eq!(written_texts(&r), vec![Some("另一台设备的复制".to_owned())]);
 }
 
 #[test]

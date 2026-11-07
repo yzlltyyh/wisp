@@ -250,6 +250,17 @@ pub(crate) enum PasteEvent {
     PasteFailed,
 }
 
+/// [`Engine::write_quietly`] 的结果
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum QuietWrite {
+    /// 写进去了，写入后的剪贴板序号
+    Written(u64),
+    /// 一次粘贴正在进行：没有写
+    Busy,
+    /// 判断之后剪贴板又变了（用户刚复制了别的）：没有写
+    Changed,
+}
+
 /// 一次转移的结果
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PasteStep {
@@ -749,12 +760,19 @@ impl Engine {
     }
 
     /// 不经粘贴流程写一次剪贴板（实时同步把其他设备的复制放进来，`remote_copy.rs`），不发键、不 touch、不进历史。与
-    /// 粘贴共用单飞闸门：粘贴进行中不写（返回 None）；写入期间来的粘贴被拒绝，不会有一次粘贴在「写入」与「发键」之间被
-    /// 换掉内容。照常带 `from_wisp` 与自写抑制，监听方跳过这次变化，不会把它记成新的本机复制再上传。**会阻塞**
-    pub(crate) fn write_quietly(&self, payload: &ClipPayload) -> Result<Option<u64>, PlatformError> {
+    /// 粘贴共用单飞闸门：粘贴进行中不写（[`QuietWrite::Busy`]）；写入期间来的粘贴被拒绝，不会有一次粘贴在「写入」与
+    /// 「发键」之间被换掉内容。`expect` 是调用方做判断时读到的剪贴板序号：拿到闸门之后再核对一次，期间用户复制了别的
+    /// 就不写（[`QuietWrite::Changed`]）——否则那次复制会被盖掉，而监听下一次读到的是我们写入的内容（带自写标记、跳过），
+    /// 那次复制连历史里都没有。照常带 `from_wisp` 与自写抑制，监听方跳过这次变化，不会把它记成新的本机复制再上传。
+    /// **会阻塞**
+    pub(crate) fn write_quietly(&self, payload: &ClipPayload, expect: u64) -> Result<QuietWrite, PlatformError> {
         let Ok(mut run) = self.paste_gate.begin(None) else {
-            return Ok(None);
+            return Ok(QuietWrite::Busy);
         };
+        if self.port.clipboard().change_id() != expect {
+            run.advance(PasteEvent::WriteFailed);
+            return Ok(QuietWrite::Changed);
+        }
         let change = match self.port.paste().write(payload, WriteOpts::default()) {
             Ok(change) => change,
             Err(e) => {
@@ -769,7 +787,7 @@ impl Engine {
         // 写完就结束：相当于一次「只复制」的交接
         run.advance(PasteEvent::Written);
         run.advance(PasteEvent::CopyOnly);
-        Ok(Some(change))
+        Ok(QuietWrite::Written(change))
     }
 
     /// 面板的只复制收尾：隐藏面板；toast 由 [`Engine::paste`] 在闸门放开之后显示
