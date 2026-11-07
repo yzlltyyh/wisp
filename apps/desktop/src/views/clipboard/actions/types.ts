@@ -259,6 +259,13 @@ export interface HintSpec {
   readonly layer?: ClipKeyLayer
   /** 显示这一层全部可显示的按键（↑↓ 浏览），默认只显示第一个 */
   readonly all?: boolean
+  /** 显示成区间（「1–9」）：这一层可显示的第一个与最后一个组合 */
+  readonly span?: boolean
+  /**
+   * 显示的键会随状态在几个组合之间切换（预览的 Space ↔ ⇧Space）：键帽按其中最宽的那个预留宽度，切换时这一项的宽度
+   * 不变，提示条不会因此重新取舍（指针扫过列表时提示不会忽隐忽现）
+   */
+  readonly reserve?: boolean
 }
 
 export interface ClipAction<A = undefined> {
@@ -311,7 +318,12 @@ export interface ActionEntry {
 /** 提示条的一项 */
 export interface HintItem {
   readonly id: ClipActionId
+  /** 显示的组合；`span` 时是区间的首尾两个 */
   readonly combos: readonly string[]
   readonly label: string
   readonly priority: number
+  /** 区间显示（「1–9」） */
+  readonly span?: boolean
+  /** 键帽预留宽度的候选组合（含此刻显示的 `combos[0]`），见 HintSpec 的 `reserve` */
+  readonly reserve?: readonly string[]
 }

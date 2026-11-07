@@ -136,6 +136,12 @@ export interface ClipState {
   readonly rename: Renaming | null
   /** 进行中的连续粘贴（`clipboard:queue`）；没有时为 null */
   readonly queue: QueueStatus | null
+  /**
+   * 浏览意图：最近一次操作是在列表里移动（↑↓ / 首尾 / 翻页 / ⇧↑↓，或指针真的移过了行），之后还没有再编辑搜索词。
+   * 焦点始终在搜索框里，这个状态代替「列表获焦」：此时 Space 是预览而不是空格（见 `spaceOpensPreview`）。编辑搜索词、
+   * 在搜索框上按下指针、在搜索框里移动插入点都会回到输入
+   */
+  readonly browse: boolean
 }
 
 /** 视图打开时要接着显示的查询、筛选与光标（从面板交接到悬浮剪贴板时） */
@@ -186,6 +192,7 @@ export function initialState(payload: ClipboardPayload, now: number): ClipState 
     chip: null,
     rename: null,
     queue: null,
+    browse: false,
   }
 }
 
@@ -203,6 +210,14 @@ export function recentHits(s: ClipState): readonly ClipHit[] {
 /** 是否处于检索模式（搜索框有内容） */
 export function isSearching(s: ClipState): boolean {
   return s.query.trim() !== ''
+}
+
+/**
+ * Space 此刻是否切换预览（否则它是打进搜索框的空格）：搜索框里没有可见的字（只有空白也算——否则一个误入的空格之后
+ * Space 永远是空格），或者处于浏览意图。⌫ 不跟着放宽：删除是破坏性操作，搜索框里有看不见的空格时先删空格
+ */
+export function spaceOpensPreview(s: ClipState): boolean {
+  return s.query.trim() === '' || s.browse
 }
 
 /**

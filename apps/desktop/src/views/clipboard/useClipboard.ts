@@ -136,6 +136,8 @@ export type FailedAction =
  */
 export interface ClipCommands {
   setQuery(query: string): void
+  /** 浏览意图（store 的 `browse`）：列表里的移动进入，回到输入时退出；相同则不写 */
+  setBrowse(on: boolean): void
   setFilter(filter: ClipFilter): void
   /** `jump`：指示器直接到位（按键重复、按页 / 到首尾），否则单步 spring 追随 */
   select(id: number | null, reveal?: boolean, jump?: boolean): void
@@ -542,6 +544,7 @@ export function createClipCommands(
     })
   }
 
+  // 编辑搜索词（任何文本变化：打字、删除、粘贴、输入法提交、清除按钮、Esc 清空）都回到输入：浏览意图结束
   const setQuery = (query: string) => {
     const before = get()
     if (query === before.query) return
@@ -554,15 +557,28 @@ export function createClipCommands(
         query,
         search: null,
         searching: false,
-        // 回到最近列表的第一条列出来的条目（收藏折叠时不落在藏起来的收藏上）
-        selectedId: keepSelection({ ...s, query, search: null }, null),
+        // 退出检索时回到最近列表的第一条列出来的条目（收藏折叠时不落在藏起来的收藏上）；本来就不在检索（空 ↔ 只有
+        // 空白）时列表没换，光标留在原处——否则误入一个空格就会把悬停 / 移到的条目拉回顶部
+        selectedId: keepSelection(
+          { ...s, query, search: null },
+          wasSearching ? null : s.selectedId,
+        ),
         confirm: s.confirm?.kind === 'delete' ? null : s.confirm,
         scrollReset: wasSearching ? s.scrollReset + 1 : s.scrollReset,
+        browse: false,
       }))
       return
     }
-    set((s) => ({ query, confirm: s.confirm?.kind === 'delete' ? null : s.confirm }))
+    set((s) => ({
+      query,
+      confirm: s.confirm?.kind === 'delete' ? null : s.confirm,
+      browse: false,
+    }))
     scheduleSearch()
+  }
+
+  const setBrowse = (on: boolean) => {
+    if (get().browse !== on) set({ browse: on })
   }
 
   // ----- 过滤
@@ -1180,7 +1196,9 @@ export function createClipCommands(
   const setPreview = (open: boolean) => {
     const s = get()
     if (open && !selectedItem(s)) return
-    if (s.preview !== open) set({ preview: open })
+    // 打开预览时退出芯片模式：芯片小条在预览期间隐藏，留着的话搜索框的 aria-activedescendant 会指向看不见的芯片
+    if (open && s.chip !== null) set({ preview: true, chip: null })
+    else if (s.preview !== open) set({ preview: open })
   }
 
   const saveImage = (id: number) => {
@@ -1363,6 +1381,7 @@ export function createClipCommands(
 
   return {
     setQuery,
+    setBrowse,
     setFilter,
     select,
     loadMore,

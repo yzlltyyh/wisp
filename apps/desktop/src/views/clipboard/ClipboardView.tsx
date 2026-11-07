@@ -67,6 +67,7 @@ import { useViewActive } from '../../shared/hooks/useViewActive'
 import { Trans } from '../../shared/i18n/Trans'
 import { formatNumber } from '../../shared/i18n/format'
 import { useT, useTKey, type TFunction } from '../../shared/i18n/useT'
+import { formatHotkeyRange } from '../../shared/keys/formatHotkey'
 import { usePreset } from '../../shared/motion/presets'
 import { duration, ms, spring, timing } from '../../shared/motion/tokens'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
@@ -89,6 +90,7 @@ import {
   useClipRunner,
   type ClipRunner,
   type ClipViewUi,
+  type HintItem,
   type HintMode,
 } from './actions'
 import { ClipList } from './ClipList'
@@ -117,6 +119,7 @@ import {
   isSearching,
   rowsOf,
   selectedItem,
+  spaceOpensPreview,
   visibleHits,
   type ClipState,
   type ClipStore,
@@ -151,6 +154,9 @@ function cycleFocusIn(
   const at = Math.max(0, ring.indexOf(document.activeElement as HTMLElement))
   ring[(((at + step) % ring.length) + ring.length) % ring.length]?.focus({ preventScroll: true })
 }
+
+/** 在搜索框里移动插入点的键：按下就是想编辑搜索词（回到输入） */
+const CARET_KEYS: ReadonlySet<string> = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End'])
 
 /** 跟随卡片底边最长多久（卡片高度动画之外的兜底：卡片没有动画时不会一直跟） */
 const FOLLOW_MAX_MS = 1000
@@ -266,6 +272,9 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
   const marking = marked > 0
   const chipFocus = useStore(store, (s) => s.chip)
   const renaming = useStore(store, (s) => s.rename !== null)
+  // Space 的含义（预览 / 空格）：提示条与悬停卡片的键帽跟着它变；浏览意图下正在检索时隐藏插入点（按键此刻作用于列表）
+  const spacePreviews = useStore(store, spaceOpensPreview)
+  const browsing = useStore(store, (s) => s.browse && isSearching(s))
   const rows = rowsOf(store)
   const offsets = useMemo(() => rowOffsets(rows), [rows])
   const empty = rows.length === 0
@@ -461,6 +470,23 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
     [store],
   )
   const runner = useClipRunner(store, os, { cmd, ui, host })
+
+  // ----- 输入法兜底：有的输入法（中文状态、没有组字时）把 Space 报成 keyCode 229，键盘路由按组字放行，空格会直接进
+  // 搜索框。这时在搜索框上看到的是一次 insertText 的空格（半角或全角）：Space 此刻是预览就取消输入、切换预览。用原生
+  // 监听（React 的 onBeforeInput 合成自 textInput / keypress，拿不到 inputType）；组字中的空格（选候选词）不管
+  useEffect(() => {
+    const input = searchRef.current
+    if (!input) return
+    const onBeforeInput = (e: InputEvent) => {
+      if (e.isComposing || e.inputType !== 'insertText') return
+      if (e.data !== ' ' && e.data !== '　') return
+      if (!spaceOpensPreview(store.getState())) return
+      e.preventDefault()
+      runner.run('preview', runner.ctx('key'), 'toggle')
+    }
+    input.addEventListener('beforeinput', onBeforeInput)
+    return () => input.removeEventListener('beforeinput', onBeforeInput)
+  }, [store, runner])
   // 头部的图标按钮（注册表的 toolbar 界面）：面板是交接到悬浮窗的钉子，悬浮窗是置顶、关闭；连续粘贴进行中多一个「结束」
   useStore(store, (s) => s.queue?.active === true)
   const toolbar = runner.entries('toolbar', runner.ctx('toolbar', null), t)
@@ -536,6 +562,7 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
       data-view="clipboard"
       data-session={sessionId}
       data-preview={showPreview || undefined}
+      data-browse={(browsing && !showPreview) || undefined}
       data-hint-bar={hintBar || undefined}
       // 清空确认与命名条是模态的：列表不接收指针（命名时点到一行不会把它粘贴出去）
       data-modal={clearOpen || renaming || undefined}
@@ -567,7 +594,16 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
           // 悬浮窗平时不抢焦点：点进搜索框（或它拿到焦点）时才临时可聚焦，面板里什么都不做。焦点离开窗口（切到别的
           // 应用、Esc 交还）时恢复不可聚焦——否则之后每次点条目都会抢走目标应用的前台；焦点只是移到窗口里别的输入框
           // （改名条、⌘K）时保持可聚焦，用户还在打字
-          onPointerDown={() => host.searchFocus(true)}
+          // 在搜索框上按下指针、在搜索框里移动插入点：想编辑搜索词，回到输入（Space 是空格）。芯片模式下的 ← / → 由
+          // 键位层在捕获阶段拦下，到不了这里
+          onPointerDown={() => {
+            cmd.setBrowse(false)
+            host.searchFocus(true)
+          }}
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return
+            if (CARET_KEYS.has(e.key)) cmd.setBrowse(false)
+          }}
           onFocus={() => host.searchFocus(true)}
           onBlur={(e) => {
             if (e.relatedTarget === null) host.searchFocus(false)
@@ -784,6 +820,7 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
           runner={runner}
           mode={showPreview ? 'preview' : chipFocus !== null ? 'chips' : marking ? 'marks' : 'list'}
           marked={marked}
+          space={spacePreviews}
           dim={empty}
           drag={drag}
         />
@@ -1035,6 +1072,8 @@ const HintBar = memo(function HintBar({
   mode: HintMode
   /** 选了几条：提示随它变（选了两条以上时 ⌘↩ 是连续粘贴），只用来让提示条重新取一次 */
   marked: number
+  /** Space 此刻是否预览（预览的键在 Space / ⇧Space 之间切换），只用来让提示条重新取一次 */
+  space: boolean
   dim: boolean
   /** 从提示条的空白处拖动面板 */
   drag: PanelDragHandlers | undefined
@@ -1042,7 +1081,8 @@ const HintBar = memo(function HintBar({
   const t = useT()
   const ref = useRef<HTMLElement>(null)
   const items = runner.hints(mode, t)
-  const signature = items.map((it) => `${it.id}:${it.label}`).join('|')
+  // 组合键也进签名：键帽宽度变了要重新取舍。预留了宽度的项（reserve）切换时宽度不变，重新取舍的结果也不变
+  const signature = items.map((it) => `${it.id}:${it.label}:${it.combos.join(',')}`).join('|')
 
   useLayoutEffect(() => {
     const el = ref.current
@@ -1085,15 +1125,51 @@ const HintBar = memo(function HintBar({
     >
       {items.map((it) => (
         <span key={it.id} className="clip-hint" data-hint={it.id} data-priority={it.priority}>
-          {it.combos.map((c) => (
-            <Kbd key={c} combo={c} variant="cap" />
-          ))}
+          <HintKeys item={it} os={runner.os} />
           {it.label}
         </span>
       ))}
     </footer>
   )
 })
+
+/**
+ * 提示条一项的键帽：区间（「1–9」）合成一个键帽；会切换的键（reserve）把各个候选叠在同一格里、只显示当前的那个，
+ * 宽度恒为最宽的候选（与过滤 Chip 的 FilterLabel 同一个做法）
+ */
+function HintKeys({ item, os }: { item: HintItem; os: OsKind }) {
+  const [first, last] = item.combos
+  if (item.span && first && last) {
+    return (
+      <kbd className="ui-kbd">
+        <span className="ui-kbd-key">{formatHotkeyRange(first, last, os)}</span>
+      </kbd>
+    )
+  }
+  if (item.reserve) {
+    return (
+      <span className="clip-hint-keys">
+        {item.reserve.map((c) => (
+          <span
+            key={c}
+            className="clip-hint-key"
+            data-on={c === first || undefined}
+            aria-hidden={c !== first || undefined}
+          >
+            <Kbd combo={c} variant="cap" />
+          </span>
+        ))}
+      </span>
+    )
+  }
+  return (
+    <>
+      {item.combos.map((c) => (
+        <Kbd key={c} combo={c} variant="cap" />
+      ))}
+    </>
+  )
+}
 
 // -----------------------------------------------------------------------------
 // JIT 预热（shared/perf/prewarm.tsx）：启动后 / 回收重建后第一次打开剪贴板（1000 条历史）首帧实测 66–101 ms，贴着

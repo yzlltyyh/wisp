@@ -14,6 +14,7 @@ import {
   restoreHit,
   rowsOf,
   shiftOffset,
+  spaceOpensPreview,
   visibleHits,
   withSearchResult,
   type ClipState,
@@ -237,6 +238,17 @@ describe('检索与过滤', () => {
       search: { query: 'a', filter: 'all', hits: [hit(meta(3)), hit(sample()[4]!)], limit: 200 },
     })
     expect(ids(s)).toEqual([5])
+  })
+})
+
+describe('Space 的含义', () => {
+  it('搜索框为空或只有空白时是预览；有字时只有浏览意图下是预览', () => {
+    const s = base()
+    expect(s.browse).toBe(false)
+    expect(spaceOpensPreview(s)).toBe(true)
+    expect(spaceOpensPreview(apply(s, { query: ' \u3000 ' }))).toBe(true)
+    expect(spaceOpensPreview(apply(s, { query: 'ab' }))).toBe(false)
+    expect(spaceOpensPreview(apply(s, { query: 'ab', browse: true }))).toBe(true)
   })
 })
 

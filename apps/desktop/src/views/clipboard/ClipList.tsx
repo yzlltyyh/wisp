@@ -151,6 +151,11 @@ const LEAD_CARRY = 0.35
  * 正常移动鼠标约 1 px / ms，停下来看卡片时 < 0.1
  */
 const CARD_INTENT_SPEED = 0.3
+/**
+ * 指针移动多远（px，自上次编辑搜索词起累计）、并且跨过了行边界，才算移到了列表上（浏览意图，Space 是预览）：打字时手
+ * 搭在鼠标上的轻微晃动远小于它，移到相邻的行至少要半行（22 px）
+ */
+const BROWSE_TRAVEL = 24
 /** 覆盖式滚动条：滑块离列表区上下边的距离、最短长度、指针离右边缘多近时显示 */
 const BAR_INSET = 4
 const BAR_MIN_THUMB = 28
@@ -707,7 +712,17 @@ export function ClipList({
    * 不同，但指针根本没动）：第一次只记作基线、不选中，坐标真正变化之后才算悬停——否则「⌥V → ↩」粘贴的是指针下的
    * 那一行而不是最新的一条。列表随每次会话重新挂载，基线也随之重置
    */
-  const pointer = useRef({ x: -1, y: -1, id: -1, t: 0, speed: 0, armed: false })
+  const pointer = useRef({
+    x: -1,
+    y: -1,
+    id: -1,
+    t: 0,
+    speed: 0,
+    armed: false,
+    // 浏览意图的记账（noteBrowse）：自上次编辑搜索词（或上次离开浏览意图）以来累计移动的距离、是否跨过了行边界
+    travel: 0,
+    crossed: false,
+  })
   const clearHoverTimer = () => {
     if (hoverTimer.current !== null) clearTimeout(hoverTimer.current)
     hoverTimer.current = null
@@ -775,6 +790,49 @@ export function ClipList({
     return (y >= w.top + h.bottom && y <= c.top) || (y <= w.top + h.top && y >= c.bottom)
   }
 
+  /** 列表区里某个屏幕 y 落在哪一行（按当前的行偏移与滚动位置；落在首尾留白里、列表外为 -1） */
+  const rowIndexAtY = (clientY: number): number => {
+    const el = listRef.current?.element()
+    if (!el) return -1
+    const y = clientY - el.getBoundingClientRect().top + el.scrollTop
+    // 偏移递增：找最后一个起点 ≤ y 的行
+    let lo = 0
+    let hi = offsets.length - 1
+    let found = -1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if ((offsets[mid] ?? 0) <= y) {
+        found = mid
+        lo = mid + 1
+      } else hi = mid - 1
+    }
+    if (found < 0) return -1
+    return y < (offsets[found] ?? 0) + rowHeight(rows[found]) ? found : -1
+  }
+
+  /**
+   * 指针带来的浏览意图（store 的 browse）：自上次编辑搜索词（或上次离开浏览意图）以来，指针真的跨过了行边界、并且
+   * 累计移动了 BROWSE_TRAVEL 以上。不能看「悬停的条目变了」：检索结果更新、卡片收起之后，指针原地抖动 1 px 也会落到
+   * 另一行上。跨没跨过按同一份布局比较前后两个坐标落在哪一行
+   */
+  const noteBrowse = (fromY: number, toY: number, step: number) => {
+    const p = pointer.current
+    if (store.getState().browse) return
+    p.travel += step
+    if (!p.crossed) p.crossed = rowIndexAtY(fromY) !== rowIndexAtY(toY)
+    if (p.crossed && p.travel >= BROWSE_TRAVEL) cmd.setBrowse(true)
+  }
+  // 每次编辑搜索词、每次离开浏览意图（点搜索框、移动插入点）都从零开始记
+  useEffect(
+    () =>
+      store.subscribe((s, prev) => {
+        if (s.query === prev.query && (s.browse || !prev.browse)) return
+        pointer.current.travel = 0
+        pointer.current.crossed = false
+      }),
+    [store],
+  )
+
   const onPointerMove = (e: ReactPointerEvent) => {
     // 按着大条目开始移动：可能要拖出，现在取拖拽数据（见 DRAG_EAGER_CHARS）
     const lazy = lazyDrag.current
@@ -797,10 +855,12 @@ export function ClipList({
     // 指针速度（平滑过的 px / ms）：判断是想进入悬停卡片，还是正在往下扫
     const dt = e.timeStamp - p.t
     const step = Math.hypot(e.clientX - p.x, e.clientY - p.y)
+    const fromY = p.y
     p.speed = p.t > 0 && dt > 0 ? (p.speed + Math.min(step / dt, 10)) / 2 : 0
     p.t = e.timeStamp
     p.x = e.clientX
     p.y = e.clientY
+    noteBrowse(fromY, e.clientY, step)
     // 指针靠近右边缘：显示滚动条
     const wrap = wrapRef.current
     const bar = barRef.current

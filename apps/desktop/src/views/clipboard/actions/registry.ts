@@ -16,12 +16,12 @@
  * | ⌥⇧↩ | 「粘贴为…」子页（合并行、去空白、大小写、全半角、JSON、去跟踪参数；只列适用的） |
  * | ⌘1–9 / ⌥⌘1–9（Windows / Linux：Ctrl+1–9 / Ctrl+Shift+1–9） | 粘贴 / 纯文本粘贴第 n 条（按当前可见顺序，只数列出来的行；macOS 的 ⌘⇧3–5 是系统截屏键，见 keys.ts） |
  * | ⌘D | 收藏 / 取消收藏（与浏览器的书签键一致；多选时作用于全部） |
- * | ⌘E | 进入芯片条（识别出的片段）：←/→ 选择、↩ 粘贴、⌥↩ 仅复制、Esc 返回 |
+ * | ⌘E | 进入芯片模式（选中行右侧识别出的片段展开）：←/→ 选择、↩ 粘贴、⌥↩ 仅复制、1–9 直接粘贴第 n 个（两个以上时）、Esc 返回 |
  * | ⌘P | 交接到悬浮剪贴板（与翻译 / OCR 的「固定」同一个键；头部的钉子按钮同义） |
  * | ⇧↑ / ⇧↓、⌘ 点击、⇧ 点击 | 多选（行首按选择顺序编号）；Esc 先取消选择 |
  * | ⌫（搜索框为空时） | 删除；收藏先弹出行内确认，再按一次才删 |
  * | ⌘⌫ | 直接删除（含收藏），搜索框有字时同样生效 |
- * | Space（搜索框为空时）/ ⇧Space | 打开 / 关闭全文预览；搜索框有字时 Space 是空格 |
+ * | Space（搜索框为空或浏览意图下）/ ⇧Space / ⌘Y（仅 macOS） | 打开 / 关闭全文预览；正在输入搜索词时 Space 是空格（↑↓ 或指针移过条目之后又是预览，见 store 的 `spaceOpensPreview`） |
  * | ⌘K / ⇧F10 / ContextMenu | 选中项的操作菜单（右键菜单的全部操作 + 暂停记录、剪贴板设置、清空历史） |
  * | Tab / ⇧Tab | 循环切换类型过滤（焦点不会移走）；全文预览打开时改为在预览里的按钮之间移动焦点 |
  * | ⌘F | 打开类型过滤菜单 |
@@ -61,12 +61,18 @@ import {
   X,
 } from 'lucide-react'
 import { copyText } from '../../../shared/hooks/useCopy'
-import type { ClipItemMeta, ClipKind, ClipInspect, PasteMode } from '../../../shared/ipc/types'
+import type {
+  ClipItemMeta,
+  ClipKind,
+  ClipInspect,
+  OsKind,
+  PasteMode,
+} from '../../../shared/ipc/types'
 import { entityText, ENTITY_SPECS, TRANSFORM_SPECS } from '../../../shared/smart/specs'
 import { plainNthCombo } from '../keys'
 import { allFilesMissing, hasTextBody, isTextual } from '../kinds'
 import { cycleFilter, firstItemIndex, indexOfId, lastItemIndex, nthItem, stepItem } from '../model'
-import { isSearching, visibleHits } from '../store'
+import { isSearching, spaceOpensPreview, visibleHits } from '../store'
 import {
   pageItem,
   type ActionArgs,
@@ -85,8 +91,15 @@ function controlFocused(): boolean {
 }
 
 const notOnControl = (): boolean => !controlFocused()
-/** 搜索框为空：⌫ 是删除、Space 是预览；有字时它们照常编辑搜索框 */
+/** 搜索框为空：⌫ 是删除；有字时照常编辑搜索框（Space 另有更宽的规则，见 `spaceOpensPreview`） */
 const queryEmpty = (c: ActionCtx): boolean => c.s.query === ''
+/** Space 此刻是预览（搜索框里没有可见的字，或浏览意图下） */
+const spacePreviews = (c: ActionCtx): boolean => spaceOpensPreview(c.s)
+/** ⌘Y 是 macOS 的「快速查看」惯例；Windows / Linux 的 Ctrl+Y 是重做，不绑定 */
+const macOnly =
+  (combo: string) =>
+  (os: OsKind): string | null =>
+    os === 'macos' ? combo : null
 const kindIs =
   (kind: ClipKind) =>
   (c: ActionCtx): boolean =>
@@ -118,7 +131,9 @@ const VIEW_MENUS = { more: {}, command: {} } as const
 const DELETE_LAYERS: readonly ClipKeyLayer[] = ['list', 'confirm']
 const DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const
 
+/** 键盘在列表里移动（↑↓ / 翻页 / 首尾 / ⇧↑↓）：进入浏览意图，之后 Space 是预览 */
 function moveBy(c: ActionCtx, x: ActionEnv, step: 1 | -1, count: number, jump: boolean): void {
+  x.cmd.setBrowse(true)
   const rows = x.ui.rows()
   const next = rows[stepItem(rows, indexOfId(rows, c.s.selectedId), step, count)]
   if (next?.type === 'item') x.cmd.select(next.key, true, jump)
@@ -177,7 +192,7 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
     // 选了两条以上时 ⌘↩ 是连续粘贴（下面的 queue_start）；合并复制仍在菜单里
     keys: [{ combo: 'Mod+Enter', when: notQueueable, display: notQueueable }],
     surfaces: ITEM_MENUS,
-    hints: { list: { order: 2, priority: 4, label: 'clipboard.hint.copy' } },
+    hints: { list: { order: 2, priority: 5, label: 'clipboard.hint.copy' } },
     run: (c, x) => pasteTargets(c, x, 'copy_only'),
   },
   queue_start: {
@@ -253,16 +268,31 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
       c.os === 'macos' ? 'clipboard.action.preview_macos' : 'clipboard.action.preview',
     icon: Eye,
     keys: [
-      { combo: 'Space', when: (c) => queryEmpty(c) && notOnControl(), arg: 'toggle' },
+      // Space 不是预览时（正在输入搜索词）不显示它：第一个可显示的组合换成 ⇧Space，提示条与悬停卡片跟着变
+      {
+        combo: 'Space',
+        when: (c) => spacePreviews(c) && notOnControl(),
+        display: spacePreviews,
+        arg: 'toggle',
+      },
       { combo: 'Shift+Space', when: notOnControl, arg: 'toggle' },
+      { combo: macOnly('Mod+KeyY'), when: notOnControl, arg: 'toggle', display: false },
       // 预览打开时：Space（搜索框有字时同样）返回，Esc 也返回
       { combo: 'Space', layers: ['preview'], when: notOnControl, arg: 'close' },
       { combo: 'Shift+Space', layers: ['preview'], when: notOnControl, arg: 'close' },
+      {
+        combo: macOnly('Mod+KeyY'),
+        layers: ['preview'],
+        when: notOnControl,
+        arg: 'close',
+        display: false,
+      },
       { combo: 'Escape', layers: ['preview'], repeat: 'run', arg: 'close', display: false },
     ],
     surfaces: ITEM_MENUS,
     hints: {
-      list: { order: 5, priority: 7, label: 'clipboard.hint.preview' },
+      // 默认 420 宽里放得下（窄宽度下「仅复制」先让位）；Space ↔ ⇧Space 切换时键帽宽度固定（reserve），提示条不重新取舍
+      list: { order: 5, priority: 4, label: 'clipboard.hint.preview', reserve: true },
       preview: { order: 0, priority: 0, label: 'clipboard.hint.back', layer: 'preview' },
     },
     run: (c, x, mode = 'open') => {
@@ -288,7 +318,7 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
     surfaces: ITEM_MENUS,
     // 提示条的文案固定为「收藏」（⌘D 是开关）：不随选中项变化
     hints: {
-      list: { order: 3, priority: 6, label: 'clipboard.hint.favorite' },
+      list: { order: 3, priority: 7, label: 'clipboard.hint.favorite' },
       marks: { order: 1, priority: 2, label: 'clipboard.hint.favorite' },
     },
     run: (c, x) => x.cmd.toggleFavorite(targets(c)),
@@ -460,7 +490,7 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
     // 菜单本身就是一次明确的操作：收藏也直接删除
     surfaces: { context: { arg: true }, command: { arg: true } },
     hints: {
-      list: { order: 4, priority: 5, label: 'clipboard.hint.delete' },
+      list: { order: 4, priority: 6, label: 'clipboard.hint.delete' },
       marks: { order: 2, priority: 3, label: 'clipboard.hint.delete' },
     },
     run: (c, x, force = false) => {
@@ -587,6 +617,7 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
       { combo: 'Mod+ArrowDown', arg: 'last' },
     ],
     run: (_c, x, which = 'first') => {
+      x.cmd.setBrowse(true)
       const rows = x.ui.rows()
       const row = rows[which === 'first' ? firstItemIndex(rows) : lastItemIndex(rows)]
       if (row?.type === 'item') x.cmd.select(row.key, true, true)
@@ -608,7 +639,10 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
       { combo: 'Shift+ArrowUp', arg: -1, repeat: 'run' },
       { combo: 'Shift+ArrowDown', arg: 1, repeat: 'run' },
     ],
-    run: (_c, x, step = 1) => x.cmd.extendMarks(x.ui.rows(), step),
+    run: (_c, x, step = 1) => {
+      x.cmd.setBrowse(true)
+      x.cmd.extendMarks(x.ui.rows(), step)
+    },
   },
   mark_toggle: {
     group: 'nav',

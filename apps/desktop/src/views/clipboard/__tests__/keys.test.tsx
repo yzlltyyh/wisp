@@ -1,13 +1,15 @@
 /**
  * 剪贴板键位表逐键测试：
- * ↑↓、⌘↑/↓、PageUp/Down、↩ / ⇧↩ / ⌘↩、⌘1–9 / 纯文本 ⌥⌘1–9（Windows / Linux Ctrl+Shift+1–9）、⌘P、⌫（搜索为空时；置顶项二次确认）/ ⌘⌫、Space（搜索为空时）
- * / ⇧Space、Tab / ⇧Tab、⌘F、Esc（先清空再交给外壳关闭）；Windows / Linux 上 ⌘→Ctrl、⌫→Delete；
- * 搜索框有字时 ⌫ 是退格、Space 是空格；Tab 不会移走焦点；输入法组合中不触发。
+ * ↑↓、⌘↑/↓、PageUp/Down、↩ / ⇧↩ / ⌘↩、⌘1–9 / 纯文本 ⌥⌘1–9（Windows / Linux Ctrl+Shift+1–9）、⌘P、⌫（搜索为空时；置顶项二次确认）/ ⌘⌫、Space（搜索为空
+ * 或浏览意图下）/ ⇧Space / ⌘Y（仅 macOS）、Tab / ⇧Tab、⌘F、Esc（先清空再交给外壳关闭）；Windows / Linux 上 ⌘→Ctrl、⌫→Delete；
+ * 搜索框有字时 ⌫ 是退格，正在输入时 Space 是空格（↑↓ / 指针移过条目之后是预览，编辑搜索词回到输入；输入法把 Space
+ * 报成 229 时由 beforeinput 兜底）；Tab 不会移走焦点；输入法组合中不触发。
  */
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { setTransport } from '../../../shared/ipc'
 import { t } from '../../../shared/i18n/i18n'
+import { formatHotkey } from '../../../shared/keys/formatHotkey'
 import { ClipboardView } from '../ClipboardView'
 import {
   armPointer,
@@ -38,6 +40,13 @@ const filterLabel = () =>
   screen.getByTestId('clip-filter').querySelector('[data-on]')?.textContent ?? ''
 const selected = () => search().getAttribute('aria-activedescendant')
 const rowId = (id: number) => `clip-row-${id}`
+const row = (id: number) => document.getElementById(rowId(id)) as HTMLElement
+const view = () => screen.getByTestId('view-clipboard')
+/** 输入搜索词并等检索结果平铺（第一条命中被选中） */
+async function typeQuery(q: string) {
+  fireEvent.change(search(), { target: { value: q } })
+  await waitFor(() => expect(document.querySelector('.clip-group')).toBeNull())
+}
 
 beforeEach(() => {
   ipc = fakeIpc()
@@ -223,6 +232,167 @@ describe('预览（Space / ⇧Space）', () => {
     key('Space', { shift: true })
     expect(await screen.findByTestId('clip-preview')).toBeTruthy()
   })
+
+  it('搜索框有字：↓ 之后 Space 打开预览（浏览意图）；再输入字母回到输入，Space 又是空格', async () => {
+    mount()
+    await typeQuery('a')
+    expect(key('Space').defaultPrevented).toBe(false)
+    key('ArrowDown')
+    expect(selected()).toBe(rowId(4))
+    expect(key('Space').defaultPrevented).toBe(true)
+    expect(await screen.findByTestId('clip-preview')).toBeTruthy()
+    // 预览里 ↑↓ 换条目保持浏览意图，Space 关闭
+    key('ArrowDown')
+    key('Space')
+    await waitFor(() => expect(screen.queryByTestId('clip-preview')).toBeNull())
+    expect(key('Space').defaultPrevented).toBe(true)
+    await waitFor(() => expect(screen.queryByTestId('clip-preview')).not.toBeNull())
+    key('Escape')
+    await waitFor(() => expect(screen.queryByTestId('clip-preview')).toBeNull())
+    fireEvent.change(search(), { target: { value: 'al' } })
+    expect(key('Space').defaultPrevented).toBe(false)
+    expect(screen.queryByTestId('clip-preview')).toBeNull()
+  })
+
+  it('⌘↓ / ⇧↓ 同样进入浏览意图；在搜索框里按 ← / → / Home / End、在搜索框上按下指针回到输入', async () => {
+    mount()
+    search().focus()
+    await typeQuery('a')
+    for (const leave of ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'pointer'] as const) {
+      key('ArrowDown', { meta: true })
+      expect(view().hasAttribute('data-browse'), leave).toBe(true)
+      if (leave === 'pointer') fireEvent.pointerDown(search())
+      else key(leave)
+      expect(view().hasAttribute('data-browse'), leave).toBe(false)
+      expect(key('Space').defaultPrevented, leave).toBe(false)
+    }
+    key('ArrowDown', { shift: true })
+    expect(key('Space').defaultPrevented).toBe(true)
+  })
+
+  it('指针真的跨过行边界、并且自上次编辑以来移动了 ≥ 24 px 之后，Space 预览指针下的那一行', async () => {
+    mount()
+    await typeQuery('a')
+    armPointer()
+    // 检索结果平铺：3 在 4–48、4 在 48–92、6 在 92–136、7 在 136–180（jsdom 没有布局：clientY 就是内容坐标）
+    fireEvent.pointerMove(row(4), { clientX: 40, clientY: 70, pointerType: 'mouse' })
+    expect(selected()).toBe(rowId(4))
+    expect(key('Space').defaultPrevented).toBe(true)
+    expect(await screen.findByTestId('clip-preview')).toBeTruthy()
+  })
+
+  it('检索结果更新之后指针 1 px 的抖动（哪怕换到了别的行上、跨过了行边界）不进入浏览意图', async () => {
+    mount()
+    armPointer()
+    // 打字之前指针停在列表上（分组列表里 7 在 372–416）
+    fireEvent.pointerMove(row(7), { clientX: 40, clientY: 400, pointerType: 'mouse' })
+    await typeQuery('a')
+    // 结果平铺之后指针下面换成了别的行：1 px 的抖动只是悬停换了选中项
+    fireEvent.pointerMove(row(4), { clientX: 40, clientY: 401, pointerType: 'mouse' })
+    expect(key('Space').defaultPrevented).toBe(false)
+    // 恰好压在行边界上（6 / 7 之间的 136）：跨过了边界，但累计移动不到 24 px
+    fireEvent.pointerMove(row(6), { clientX: 40, clientY: 135, pointerType: 'mouse' })
+    fireEvent.change(search(), { target: { value: 'al' } })
+    fireEvent.change(search(), { target: { value: 'a' } })
+    await waitFor(() => expect(document.getElementById(rowId(7))).not.toBeNull())
+    fireEvent.pointerMove(row(7), { clientX: 40, clientY: 137, pointerType: 'mouse' })
+    expect(key('Space').defaultPrevented).toBe(false)
+    // 真的移动过去：进入浏览意图
+    fireEvent.pointerMove(row(4), { clientX: 40, clientY: 60, pointerType: 'mouse' })
+    expect(key('Space').defaultPrevented).toBe(true)
+  })
+
+  it('输入法兜底：浏览意图下搜索框收到 insertText 的空格（半角 / 全角）时取消并切换预览；组字中、输入中不拦', async () => {
+    mount()
+    await typeQuery('a')
+    key('ArrowDown')
+    const space = (data: string, isComposing = false) => {
+      const ev = new InputEvent('beforeinput', {
+        inputType: 'insertText',
+        data,
+        isComposing,
+        bubbles: true,
+        cancelable: true,
+      })
+      act(() => {
+        search().dispatchEvent(ev)
+      })
+      return ev
+    }
+    expect(space(' ').defaultPrevented).toBe(true)
+    expect(await screen.findByTestId('clip-preview')).toBeTruthy()
+    expect(space('　').defaultPrevented).toBe(true)
+    await waitFor(() => expect(screen.queryByTestId('clip-preview')).toBeNull())
+    // 输入法组字中的空格（选候选词）不拦
+    expect(space(' ', true).defaultPrevented).toBe(false)
+    // 回到输入之后不拦：空格照常进入搜索框
+    fireEvent.change(search(), { target: { value: 'al' } })
+    expect(space(' ').defaultPrevented).toBe(false)
+    expect(screen.queryByTestId('clip-preview')).toBeNull()
+  })
+
+  it('浏览意图下输入法的 Space（isComposing / keyCode 229）不打开预览', async () => {
+    mount()
+    await typeQuery('a')
+    key('ArrowDown')
+    expect(key('Space', { composing: true }).defaultPrevented).toBe(false)
+    const ev = new KeyboardEvent('keydown', {
+      key: ' ',
+      code: 'Space',
+      bubbles: true,
+      cancelable: true,
+    })
+    Object.defineProperty(ev, 'keyCode', { value: 229 })
+    act(() => {
+      search().dispatchEvent(ev)
+    })
+    expect(ev.defaultPrevented).toBe(false)
+    expect(screen.queryByTestId('clip-preview')).toBeNull()
+  })
+
+  it('搜索框里只有空白时 Space 仍是预览；空 ↔ 空白之间切换不把光标拉回第一条', async () => {
+    mount()
+    key('ArrowDown')
+    key('ArrowDown')
+    expect(selected()).toBe(rowId(3))
+    fireEvent.change(search(), { target: { value: ' ' } })
+    expect(selected()).toBe(rowId(3))
+    fireEvent.change(search(), { target: { value: '' } })
+    expect(selected()).toBe(rowId(3))
+    fireEvent.change(search(), { target: { value: '  ' } })
+    expect(key('Space').defaultPrevented).toBe(true)
+    expect(await screen.findByTestId('clip-preview')).toBeTruthy()
+    expect(selected()).toBe(rowId(3))
+  })
+
+  it('macOS：⌘Y 任何时候都切换预览（搜索框有字时同样）', async () => {
+    mount()
+    await typeQuery('a')
+    expect(key('KeyY', { meta: true }).defaultPrevented).toBe(true)
+    expect(await screen.findByTestId('clip-preview')).toBeTruthy()
+    key('KeyY', { meta: true })
+    await waitFor(() => expect(screen.queryByTestId('clip-preview')).toBeNull())
+  })
+
+  it('Windows：Ctrl+Y 不拦截（那是重做）', () => {
+    setPlatform('windows')
+    mount()
+    expect(key('KeyY', { ctrl: true }).defaultPrevented).toBe(false)
+    expect(screen.queryByTestId('clip-preview')).toBeNull()
+  })
+
+  it('提示条与根节点随 Space 的含义切换：输入中显示 ⇧Space，↓ 之后显示 Space 并隐藏插入点', async () => {
+    mount()
+    const shown = () =>
+      document.querySelector('[data-hint="preview"] [data-on]')?.textContent ?? null
+    expect(shown()).toBe(formatHotkey('Space', 'macos'))
+    await typeQuery('a')
+    expect(shown()).toBe(formatHotkey('Shift+Space', 'macos'))
+    expect(view().hasAttribute('data-browse')).toBe(false)
+    key('ArrowDown')
+    expect(shown()).toBe(formatHotkey('Space', 'macos'))
+    expect(view().hasAttribute('data-browse')).toBe(true)
+  })
 })
 
 describe('过滤（Tab / ⇧Tab / ⌘F）', () => {
@@ -306,7 +476,6 @@ describe('按住不放（按键重复）', () => {
     await preloadPreview()
     mount()
     search().focus()
-    const view = () => screen.getByTestId('view-clipboard')
     key('Space')
     expect(view().hasAttribute('data-preview')).toBe(true)
     for (let i = 0; i < 5; i++) {

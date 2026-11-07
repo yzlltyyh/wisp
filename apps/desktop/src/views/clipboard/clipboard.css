@@ -57,6 +57,11 @@
 [data-reduced-motion='true'] :is(.clip-spinner, .clip-head .ui-search > .ui-field-leading) {
   transition-duration: var(--dur-base);
 }
+/* 浏览意图（搜索词之后又用 ↑↓ / 指针移到了条目上）：隐藏插入点——按键此刻作用于列表，Space 是预览；打一个字、
+   按 ← / →、点搜索框，插入点就回来 */
+.clip[data-browse] .clip-head .ui-field-input {
+  caret-color: transparent;
+}
 
 /* 过滤 Chip：所有类型名叠在同一格里，宽度恒为最长的那个（Tab 循环切换时头部不横移）；文字在格子里居中，
    较短的类型名（All / Text）两侧留白相等，选中 / 悬停的底色胶囊左右对称，下拉箭头仍贴在右侧 */
@@ -1037,6 +1042,19 @@
 }
 .clip-hint .ui-kbd + .ui-kbd {
   margin-left: -4px;
+}
+/* 会切换的键（预览的 Space ↔ ⇧Space）：候选叠在同一格里，宽度恒为最宽的那个，只显示当前的；键帽贴着文字（右对齐），
+   多出的空白落在与前一项之间 */
+.clip-hint-keys {
+  display: inline-grid;
+}
+.clip-hint-key {
+  display: inline-flex;
+  grid-area: 1 / 1;
+  justify-self: end;
+}
+.clip-hint-key:not([data-on]) {
+  visibility: hidden;
 }
 /* 放不下时按优先级整项隐藏（hints.ts，ResizeObserver 回调里设置） */
 .clip-hint[data-off] {

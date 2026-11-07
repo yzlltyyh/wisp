@@ -422,7 +422,7 @@ describe('操作注册表', () => {
     }
   })
 
-  it('提示条：列表里必留 粘贴 / 纯文本 / 筛选 / 关闭，其余按 仅复制 → 删除 → 收藏 → 预览 → 操作 让位', () => {
+  it('提示条：列表里必留 粘贴 / 纯文本 / 筛选 / 关闭，其余按 预览 → 仅复制 → 删除 → 收藏 → 操作 让位', () => {
     const c = contexts('macos')[0] as ActionCtx
     const priority = Object.fromEntries(hintItems('list', c, t).map((h) => [h.id, h.priority]))
     expect(priority).toEqual({
@@ -430,12 +430,28 @@ describe('操作注册表', () => {
       paste_plain: 1,
       open_filter_menu: 2,
       escape: 3,
-      copy_only: 4,
-      delete: 5,
-      favorite: 6,
-      preview: 7,
+      preview: 4,
+      copy_only: 5,
+      delete: 6,
+      favorite: 7,
       open_actions: 8,
     })
+    // 预览的键随 Space 的含义切换（Space / ⇧Space），提示条按两者中较宽的预留键帽宽度
+    for (const os of OSES) {
+      const base = contexts(os).find(
+        (x) => x.target?.kind === 'text' && x.host === 'panel' && x.marked.length === 0,
+      ) as ActionCtx
+      const typing = { ...base, s: { ...base.s, query: 'abc', browse: false } }
+      const browsing = { ...typing, s: { ...typing.s, browse: true } }
+      const preview = (x: ActionCtx) => hintItems('list', x, t).find((h) => h.id === 'preview')
+      expect(preview(base)).toMatchObject({ combos: ['Space'], reserve: ['Space', 'Shift+Space'] })
+      expect(preview(typing)).toMatchObject({ combos: ['Shift+Space'] })
+      expect(preview(browsing)).toMatchObject({ combos: ['Space'] })
+      // ⌘Y 只在 macOS 绑定（Windows / Linux 的 Ctrl+Y 是重做），且不显示
+      expect(pressIn('list', 'Mod+KeyY', typing)).toBe(os === 'macos' ? 'preview' : null)
+      expect(pressIn('list', 'Space', typing)).toBe(null)
+      expect(pressIn('list', 'Space', browsing)).toBe('preview')
+    }
     expect(hintItems('preview', c, t).map((h) => [h.id, h.combos])).toEqual([
       ['preview', ['Space']],
       ['paste', ['Enter']],

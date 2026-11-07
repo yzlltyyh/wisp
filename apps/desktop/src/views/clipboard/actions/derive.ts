@@ -280,26 +280,52 @@ export function keyBindings(
   }))
 }
 
+/**
+ * 可能成为「第一个显示的组合」的那几个（不看上下文）：按声明顺序收集，到第一个无条件显示的为止——它之后的永远排不到
+ * 第一个。提示条据此预留键帽宽度（HintSpec 的 `reserve`）
+ */
+export function firstComboCandidates(
+  a: ClipAction<unknown>,
+  os: OsKind,
+  layer: ClipKeyLayer = 'list',
+): string[] {
+  const out: string[] = []
+  for (const k of a.keys ?? []) {
+    if (!keyLayers(k).includes(layer) || k.display === false) continue
+    const combo = comboOf(k, os)
+    if (!combo) continue
+    if (!out.includes(combo)) out.push(combo)
+    if (!k.display) break
+  }
+  return out
+}
+
 /** 提示条的一组提示（按显示顺序）；文案固定，不随选中项变化 */
 export function hintItems(mode: HintMode, c: ActionCtx, t: TFunction): HintItem[] {
   const out: (HintItem & { order: number })[] = []
   for (const a of ACTIONS) {
     const h = a.hints?.[mode]
     if (!h) continue
-    const combos = displayCombos(a, c, h.layer ?? 'list')
+    const layer = h.layer ?? 'list'
+    const combos = displayCombos(a, c, layer)
     // 此刻没有可显示的键（例如只选了一条时的连续粘贴）：不占提示条的位置
     if (combos.length === 0) continue
+    const reserve = h.reserve ? firstComboCandidates(a, c.os, layer) : []
     out.push({
       id: a.id,
-      combos: h.all ? combos : combos.slice(0, 1),
+      combos: h.span
+        ? [combos[0] as string, combos.at(-1) as string]
+        : h.all
+          ? combos
+          : combos.slice(0, 1),
       label: t(typeof h.label === 'function' ? h.label(c) : h.label),
       priority: h.priority,
       order: h.order,
+      ...(h.span ? { span: true } : null),
+      ...(reserve.length > 1 ? { reserve } : null),
     })
   }
-  return out
-    .sort((x, y) => x.order - y.order)
-    .map(({ id, combos, label, priority }) => ({ id, combos, label, priority }))
+  return out.sort((x, y) => x.order - y.order).map(({ order: _order, ...item }) => item)
 }
 
 export interface NthShortcut {

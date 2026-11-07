@@ -2,15 +2,16 @@
  * 悬停预览卡片：画在面板内部、覆盖在列表上（左右内缩与行高亮同为 6 px）；
  * 放得下就在行的下方，否则在上方，两边都放不下时贴着空间更大的一侧并截断。出现 / 消失按 presets.popover（由列表的
  * AnimatePresence 播放退出）。卡片接收指针：指针在卡片上慢下来时卡片保持；正常速度扫过时由列表收起卡片、选中下面的
- * 行（ClipList）；点卡片等于点它对应的行。退出动画期间不接收指针。
+ * 行（ClipList）；点卡片等于点它对应的行。退出动画期间不接收指针。卡片只是预览：识别出的片段（芯片）在选中行右侧的
+ * 小条里（指针横着移过去就点得到），不放进卡片——卡片压在往下扫的路径上，里面的芯片几乎点不到。
  *
  * 文本只显示前 3 行：单行的条目直接用元数据里的预览（≤ 200 字，3 行放得下），多行的才取正文，而且只取开头
  * （`textHead`，最多 2000 字，每行再截到 300 字）——排版的工作量有上限。超过 LARGE_TEXT_CHARS 的多行正文不取
  * （`clipboard_get` 只能取全文，整段经 IPC 传过来再解析会在主线程上卡一下），同样用元数据里的预览。
  */
 import { m, useIsPresent } from 'motion/react'
-import { useStore } from 'zustand'
 import { useLayoutEffect, useRef, useState } from 'react'
+import { useStore } from 'zustand'
 import { resolveAssetUrl } from '../../../shared/ipc'
 import type { ClipHit } from '../../../shared/ipc/types'
 import { relativeTime } from '../../../shared/i18n/relativeTime'
@@ -21,9 +22,8 @@ import type { ClipRunner } from '../actions'
 import { blankLabel } from '../ClipRow'
 import { hasTextBody } from '../kinds'
 import { firstLines, hostOf, isBlank, LARGE_TEXT_CHARS } from '../model'
-import type { ClipStore } from '../store'
+import { spaceOpensPreview, type ClipStore } from '../store'
 import type { ClipCommands } from '../useClipboard'
-import { EntityChips } from './Chips'
 import { ColorInfo, FileList, ImageView, metaParts, useDetail, useHead } from './parts'
 
 export interface HoverCardProps {
@@ -37,7 +37,7 @@ export interface HoverCardProps {
   cmd: ClipCommands
   /** 角落里「Space 打开预览」的按键来自注册表 */
   runner: ClipRunner
-  /** 识别出的片段（芯片）读 store 里的检视结果 */
+  /** 角落的键帽随 Space 此刻的含义（预览 / 空格）在 Space 与 ⇧Space 之间切换 */
   store: ClipStore
 }
 
@@ -73,11 +73,9 @@ export function HoverCard({
     hasTextBody(it.kind) && (it.line_count ?? 1) > 1 && (it.char_count ?? 0) <= LARGE_TEXT_CHARS
   const detail = useDetail(cmd, it.id, it.kind === 'image')
   const head = useHead(cmd, it.id, multiline)
+  // 订阅只为在 Space 的含义变化时重新取键（runner 按 store 的当前状态给出显示的组合）
+  useStore(store, spaceOpensPreview)
   const previewKey = runner.shortcut('preview')
-  // 芯片的个数只用来在它们出现时重新定位（芯片本身由 EntityChips 读 store）
-  const chips = useStore(store, (s) =>
-    s.inspect?.id === it.id ? s.inspect.result.entities.length : 0,
-  )
   const motion = usePreset('popover')
 
   // 定位：先按自然高度量一次，再决定放在行的上方还是下方
@@ -95,9 +93,9 @@ export function HoverCard({
     setPos((p) =>
       p.top === next.top && p.maxHeight === next.maxHeight && p.side === next.side ? p : next,
     )
-    // 详情（正文 / 原图）、芯片到达后内容高度会变，需要重新定位
+    // 详情（正文 / 原图）到达后内容高度会变，需要重新定位
     // oxlint-disable-next-line react/exhaustive-effect-dependencies
-  }, [anchorTop, anchorBottom, areaHeight, detail, head, chips])
+  }, [anchorTop, anchorBottom, areaHeight, detail, head])
 
   const meta = metaParts(it, t)
   return (
@@ -125,7 +123,6 @@ export function HoverCard({
           loading={multiline && head === undefined}
         />
       </div>
-      <EntityChips store={store} runner={runner} id={it.id} />
       <div className="clip-hover-meta">
         <AppIcon
           src={it.source?.icon_url ? resolveAssetUrl(it.source.icon_url) : null}
