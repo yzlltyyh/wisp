@@ -7766,9 +7766,8 @@ mod tests {
         let region = last_region(&host.take()).expect("region after in-place ready");
         assert_eq!((region.card.width, region.card.height), (0.0, 0.0));
         c.resize(2, 56.0, ResizeSpring::Gentle);
-        if let Some(region) = last_region(&host.take()) {
-            assert_eq!((region.card.width, region.card.height), (0.0, 0.0));
-        }
+        let region = last_region(&host.take()).expect("region after resize");
+        assert_eq!((region.card.width, region.card.height), (0.0, 0.0));
         // 剪贴板视图：先退出再进入，卡片接收点击
         c.prepare(open(3, PanelView::Clipboard, anchor_b()));
         assert!(host.take().contains(&Call::EmitHideRequest(2, HideReason::Retrigger)));

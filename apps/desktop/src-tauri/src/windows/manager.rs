@@ -21,7 +21,8 @@ use super::native::{self, CardSurface, TemplateKind};
 use super::outside_click::GuardSpec;
 use super::overlay::OverlayRegistry;
 use super::panel::{
-    BootProvider, PANEL_LABEL, PanelController, PanelHost, PanelOpen, PanelOptions, PerfHook, PerfNote, TauriPanelHost,
+    BootProvider, LastCard, PANEL_LABEL, PanelController, PanelHost, PanelOpen, PanelOptions, PerfHook, PerfNote,
+    TauriPanelHost,
 };
 use super::pinned::{self, PinRequest, PinnedRegistry};
 use super::placement::{self, PlaceAnchor, PlaceOpts, Screen, TranslateEstimate, initial_height};
@@ -372,6 +373,41 @@ fn located_rect_anchor(a: &Anchor, screens: &[Screen]) -> Option<(Screen, PlaceA
     Some((screen.clone(), PlaceAnchor::Rect(a.rect), real))
 }
 
+/// 光标锚点：`cursor`（光标所在屏与光标位置）下方的矩形；光标取不到时主显示器居中
+fn cursor_anchor_of(cursor: Option<(Screen, Point)>, screens: &[Screen]) -> Option<(Screen, PlaceAnchor)> {
+    cursor
+        .map(|(s, p)| (s, PlaceAnchor::Rect(placement::cursor_rect(p))))
+        .or_else(|| primary_screen(screens).map(|s| (s, PlaceAnchor::Center)))
+}
+
+/// toast 放在哪，返回 [`toast_geometry`] 的 `(corner, other)`。连续粘贴的进度（`notice`）只要一块屏：光标所在屏
+/// （用户点进下一个输入框时光标就在那块屏上），取不到时主屏；其余 toast 放在上一张卡片的位置（屏幕按最新的列表，
+/// 卡片所在屏已断开时沿用记下的那块），没有上一张卡片时在光标下方。光标与上一张卡片只在用得到时才取
+fn toast_sites(
+    notice: bool,
+    width: f64,
+    screens: &[Screen],
+    cursor: impl FnOnce() -> Option<(Screen, Point)>,
+    last_card: impl FnOnce() -> Option<LastCard>,
+) -> (Option<Screen>, Option<(Screen, PlaceAnchor)>) {
+    if notice {
+        let screen = cursor().map(|(s, _)| s).or_else(|| primary_screen(screens));
+        return (screen, None);
+    }
+    let other = match last_card() {
+        Some(last) => {
+            let screen = screens
+                .iter()
+                .find(|s| s.id == last.screen.id)
+                .cloned()
+                .unwrap_or(last.screen);
+            Some((screen, PlaceAnchor::At(placement::toast_anchor(last.rect, width))))
+        }
+        None => cursor_anchor_of(cursor(), screens),
+    };
+    (None, other)
+}
+
 /// toast 的几何。连续粘贴的进度（`queue` 有值）放在 `corner`（光标所在屏，取不到时主屏）的 [`native::NOTICE_CORNER`]，
 /// 远离用户正在填写的输入框，高度上限 [`placement::NOTICE_MAX_HEIGHT`]；其余 toast 放在 `other`（上一张卡片的位置，
 /// 没有时光标下方）。宽度只取决于粘贴键：连续两条进度的位置与宽度相同，原地替换
@@ -625,9 +661,7 @@ impl WindowManager {
     /// 光标锚点：光标所在屏幕 + 光标下方的矩形。光标取不到（Wayland 下 `cursor()` 的显示器 id 为空）时退回主显示器
     /// 居中
     fn cursor_anchor(&self, screens: &[Screen]) -> Option<(Screen, PlaceAnchor)> {
-        self.cursor_screen(screens)
-            .map(|(s, p)| (s, PlaceAnchor::Rect(placement::cursor_rect(p))))
-            .or_else(|| primary_screen(screens).map(|s| (s, PlaceAnchor::Center)))
+        cursor_anchor_of(self.cursor_screen(screens), screens)
     }
 
     /// 锚点 → 屏幕、放置锚点，以及锚点是不是真实的选区 / 框选矩形（只有这时才允许侧放、OCR 随框选变宽）
@@ -794,27 +828,13 @@ impl WindowManager {
         let settings = self.settings.get();
         let screens = self.refresh_screens();
         let width = placement::toast_width(&toast.paste_key);
-        let (corner, other) = if toast.queue.is_some() {
-            // 用户点进下一个输入框时光标就在那块屏上
-            let screen = self
-                .cursor_screen(&screens)
-                .map(|(s, _)| s)
-                .or_else(|| primary_screen(&screens));
-            (screen, None)
-        } else {
-            let other = match self.panel.last_card() {
-                Some(last) => {
-                    let screen = screens
-                        .iter()
-                        .find(|s| s.id == last.screen.id)
-                        .cloned()
-                        .unwrap_or(last.screen);
-                    Some((screen, PlaceAnchor::At(placement::toast_anchor(last.rect, width))))
-                }
-                None => self.cursor_anchor(&screens),
-            };
-            (None, other)
-        };
+        let (corner, other) = toast_sites(
+            toast.queue.is_some(),
+            width,
+            &screens,
+            || self.cursor_screen(&screens),
+            || self.panel.last_card(),
+        );
         let ratio = f64::from(settings.appearance.max_height_ratio);
         let Some(geometry) = toast_geometry(&toast, corner, other, ratio) else {
             log::error!("panel_show_toast: no monitor available");
@@ -1835,6 +1855,88 @@ mod tests {
         let plain = toast_geometry(&toast_payload(None), Some(s.clone()), Some(at), 0.6).expect("plain");
         assert_eq!((plain.x, plain.edge_y), (600.0, 300.0));
         assert_eq!(plain.max_height, placement::height_cap(&s, 0.6));
+    }
+
+    /// 1920×1080 的副屏，放在主屏右边（物理原点 2880），任务栏 40
+    fn side_screen() -> Screen {
+        Screen {
+            id: "2".to_owned(),
+            frame: Rect::new(0.0, 0.0, 1920.0, 1080.0),
+            work: Rect::new(0.0, 0.0, 1920.0, 1040.0),
+            scale: 1.0,
+            physical_origin: wisp_types::PhysPoint { x: 2880, y: 0 },
+            primary: false,
+        }
+    }
+
+    /// toast 放在哪块屏：进度跟着光标所在屏（取不到时主屏），不看上一张卡片；普通 toast 在上一张卡片的位置（屏幕按最新的
+    /// 列表），没有时在光标下方，光标也取不到时主屏居中。光标与上一张卡片只在用得到时才取
+    #[test]
+    fn toast_sites_follow_the_cursor_screen_for_progress() {
+        let main = mac_screen();
+        let side = side_screen();
+        let screens = [main.clone(), side.clone()];
+        let pointer = Point { x: 900.0, y: 500.0 };
+        let card = Rect::new(300.0, 200.0, 420.0, 300.0);
+        let last_on_main = LastCard {
+            screen: main.clone(),
+            rect: card,
+        };
+        // 进度：光标在副屏 → 副屏的角落；上一张卡片在主屏，不取它
+        let (corner, other) = toast_sites(
+            true,
+            260.0,
+            &screens,
+            || Some((side.clone(), pointer)),
+            || panic!("进度提示不看上一张卡片"),
+        );
+        assert_eq!(corner.as_ref().map(|s| s.id.as_str()), Some("2"));
+        assert_eq!(other, None);
+        let g = toast_geometry(&toast_payload(Some((2, 5))), corner, other, 0.6).expect("corner");
+        assert_eq!(g.screen.id, "2");
+        assert_eq!(g.x + g.width, side.work.right() - placement::CORNER_INSET);
+        // 光标取不到：主屏
+        let (corner, _) = toast_sites(true, 260.0, &screens, || None, || Some(last_on_main.clone()));
+        assert_eq!(corner.as_ref().map(|s| s.id.as_str()), Some("1"));
+        // 普通 toast：上一张卡片所在的屏（按最新的列表：记下的那份已经过时），位置贴着卡片；不取光标
+        let stale = LastCard {
+            screen: Screen {
+                work: Rect::new(0.0, 0.0, 1920.0, 1080.0),
+                ..side.clone()
+            },
+            rect: card,
+        };
+        let (corner, other) = toast_sites(
+            false,
+            260.0,
+            &screens,
+            || panic!("有上一张卡片时不取光标"),
+            || Some(stale.clone()),
+        );
+        assert_eq!(corner, None);
+        assert_eq!(
+            other,
+            Some((side.clone(), PlaceAnchor::At(placement::toast_anchor(card, 260.0))))
+        );
+        // 卡片所在屏已经断开：沿用记下的那块
+        let (_, other) = toast_sites(
+            false,
+            260.0,
+            std::slice::from_ref(&main),
+            || None,
+            || Some(stale.clone()),
+        );
+        assert_eq!(other.map(|(s, _)| s), Some(stale.screen.clone()));
+        // 没有上一张卡片：光标下方；光标也取不到：主屏居中
+        let (_, other) = toast_sites(false, 260.0, &screens, || Some((side.clone(), pointer)), || None);
+        assert_eq!(
+            other,
+            Some((side.clone(), PlaceAnchor::Rect(placement::cursor_rect(pointer))))
+        );
+        let (_, other) = toast_sites(false, 260.0, &screens, || None, || None);
+        assert_eq!(other, Some((main.clone(), PlaceAnchor::Center)));
+        // 没有任何屏幕
+        assert_eq!(toast_sites(true, 260.0, &[], || None, || None), (None, None));
     }
 
     /// 1920×1080、底部面板 44 的单屏（Linux 桌面的常见布局）
