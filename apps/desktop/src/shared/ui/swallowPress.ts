@@ -1,3 +1,14 @@
+import { boot } from '../ipc/boot'
+
+/**
+ * 点外面关闭菜单时要不要吞掉这次按下：只吞主键的「点一下」。右键照常送达（右键另一行就在那里重新打开右键菜单）；
+ * macOS 上 Ctrl + 主键就是右键（button 仍是 0，随后派发 contextmenu），按右键对待——否则菜单关了、新的右键菜单却
+ * 不出现。Windows / Linux 上 Ctrl + 主键是带修饰键的点击（剪贴板里是多选），照样只关菜单
+ */
+export function isPrimaryPress(e: PointerEvent): boolean {
+  return e.button === 0 && !(e.ctrlKey && boot.os === 'macos')
+}
+
 /**
  * 吞掉一次指针按下连同它的后续（mousedown / pointerup / mouseup / click / contextmenu）：事件不再落到下面的元素上，
  * 默认行为（聚焦、选中文字、开始拖拽）也不发生。菜单用它：

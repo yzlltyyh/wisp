@@ -12,6 +12,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react'
 import * as React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setTransport, type Transport } from '../../ipc'
+import { boot } from '../../ipc/boot'
 import { MotionRoot } from '../../motion/MotionRoot'
 import { ms, timing } from '../../motion/tokens'
 import { DropdownMenu, PagedMenu, type MenuEntry, type MenuPage } from '..'
@@ -640,6 +641,94 @@ describe('点外面关闭菜单：只关菜单', () => {
     fireEvent.contextMenu(area, { button: 2 })
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
     expect(ctx).toHaveBeenCalledTimes(1)
+  })
+
+  it('macOS 上 Ctrl + 主键点外面是右键：关闭菜单，右键菜单事件照样送达（与真正的右键一致）', async () => {
+    const os = boot.os
+    boot.os = 'macos'
+    try {
+      const ctx = vi.fn<() => void>()
+      const down = vi.fn<() => void>()
+      const trigger = dropdown(
+        items(3),
+        // oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- 用例里的右键目标
+        <div data-testid="area" onContextMenu={ctx} onPointerDown={down}>
+          区域
+        </div>,
+      )
+      fireEvent.click(trigger)
+      await screen.findByRole('menu')
+      const area = screen.getByTestId('area')
+      const init = { button: 0, ctrlKey: true, pointerType: 'mouse' }
+      fireEvent.pointerDown(area, init)
+      fireEvent.mouseDown(area, init)
+      fireEvent.contextMenu(area, init)
+      expect(trigger.getAttribute('aria-expanded')).toBe('false')
+      expect(down).toHaveBeenCalledTimes(1)
+      expect(ctx).toHaveBeenCalledTimes(1)
+    } finally {
+      boot.os = os
+    }
+  })
+
+  it('Windows / Linux 上 Ctrl + 点外面仍是主键点击（剪贴板里是多选）：只关菜单', async () => {
+    const os = boot.os
+    boot.os = 'windows'
+    try {
+      const outside = vi.fn<() => void>()
+      const trigger = dropdown(
+        items(3),
+        <button type="button" onClick={outside}>
+          外面
+        </button>,
+      )
+      fireEvent.click(trigger)
+      await screen.findByRole('menu')
+      const btn = screen.getByRole('button', { name: '外面' })
+      const init = { button: 0, ctrlKey: true, pointerType: 'mouse' }
+      fireEvent.pointerDown(btn, init)
+      fireEvent.mouseDown(btn, init)
+      fireEvent.pointerUp(btn, init)
+      fireEvent.mouseUp(btn, init)
+      fireEvent.click(btn, init)
+      expect(trigger.getAttribute('aria-expanded')).toBe('false')
+      expect(outside).not.toHaveBeenCalled()
+    } finally {
+      boot.os = os
+    }
+  })
+
+  it('PagedMenu：macOS 上 Ctrl + 主键点外面同样是右键，右键菜单事件照样送达', () => {
+    const os = boot.os
+    boot.os = 'macos'
+    try {
+      const ctx = vi.fn<() => void>()
+      const onClose = vi.fn<() => void>()
+      wrap(
+        <>
+          <PagedMenu
+            open
+            onClose={onClose}
+            anchor={{ left: 10, top: 10, width: 0, height: 0 }}
+            page={{ key: 'root', label: '操作', items: items(3) }}
+            direction={1}
+          />
+          {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- 用例里的右键目标 */}
+          <div data-testid="area" onContextMenu={ctx}>
+            区域
+          </div>
+        </>,
+      )
+      const area = screen.getByTestId('area')
+      const init = { button: 0, ctrlKey: true, pointerType: 'mouse' }
+      fireEvent.pointerDown(area, init)
+      fireEvent.mouseDown(area, init)
+      fireEvent.contextMenu(area, init)
+      expect(onClose).toHaveBeenCalledTimes(1)
+      expect(ctx).toHaveBeenCalledTimes(1)
+    } finally {
+      boot.os = os
+    }
   })
 
   it('PagedMenu：点外面的按钮只关菜单，按钮收不到这次点击', () => {

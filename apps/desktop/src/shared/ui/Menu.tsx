@@ -10,7 +10,7 @@
  * - 焦点：定位完成的那次提交里移进菜单；关闭时（任何原因、包括调用方直接把 open 置 false）焦点还留在正在退场的菜单
  *   里或落到 body 上，就还给触发器——视图不需要自己补焦点；
  * - 指针：悬停高亮、点击选择、点外面关闭——点外面的那一下只关菜单，不再落到下面的元素上（与原生菜单一致：剪贴板里
- *   菜单开着时点另一行不会顺带粘贴它；右键照常送达）；
+ *   菜单开着时点另一行不会顺带粘贴它；右键与 macOS 的 Ctrl + 点按照常送达）；
  * - 溢出：放不下时内部滚动，上 / 下还有内容的一侧显示一道渐隐阴影（纯 CSS，background-attachment）。打开时与键盘导航
  *   把高亮项滚进视野（只滚菜单自己，见 {@link revealInMenu}）；悬停改变高亮不滚动——否则指针下的内容会跑掉；
  * - 动效：presets.menuIn / menuOut，变换原点在触发器一侧；减少动效时只淡入淡出；
@@ -41,7 +41,7 @@ import { cx } from './cx'
 import { FloatingPortal, useFloating, type Align, type Side } from './floating'
 import { Icon } from './Icon'
 import { Kbd } from './Kbd'
-import { swallowPress } from './swallowPress'
+import { isPrimaryPress, swallowPress } from './swallowPress'
 
 export interface MenuItemEntry {
   type?: 'item'
@@ -230,8 +230,8 @@ export function Menu({
       if (floatingRef.current?.contains(t)) return
       if ('current' in anchor && anchor.current?.contains(t)) return
       close('outside')
-      // 主键：这一下只关菜单（见文件头）
-      if (e.button === 0) swallowPress(e)
+      // 主键：这一下只关菜单（见文件头；macOS 的 Ctrl + 点按是右键，照常送达）
+      if (isPrimaryPress(e)) swallowPress(e)
     }
     const onBlur = () => close('blur')
     document.addEventListener('pointerdown', onPointer, true)

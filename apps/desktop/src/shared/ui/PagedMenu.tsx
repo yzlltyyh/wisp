@@ -56,7 +56,7 @@ import {
   type MenuEntry,
   type MenuItemEntry,
 } from './Menu'
-import { swallowPress } from './swallowPress'
+import { isPrimaryPress, swallowPress } from './swallowPress'
 
 /** 换页时菜单高度的过渡：与卡片高度跟随同一个弹簧（spring.gentle） */
 const HEIGHT_SPRING = presets.sectionExpand.animate.transition.height
@@ -405,7 +405,7 @@ export function PagedMenu({
       const target = e.target as Node
       if (floating.ref.current?.contains(target) || anchorElement(anchor)?.contains(target)) return
       close('outside')
-      if (e.button === 0) swallowPress(e)
+      if (isPrimaryPress(e)) swallowPress(e)
     }
     const onBlur = () => close('blur')
     document.addEventListener('pointerdown', onPointer, true)
