@@ -292,6 +292,27 @@ describe('连续粘贴的进度', () => {
     expect(screen.getByTestId('toast-detail').textContent).toBe(t(message, { n }))
   })
 
+  it('第一条之后有说明时说明优先于单行规则：不按单行居中，按说明的长度停留（不是 1.6 s）', () => {
+    vi.useFakeTimers()
+    const props = viewProps<'toast'>(
+      {
+        kind: 'toast',
+        reason: 'copy_only',
+        paste_key: '⌘V',
+        queue: { active: true, index: 3, total: 5 },
+        queue_note: 'kept',
+      },
+      { focused: false },
+    )
+    renderIn(<ToastView {...props} />)
+    expect(screen.getByTestId('toast-detail').textContent).toBe(t('clipboard.queue.kept', { n: 4 }))
+    expect(screen.getByTestId('view-toast').hasAttribute('data-single')).toBe(false)
+    act(() => vi.advanceTimersByTime(ms(timing.toastViewHold) + 10))
+    expect(props.requestHide).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(ms(timing.toastViewDetailMax)))
+    expect(props.requestHide).toHaveBeenCalledWith('other')
+  })
+
   it('粘贴键不对：说明提到前台应用自己的粘贴键，而不是「没检测到输入框」', () => {
     const props = viewProps<'toast'>(
       {

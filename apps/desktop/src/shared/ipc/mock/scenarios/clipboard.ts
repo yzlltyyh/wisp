@@ -15,7 +15,7 @@
  * - 收藏、芯片、多选、「粘贴为…」、命名：`clipboard.favorites-*`、`clipboard.chips`（选中行右侧的芯片小条，浏览器级
  *   用例从这里开始）、`clipboard.chips-otp`（⌘E 展开）、`clipboard.multi-select`、`clipboard.paste-as`、`clipboard.rename`；
  * - 悬浮剪贴板与连续粘贴：`clipboard.float`、`clipboard.float-queue`（clipfloat 入口）、`clipboard.queue-start`、
- *   `clipboard.queue-toast-first`、`clipboard.queue-toast`、`clipboard.queue-kept`。
+ *   `clipboard.queue-toast-first`、`clipboard.queue-toast`、`clipboard.queue-kept`、`clipboard.queue-key-mismatch`。
  */
 import { matchesFilter, startOfDay } from '../../../../views/clipboard/model'
 import { mockInspect } from '../smart'
@@ -788,13 +788,20 @@ function toastWidth(pasteKey: string): number {
  * 连续粘贴的进度：Rust 放在屏幕角落（macOS / Linux 右上，Windows 右下）、高度上限 88（placement::NOTICE_MAX_HEIGHT）、
  * 整窗点击穿透。第一条带下一次要按的键与「Esc 结束」，之后只有一行；这一次有说明（留到下一次等）时换成说明
  */
-const queueToast = (id: string, label: string, index: number, note?: QueueNote): Scenario => ({
+const queueToast = (
+  id: string,
+  label: string,
+  index: number,
+  note?: QueueNote,
+  /** 粘贴键不对时 Rust 把 paste_key 换成前台应用自己的粘贴键（toast 随之变宽） */
+  appKey?: string,
+): Scenario => ({
   id: `clipboard.${id}`,
   label,
   view: 'toast',
   manualSettle: true,
   setup(ctx) {
-    const pasteKey = ctx.fixtures.os === 'macos' ? '⌘V' : 'Ctrl+V'
+    const pasteKey = appKey ?? (ctx.fixtures.os === 'macos' ? '⌘V' : 'Ctrl+V')
     ctx.preparePanel(
       {
         kind: 'toast',
@@ -1265,6 +1272,13 @@ export const scenarios: readonly Scenario[] = [
     'toast · 连续粘贴判断没粘贴进去（第 3 条留到下一次，说明不被单行规则去掉）',
     2,
     'kept',
+  ),
+  queueToast(
+    'queue-key-mismatch',
+    'toast · 连续粘贴的粘贴键不对（说出前台应用自己的粘贴键，第 3 条留到下一次）',
+    2,
+    'key_mismatch',
+    'Shift+Insert',
   ),
   clip('filter-menu', '剪贴板 · 类型过滤菜单（⌘F）', {
     act: () => press('f', 'KeyF', { mod: true }),
