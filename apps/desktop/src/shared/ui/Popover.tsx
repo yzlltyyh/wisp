@@ -32,6 +32,11 @@ export interface PopoverProps {
   reserve?: boolean
   /** 点外面是否关闭（默认 true） */
   dismissOnOutside?: boolean
+  /**
+   * 真正滚动的是浮层里的某个元素（不是浮层本身）时传它：定位按它量自然高度（floating.tsx 的 scroller），浮层被限高时
+   * 也量得准——否则放到锚点上方时按受限后的高度定位，会盖住锚点
+   */
+  scroller?: RefObject<HTMLElement | null>
   label?: string
   /** 打开时把焦点移进浮层：第一个可聚焦元素，或指定元素 */
   initialFocus?: 'first' | RefObject<HTMLElement | null>
@@ -55,6 +60,7 @@ export function Popover({
   preview = false,
   reserve = true,
   dismissOnOutside = true,
+  scroller,
   label,
   initialFocus,
   returnFocus = true,
@@ -67,7 +73,7 @@ export function Popover({
     style: floatingStyle,
     side: floatingSide,
     placed,
-  } = useFloating({ open, anchor, side, align, offset: 6, reserve })
+  } = useFloating({ open, anchor, side, align, offset: 6, reserve, scroller })
 
   // 定位完成（浮层可见）的那次提交里、绘制之前把焦点移进浮层；焦点已经在里面时不动
   useLayoutEffect(() => {

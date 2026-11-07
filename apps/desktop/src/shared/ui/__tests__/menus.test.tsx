@@ -15,7 +15,7 @@ import { setTransport, type Transport } from '../../ipc'
 import { boot } from '../../ipc/boot'
 import { MotionRoot } from '../../motion/MotionRoot'
 import { ms, timing } from '../../motion/tokens'
-import { DropdownMenu, PagedMenu, type MenuEntry, type MenuPage } from '..'
+import { DropdownMenu, PagedMenu, Popover, type MenuEntry, type MenuPage } from '..'
 import { FloatingContext, type FloatingBoundary } from '../floating'
 
 function transport(): Transport {
@@ -151,6 +151,62 @@ describe('useFloating', () => {
     collect(mo.takeRecords())
     mo.disconnect()
     expect(olds.some((v) => /max-height:\s*none/.test(v))).toBe(false)
+  })
+})
+
+describe('useFloating：滚动容器在浮层更深处（排除应用选择器）', () => {
+  it('浮层正被上一次的位置限高时，按传入的滚动容器与中间元素自己的上限量出真正的自然高度：翻到上方时整份放在锚点上方', () => {
+    // 几何：浮层受上一次的 max-height 限在 226（重新打开时沿用上次的位置）；中间的选择器有自己的 360 px 上限、
+    // 现在 202 高；候选列表可视 150、内容 400。真正的自然高度 = 226 + min(400 − 150, 360 − 202) = 384
+    vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.matches('.ui-popover')) return 226
+      if (this.dataset.testid === 'mid') return 202
+      return 0
+    })
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(300)
+    vi.spyOn(Element.prototype, 'clientHeight', 'get').mockImplementation(function (this: Element) {
+      if (this.matches('.ui-popover')) return 226
+      return this.getAttribute('data-testid') === 'list' ? 150 : 0
+    })
+    vi.spyOn(Element.prototype, 'scrollHeight', 'get').mockImplementation(function (this: Element) {
+      if (this.matches('.ui-popover')) return 226
+      return this.getAttribute('data-testid') === 'list' ? 400 : 0
+    })
+    const boundary: FloatingBoundary = { container: null, rect: () => new DOMRect(0, 0, 760, 480) }
+    function Picker() {
+      const anchor = React.useRef<HTMLButtonElement>(null)
+      const list = React.useRef<HTMLDivElement>(null)
+      return (
+        <>
+          <button
+            type="button"
+            ref={(el) => {
+              anchor.current = el
+              if (el)
+                vi.spyOn(el, 'getBoundingClientRect').mockReturnValue(new DOMRect(40, 420, 80, 28))
+            }}
+          >
+            添加
+          </button>
+          <Popover open onClose={() => {}} anchor={anchor} scroller={list} data-testid="pop">
+            <div data-testid="mid" style={{ maxHeight: '360px' }}>
+              <div ref={list} data-testid="list" />
+            </div>
+          </Popover>
+        </>
+      )
+    }
+    wrap(
+      <FloatingContext value={boundary}>
+        <Picker />
+      </FloatingContext>,
+    )
+    const pop = screen.getByTestId('pop')
+    // 下方 480 − 8 − (448 + 6) = 18 放不下，上方 420 − 6 − 8 = 406 放得下 384：翻到上方，底边贴在锚点上方 6 px
+    expect(pop.style.top).toBe(`${420 - 6 - 384}px`)
+    expect(pop.style.maxHeight).toBe('406px')
   })
 })
 

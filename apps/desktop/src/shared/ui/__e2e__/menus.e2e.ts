@@ -236,6 +236,65 @@ test('设置 › 剪贴板 › 排除应用的选择器（滚动的是浮层里�
   expect(await top()).toBe(30)
 })
 
+test('排除应用的选择器被限高时（窗口矮、按钮在中间）：滚到底之后重新定位不弹回；之后上方空间够时重新打开，整份放在按钮上方、不盖住按钮', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 760, height: 480 })
+  await open(page, '/settings.html?scenario=settings.clipboard', { os: 'windows' })
+  const btn = page.getByTestId('clip-excluded-add')
+  const popover = page.getByTestId('clip-app-popover')
+  const picker = page.getByTestId('clip-app-picker')
+  /** 滚动设置页，让「添加」按钮的顶边落在 y */
+  const placeButton = (y: number) =>
+    btn.evaluate((b, target) => {
+      let sc: HTMLElement | null = b.parentElement
+      while (
+        sc &&
+        !(sc.scrollHeight > sc.clientHeight && /auto|scroll/.test(getComputedStyle(sc).overflowY))
+      )
+        sc = sc.parentElement
+      if (sc) sc.scrollTop += b.getBoundingClientRect().top - target
+    }, y)
+  const openPicker = async () => {
+    await btn.click()
+    await expect(picker).toBeVisible()
+    await expect(picker.locator('[aria-busy="true"]')).toHaveCount(0)
+    await page.waitForTimeout(400)
+  }
+  // 按钮在中间：上下都放不下整份，浮层按可用空间限高，候选列表在里面滚动
+  await placeButton(240)
+  await openPicker()
+  const list = picker.locator('.st-app-picker-list')
+  const limited = await popover.evaluate((el) => parseFloat(el.style.maxHeight))
+  expect(limited).toBeLessThan(360)
+  // 滚到底，再触发一次重新定位（窗口的 scroll 事件）：受限状态下测量不改样式，候选列表仍停在底部
+  const atBottom = () => list.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)
+  await list.evaluate((el) => {
+    el.scrollTop = el.scrollHeight
+  })
+  expect(await atBottom()).toBeLessThanOrEqual(1)
+  await page.evaluate(() => window.dispatchEvent(new Event('scroll')))
+  await frames(page)
+  await page.waitForTimeout(150)
+  expect(await atBottom()).toBeLessThanOrEqual(1)
+  await page.keyboard.press('Escape')
+  await expect(popover).toHaveCount(0)
+  // 按钮挪到靠下、上方放得下整份：重新打开时沿用了上一次受限的位置，量出的仍是真正的自然高度——整份在按钮上方
+  await placeButton(420)
+  await openPicker()
+  const geo = await page.evaluate(() => {
+    const b = document.querySelector('[data-testid="clip-excluded-add"]')?.getBoundingClientRect()
+    const p = document.querySelector('[data-testid="clip-app-popover"]')?.getBoundingClientRect()
+    return b && p ? { btnTop: b.top, top: p.top, bottom: p.bottom, h: p.height } : null
+  })
+  expect(geo).not.toBeNull()
+  if (!geo) return
+  expect(geo.h).toBeGreaterThan(limited)
+  expect(geo.top).toBeGreaterThanOrEqual(0)
+  // 底边贴在按钮上方的间距处（Popover 的 offset 6）：量小了会盖住按钮，量大了（不认中间元素的 360 px 上限）会悬在半空
+  expect(Math.abs(geo.btnTop - 6 - geo.bottom)).toBeLessThanOrEqual(1)
+})
+
 test.describe('悬停进入子页', () => {
   /** 右键一条文本，返回菜单与「粘贴为」及其相邻的一项 */
   async function contextMenu(page: Page) {

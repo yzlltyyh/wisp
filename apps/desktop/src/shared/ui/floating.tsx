@@ -16,10 +16,12 @@
  * 没有 boundary 的窗口（设置 / 引导）挂到 body、以视口为边界。
  *
  * 测量与重新定位不能打断浮层自己的滚动：
- * - 自然高度不改样式地量：`浮层外框高 − 滚动容器可视高 + 滚动容器内容高`。临时去掉 max-height 再量，会在那次强制排版
- *   里让菜单不再溢出，Chromium / WebKit 随即把它的滚动位置夹回 0——菜单一滚就跳回顶部、滚动条拖不动、键盘导航被抵消。
- *   公式的前提：**滚动容器是浮层本身，或者由 `scroller` 显式传入**（分页菜单传菜单本体）；滚动容器更深、又没有传入时
- *   量到的是受限之后的高度；
+ * - 自然高度不改样式地量：`浮层外框高 + 滚动容器还要长多少才放得下全部内容（内容高 − 可视高）`。临时去掉 max-height
+ *   再量，会在那次强制排版里让菜单不再溢出，Chromium / WebKit 随即把它的滚动位置夹回 0——菜单一滚就跳回顶部、滚动条
+ *   拖不动、键盘导航被抵消。公式的前提：**滚动容器是浮层本身，或者由 `scroller` 显式传入**（分页菜单传菜单本体，排除
+ *   应用选择器传候选列表）；滚动容器自己不设上限（由浮层的 max-height 限高），它与浮层之间的元素可以有自己的
+ *   max-height（选择器的 360 px），量的时候最多长到那个上限。滚动容器更深、又没有传入时，浮层正被限高（包括重新打开时
+ *   沿用上一次的位置）就只量到受限之后的高度——放到锚点上方时会按这个偏小的高度定位，盖住锚点；
  * - 打开期间跟随锚点的 scroll 监听跳过浮层自己（及其中元素）的滚动：它们不会移动锚点。
  */
 import {
@@ -198,14 +200,37 @@ function viewportBox(): Box {
 }
 
 /**
- * 浮层的自然高度，不改样式地量（见文件头）：外框高 − 滚动容器的可视高 + 滚动容器的内容高。没有溢出时就是外框高
+ * 浮层的自然高度，不改样式地量（见文件头）：外框高 + 滚动容器还要长多少才放得下全部内容；滚动容器与浮层之间有自己
+ * max-height 的元素时，最多长到那个上限。没有溢出时就是外框高
  */
 function naturalHeight(
   el: HTMLElement,
   scroller: RefObject<HTMLElement | null> | undefined,
 ): number {
   const s = scroller?.current ?? el
-  return el.offsetHeight - s.clientHeight + s.scrollHeight
+  let grow = s.scrollHeight - s.clientHeight
+  for (let a = s.parentElement; grow > 0 && a && a !== el; a = a.parentElement) {
+    const cap = maxBorderHeight(a)
+    if (cap !== null) grow = Math.min(grow, Math.max(0, cap - a.offsetHeight))
+  }
+  return el.offsetHeight + grow
+}
+
+/** 元素自己的 max-height（换算成边框盒，与 offsetHeight 同一口径）；没有设、或不是固定长度（百分比等）时为 null */
+function maxBorderHeight(el: HTMLElement): number | null {
+  const cs = getComputedStyle(el)
+  const m = /^(\d+(?:\.\d+)?)px$/.exec(cs.maxHeight)
+  if (!m) return null
+  const cap = Number(m[1])
+  if (cs.boxSizing === 'border-box') return cap
+  const px = (v: string) => parseFloat(v) || 0
+  return (
+    cap +
+    px(cs.paddingTop) +
+    px(cs.paddingBottom) +
+    px(cs.borderTopWidth) +
+    px(cs.borderBottomWidth)
+  )
 }
 
 export interface UseFloatingOptions extends PositionOptions {
@@ -214,7 +239,7 @@ export interface UseFloatingOptions extends PositionOptions {
   anchor: RefObject<HTMLElement | null> | Box | null
   /** 是否预留卡片高度（菜单 / Popover 为 true，Tooltip 为 false） */
   reserve?: boolean
-  /** 真正滚动的元素（量自然高度用，见文件头）；缺省为浮层本身 */
+  /** 真正滚动的元素（量自然高度用，见文件头：它自己不设上限，与浮层之间的元素可以有）；缺省为浮层本身 */
   scroller?: RefObject<HTMLElement | null>
 }
 

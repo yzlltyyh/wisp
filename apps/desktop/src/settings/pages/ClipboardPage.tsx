@@ -604,6 +604,8 @@ function ExcludedApps({ apps }: { apps: readonly ExcludedApp[] }) {
         anchor={anchor}
         label={t('settings.clipboard.excluded_add')}
         initialFocus={filter}
+        // 滚动的是候选列表（浮层本身 overflow: hidden）：按它量自然高度，窗口矮、浮层被限高时也定位得准
+        scroller={list}
         data-testid="clip-app-popover"
       >
         {/* oxlint-disable-next-line jsx-a11y/no-static-element-interactions -- ↑↓ 只是在过滤框与选项按钮之间移动焦点 */}
