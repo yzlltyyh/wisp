@@ -899,6 +899,20 @@ export const scenarios: readonly Scenario[] = [
     },
   }),
   panel({
+    id: 'translate.reading',
+    label:
+      '展开阅读：长译文完成后展开为「原文 | 译文」两栏（宽 760、上限工作区 × 0.85，两栏按比例同步滚动）',
+    motion: true,
+    setup(ctx) {
+      install(ctx)
+      openTranslate(ctx, LONG_SRC, { width: 480, focused: true, pace: { intervalMs: 8 } })
+      whenStatus(ctx, 'done', () => {
+        click('tv-reading')
+        ctx.after(60, () => ctx.motionMid())
+      })
+    },
+  }),
+  panel({
     id: 'translate.narrow',
     label: '极端尺寸：宽 360、上限 200，长 URL 与超长单词',
     setup(ctx) {
@@ -1187,6 +1201,19 @@ export const scenarios: readonly Scenario[] = [
       pinnedWindow(ctx)
       ctx.handle('pinned_init', () => pinState())
       ctx.after(200, () => ctx.motionMid())
+    },
+  },
+  {
+    id: 'translate.pinned-reading',
+    label:
+      'Pinned · 从展开阅读固定（窗口宽 760：开着原文时自动「原文 | 译文」两栏，关掉原文回到单栏）',
+    view: 'pinned',
+    setup(ctx) {
+      install(ctx)
+      pinnedWindow(ctx, 760, 460)
+      ctx.handle('pinned_init', () =>
+        pinState({ source_text: LONG_SRC.source, result_text: LONG_OUT, show_source: true }),
+      )
     },
   },
   {

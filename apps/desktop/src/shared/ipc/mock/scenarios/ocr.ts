@@ -806,6 +806,34 @@ export const scenarios: readonly Scenario[] = [
     },
   }),
   scenario({
+    id: 'reading',
+    label: 'OCR · 展开阅读：高截图左右并排（截图 | 识别文本，宽 880）',
+    async run(ctx) {
+      ctx.stream('r-ocr', ctx.textStream(LONG_TEXT, { chunkChars: 40, intervalMs: 8, model: QWEN }))
+      show(
+        ctx,
+        await ocrPayload(ctx, { size: [520, 900], thumbLines: LONG_TEXT.split('\n').slice(0, 30) }),
+      )
+      await until(phase('done'))
+      click('[data-testid="ocr-reading"]')
+      await until(() => $('[data-testid="view-ocr"][data-reading]') !== null)
+      await pause(600)
+    },
+  }),
+  scenario({
+    id: 'reading-wide',
+    label: 'OCR · 展开阅读：宽截图上下堆叠（截图 1:1 在上、识别文本逐行对照）',
+    async run(ctx) {
+      const lines = OCR_TEXT.split('\n')
+      ctx.stream('r-ocr', ocrStream(ctx, OCR_TEXT))
+      show(ctx, await ocrPayload(ctx, { size: [1320, 200], thumbLines: lines }))
+      await until(phase('done'))
+      click('[data-testid="ocr-reading"]')
+      await until(() => $('[data-testid="view-ocr"][data-reading]') !== null)
+      await pause(600)
+    },
+  }),
+  scenario({
     id: 'layout',
     label: 'OCR · 窄面板（360 px）的排版按钮（?mode=lines / paragraphs / markdown）',
     async run(ctx) {
