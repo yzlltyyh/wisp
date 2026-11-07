@@ -51,7 +51,7 @@ pnpm i18n:check && pnpm check:contract && pnpm check:size
 - **前端**：`@tauri-apps/*` 只能在 `apps/desktop/src/shared/ipc/` 里引用；动效时长与曲线只用 `shared/motion/` 的令牌或 `--dur-*` / `--ease-*`；颜色只用设计令牌；覆盖层（`overlay/`）是原生 TS，不引入 React / Motion。
 - **文案**：用户可见的字符串一律经 i18n，`zh-CN` 与 `en-US` 两份 locales 同时添加；Rust 显示的托盘 / 通知文案在 `src-tauri/src/app/i18n.rs`。
 - **隐私**：不得把原文、译文、剪贴板内容（包括识别出的片段与变换结果）、截图、API Key、请求头的值、URL 查询参数，以及同步服务器的地址、账号、密码、同步密码、远端路径与设备名写进日志、错误信息或诊断包。PaddleOCR 的访问令牌、模型下载链接的签名参数与云端结果地址、离线推理进程（llama-server、ORT 工作进程）的输出同样不得写入。API Key 与同步凭据只能由 Rust 读取，不提供返回前端的接口。
-- **性能**：不引入常驻的周期定时器或轮询；新资源（连接、线程、钩子）按需创建、用完释放。离线模型的推理只在子进程里进行，未使用时不读盘、不起进程；子进程在取消、失败、退出与崩溃时都不能残留（Windows 用 Job Object，macOS / Linux 用 `--wisp-guard` 守护进程）。面板首屏的五个视图保持静态导入；`pnpm check:size` 检查体积与入口依赖图。
+- **性能**：不引入常驻的周期定时器或轮询（唯一的例外是用户在设置里主动开启的实验性「实时同步」：它按使用活跃度自适应地检查服务器，离开、锁屏时不联网，关闭时不存在任何计时器或请求）；新资源（连接、线程、钩子）按需创建、用完释放。离线模型的推理只在子进程里进行，未使用时不读盘、不起进程；子进程在取消、失败、退出与崩溃时都不能残留（Windows 用 Job Object，macOS / Linux 用 `--wisp-guard` 守护进程）。面板首屏的五个视图保持静态导入；`pnpm check:size` 检查体积与入口依赖图。
 - **Rust 细节**：`unsafe` 前写 `// SAFETY:`；错误类型用 `thiserror`；可能阻塞的系统调用放进 `spawn_blocking` 或工作线程并设超时。
 - **依赖**：不随意新增依赖；需要时锁定精确版本，并运行 `pnpm run licenses`。
 - **应用标识不可更改**：identifier `io.github.yzlltyyh.wisp`、`tauri.conf.json` 里的更新器公钥与端点都不要改。
