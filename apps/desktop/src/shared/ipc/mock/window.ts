@@ -11,9 +11,19 @@
  */
 import type { Boot } from '../boot'
 import { windowKindOf } from '../boot'
-import type { HideReason, PanelPrepare, PanelShown, PanelView, Rect, ResizeSpring } from '../types'
+import { ms, timing } from '../../motion/tokens'
+import type {
+  HideReason,
+  PanelPrepare,
+  PanelReading,
+  PanelShown,
+  PanelView,
+  Rect,
+  ResizeSpring,
+} from '../types'
 import type { MockBus } from './bus'
 import type { MockDesktop } from './desktop'
+import { readingPlan } from './geometry'
 
 /** 各视图的初始估计高度（40 ms 超时时用它 show） */
 const ESTIMATED_HEIGHT: Record<PanelView, number> = {
@@ -48,6 +58,10 @@ interface Session {
   readyAt: number | null
   readyTimeout: boolean
   focused: boolean
+  /** 展开阅读之前的宽度与上限（收起时恢复）；null = 普通布局 */
+  reading: { width: number; maxHeight: number; layout: NonNullable<PanelReading['layout']> } | null
+  /** 展开 / 收起的轮次（推迟到透明帧的改宽据此作废） */
+  readingSeq: number
 }
 
 export class MockPanelWindow {
@@ -162,6 +176,47 @@ export class MockPanelWindow {
     this.position(this.windowHeight, edge)
   }
 
+  /**
+   * 展开 / 收起阅读（`panel_set_reading`，规则见 geometry.ts 的 `readingPlan`）。与 Rust 一样立即返回新的宽度、上限与
+   * 版式，模拟窗口的改宽排在内容完全透明的那一刻（timing.crossfade 之后；Css 帧模式先取新旧宽度的并集，卡片换宽之后再收）；
+   * 卡片长到工作区外时由 `position` 整体夹回（近似 Rust 的推回）
+   */
+  setReading(sessionId: number, on: boolean): PanelReading | null {
+    const s = this.session
+    if (!s || s.prepare.session_id !== sessionId || !this.visible) return null
+    const current = (): PanelReading => ({
+      width: s.prepare.width,
+      max_height: s.prepare.max_height,
+      layout: s.reading?.layout ?? null,
+    })
+    if (on === (s.reading !== null)) return current()
+    const before = s.prepare.width
+    if (on) {
+      const plan = readingPlan(s.prepare.payload, this.workArea(), before)
+      if (!plan) return null
+      s.reading = { width: before, maxHeight: s.prepare.max_height, layout: plan.layout }
+      s.prepare = { ...s.prepare, width: plan.width, max_height: plan.maxHeight }
+    } else if (s.reading) {
+      const { width, maxHeight } = s.reading
+      s.reading = null
+      s.prepare = { ...s.prepare, width, max_height: maxHeight }
+    }
+    const seq = ++s.readingSeq
+    const edge = this.boot.frame_mode === 'css' ? SHADOW_EDGE : 0
+    const after = s.prepare.width
+    if (edge > 0) this.root.style.width = `${Math.max(before, after) + edge * 2}px`
+    const reduce = this.boot.reduce_motion
+    setTimeout(
+      () => {
+        if (this.session !== s || s.readingSeq !== seq) return
+        this.root.style.width = `${after + edge * 2}px`
+        this.applyHeight(false)
+      },
+      ms(reduce ? timing.reducedFade : timing.crossfade) + (edge > 0 ? ms(timing.crossfade) : 0),
+    )
+    return current()
+  }
+
   hide(sessionId: number, _reason: HideReason): void {
     if (this.session?.prepare.session_id !== sessionId) return
     this.clearTimeout()
@@ -197,6 +252,8 @@ export class MockPanelWindow {
       readyAt: null,
       readyTimeout: false,
       focused: p.focused,
+      reading: null,
+      readingSeq: 0,
     }
     if (!this.visible) {
       this.frames.block()

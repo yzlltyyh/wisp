@@ -40,6 +40,7 @@ import {
   useState,
   type ContextType,
   type ReactNode,
+  type Ref,
 } from 'react'
 import { flushSync } from 'react-dom'
 import { createViewActivity, ViewActivityContext } from '../../shared/hooks/useViewActive'
@@ -67,11 +68,13 @@ export type ViewSwitchProps = Omit<ViewProps, 'payload'> & {
   onSwapped: () => void
   /** 替换注册表里的视图（mock 视觉稿 design.* 用；生产路径为 undefined） */
   render?: (props: ViewSwitchRenderProps) => ReactNode
+  /** 切换层的根元素（外壳展开 / 收起阅读时把整个视图淡出、淡入，不经过视图层的交叉淡入） */
+  rootRef?: Ref<HTMLDivElement>
 }
 
 export type ViewSwitchRenderProps = Omit<
   ViewSwitchProps,
-  'render' | 'viewKey' | 'widthPending' | 'stageWidthDelta' | 'onSwap' | 'onSwapped'
+  'render' | 'viewKey' | 'widthPending' | 'stageWidthDelta' | 'onSwap' | 'onSwapped' | 'rootRef'
 >
 
 /** 视图层的状态：显示中 / 宽度变化时在布局里原地淡出 / 宽度不变时脱离布局淡出 / 暂存 */
@@ -93,6 +96,7 @@ export function ViewSwitch({
   onSwap,
   onSwapped,
   render,
+  rootRef,
   ...props
 }: ViewSwitchProps) {
   const reduced = useReducedMotionPref()
@@ -113,6 +117,8 @@ export function ViewSwitch({
     frame,
     placement,
     maxHeight,
+    reading,
+    toggleReading,
     requestHide,
     switchView,
     activate,
@@ -128,6 +134,8 @@ export function ViewSwitch({
       frame,
       placement,
       maxHeight,
+      reading,
+      toggleReading,
       requestHide,
       switchView,
       activate,
@@ -143,6 +151,8 @@ export function ViewSwitch({
     frame,
     placement,
     maxHeight,
+    reading,
+    toggleReading,
     requestHide,
     switchView,
     activate,
@@ -214,7 +224,7 @@ export function ViewSwitch({
 
   const stageWidth = stageWidthDelta ? `calc(100% + ${stageWidthDelta}px)` : '100%'
   return (
-    <div className="panel-viewswitch">
+    <div ref={rootRef} className="panel-viewswitch">
       {items.map(({ key, state }) => (
         <ViewLayer
           key={key}

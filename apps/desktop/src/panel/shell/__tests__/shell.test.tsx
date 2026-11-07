@@ -15,7 +15,13 @@ import { m } from 'motion/react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { boot, setTransport, type Transport } from '../../../shared/ipc'
-import type { EventMap, EventName, PanelPayload, PanelPrepare } from '../../../shared/ipc/types'
+import type {
+  EventMap,
+  EventName,
+  PanelPayload,
+  PanelPrepare,
+  PanelReading,
+} from '../../../shared/ipc/types'
 import { getAppearance, setAppearance } from '../../../shared/hooks/useAppearance'
 import { useKeyScope } from '../../../shared/keys/useKeyScope'
 import { TextArea } from '../../../shared/ui'
@@ -31,6 +37,8 @@ type Listener = (payload: unknown) => void
 let listeners: Map<string, Set<Listener>>
 let log: string[]
 let calls: Array<[string, Record<string, unknown>]>
+/** `panel_set_reading` 的返回（按 on）；undefined = 返回 null */
+let readingReply: ((on: boolean) => PanelReading | null) | undefined
 
 function fakeTransport(): Transport {
   return {
@@ -40,6 +48,9 @@ function fakeTransport(): Transport {
       log.push(cmd)
       if (cmd === 'panel_ready') {
         return Promise.resolve({ session_id: args?.session_id, focused: false } as T)
+      }
+      if (cmd === 'panel_set_reading') {
+        return Promise.resolve((readingReply?.(args?.on === true) ?? null) as T)
       }
       return Promise.resolve(undefined as T)
     },
@@ -90,6 +101,7 @@ function prepare(payload: PanelPayload, extra: Partial<PanelPrepare> = {}): Pane
     placement: 'below',
     origin_x: 40,
     side: null,
+    reading: null,
     focused: false,
     transition: 'enter',
     ...extra,
@@ -121,6 +133,7 @@ beforeEach(async () => {
   listeners = new Map()
   log = []
   calls = []
+  readingReply = undefined
   setTransport(fakeTransport())
   // 减少动效：退出 / 交叉淡入 ≤ 100 ms，测试更快
   setAppearance({ ...savedAppearance, reduceMotion: true })
@@ -752,5 +765,135 @@ describe('退出与隐藏', () => {
       session_id: p.session_id,
       reason: 'escape',
     })
+  })
+})
+
+describe('展开阅读', () => {
+  const EXPANDED: PanelReading = { width: 760, max_height: 700, layout: 'columns' }
+  const COLLAPSED: PanelReading = { width: 400, max_height: 500, layout: null }
+
+  /** 只渲染外壳给视图的阅读相关 props，按钮直接调用 toggleReading */
+  function Probe({ payload, reading, toggleReading, maxHeight }: ViewSwitchRenderProps) {
+    return (
+      <section
+        data-testid={`view-${payload.kind}`}
+        data-reading={reading ?? 'none'}
+        data-max={maxHeight}
+      >
+        {toggleReading ? (
+          <button type="button" onClick={toggleReading} data-testid="toggle">
+            toggle
+          </button>
+        ) : null}
+      </section>
+    )
+  }
+
+  const probe = () => screen.getByTestId('view-translate')
+  const esc = () =>
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          code: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        }),
+      )
+    })
+
+  async function open(extra: Partial<PanelPrepare> = {}) {
+    boot.frame_mode = 'native'
+    contentHeights({ translate: 300 })
+    readingReply = (on) => (on ? EXPANDED : COLLAPSED)
+    setViewOverride((p) => <Probe {...p} />)
+    const p = prepare(translate, { reading: 'columns', ...extra })
+    act(() => emit('panel:prepare', p))
+    await waitFor(() => expect(usePanelStore.getState().phase).toBe('shown'))
+    return p
+  }
+
+  it('点下：panel_set_reading(on) 并让面板取得键盘焦点；淡出完成、结果到达后在同一次提交里换宽度 / 上限 / 版式，立即上报高度', async () => {
+    const p = await open()
+    expect(probe().dataset.reading).toBe('none')
+    calls = []
+    act(() => screen.getByTestId('toggle').click())
+    expect(calls.slice(0, 2)).toEqual([
+      ['panel_activate', { session_id: p.session_id }],
+      ['panel_set_reading', { session_id: p.session_id, on: true }],
+    ])
+    await waitFor(() => expect(usePanelStore.getState().reading).toBe('columns'))
+    const s = usePanelStore.getState()
+    expect([s.width, s.maxHeight]).toEqual([760, 700])
+    expect(probe().dataset.reading).toBe('columns')
+    expect(probe().dataset.max).toBe('700')
+    expect(calls).toContainEqual([
+      'panel_resize',
+      { session_id: p.session_id, content_height: 300 },
+    ])
+    // 视图没有重新挂载（同一个视图层、同一个会话）
+    expect(usePanelStore.getState().viewKey).toBe(s.viewKey)
+    // 收起：不再激活（已经是 key），结果是展开之前的宽度与上限
+    calls = []
+    act(() => screen.getByTestId('toggle').click())
+    expect(calls[0]).toEqual(['panel_set_reading', { session_id: p.session_id, on: false }])
+    await waitFor(() => expect(usePanelStore.getState().reading).toBeNull())
+    expect([usePanelStore.getState().width, usePanelStore.getState().maxHeight]).toEqual([400, 500])
+  })
+
+  it('Esc 先收起、再按一次才关闭；Rust 的全局 Esc（面板不是 key 时）同样先收起', async () => {
+    const p = await open()
+    act(() => screen.getByTestId('toggle').click())
+    await waitFor(() => expect(usePanelStore.getState().reading).toBe('columns'))
+    calls = []
+    esc()
+    expect(calls.find(([c]) => c === 'panel_hide')).toBeUndefined()
+    expect(calls).toContainEqual(['panel_set_reading', { session_id: p.session_id, on: false }])
+    await waitFor(() => expect(usePanelStore.getState().reading).toBeNull())
+    esc()
+    expect(calls.find(([c]) => c === 'panel_hide')?.[1]).toEqual({
+      session_id: p.session_id,
+      reason: 'escape',
+    })
+  })
+
+  it('Rust 发来的 hide_request(escape)：展开阅读时只收起；其他原因照常关闭', async () => {
+    const p = await open()
+    act(() => screen.getByTestId('toggle').click())
+    await waitFor(() => expect(usePanelStore.getState().reading).toBe('columns'))
+    act(() => emit('panel:hide_request', { session_id: p.session_id, reason: 'escape' }))
+    expect(usePanelStore.getState().phase).toBe('shown')
+    await waitFor(() => expect(usePanelStore.getState().reading).toBeNull())
+    act(() => screen.getByTestId('toggle').click())
+    await waitFor(() => expect(usePanelStore.getState().reading).toBe('columns'))
+    act(() => emit('panel:hide_request', { session_id: p.session_id, reason: 'click_outside' }))
+    expect(usePanelStore.getState().phase).toBe('exiting')
+  })
+
+  it('Rust 回 null（会话已过期、放不下）：什么都不改，内容淡回来', async () => {
+    await open()
+    readingReply = () => null
+    act(() => screen.getByTestId('toggle').click())
+    await waitFor(() => expect(calls.some(([c]) => c === 'panel_set_reading')).toBe(true))
+    await act(async () => new Promise((r) => setTimeout(r, 0)))
+    const s = usePanelStore.getState()
+    expect([s.reading, s.width, s.maxHeight]).toEqual([null, 400, 500])
+    expect(document.querySelector<HTMLElement>('.panel-viewswitch')?.style.opacity).toBe('')
+  })
+
+  it('PanelPrepare.reading 为 null（放不下 / 不是翻译与 OCR）：视图拿不到 toggleReading', async () => {
+    await open({ reading: null })
+    expect(screen.queryByTestId('toggle')).toBeNull()
+  })
+
+  it('原位交叉淡入的新会话回到普通布局（上限取新 prepare 的）', async () => {
+    await open()
+    act(() => screen.getByTestId('toggle').click())
+    await waitFor(() => expect(usePanelStore.getState().reading).toBe('columns'))
+    act(() =>
+      emit('panel:prepare', prepare(translate, { transition: 'crossfade', max_height: 480 })),
+    )
+    const s = usePanelStore.getState()
+    expect([s.reading, s.maxHeight]).toEqual([null, 480])
   })
 })

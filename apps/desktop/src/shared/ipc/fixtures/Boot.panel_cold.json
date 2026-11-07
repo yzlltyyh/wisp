@@ -30,6 +30,7 @@
     "placement": "center",
     "origin_x": 210.0,
     "side": null,
+    "reading": null,
     "focused": true,
     "transition": "enter"
   }

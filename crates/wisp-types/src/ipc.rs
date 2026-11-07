@@ -44,6 +44,26 @@ pub enum PanelSide {
     Right,
 }
 
+/// 面板内「展开阅读」的版式（翻译 / OCR 视图）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReadingLayout {
+    /// 左右两栏：翻译「原文 | 译文」，OCR「截图 | 识别文本」（高截图）
+    Columns,
+    /// 上下堆叠：OCR 宽截图以 1:1 显示在上方（放不下时在框内滚动），识别文本在下（工作区不够宽时高截图也这样排）
+    Stacked,
+}
+
+/// `panel_set_reading` 的结果：切换之后卡片的宽度、高度上限与版式。Rust 已按它安排好窗口（Native 帧模式在内容完全透明的
+/// 那一刻切换宽度），前端在同一时刻提交新的宽度、上限与版式
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PanelReading {
+    pub width: f64,
+    pub max_height: f64,
+    /// 展开阅读的版式；收起（回到普通布局）时为 None
+    pub layout: Option<ReadingLayout>,
+}
+
 /// 视图进入方式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -65,6 +85,9 @@ pub struct PanelPrepare {
     pub origin_x: f64,
     /// 侧放时卡片在锚点的哪一侧（`placement` 此时为 Below），进入动效改为水平移向锚点；其余为 None
     pub side: Option<PanelSide>,
+    /// 能否「展开阅读」，能的话展开后用哪种版式（按显示时所在屏的工作区预估；实际以 `panel_set_reading` 的返回为准）。
+    /// 翻译 / OCR 之外的视图、工作区放不下阅读布局（翻译要求至少 680 宽）时为 None，前端不显示展开按钮
+    pub reading: Option<ReadingLayout>,
     /// 显示后是否持有键盘焦点（输入 / 剪贴板视图为 true）
     pub focused: bool,
     pub transition: PanelTransition,

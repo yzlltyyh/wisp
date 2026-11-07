@@ -805,6 +805,12 @@ impl WindowManager {
         self.panel.set_width(session_id, width);
     }
 
+    /// 面板内「展开阅读」的展开 / 收起（见 `PanelController::set_reading`），返回切换之后的宽度、上限与版式；会话已过期、
+    /// 视图没有阅读布局或工作区放不下时 None。Css 模式会同步改窗口（主线程往返），在阻塞线程上调用
+    pub fn panel_set_reading(&self, session_id: u64, on: bool) -> Option<wisp_types::PanelReading> {
+        self.panel.set_reading(session_id, on)
+    }
+
     /// emit panel:hide_request（前端先播放退出动画）
     pub fn panel_request_hide(&self, reason: HideReason) {
         self.panel.request_hide(reason);

@@ -20,6 +20,7 @@
   "placement": "below",
   "origin_x": 0.0,
   "side": "right",
+  "reading": "stacked",
   "focused": false,
   "transition": "enter"
 }

@@ -19,6 +19,7 @@
   "placement": "below",
   "origin_x": 24.0,
   "side": null,
+  "reading": "columns",
   "focused": false,
   "transition": "enter"
 }

@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use tauri::State;
-use wisp_types::{HideReason, PanelShown, PinState, ResizeSpring, WindowTarget};
+use wisp_types::{HideReason, PanelReading, PanelShown, PinState, ResizeSpring, WindowTarget};
 
 use crate::error::IpcError;
 use crate::ipc::validate::{validate_pin_state, validate_window_target};
@@ -68,6 +68,18 @@ pub async fn panel_resize(
 pub async fn panel_set_width(app_state: State<'_, AppState>, session_id: u64, width: f64) -> Result<(), IpcError> {
     check_non_negative("width", width)?;
     blocking(&app_state.windows, move |w| w.panel_set_width(session_id, width)).await
+}
+
+/// 面板内「展开阅读」：`on` = true 展开、false 收起。前端在点下的那一刻调用并开始淡出内容，Rust 立即返回切换之后的
+/// 宽度、高度上限与版式，并把窗口的改变安排在内容完全透明的那一刻（Native 帧模式的宽度切换排在 `timing.crossfade`
+/// 之后）；前端淡出完提交新版式、再淡入。会话已过期、视图没有阅读布局或工作区放不下时返回 null（什么都不改）
+#[tauri::command(rename_all = "snake_case")]
+pub async fn panel_set_reading(
+    app_state: State<'_, AppState>,
+    session_id: u64,
+    on: bool,
+) -> Result<Option<PanelReading>, IpcError> {
+    blocking(&app_state.windows, move |w| w.panel_set_reading(session_id, on)).await
 }
 
 /// 退出动画结束后调用

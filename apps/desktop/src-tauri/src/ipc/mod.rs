@@ -107,6 +107,7 @@ commands![
     cmd_window::panel_painted,
     cmd_window::panel_resize,
     cmd_window::panel_set_width,
+    cmd_window::panel_set_reading,
     cmd_window::panel_hide,
     cmd_window::panel_activate,
     cmd_window::panel_drag_start,

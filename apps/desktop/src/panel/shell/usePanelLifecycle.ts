@@ -12,7 +12,9 @@
  *   `panel_hide`，fast 之后再卸载内容；窗口不能透明（Css + `shadow_margin == 0`）时同样立即 `panel_hide`
  *   （Rust 直接隐藏；不透明窗口里的透明度 / 缩放动画会露出 WebView 的默认底色）；其余 Css 帧模式先播放卡片的
  *   退出动画，播完（`completeExit`）再调用 `panel_hide`，兜底计时器 fast + exitSlack；
- * - **隐藏**：卸载视图、清空会话数据、`<html data-hidden>` 暂停 CSS 动画。
+ * - **隐藏**：卸载视图、清空会话数据、`<html data-hidden>` 暂停 CSS 动画；
+ * - **Esc 先收起展开阅读**：隐藏原因是 Esc（面板是 key 时外壳的键盘作用域；不是 key 时 Rust 的全局 Esc 守卫发来的
+ *   hide_request）而外壳登记的收起回调接手了（正处在展开阅读），这一次只收起、不关闭——再按一次才关闭。
  *
  * **订阅时机**：面板入口在 `createRoot().render` **之前**调用 `installPanelEvents()`，
  * 三个面板事件的监听随页面一加载就注册（与 React 的第一次渲染、视图预热并行），不等外壳的 effect——冷页面（回收 /
@@ -80,6 +82,16 @@ let pending: PanelPrepare | null = null
 let lastReady: { session: number; height: number } | null = null
 /** 本页还没有发出过 ready：第一次发出时记一个时间点（每页一次，window lab 的冷唤出拆分用） */
 let firstReady = true
+/** Esc 的收起回调（外壳登记）：返回 true 表示这次 Esc 已用来收起展开阅读、不再关闭面板 */
+let escapeHook: (() => boolean) | null = null
+
+/** 登记 Esc 的收起回调（见文件头），返回注销函数 */
+export function setEscapeHook(hook: () => boolean): () => void {
+  escapeHook = hook
+  return () => {
+    if (escapeHook === hook) escapeHook = null
+  }
+}
 
 /** 会话 ready 时报的内容高度；不是这个会话（或还没 ready）时为 null */
 export function readyHeightOf(session: number): number | null {
@@ -231,6 +243,7 @@ function hide(reason: HideReason): void {
   const s = usePanelStore.getState()
   const session = s.prepare?.session_id
   if (session === undefined || s.phase === 'exiting' || s.phase === 'hidden') return
+  if (reason === 'escape' && escapeHook?.()) return
   s.beginExit(reason)
   if (boot.frame_mode === 'native' || isOpaqueWindow()) {
     // Native：窗口 alpha 淡出由 Rust 承担；不透明窗口：Rust 直接隐藏，前端不播退出动画。

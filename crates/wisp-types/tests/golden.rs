@@ -1185,6 +1185,7 @@ fn all_samples() -> Samples {
             placement: Placement::Below,
             origin_x: 24.0,
             side: None,
+            reading: Some(ReadingLayout::Columns),
             focused: false,
             transition: PanelTransition::Enter,
         },
@@ -1200,6 +1201,7 @@ fn all_samples() -> Samples {
             placement: Placement::Below,
             origin_x: 0.0,
             side: Some(PanelSide::Right),
+            reading: Some(ReadingLayout::Stacked),
             focused: false,
             transition: PanelTransition::Enter,
         },
@@ -1323,6 +1325,22 @@ fn all_samples() -> Samples {
         PanelShown {
             session_id: 7,
             focused: false,
+        },
+    );
+    x.add(
+        "PanelReading",
+        PanelReading {
+            width: 760.0,
+            max_height: 799.0,
+            layout: Some(ReadingLayout::Columns),
+        },
+    );
+    x.add(
+        "PanelReading.collapsed",
+        PanelReading {
+            width: 520.0,
+            max_height: 564.0,
+            layout: None,
         },
     );
     x.add(
@@ -1548,6 +1566,7 @@ fn all_samples() -> Samples {
                 placement: Placement::Center,
                 origin_x: 210.0,
                 side: None,
+                reading: None,
                 focused: true,
                 transition: PanelTransition::Enter,
             }),

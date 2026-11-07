@@ -137,6 +137,7 @@ export function installDefaults(d: DefaultsDeps): void {
     d.panel?.resize(session_id, content_height, spring ?? 'gentle'),
   )
   r.handle('panel_set_width', ({ session_id, width }) => d.panel?.setWidth(session_id, width))
+  r.handle('panel_set_reading', ({ session_id, on }) => d.panel?.setReading(session_id, on) ?? null)
   r.handle('panel_hide', ({ session_id, reason }) => d.panel?.hide(session_id, reason))
   r.handle('panel_activate', ({ session_id }) => d.panel?.activate(session_id))
   r.handle('panel_drag_start', () => undefined)

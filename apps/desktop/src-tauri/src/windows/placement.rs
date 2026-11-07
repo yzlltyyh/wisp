@@ -7,7 +7,9 @@
 //!   （`MonitorInfo.frame` 在这两个平台上只用于排序与命中判断），所以按「显示器物理原点 + 本屏逻辑坐标 × 本屏缩放」换算，
 //!   窗口落在哪块屏上就按哪块屏的缩放比摆放，不会在跨 DPI 的屏幕上偏移或变形。
 
-use wisp_types::{Lang, MonitorId, MonitorInfo, PanelSide, PhysPoint, Placement, Point, Rect, TaskKind};
+use wisp_types::{
+    Lang, MonitorId, MonitorInfo, PanelPayload, PanelSide, PhysPoint, Placement, Point, ReadingLayout, Rect, TaskKind,
+};
 
 /// 面板与锚点的间距（锚点下方 12 px）
 pub const ANCHOR_GAP: f64 = 12.0;
@@ -75,6 +77,22 @@ pub const PINNED_EXPAND_HEIGHT_RATIO: f64 = 0.7;
 pub const PINNED_MIN_WIDTH: f64 = 320.0;
 /// Pinned 窗口的最小高度
 pub const PINNED_MIN_HEIGHT: f64 = 120.0;
+
+/// 「展开阅读」翻译两栏（原文 | 译文）的卡片宽度：每栏 (760 − 32 − 24) / 2 = 352，约 25 个汉字 / 50 个拉丁字符一行。
+/// 单栏再加宽反而难读（长译文的 520 宽已接近舒适行长），更宽只在两栏并排时才有意义
+pub const READING_TRANSLATE_WIDTH: f64 = 760.0;
+/// 「展开阅读」OCR 左右并排（截图 ≈ 400 | 识别文本 440）的卡片宽度，也是上下堆叠时随截图变宽的上限
+pub const READING_OCR_WIDTH: f64 = 880.0;
+/// 翻译两栏要求的最小工作区宽度：再窄每栏不到 300、两栏不如单栏好读，不提供展开阅读（按钮不出现）
+pub const READING_TRANSLATE_MIN_WORK: f64 = 680.0;
+/// OCR 左右并排要求的最小工作区宽度：再窄截图栏太窄，退回上下堆叠
+pub const READING_OCR_MIN_WORK: f64 = 800.0;
+/// 截图逻辑宽高比达到它算「宽截图」（一两行到几行文字的横条）：上下堆叠、截图 1:1 显示在上方，识别文本与截图同宽、
+/// 逐行对照；更高的截图左右并排（截图按栏宽缩小、整张看得见）。与前端 `panel/reading.ts` 的 `READING.wideAspect` 一致
+/// （测试 `reading_constants_match_frontend` 核对）
+pub const READING_WIDE_ASPECT: f64 = 2.0;
+/// 「展开阅读」的高度上限：工作区高度 × 0.85（普通布局的上限默认 0.6，设置里最多 0.8）
+pub const READING_HEIGHT_RATIO: f64 = 0.85;
 
 /// 翻译宽度的 lerp 区间：显示宽度单位 80 起开始变宽，400 时到最大
 const TRANSLATE_UNITS_START: f64 = 80.0;
@@ -452,6 +470,85 @@ pub fn height_cap(screen: &Screen, max_height_ratio: f64) -> f64 {
         0.6
     };
     (screen.work.height * ratio).floor().max(MIN_CARD_HEIGHT)
+}
+
+/// 要「展开阅读」的视图
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ReadingSubject {
+    Translate,
+    /// OCR：截图的逻辑尺寸（宽, 高）；未知时 None
+    Ocr {
+        shot: Option<(f64, f64)>,
+    },
+}
+
+/// 载荷对应的阅读对象：翻译、OCR（截图尺寸按 `scale` 从物理像素换算成逻辑尺寸——面板与截图通常在同一块屏上）；
+/// 其余视图没有阅读布局
+pub fn reading_subject(payload: &PanelPayload, scale: f64) -> Option<ReadingSubject> {
+    match payload {
+        PanelPayload::Translate(_) => Some(ReadingSubject::Translate),
+        PanelPayload::Ocr(o) => {
+            let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+            let (w, h) = (f64::from(o.image_size.width), f64::from(o.image_size.height));
+            let shot = (w > 0.0 && h > 0.0).then(|| (w / scale, h / scale));
+            Some(ReadingSubject::Ocr { shot })
+        }
+        _ => None,
+    }
+}
+
+/// 「展开阅读」的版式与尺寸（本屏逻辑 px）
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ReadingPlan {
+    pub layout: ReadingLayout,
+    /// 卡片宽度（已夹到工作区内）
+    pub width: f64,
+    /// 会话上限（工作区 × [`READING_HEIGHT_RATIO`]）
+    pub cap: f64,
+}
+
+/// 「展开阅读」的高度上限：`floor(工作区高 × 0.85)`
+pub fn reading_cap(screen: &Screen) -> f64 {
+    (screen.work.height * READING_HEIGHT_RATIO).floor().max(MIN_CARD_HEIGHT)
+}
+
+/// 在 `screen` 上展开阅读的版式与尺寸。只按卡片所在屏的工作区算（多屏时拖到哪块屏就按哪块屏）：
+/// - 翻译：工作区至少 [`READING_TRANSLATE_MIN_WORK`] 宽时两栏、宽 760（不超过工作区），否则不提供（None）；
+/// - OCR：高截图（宽高比 < [`READING_WIDE_ASPECT`]）在工作区至少 [`READING_OCR_MIN_WORK`] 宽时左右并排、宽 880；宽截图、
+///   或工作区不够宽时上下堆叠，宽度按截图 1:1 放得下（逻辑宽 + 左右内边距），不窄于当前宽度 `current_width`、不超过 880
+///   （更宽的截图在框内横向滚动）。截图尺寸未知时按高截图处理
+pub fn reading_plan(subject: ReadingSubject, screen: &Screen, current_width: f64) -> Option<ReadingPlan> {
+    let work = screen.work;
+    let cap = reading_cap(screen);
+    let current = if current_width.is_finite() {
+        current_width
+    } else {
+        OCR_WIDTH
+    };
+    match subject {
+        ReadingSubject::Translate => (work.width >= READING_TRANSLATE_MIN_WORK).then(|| ReadingPlan {
+            layout: ReadingLayout::Columns,
+            width: fit_width(READING_TRANSLATE_WIDTH, work),
+            cap,
+        }),
+        ReadingSubject::Ocr { shot } => {
+            let shot = shot.filter(|&(w, h)| w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0);
+            let wide = shot.is_some_and(|(w, h)| w >= h * READING_WIDE_ASPECT);
+            if !wide && work.width >= READING_OCR_MIN_WORK {
+                return Some(ReadingPlan {
+                    layout: ReadingLayout::Columns,
+                    width: fit_width(READING_OCR_WIDTH, work),
+                    cap,
+                });
+            }
+            let natural = shot.map_or(current, |(w, _)| (w + CONTENT_INSET).round());
+            Some(ReadingPlan {
+                layout: ReadingLayout::Stacked,
+                width: fit_width(natural.min(READING_OCR_WIDTH).max(current), work),
+                cap,
+            })
+        }
+    }
 }
 
 /// 剪贴板视图的尺寸（逻辑 px），与前端 `views/clipboard/model.ts` 同名常量一致（Rust 据此预估打开高度；
@@ -2301,5 +2398,148 @@ mod tests {
         );
         assert!(compact.contains(&line), "model.ts 里找不到 `{line}`");
         assert_eq!(l::ocr::PAD, l::CARD_PAD);
+    }
+
+    /// Windows 1920×1080 @150%（逻辑 1280×720，任务栏 48）
+    fn win_1080p() -> Screen {
+        Screen {
+            id: r"\\.\DISPLAY1".to_owned(),
+            frame: Rect::new(0.0, 0.0, 1280.0, 720.0),
+            work: Rect::new(0.0, 0.0, 1280.0, 672.0),
+            scale: 1.5,
+            physical_origin: PhysPoint { x: 0, y: 0 },
+            primary: true,
+        }
+    }
+
+    fn ocr_payload(width: u32, height: u32) -> PanelPayload {
+        PanelPayload::Ocr(wisp_types::OcrPayload {
+            capture_id: "c".to_owned(),
+            request_id: None,
+            mode: wisp_types::OcrMode::Lines,
+            thumb_url: "crop/c.png".to_owned(),
+            image_size: wisp_types::PhysSize { width, height },
+            target_lang: Lang::ZhCn,
+            not_ready: None,
+            layout: wisp_types::OcrLayout::default(),
+        })
+    }
+
+    #[test]
+    fn reading_subject_converts_the_shot_to_logical_size() {
+        assert_eq!(
+            reading_subject(&ocr_payload(1200, 300), 2.0),
+            Some(ReadingSubject::Ocr {
+                shot: Some((600.0, 150.0))
+            })
+        );
+        assert_eq!(
+            reading_subject(&ocr_payload(0, 0), 2.0),
+            Some(ReadingSubject::Ocr { shot: None })
+        );
+        // 缩放比非法按 1
+        assert_eq!(
+            reading_subject(&ocr_payload(900, 300), f64::NAN),
+            Some(ReadingSubject::Ocr {
+                shot: Some((900.0, 300.0))
+            })
+        );
+        let toast = PanelPayload::Toast(wisp_types::ToastPayload {
+            reason: wisp_types::CopiedReason::CopyOnly,
+            paste_key: "⌘V".to_owned(),
+            queue: None,
+        });
+        assert_eq!(reading_subject(&toast, 2.0), None);
+    }
+
+    /// 翻译两栏 760、OCR 并排 880 / 堆叠按截图；上限 floor(工作区 × 0.85)；只看卡片所在屏的工作区（150% 与副屏都在逻辑
+    /// 坐标里算）
+    #[test]
+    fn reading_plan_follows_the_view_and_the_work_area() {
+        let mac = mac_screen();
+        assert_eq!(reading_cap(&mac), 684.0);
+        assert_eq!(
+            reading_plan(ReadingSubject::Translate, &mac, 520.0),
+            Some(ReadingPlan {
+                layout: ReadingLayout::Columns,
+                width: 760.0,
+                cap: 684.0
+            })
+        );
+        // Windows 1080p@150%：工作区 1280×672 → 760 宽、上限 571
+        let win = win_1080p();
+        assert_eq!(
+            reading_plan(ReadingSubject::Translate, &win, 520.0),
+            Some(ReadingPlan {
+                layout: ReadingLayout::Columns,
+                width: 760.0,
+                cap: 571.0
+            })
+        );
+        // 副屏（2560×1392 @1.5）
+        assert_eq!(
+            reading_plan(ReadingSubject::Translate, &win_secondary(), 520.0).map(|p| p.cap),
+            Some(1183.0)
+        );
+        // 工作区不到 680：翻译不提供；正好 680：卡片夹到 680 − 16
+        let narrow = |w: f64| Screen {
+            work: Rect::new(0.0, 0.0, w, 672.0),
+            ..win_1080p()
+        };
+        assert_eq!(reading_plan(ReadingSubject::Translate, &narrow(679.0), 520.0), None);
+        assert_eq!(
+            reading_plan(ReadingSubject::Translate, &narrow(680.0), 520.0).map(|p| p.width),
+            Some(664.0)
+        );
+
+        let ocr = |w: f64, h: f64| ReadingSubject::Ocr { shot: Some((w, h)) };
+        // 高截图并排 880；尺寸未知按高截图
+        for subject in [ocr(600.0, 900.0), ocr(500.0, 300.0), ReadingSubject::Ocr { shot: None }] {
+            assert_eq!(
+                reading_plan(subject, &mac, 552.0),
+                Some(ReadingPlan {
+                    layout: ReadingLayout::Columns,
+                    width: 880.0,
+                    cap: 684.0
+                }),
+                "{subject:?}"
+            );
+        }
+        // 宽截图（宽 ≥ 2 × 高）堆叠：宽度按截图 1:1（+32），不窄于当前、不超过 880
+        let stacked = |subject, current| reading_plan(subject, &mac, current).map(|p| (p.layout, p.width));
+        assert_eq!(stacked(ocr(700.0, 100.0), 552.0), Some((ReadingLayout::Stacked, 732.0)));
+        assert_eq!(stacked(ocr(600.0, 300.0), 552.0), Some((ReadingLayout::Stacked, 632.0)));
+        assert_eq!(stacked(ocr(300.0, 60.0), 552.0), Some((ReadingLayout::Stacked, 552.0)));
+        assert_eq!(stacked(ocr(3000.0, 96.0), 600.0), Some((ReadingLayout::Stacked, 880.0)));
+        // 工作区不到 800：高截图也堆叠；宽度不超过工作区 − 16
+        assert_eq!(
+            reading_plan(ocr(600.0, 900.0), &narrow(790.0), 440.0).map(|p| (p.layout, p.width)),
+            Some((ReadingLayout::Stacked, 632.0))
+        );
+        assert_eq!(
+            reading_plan(ocr(2000.0, 100.0), &narrow(700.0), 440.0).map(|p| p.width),
+            Some(684.0)
+        );
+        // 非法的当前宽度 / 截图尺寸不会产生 NaN
+        let odd = reading_plan(ocr(f64::NAN, 100.0), &mac, f64::NAN).expect("plan");
+        assert!(odd.width.is_finite() && odd.width >= MIN_CARD_HEIGHT, "{odd:?}");
+    }
+
+    /// 前端（固定窗口自己判断版式、OCR 截图区）的阅读常量与这里一致：`panel/reading.ts` 的 READING
+    #[test]
+    fn reading_constants_match_frontend() {
+        let src = include_str!("../../../src/panel/reading.ts");
+        let compact: String = src.chars().filter(|c| !c.is_whitespace()).collect();
+        let start = compact
+            .find("exportconstREADING={")
+            .expect("reading.ts 里找不到 READING");
+        let block = &compact[start..start + compact[start..].find("}asconst").expect("READING 的结尾")];
+        for decl in [
+            format!("minWidth:{},", READING_TRANSLATE_MIN_WORK),
+            format!("ocrColumnsWidth:{},", READING_OCR_MIN_WORK - 2.0 * EDGE_INSET),
+            format!("wideAspect:{},", READING_WIDE_ASPECT),
+        ] {
+            assert!(block.contains(&decl), "READING 里找不到 `{decl}`");
+        }
     }
 }

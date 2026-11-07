@@ -27,6 +27,13 @@
 //! 前端排版用的那个，交叉淡入原地替换时新会话继承「拖过」，上限按整个工作区算。拖动只影响本次会话：下次唤出按锚点定位；
 //! 剪贴板在「记住位置」模式下隐藏时记住位置。
 //!
+//! ## 展开阅读
+//! 翻译 / OCR 视图可以在会话内切换为阅读布局（[`PanelController::set_reading`]）：宽度与高度上限换成阅读布局的值（翻译 760、
+//! OCR 880 或按截图，上限工作区 × 0.85），位置保持（左边不动、右侧越界时整体左移），之后按拖过的面板处理（长到工作区外时
+//! 整体推回）；收起恢复展开之前的宽度与上限，位置保持当前的。宽度与上限的改变都落在前端内容完全透明的那一刻
+//! （`timing.crossfade` 之后），之前的高度变化仍按旧上限夹。阅读布局只属于这次会话：原地替换的新会话、下一次唤出都回到
+//! 普通布局。
+//!
 //! ## 打断与恢复
 //! - **淡出中又来新的 prepare**：淡出立即完成（旧内容不会被带到新位置上闪一下）；
 //! - **可见时又来新的 prepare**：要求交叉淡入时**保留当前位置**原地替换（屏幕、左边、固定边都不变，只换宽度与高度上限）；
@@ -57,8 +64,8 @@ use tauri::webview::PageLoadEvent;
 use tauri::{Emitter, Manager, WebviewWindowBuilder, WindowEvent};
 use tokio::sync::watch;
 use wisp_types::{
-    AppRef, Boot, FrameMode, HideReason, PanelFocusChanged, PanelHideRequest, PanelPayload, PanelPrepare, PanelShown,
-    PanelTransition, PanelView, Placement, Point, Rect, ResizeSpring, event,
+    AppRef, Boot, FrameMode, HideReason, PanelFocusChanged, PanelHideRequest, PanelPayload, PanelPrepare, PanelReading,
+    PanelShown, PanelTransition, PanelView, Placement, Point, ReadingLayout, Rect, ResizeSpring, event,
 };
 
 use super::native::{
@@ -479,6 +486,34 @@ struct Session {
     page: PanelPage,
     /// 窗口上是冷唤出的原生外壳：ready 时内容淡入、高度弹到实测值（[`PanelHost::reveal_shell`]）
     shell: bool,
+    /// 「展开阅读」中：展开之前的宽度与上限（收起时恢复）。None = 普通布局
+    reading: Option<ReadingRestore>,
+    /// 位置不再按锚点规则约束：展开阅读过（原地替换时由新会话继承）。与拖过（`dragged`）一样，高度上限按整个工作区算、
+    /// 卡片伸出工作区时整体推回；但不算「用户拖到了别处」（剪贴板不会因此记住位置）
+    loose: bool,
+    /// 展开 / 收起之后、前端提交新版式之前（内容完全透明的那一刻之前）卡片高度仍按这个旧上限夹：前端这段时间还按旧版式
+    /// 上报高度（例如流式输出中），按新的较小上限夹会让窗口先缩高、再在透明帧收宽，成了两段运动
+    reading_hold: Option<(Instant, f64)>,
+    /// 展开 / 收起的轮次（不透明窗口推迟到透明帧改窗口的计时器据此作废）
+    reading_seq: u64,
+}
+
+impl Session {
+    /// 位置不再按锚点规则约束（拖过或展开阅读过），而且此刻没有在拖动：卡片伸出工作区时整体推回
+    fn free(&self) -> bool {
+        (self.dragged || self.loose) && !self.dragging
+    }
+}
+
+/// 展开阅读之前的布局（收起时恢复）
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ReadingRestore {
+    width: f64,
+    cap: f64,
+    max_height: f64,
+    /// 展开时所在屏的工作区高度：期间被拖到另一块屏时，恢复的会话上限按两块屏工作区高度的比例换算
+    work_height: f64,
+    layout: ReadingLayout,
 }
 
 /// 最近一次显示的卡片（toast 定位、截图前隐藏的判断）
@@ -1429,6 +1464,10 @@ impl PanelController {
             attempt: 0,
             page: PanelPage::Warm,
             shell: false,
+            reading: None,
+            loose: false,
+            reading_hold: None,
+            reading_seq: 0,
         }
     }
 
@@ -1584,18 +1623,21 @@ impl PanelController {
                         s.key,
                         s.ever_key,
                         s.dragged,
+                        s.loose,
                     )
                 });
-            let Some((old_geometry, window_height, window_width, card_height, key, ever_key, dragged)) = old else {
+            let Some((old_geometry, window_height, window_width, card_height, key, ever_key, dragged, loose)) = old
+            else {
                 drop(g);
                 // 外层的 prepare_attempt 已按需拿过 frame_lock（不可重入）：直接重新选路
                 self.prepare_routed(open, rebuilds);
                 return;
             };
             open.geometry = old_geometry.keep_position(open.geometry.width, open.geometry.cap);
-            if dragged {
-                // 拖动过的面板：固定边可能贴近工作区边缘，按固定边以外的空间算上限会把新视图压得很矮、只能滚动——上限按
-                // 整个工作区算，新卡片伸出工作区时整体推回（ready 与之后的长高都走 fit_card）
+            if dragged || loose {
+                // 拖动过（或展开阅读过）的面板：固定边可能贴近工作区边缘，按固定边以外的空间算上限会把新视图压得很矮、只能
+                // 滚动——上限按整个工作区算，新卡片伸出工作区时整体推回（ready 与之后的长高都走 fit_card）。阅读布局本身
+                // 不继承：新会话回到普通布局
                 open.geometry.max_height = open.geometry.movable_max_height();
             }
             let prepare = Self::prepare_payload(&open);
@@ -1609,6 +1651,7 @@ impl PanelController {
             s.key = key;
             s.ever_key = ever_key;
             s.dragged = dragged;
+            s.loose = loose;
             if self.css_with_margin() {
                 // 新卡片的左边只会不变或左移（keep_position），并集从新卡片左边开始
                 let new = &s.open.geometry;
@@ -1654,6 +1697,9 @@ impl PanelController {
             placement: g.placement,
             origin_x: g.origin_x,
             side: g.side,
+            reading: placement::reading_subject(&open.payload, g.screen.scale)
+                .and_then(|subject| placement::reading_plan(subject, &g.screen, g.width))
+                .map(|plan| plan.layout),
             focused: open.focused,
             transition: open.transition,
         }
@@ -1749,8 +1795,9 @@ impl PanelController {
             } else {
                 Duration::ZERO
             };
-            // 原地替换拖动过的面板：新卡片伸出工作区时整体推回（Native 帧模式由带边界的高度弹簧推，见 InPlace.bound）
-            let free = s.in_place && s.dragged;
+            // 原地替换拖动过（或展开阅读过）的面板：新卡片伸出工作区时整体推回（Native 帧模式由带边界的高度弹簧推，见
+            // InPlace.bound）
+            let free = s.in_place && s.free();
             if free && s.open.geometry.fit_card(card) && self.frame_mode == FrameMode::Native {
                 s.push_until = Some(Instant::now() + push_settle(ResizeSpring::Gentle, s.card_height, card));
             }
@@ -2169,7 +2216,15 @@ impl PanelController {
             if let Some((frame, screen)) = window.filter(|_| !s.dragging) {
                 self.follow_frame(s, frame, screen);
             }
-            let geometry = s.open.geometry.clone();
+            let mut geometry = s.open.geometry.clone();
+            // 展开 / 收起的新版式还没提交（见 `Session::reading_hold`）：仍按旧上限夹，窗口不在透明帧之前先缩高
+            if let Some((until, held)) = s.reading_hold {
+                if Instant::now() < until {
+                    geometry.max_height = geometry.max_height.max(held);
+                } else {
+                    s.reading_hold = None;
+                }
+            }
             let card = match content_height {
                 Some(content) => {
                     let card = if s.open.view == PanelView::Clipboard {
@@ -2194,9 +2249,9 @@ impl PanelController {
                 }
             };
             let before = std::mem::replace(&mut s.card_height, card);
-            // 拖动过的面板（拖动已结束）：卡片伸出工作区时整体推回（见 PanelGeometry::fit_card）。高度上限是前端排版用的
-            // 那个，会话内不变
-            let free = s.dragged && !s.dragging;
+            // 拖动过（或展开阅读过）的面板（拖动已结束）：卡片伸出工作区时整体推回（见 PanelGeometry::fit_card）。高度上限
+            // 是前端排版用的那个，只有展开 / 收起阅读会改它
+            let free = s.free();
             let pushed = free && s.open.geometry.fit_card(card);
             // Css 帧模式改窗口：用户正在拖动时推迟到拖动结束（不和系统的拖动抢位置，窗口位置此刻以系统为准）
             let frame = |me: &Self, s: &mut Session| {
@@ -2365,6 +2420,191 @@ impl PanelController {
         }
         if slack {
             self.schedule_slack(session_id, CSS_SLACK_RECLAIM);
+        }
+    }
+
+    /// 面板内「展开阅读」：`on` 为 true 时把当前会话切换为阅读布局（翻译 760 宽两栏；OCR 按截图选左右并排 880 或上下
+    /// 堆叠，见 [`placement::reading_plan`]），高度上限改为工作区 × 0.85；false 时收起，恢复展开之前的宽度与上限。返回
+    /// 切换之后的宽度、上限与版式，前端在内容完全透明的那一刻（点下后 `timing.crossfade`）提交新版式。
+    ///
+    /// - 位置按 [`PanelGeometry::keep_position`] 保持（左边不动、右侧越出工作区时整体左移；固定边不动），只在卡片所在屏的
+    ///   工作区内算。展开后按「拖过的面板」处理（[`Session::loose`]）：上限按整个工作区算，卡片长到工作区外时整体推回；
+    ///   收起时 v1 保持当前位置，上限恢复为展开之前的值（不超过固定边以外的空间；拖过的面板按整个工作区）；
+    /// - 上限变化与宽度切换在同一时刻提交：Native 帧模式的 [`WidthSwitch`] 排在 `timing.crossfade` 之后（与前端淡出完同一
+    ///   时刻），同一帧重新固定 WebView；在那之前卡片高度仍按旧上限夹（[`Session::reading_hold`]），不会先缩高、再收宽；
+    /// - Css 帧模式（带透明边距）：窗口立即取新旧两张卡片的并集（宽度稳定后回收），Above 放置的窗口高度随新上限重算并
+    ///   立即改窗口——展开时窗口向上长到新上限（卡片贴窗口底边，看不出变化），收起时保持（卡片还在按旧高度收缩，窗口先缩
+    ///   会把它裁掉；Above 的窗口高度不回收，见 [`Self::has_slack`]）；不透明窗口（窗口即卡片）等到透明帧再改；
+    /// - 用户正在拖动：同 [`Self::set_width`]，改窗口推迟到拖动结束。
+    ///
+    /// 只对已显示的当前会话生效：会话已过期、正在隐藏、视图没有阅读布局、工作区放不下（翻译）时返回 None；状态没变
+    /// （已经展开 / 已经收起）时不改任何东西、返回当前值
+    pub fn set_reading(&self, session_id: u64, on: bool) -> Option<PanelReading> {
+        enum Act {
+            Native(WidthSwitch),
+            Frame(Rect),
+            /// 不透明窗口：等内容完全透明（`timing.crossfade`）再改到新矩形
+            Later(Duration, u64),
+            Keep,
+        }
+        let _frame = self.frame_lock.lock();
+        let (act, slack, result) = {
+            let mut g = self.inner.lock();
+            let options = g.options;
+            let pinned = g.pinned_webview;
+            let s = g
+                .session
+                .as_mut()
+                .filter(|s| s.open.session_id == session_id && s.phase == Phase::Shown)?;
+            let now_reading = s.reading.map(|r| r.layout);
+            if on == now_reading.is_some() {
+                let g2 = &s.open.geometry;
+                return Some(PanelReading {
+                    width: g2.width,
+                    max_height: g2.max_height,
+                    layout: now_reading,
+                });
+            }
+            let old = s.open.geometry.clone();
+            let next = if on {
+                let subject = placement::reading_subject(&s.open.payload, old.screen.scale)?;
+                let plan = placement::reading_plan(subject, &old.screen, old.width)?;
+                s.reading = Some(ReadingRestore {
+                    width: old.width,
+                    cap: old.cap,
+                    max_height: old.max_height,
+                    work_height: old.screen.work.height,
+                    layout: plan.layout,
+                });
+                s.loose = true;
+                let mut next = old.keep_position(plan.width, plan.cap);
+                next.max_height = next.movable_max_height();
+                next
+            } else {
+                let saved = s.reading.take()?;
+                s.loose = false;
+                // 阅读期间被拖到另一块屏：会话上限按两块屏工作区高度的比例换算（与 follow_window 同一规则）
+                let cap = if saved.work_height > 0.0 && (saved.work_height - old.screen.work.height).abs() >= 0.5 {
+                    (saved.cap * old.screen.work.height / saved.work_height)
+                        .floor()
+                        .max(MIN_CARD_HEIGHT)
+                } else {
+                    saved.cap
+                };
+                let mut next = old.keep_position(saved.width, cap);
+                next.max_height = if s.dragged {
+                    next.movable_max_height()
+                } else {
+                    saved
+                        .max_height
+                        .min(cap)
+                        .min(next.available_height())
+                        .max(MIN_CARD_HEIGHT)
+                        .floor()
+                };
+                next
+            };
+            let exit = Self::crossfade_exit(options);
+            s.reading_hold = Some((Instant::now() + exit, old.max_height));
+            s.reading_seq = s.reading_seq.wrapping_add(1);
+            let old_right = old.x + s.window_width;
+            s.open.geometry = next;
+            let g2 = &s.open.geometry;
+            let result = PanelReading {
+                width: g2.width,
+                max_height: g2.max_height,
+                layout: s.reading.map(|r| r.layout),
+            };
+            if self.css_with_margin() {
+                // 新卡片的左边只会不变或左移（keep_position），并集从新卡片左边开始
+                s.window_width = old_right.max(g2.x + g2.width) - g2.x;
+                // Above 的窗口高度是会话上限：展开时随之变高；收起时保持（见文档注释）。Below 的窗口不比卡片 + 2·m 矮
+                s.window_height = s.window_height.max(self.window_height_for(g2, s.card_height));
+            } else {
+                s.window_width = g2.width;
+            }
+            let new_max = g2.max_height;
+            let rect = self.desktop_window_rect(s);
+            let act = if s.dragging {
+                match self.frame_mode {
+                    FrameMode::Native => s.width_pending = true,
+                    FrameMode::Css => s.frame_pending = true,
+                }
+                Act::Keep
+            } else if self.frame_mode == FrameMode::Native {
+                let pin = pinned.is_none_or(|h| (h - new_max).abs() >= 0.5).then_some(new_max);
+                Act::Native(WidthSwitch {
+                    x: rect.x,
+                    width: rect.width,
+                    delay: exit,
+                    pin,
+                })
+            } else if self.opaque {
+                Act::Later(exit, s.reading_seq)
+            } else {
+                Act::Frame(rect)
+            };
+            if let Act::Native(WidthSwitch { pin: Some(h), .. }) = act {
+                g.pinned_webview = Some(h);
+            }
+            let s = g.session.as_mut()?;
+            self.host.update_guard_card(Self::card_hit(s));
+            self.host.set_click_through(self.click_region(s));
+            log::debug!(
+                "panel reading session={session_id} on={on} layout={:?} width={} max_height={}",
+                result.layout,
+                result.width,
+                result.max_height
+            );
+            (act, self.arm_slack(s, CSS_SLACK_RECLAIM), result)
+        };
+        match act {
+            Act::Native(switch) => self.host.switch_width(switch),
+            Act::Frame(rect) => {
+                if let Err(e) = self.host.set_frame(rect) {
+                    log::warn!("panel set_reading failed: {}", e.message);
+                }
+            }
+            Act::Later(delay, seq) => {
+                let me = self.me.clone();
+                self.host.schedule(
+                    delay,
+                    Box::new(move || {
+                        if let Some(me) = me.upgrade() {
+                            me.reading_frame(session_id, seq);
+                        }
+                    }),
+                );
+            }
+            Act::Keep => {}
+        }
+        if slack {
+            self.schedule_slack(session_id, CSS_SLACK_RECLAIM);
+        }
+        Some(result)
+    }
+
+    /// 不透明窗口（窗口即卡片）展开 / 收起阅读：内容完全透明之后才把窗口改到新矩形（提前改会让旧内容按新宽度重排一下）。
+    /// 期间又切换了一次（轮次不同）、会话已过期或正在拖动时什么都不做（拖动结束时按会话几何补上）
+    fn reading_frame(&self, session_id: u64, seq: u64) {
+        let _frame = self.frame_lock.lock();
+        let rect = {
+            let mut g = self.inner.lock();
+            let Some(s) = g
+                .session
+                .as_mut()
+                .filter(|s| s.open.session_id == session_id && s.phase == Phase::Shown && s.reading_seq == seq)
+            else {
+                return;
+            };
+            if s.dragging {
+                s.frame_pending = true;
+                return;
+            }
+            self.desktop_window_rect(s)
+        };
+        if let Err(e) = self.host.set_frame(rect) {
+            log::warn!("panel set_reading failed: {}", e.message);
         }
     }
 
@@ -3225,7 +3465,7 @@ impl PanelController {
             {
                 s.dragged = true;
             }
-            let clamped = s.dragged && s.open.geometry.fit_card(s.card_height);
+            let clamped = (s.dragged || s.loose) && s.open.geometry.fit_card(s.card_height);
             let frame_pending = std::mem::take(&mut s.frame_pending);
             let width_pending = std::mem::take(&mut s.width_pending);
             self.sync_hit(s);
@@ -3239,7 +3479,7 @@ impl PanelController {
                 Settle::Native(
                     s.card_height,
                     g2.placement,
-                    s.dragged.then(|| self.vertical_bound(g2)),
+                    (s.dragged || s.loose).then(|| self.vertical_bound(g2)),
                     !reduce,
                 )
             } else {
@@ -7879,5 +8119,398 @@ mod tests {
         let plain = c.last_card().expect("plain toast card");
         assert_ne!(plain, clipboard);
         assert_eq!(plain.rect.width, 260.0);
+    }
+
+    // ---- 展开阅读 ----
+
+    fn switches(calls: &[Call]) -> Vec<WidthSwitch> {
+        calls
+            .iter()
+            .filter_map(|c| match c {
+                Call::SwitchWidth(w) => Some(*w),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn crossfade() -> Duration {
+        Duration::from_secs_f64(sizing::timing::CROSSFADE)
+    }
+
+    fn expanded(width: f64, max_height: f64) -> PanelReading {
+        PanelReading {
+            width,
+            max_height,
+            layout: Some(ReadingLayout::Columns),
+        }
+    }
+
+    fn collapsed(width: f64, max_height: f64) -> PanelReading {
+        PanelReading {
+            width,
+            max_height,
+            layout: None,
+        }
+    }
+
+    /// 在 `screen` 上按锚点放置的翻译会话（上限 `cap`）
+    fn open_on(session_id: u64, screen: &Screen, anchor: Rect, cap: f64) -> PanelOpen {
+        let mut o = open(session_id, PanelView::Translate, anchor);
+        o.geometry = place_panel(screen, PlaceAnchor::Rect(anchor), 420.0, 120.0, cap);
+        o
+    }
+
+    fn ocr_open(session_id: u64, width: u32, height: u32) -> PanelOpen {
+        let mut o = open(session_id, PanelView::Ocr, anchor_a());
+        o.payload = PanelPayload::Ocr(wisp_types::OcrPayload {
+            capture_id: "c".to_owned(),
+            request_id: None,
+            mode: wisp_types::OcrMode::Lines,
+            thumb_url: "crop/c.png".to_owned(),
+            image_size: wisp_types::PhysSize { width, height },
+            target_lang: Lang::ZhCn,
+            not_ready: None,
+            layout: wisp_types::OcrLayout::default(),
+        });
+        o
+    }
+
+    /// 能否展开在渲染前随 prepare 告诉前端：翻译两栏；OCR 按截图（高截图并排、宽截图堆叠）；其余视图、工作区放不下时 None
+    #[test]
+    fn prepare_tells_whether_reading_is_available() {
+        let reading = |o: &PanelOpen| PanelController::prepare_payload(o).reading;
+        assert_eq!(
+            reading(&open(1, PanelView::Translate, anchor_a())),
+            Some(ReadingLayout::Columns)
+        );
+        // mac_screen 缩放 2：1200×1800 → 600×900（高截图）；1400×200 → 700×100（宽截图）
+        assert_eq!(reading(&ocr_open(2, 1200, 1800)), Some(ReadingLayout::Columns));
+        assert_eq!(reading(&ocr_open(3, 1400, 200)), Some(ReadingLayout::Stacked));
+        assert_eq!(reading(&toast_open(4, false)), None);
+        let narrow = Screen {
+            work: Rect::new(0.0, 25.0, 660.0, 805.0),
+            ..screen()
+        };
+        assert_eq!(reading(&open_on(5, &narrow, anchor_a(), 483.0)), None);
+    }
+
+    /// Native 帧模式：展开 / 收起各一次 WidthSwitch，排在旧内容淡出完的那一刻（timing.crossfade），WebView 在同一帧按新上限
+    /// 重新固定；展开后按「拖过的面板」长高、伸出工作区时带边界整体推回；收起恢复宽度与上限。新版式提交之前高度仍按旧上限
+    /// 夹（不先缩高、再收宽）
+    #[test]
+    fn reading_native_switches_width_and_cap_in_the_transparent_frame() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(open(1, PanelView::Translate, anchor_a()));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        // mac_screen：工作区 805 高 → floor(805 × 0.85) = 684
+        let r = c.set_reading(1, true).expect("expanded");
+        assert_eq!(r, expanded(760.0, 684.0));
+        let calls = host.take();
+        assert!(set_frames(&calls).is_empty(), "{calls:?}");
+        assert_eq!(
+            switches(&calls),
+            vec![WidthSwitch {
+                x: 300.0,
+                width: 760.0,
+                delay: crossfade(),
+                pin: Some(684.0)
+            }]
+        );
+        let card = Rect::new(300.0, 230.0, 760.0, 300.0);
+        assert!(calls.contains(&Call::UpdateGuardCard(card)), "{calls:?}");
+        assert_eq!(c.snapshot().expect("snapshot").rect, card);
+        // 已经展开：不改任何东西
+        assert_eq!(c.set_reading(1, true), Some(r));
+        assert!(host.take().is_empty());
+        // 长高到 650：底边会到 880（工作区底 822）→ 整体上移，弹簧带竖直边界
+        c.resize(1, 650.0, ResizeSpring::Gentle);
+        let calls = host.take();
+        assert!(calls.iter().any(|c| matches!(c, Call::HeightBound(_))), "{calls:?}");
+        assert!(calls.contains(&Call::AnimateHeight(650.0, true)), "{calls:?}");
+        assert_eq!(
+            c.snapshot().expect("snapshot").rect,
+            Rect::new(300.0, 172.0, 760.0, 650.0)
+        );
+
+        // 收起：宽度回到 420，上限回到展开之前的 483（位置保持，不超过固定边以外的空间）
+        assert_eq!(c.set_reading(1, false), Some(collapsed(420.0, 483.0)));
+        let calls = host.take();
+        assert_eq!(
+            switches(&calls),
+            vec![WidthSwitch {
+                x: 300.0,
+                width: 420.0,
+                delay: crossfade(),
+                pin: Some(483.0)
+            }]
+        );
+        // 新版式提交之前（前端还按两栏上报 650）：仍按旧上限，窗口不先缩高
+        c.resize(1, 650.0, ResizeSpring::Gentle);
+        let calls = host.take();
+        assert!(
+            !calls.iter().any(|c| matches!(c, Call::AnimateHeight(..))),
+            "透明帧之前不缩高：{calls:?}"
+        );
+        std::thread::sleep(crossfade() + Duration::from_millis(20));
+        c.resize(1, 650.0, ResizeSpring::Gentle);
+        let calls = host.take();
+        assert!(calls.contains(&Call::AnimateHeight(483.0, true)), "{calls:?}");
+        assert!(
+            !calls.iter().any(|c| matches!(c, Call::HeightBound(_))),
+            "收起后不再按拖过的面板推回：{calls:?}"
+        );
+
+        // 减少动效：切换排在 reducedFade 之后
+        c.set_options(PanelOptions {
+            reduce_motion: true,
+            ..PanelOptions::default()
+        });
+        c.set_reading(1, true).expect("expanded again");
+        assert_eq!(
+            switches(&host.take()).first().map(|w| w.delay),
+            Some(Duration::from_secs_f64(sizing::timing::REDUCED_FADE))
+        );
+    }
+
+    /// Css 帧模式（带透明边距）：窗口立即取新旧两张卡片的并集（稳定后回收）；Above 放置的窗口高度随新上限立即重算
+    /// （展开时向上长，收起时保持：卡片还在按旧高度收缩，窗口先缩会把它裁掉）
+    #[test]
+    fn reading_css_widens_the_window_and_recomputes_above_height() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Css, 24.0);
+        c.prepare(open(1, PanelView::Translate, anchor_a()));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 684.0)));
+        let calls = host.take();
+        assert!(switches(&calls).is_empty(), "{calls:?}");
+        assert_eq!(set_frames(&calls), vec![Rect::new(276.0, 206.0, 760.0 + 48.0, 348.0)]);
+        let region = last_region(&calls).expect("click-through");
+        assert_eq!(region.card, Rect::new(300.0, 230.0, 760.0, 300.0));
+        assert_eq!(c.set_reading(1, false), Some(collapsed(420.0, 483.0)));
+        let calls = host.take();
+        assert_eq!(
+            set_frames(&calls),
+            vec![Rect::new(276.0, 206.0, 760.0 + 48.0, 348.0)],
+            "收起时先保留并集：卡片的新宽度在透明帧才生效"
+        );
+        assert!(calls.contains(&Call::Schedule(CSS_SLACK_RECLAIM)), "{calls:?}");
+        std::thread::sleep(CSS_SLACK_RECLAIM);
+        for (_, f) in host.take_timers() {
+            f();
+        }
+        assert_eq!(
+            set_frames(&host.take()),
+            vec![Rect::new(276.0, 206.0, 420.0 + 48.0, 348.0)],
+            "稳定后回收到卡片"
+        );
+
+        // Above（选区靠下）：窗口 = 上限 + 2·m
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Css, 24.0);
+        c.prepare(open(1, PanelView::Translate, Rect::new(300.0, 700.0, 100.0, 18.0)));
+        c.ready(1, 120.0).expect("shown");
+        host.take_timers();
+        host.take();
+        assert_eq!(host.window_frame(), Some(Rect::new(276.0, 712.0 - 531.0, 468.0, 531.0)));
+        c.set_reading(1, true).expect("expanded");
+        assert_eq!(
+            set_frames(&host.take()),
+            vec![Rect::new(276.0, 712.0 - 732.0, 760.0 + 48.0, 684.0 + 48.0)],
+            "展开：窗口随新上限向上长（卡片贴窗口底边）"
+        );
+        c.set_reading(1, false).expect("collapsed");
+        assert_eq!(
+            set_frames(&host.take()),
+            vec![Rect::new(276.0, 712.0 - 732.0, 760.0 + 48.0, 684.0 + 48.0)],
+            "收起：窗口高度保持"
+        );
+    }
+
+    /// 窗口不能透明（窗口即卡片）：改窗口等内容完全透明再做；期间又切换了一次时旧的那次作废
+    #[test]
+    fn reading_opaque_window_changes_in_the_transparent_frame() {
+        let host = MockHost::existing();
+        let c = loaded_with(&host, FrameMode::Css, 0.0, true);
+        c.prepare(open(1, PanelView::Translate, anchor_a()));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        c.set_reading(1, true).expect("expanded");
+        let calls = host.take();
+        assert!(set_frames(&calls).is_empty(), "{calls:?}");
+        assert!(calls.contains(&Call::Schedule(crossfade())), "{calls:?}");
+        host.run_timers(crossfade());
+        assert_eq!(set_frames(&host.take()), vec![Rect::new(300.0, 230.0, 760.0, 300.0)]);
+        c.set_reading(1, false).expect("collapsed");
+        c.set_reading(1, true).expect("expanded again");
+        host.take();
+        host.run_timers(crossfade());
+        assert_eq!(
+            set_frames(&host.take()),
+            vec![Rect::new(300.0, 230.0, 760.0, 300.0)],
+            "收起的那次已作废，只按最后一次改"
+        );
+    }
+
+    /// 拖动中展开：改窗口推迟到拖动结束；未显示 / 不是当前会话 / 视图没有阅读布局 / 工作区放不下：None
+    #[test]
+    fn reading_during_drag_and_invalid_sessions() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(open(1, PanelView::Translate, anchor_a()));
+        assert_eq!(c.set_reading(1, true), None, "还没显示");
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        assert_eq!(c.set_reading(9, true), None, "不是当前会话");
+        c.drag_start(1);
+        c.set_reading(1, true).expect("expanded");
+        let calls = host.take();
+        assert!(switches(&calls).is_empty(), "拖动中不切换：{calls:?}");
+        drag_to(&host, Rect::new(300.0, 230.0, 420.0, 300.0));
+        host.run_timers(DRAG_SETTLE);
+        let frame = *set_frames(&host.take()).last().expect("applied after the drag");
+        assert_eq!((frame.x, frame.width), (300.0, 760.0));
+
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(toast_open(1, false));
+        c.ready(1, 40.0).expect("shown");
+        assert_eq!(c.set_reading(1, true), None, "toast 没有阅读布局");
+        assert_eq!(
+            c.set_reading(1, false),
+            Some(collapsed(260.0, 483.0)),
+            "收起是空操作，返回当前值"
+        );
+        let narrow = Screen {
+            work: Rect::new(0.0, 25.0, 660.0, 805.0),
+            ..screen()
+        };
+        c.prepare(open_on(2, &narrow, anchor_a(), 483.0));
+        c.ready(2, 120.0).expect("shown");
+        assert_eq!(c.set_reading(2, true), None, "工作区不到 680");
+    }
+
+    /// 原地替换（新的 prepare 交叉淡入）：阅读布局不继承，新会话回到普通布局；但位置已不按锚点约束，上限按整个工作区
+    #[test]
+    fn crossfade_after_reading_returns_to_the_normal_layout() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        // 选区在 370：下方 422，普通上限 min(483, 422) = 422
+        c.prepare(open(1, PanelView::Translate, Rect::new(300.0, 370.0, 100.0, 18.0)));
+        c.ready(1, 300.0).expect("shown");
+        c.set_reading(1, true).expect("expanded");
+        host.take_timers();
+        host.take();
+        c.prepare(open_with(2, anchor_b(), 360.0, PanelTransition::Crossfade));
+        c.ready(2, 150.0).expect("shown in place");
+        assert_eq!(
+            c.set_reading(2, false),
+            Some(collapsed(360.0, 483.0)),
+            "普通布局、上限按整个工作区"
+        );
+        host.take();
+        // 长到上限：底边会到 883 → 整体推回
+        c.resize(2, 483.0, ResizeSpring::Gentle);
+        assert!(
+            host.take().iter().any(|c| matches!(c, Call::HeightBound(_))),
+            "继承「不再按锚点约束」"
+        );
+        // 新会话照样能展开（从 360 宽）
+        assert_eq!(c.set_reading(2, true), Some(expanded(760.0, 684.0)));
+    }
+
+    /// 150% 缩放与副屏：几何在卡片所在屏的逻辑坐标里算，最后才换成物理像素
+    #[test]
+    fn reading_geometry_is_logical_on_scaled_and_secondary_screens() {
+        let physical = |host: &Arc<MockHost>| {
+            *host.exists.lock() = false;
+            let c = PanelController::new(
+                Arc::clone(host) as Arc<dyn PanelHost>,
+                FrameMode::Css,
+                24.0,
+                false,
+                DesktopUnit::Physical,
+            );
+            c.create().expect("create");
+            host.fire(PanelEvent::PageLoaded);
+            host.take();
+            c
+        };
+        // Windows 1920×1080 @150%（逻辑 1280×672）：选区在右侧，760 宽放不下 → 整体左移到 1272 − 760
+        let win = Screen {
+            id: r"\\.\DISPLAY1".to_owned(),
+            frame: Rect::new(0.0, 0.0, 1280.0, 720.0),
+            work: Rect::new(0.0, 0.0, 1280.0, 672.0),
+            scale: 1.5,
+            physical_origin: PhysPoint { x: 0, y: 0 },
+            primary: true,
+        };
+        let host = MockHost::existing();
+        let c = physical(&host);
+        c.prepare(open_on(1, &win, Rect::new(900.0, 300.0, 100.0, 18.0), 403.0));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 571.0)));
+        let calls = host.take();
+        // 原来的卡片已夹到 852（右边贴 1272）：新卡片右边同样在 1272，并集就是新卡片；四周 24 的边距，逻辑
+        // (488, 306, 808, 348) × 1.5
+        assert_eq!(set_frames(&calls), vec![Rect::new(732.0, 459.0, 1212.0, 522.0)]);
+        let snap = c.snapshot().expect("snapshot");
+        assert_eq!(snap.rect, Rect::new(512.0, 330.0, 760.0, 300.0));
+        assert!(snap.rect.right() <= win.work.right() - placement::EDGE_INSET);
+
+        // 右侧副屏（2560×1392 @1.5，物理原点 (2880, −300)）：上限按副屏的工作区
+        let second = Screen {
+            id: r"\\.\DISPLAY2".to_owned(),
+            frame: Rect::new(1920.0, -200.0, 2560.0, 1440.0),
+            work: Rect::new(0.0, 0.0, 2560.0, 1392.0),
+            scale: 1.5,
+            physical_origin: PhysPoint { x: 2880, y: -300 },
+            primary: false,
+        };
+        let host = MockHost::existing();
+        let c = physical(&host);
+        c.prepare(open_on(1, &second, anchor_a(), 835.0));
+        c.ready(1, 300.0).expect("shown");
+        host.take_timers();
+        host.take();
+        assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 1183.0)));
+        // 逻辑 (276, 206, 808, 348) → 物理 (2880 + 414, −300 + 309, 1212, 522)
+        assert_eq!(set_frames(&host.take()), vec![Rect::new(3294.0, 9.0, 1212.0, 522.0)]);
+    }
+
+    /// OCR：高截图并排 880、宽截图堆叠（宽度按截图）
+    #[test]
+    fn reading_ocr_uses_the_shot_to_pick_the_layout() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(ocr_open(1, 1200, 1800));
+        c.ready(1, 300.0).expect("shown");
+        assert_eq!(
+            c.set_reading(1, true),
+            Some(PanelReading {
+                width: 880.0,
+                max_height: 684.0,
+                layout: Some(ReadingLayout::Columns)
+            })
+        );
+        c.hide_now(1, HideReason::Escape);
+        c.prepare(ocr_open(2, 1400, 200));
+        c.ready(2, 300.0).expect("shown");
+        assert_eq!(
+            c.set_reading(2, true),
+            Some(PanelReading {
+                width: 732.0,
+                max_height: 684.0,
+                layout: Some(ReadingLayout::Stacked)
+            })
+        );
     }
 }

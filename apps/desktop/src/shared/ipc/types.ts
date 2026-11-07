@@ -652,6 +652,20 @@ export type PanelView = 'translate' | 'ocr' | 'clipboard' | 'input' | 'toast'
 export type Placement = 'below' | 'above' | 'center'
 /** 侧放的面板在锚点的哪一侧：上下都放不下的长结果放到选区 / 框选的左边或右边（顶边对齐，向下长） */
 export type PanelSide = 'left' | 'right'
+/**
+ * 面板内「展开阅读」的版式：columns = 左右两栏（翻译「原文 | 译文」、OCR「截图 | 识别文本」）；stacked = 上下堆叠
+ * （OCR 宽截图 1:1 在上、识别文本在下；工作区不够宽时高截图也这样排）
+ */
+export type ReadingLayout = 'columns' | 'stacked'
+/**
+ * `panel_set_reading` 的结果：切换之后卡片的宽度、高度上限与版式（收起时 layout 为 null）。Rust 已按它安排好窗口，
+ * 前端在内容完全透明的那一刻提交
+ */
+export interface PanelReading {
+  width: number
+  max_height: number
+  layout: ReadingLayout | null
+}
 export type PanelTransition = 'enter' | 'crossfade'
 /** 面板帧模式：macOS = native（窗口即卡片），Windows / Linux = css（透明窗口 + CSS 卡片） */
 export type FrameMode = 'native' | 'css'
@@ -776,6 +790,11 @@ export interface PanelPrepare {
   origin_x: number
   /** 侧放时卡片在锚点的哪一侧（`placement` 此时为 below），进入动效改为水平移向锚点；其余为 null */
   side: PanelSide | null
+  /**
+   * 能否「展开阅读」，能的话展开后用哪种版式（按显示时所在屏的工作区预估，实际以 `panel_set_reading` 的返回为准）；
+   * 翻译 / OCR 之外的视图、工作区放不下阅读布局时为 null（不显示展开按钮）
+   */
+  reading: ReadingLayout | null
   /** 显示后是否持有键盘焦点（输入 / 剪贴板视图为 true） */
   focused: boolean
   transition: PanelTransition

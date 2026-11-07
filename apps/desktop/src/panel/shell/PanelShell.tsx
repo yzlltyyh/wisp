@@ -6,16 +6,27 @@
  * 隐藏后整棵视图树卸载（`phase = hidden` 时不渲染卡片），rAF / Observer / 计时器随之停止。
  * 窗口不能透明（Css 帧模式且 `shadow_margin == 0`，例如 Wayland）时 `<html data-opaque>`：页面底色取
  * `--surface-solid`（base.css），卡片铺满窗口、不做进入 / 退出的透明度与变换（PanelCard），高度变化立即上报。
+ *
+ * **展开阅读**（翻译 / OCR；PanelPrepare.reading 不为 null 时视图拿到 `toggleReading`）：点下（或按快捷键）的那一刻
+ * 调用 `panel_set_reading` 并开始把视图淡出（timing.crossfade、ease.exit；减少动效时 reducedFade）——Rust 立即返回
+ * 新的宽度、上限与版式，并把窗口的改变排在同一时刻（Native 帧模式的宽度切换在 timing.crossfade 之后）；内容完全透明、
+ * 结果也到了之后，在同一次提交里让新的宽度、上限与版式生效（panelStore.commitReading），立即上报新高度（高度走
+ * spring.gentle），再淡入（presets.crossfade）。视图不重新挂载：进行中的流、文本框里的编辑都保留。展开时面板取得键盘
+ * 焦点（键盘滚动、快捷键、Esc 都要能用）；Esc 先收起、再按一次才关闭（usePanelLifecycle 的 `setEscapeHook`）；关闭
+ * 面板即复原（下一次唤出是新会话、普通布局）。
  */
+import { animate } from 'motion/react'
 import { useCallback, useEffect, useLayoutEffect, useRef, type ComponentType } from 'react'
+import { flushSync } from 'react-dom'
 import { api, boot } from '../../shared/ipc'
-import type { PanelPayload } from '../../shared/ipc/types'
+import type { PanelPayload, PanelReading } from '../../shared/ipc/types'
 import { cycleFocusWithin } from '../../shared/keys/focusLoop'
 import { useKeyScope } from '../../shared/keys/useKeyScope'
 import { FrameMonitorView } from '../../shared/perf/FrameMonitorView'
 import { frameMonitorEnabled } from '../../shared/perf/frameMonitor'
 import { warmUpWhenIdle } from '../../shared/perf/warmup'
 import { setWindowHidden } from '../../shared/hooks/useHidden'
+import { presets } from '../../shared/motion/presets'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
 import { DevLatency, startLatencyFeed } from './DevLatency'
 import { viewOverride } from './devHost'
@@ -24,11 +35,41 @@ import { frameLab } from './frameLabConfig'
 import { PanelCard } from './PanelCard'
 import { usePanelStore } from './panelStore'
 import { noteReserve, useHeightFollow, type ResizeHint } from './useHeightFollow'
-import { isOpaqueWindow, usePanelLifecycle } from './usePanelLifecycle'
+import { isOpaqueWindow, setEscapeHook, usePanelLifecycle } from './usePanelLifecycle'
 import { ViewSwitch } from './ViewSwitch'
 
 /** 开发者模式的延迟 / 帧监视行的高度（逻辑 px）：视图拿到的 maxHeight 扣掉它，内容 + 这一行不超过卡片上限 */
 export const DEV_HUD_HEIGHT = 18
+
+/** 进行中的展开 / 收起：淡出完成、`panel_set_reading` 也返回之后提交（结果为 null 时什么都不改，直接淡入） */
+interface ReadingFlight {
+  session: number
+  /** undefined = 还在等 Rust 的返回 */
+  result: PanelReading | null | undefined
+  faded: boolean
+}
+
+/**
+ * 把元素的不透明度动画到 `opacity`，返回完成的 Promise。没有 WAAPI 的环境（jsdom）直接落到终值；元素不在（视图还没
+ * 渲染）时立即完成
+ */
+function fadeTo(el: HTMLElement | null, opacity: 0 | 1, reduced: boolean): Promise<void> {
+  if (!el) return Promise.resolve()
+  if (typeof el.animate !== 'function') {
+    if (opacity === 1) el.style.removeProperty('opacity')
+    else el.style.opacity = '0'
+    return Promise.resolve()
+  }
+  const transition = reduced
+    ? presets.reduced.fade
+    : opacity === 0
+      ? presets.pageSwitch.exit.transition
+      : presets.crossfade
+  return animate(el, { opacity }, transition).then(() => {
+    // 回到 1 之后去掉内联的 opacity：不留合成层，文字照常按子像素抗锯齿绘制
+    if (opacity === 1) el.style.removeProperty('opacity')
+  })
+}
 
 interface LabModule {
   FrameLab: ComponentType<FrameLabProps>
@@ -63,6 +104,8 @@ export function PanelShell() {
   const focused = usePanelStore((s) => s.focused)
   const width = usePanelStore((s) => s.width)
   const nextWidth = usePanelStore((s) => s.nextWidth)
+  const maxHeight = usePanelStore((s) => s.maxHeight)
+  const reading = usePanelStore((s) => s.reading)
   const epoch = usePanelStore((s) => s.epoch)
   const viewKey = usePanelStore((s) => s.viewKey)
   const sessionId = prepare?.session_id ?? null
@@ -86,7 +129,7 @@ export function PanelShell() {
     sessionId,
     live,
     frame === 'native' ? 'native' : opaque ? 'opaque' : 'css',
-    prepare?.max_height,
+    prepare ? maxHeight : undefined,
     reduced,
     resizeHint,
   )
@@ -135,20 +178,76 @@ export function PanelShell() {
     if (next !== null && session !== undefined) void api.panelSetWidth(session, next)
   }, [])
 
+  // 展开 / 收起阅读（见文件头）。淡出的是视图切换层的根（ViewSwitch），卡片与开发者模式的那一行不动
+  const switchRef = useRef<HTMLDivElement>(null)
+  const flight = useRef<ReadingFlight | null>(null)
+  const reducedRef = useRef(reduced)
+  useLayoutEffect(() => {
+    reducedRef.current = reduced
+  }, [reduced])
+  const toggleReading = useCallback(() => {
+    const store = usePanelStore.getState()
+    const session = store.prepare?.session_id
+    if (session === undefined || store.prepare?.reading == null || flight.current) return
+    if (store.phase !== 'entering' && store.phase !== 'shown') return
+    const on = store.reading === null
+    const f: ReadingFlight = { session, result: undefined, faded: false }
+    flight.current = f
+    // 阅读与核对是展开的本意：面板取得键盘焦点（键盘滚动、快捷键、Esc 都落到面板里）
+    if (on) void api.panelActivate(session)
+    const settle = () => {
+      if (flight.current !== f || !f.faded || f.result === undefined) return
+      flight.current = null
+      const now = usePanelStore.getState()
+      const result = f.result
+      const showing = now.phase === 'entering' || now.phase === 'shown'
+      if (result && showing && now.prepare?.session_id === session) {
+        flushSync(() => now.commitReading(result))
+        flush()
+      }
+      void fadeTo(switchRef.current, 1, reducedRef.current)
+    }
+    api.panelSetReading(session, on).then(
+      (result) => {
+        f.result = result
+        settle()
+      },
+      () => {
+        f.result = null
+        settle()
+      },
+    )
+    void fadeTo(switchRef.current, 0, reducedRef.current).then(() => {
+      f.faded = true
+      settle()
+    })
+  }, [flush])
+  // Esc 先收起展开阅读：正在切换的那一下也吞掉（再按一次 Esc 才关闭）；不在展开阅读时照常关闭
+  useEffect(
+    () =>
+      setEscapeHook(() => {
+        if (flight.current) return true
+        if (usePanelStore.getState().reading === null) return false
+        toggleReading()
+        return true
+      }),
+    [toggleReading],
+  )
+
   if (!prepare || !payload || phase === 'hidden') return null
   const Lab = frameLab ? lab : null
   const render = __WISP_MOCK__ ? (viewOverride() ?? undefined) : undefined
   // 开发者模式的延迟 / 帧监视：内容之后单独一行（参与布局、从 prepare 起就占位，打开后不会长高一下），不再浮在卡片上
   // 盖住底栏的模型名、操作按钮与提示条；toast 不显示
   const devHud = (boot.dev || frameMonitorEnabled()) && payload.kind !== 'toast'
-  const viewMaxHeight = prepare.max_height - (devHud ? DEV_HUD_HEIGHT : 0)
+  const viewMaxHeight = maxHeight - (devHud ? DEV_HUD_HEIGHT : 0)
   return (
     <PanelCard
       key={epoch}
       frame={frame}
       phase={phase}
       width={width}
-      maxHeight={prepare.max_height}
+      maxHeight={maxHeight}
       placement={prepare.placement}
       originX={prepare.origin_x}
       side={prepare.side}
@@ -176,6 +275,7 @@ export function PanelShell() {
         <Lab.FrameLab phase={phase} requestHide={requestHide} />
       ) : (
         <ViewSwitch
+          rootRef={switchRef}
           viewKey={viewKey}
           widthPending={nextWidth !== null}
           stageWidthDelta={frame === 'css' && !opaque && nextWidth !== null ? nextWidth - width : 0}
@@ -190,6 +290,8 @@ export function PanelShell() {
           frame={frame}
           placement={prepare.placement}
           maxHeight={viewMaxHeight}
+          reading={reading}
+          toggleReading={prepare.reading !== null ? toggleReading : undefined}
           requestHide={requestHide}
           switchView={switchView}
           activate={activate}

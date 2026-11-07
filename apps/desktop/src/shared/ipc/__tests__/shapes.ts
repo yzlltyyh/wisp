@@ -351,6 +351,7 @@ const PanelView = enumOf<T.PanelView>()('PanelView', {
 })
 const Placement = enumOf<T.Placement>()('Placement', { below: 1, above: 1, center: 1 })
 const PanelSide = enumOf<T.PanelSide>()('PanelSide', { left: 1, right: 1 })
+const ReadingLayout = enumOf<T.ReadingLayout>()('ReadingLayout', { columns: 1, stacked: 1 })
 const PanelTransition = enumOf<T.PanelTransition>()('PanelTransition', { enter: 1, crossfade: 1 })
 const HideReason = enumOf<T.HideReason>()('HideReason', {
   escape: 1,
@@ -938,6 +939,7 @@ export const registry = {
   PanelView,
   Placement,
   PanelSide,
+  ReadingLayout,
   PanelTransition,
   LongTextInfo: obj<T.LongTextInfo>()('LongTextInfo', {
     chars: num,
@@ -986,11 +988,17 @@ export const registry = {
     placement: Placement,
     origin_x: num,
     side: nul(PanelSide),
+    reading: nul(ReadingLayout),
     focused: bool,
     transition: PanelTransition,
   }),
   HideReason,
   PanelShown: obj<T.PanelShown>()('PanelShown', { session_id: num, focused: bool }),
+  PanelReading: obj<T.PanelReading>()('PanelReading', {
+    width: num,
+    max_height: num,
+    layout: nul(ReadingLayout),
+  }),
   PanelHideRequest: obj<T.PanelHideRequest>()('PanelHideRequest', {
     session_id: num,
     reason: HideReason,

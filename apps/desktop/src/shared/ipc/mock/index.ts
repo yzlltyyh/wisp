@@ -15,7 +15,7 @@ import { MockBus } from './bus'
 import { createState, installDefaults, type MockState } from './defaults'
 import { mountDesktop } from './desktop'
 import { createFixtures, SAMPLE, type MockFixtures } from './fixtures'
-import { OCR_WIDTH } from './geometry'
+import { OCR_WIDTH, readingPlan } from './geometry'
 import { mountHud } from './hud'
 import { MockRouter } from './router'
 import { errorStream, MockStreams, streamRate, textStream } from './streams'
@@ -304,6 +304,7 @@ function buildPrepare(
     placement,
     origin_x: Math.round(originX),
     side: options.side ?? null,
+    reading: readingPlan(payload, work, width)?.layout ?? null,
     focused: options.focused ?? (view === 'clipboard' || view === 'input'),
     transition: options.transition ?? 'enter',
   }

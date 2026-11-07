@@ -1077,6 +1077,7 @@ export const PanelPrepare = {
   "placement": "below",
   "origin_x": 24.0,
   "side": null,
+  "reading": "columns",
   "focused": false,
   "transition": "enter"
 } satisfies T.PanelPrepare
@@ -1103,6 +1104,7 @@ export const PanelPrepare__side = {
   "placement": "below",
   "origin_x": 0.0,
   "side": "right",
+  "reading": "stacked",
   "focused": false,
   "transition": "enter"
 } satisfies T.PanelPrepare
@@ -1524,6 +1526,18 @@ export const PanelShown = {
   "session_id": 7,
   "focused": false
 } satisfies T.PanelShown
+
+export const PanelReading = {
+  "width": 760.0,
+  "max_height": 799.0,
+  "layout": "columns"
+} satisfies T.PanelReading
+
+export const PanelReading__collapsed = {
+  "width": 520.0,
+  "max_height": 564.0,
+  "layout": null
+} satisfies T.PanelReading
 
 export const PanelHideRequest = {
   "session_id": 7,
@@ -2261,6 +2275,7 @@ export const Boot__panel_cold = {
     "placement": "center",
     "origin_x": 210.0,
     "side": null,
+    "reading": null,
     "focused": true,
     "transition": "enter"
   }

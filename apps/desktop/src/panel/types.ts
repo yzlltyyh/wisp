@@ -6,7 +6,14 @@
  * 同一组件也被 Pinned 窗口复用（`host === 'pinned'`）。
  */
 import type { ComponentType } from 'react'
-import type { FrameMode, HideReason, PanelPayload, PanelView, Placement } from '../shared/ipc/types'
+import type {
+  FrameMode,
+  HideReason,
+  PanelPayload,
+  PanelView,
+  Placement,
+  ReadingLayout,
+} from '../shared/ipc/types'
 
 /** 从 PanelPayload 联合中取出某个视图的载荷 */
 export type PayloadOf<V extends PanelView> = Extract<PanelPayload, { kind: V }>
@@ -42,6 +49,16 @@ export interface ViewProps<V extends PanelView = PanelView> {
   readonly placement: Placement
   /** 卡片最大高度（逻辑 px） */
   readonly maxHeight: number
+  /**
+   * 「展开阅读」的版式（null / 缺省 = 普通布局）。面板里由外壳在内容完全透明的那一帧连同宽度、上限一起提交；固定窗口
+   * 按自己的宽度给出（panel/reading.ts 的 `pinnedReading`：翻译给 columns 时只在开着原文时才两栏）
+   */
+  readonly reading?: ReadingLayout | null
+  /**
+   * 展开 / 收起阅读：面板宿主、这次显示能展开（PanelPrepare.reading 不为 null）时才有。外壳负责淡出 → 透明帧换宽度、
+   * 上限与版式 → 淡入，展开时让面板取得键盘焦点；视图据此显示头部的展开按钮、绑定快捷键
+   */
+  readonly toggleReading?: () => void
   /** 请求关闭：外壳先播放退出动画，再调用 panel_hide(reason)。Pinned 宿主下为关闭窗口 */
   requestHide(reason: HideReason): void
   /**

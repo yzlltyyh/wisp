@@ -34,6 +34,7 @@ export interface CommandMap extends OverlayCommandMap {
     ret: void
   }
   panel_set_width: { args: { session_id: number; width: number }; ret: void }
+  panel_set_reading: { args: { session_id: number; on: boolean }; ret: T.PanelReading | null }
   panel_hide: { args: { session_id: number; reason: T.HideReason }; ret: void }
   panel_activate: { args: { session_id: number }; ret: void }
   panel_drag_start: { args: { session_id: number }; ret: void }
@@ -218,6 +219,7 @@ export const COMMAND_NAMES = [
   'panel_painted',
   'panel_resize',
   'panel_set_width',
+  'panel_set_reading',
   'panel_hide',
   'panel_activate',
   'panel_drag_start',
@@ -396,6 +398,14 @@ export function panelResize(session_id: number, content_height: number, spring?:
  */
 export function panelSetWidth(session_id: number, width: number) {
   return call('panel_set_width', { session_id, width })
+}
+/**
+ * 面板内「展开阅读」：`on` = true 展开、false 收起。点下的那一刻调用（同时开始淡出内容）：Rust 立即返回切换之后的宽度、
+ * 高度上限与版式，并把窗口的改变安排在内容完全透明的那一刻；前端淡出完提交新版式再淡入。会话已过期、视图没有阅读布局
+ * 或工作区放不下时为 null（什么都不改）
+ */
+export function panelSetReading(session_id: number, on: boolean) {
+  return call('panel_set_reading', { session_id, on })
 }
 /** 退出动画结束后调用 */
 export function panelHide(session_id: number, reason: T.HideReason) {
