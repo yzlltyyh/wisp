@@ -2450,6 +2450,7 @@ mod tests {
             reason: wisp_types::CopiedReason::CopyOnly,
             paste_key: "⌘V".to_owned(),
             queue: None,
+            queue_note: None,
         });
         assert_eq!(reading_subject(&toast, 2.0), None);
         // 输入视图提交后在同一会话里换成翻译视图：按翻译算
