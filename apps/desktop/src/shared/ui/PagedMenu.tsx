@@ -12,8 +12,21 @@
  * - 打开时在定位完成（浮层可见）之后才把焦点移进菜单；关闭后焦点还在退场的菜单里 / 落到 body 时还给触发器。
  * - 锚点可以是触发器元素，也可以是一个固定矩形（右键菜单的指针位置，与 Menu 相同）；锚在矩形上时没有触发器，
  *   关闭后焦点还给 `returnFocus`；
+ * - 点外面的那一下只关菜单，不再落到下面的元素上（与 Menu 相同：剪贴板里不会顺带粘贴下面那一行）；菜单开着时，
+ *   菜单外的指针移动也不交给下面的视图（剪贴板列表的光标不跟着指针走，菜单作用的那一条与子页内容不会在指针下变掉）；
  * - 换页之后重新定位：卡片的预留与下拉帘按新页计算（更高的子页让卡片长高，不被卡片裁掉），锚定的一侧不变。新页从顶上
  *   开始、初始高亮项滚进视野；悬停改变高亮不滚动（只有打开、换页与键盘导航才滚，且只滚菜单自己）。
+ *
+ * 悬停进入子页（剪贴板「粘贴为 › / 提取 ›」、OCR「视觉模型 ›」）：侧边级联的子菜单在默认宽度的卡片里放不下，这里
+ * 仍是同一浮层换页，只是指针停在「›」项上片刻（timing.submenuDwell）就换——
+ * - 只认鼠标 / 笔的**真实**移动（坐标不变的合成移动不算，见 usePointerIntent）；从别的行或菜单外移进来才计时，页面
+ *   出现时就压在指针下的那一行要先离开（否则返回根页之后马上又翻进去）；
+ * - 停住只看竖直位移：超过 6 px 从新位置重新计时，横向移向「›」不重新计时；离开这一行 / 菜单、按下、任何按键、换页、
+ *   关闭都取消。计时器是一次性的，只在指针停在「›」上时存在；
+ * - 防误触：本想点「›」、页面却先翻了，紧跟着的点击会落在子页的某一项上（剪贴板里就是直接粘贴）。悬停换页之后，指针
+ *   离开换页处 6 px 之前，菜单内外的按下与点击都只被吞掉（不选择、不关菜单），不设时限；悬停进入期间菜单本体的最小
+ *   宽度锁在旧页的宽度，子页变窄时指针也不会落到菜单外。悬停进入的子页不预先高亮；键盘（→ / Enter）与点击进入照旧
+ *   高亮第一项、不加保护。Esc 仍关闭整个菜单，不做悬停返回。
  */
 import { ChevronLeft } from 'lucide-react'
 import { AnimatePresence, m, useAnimationControls, useIsPresent } from 'motion/react'
@@ -43,6 +56,7 @@ import {
   type MenuEntry,
   type MenuItemEntry,
 } from './Menu'
+import { swallowPress } from './swallowPress'
 
 /** 换页时菜单高度的过渡：与卡片高度跟随同一个弹簧（spring.gentle） */
 const HEIGHT_SPRING = presets.sectionExpand.animate.transition.height
@@ -106,6 +120,13 @@ function anchorRect(anchor: PagedMenuProps['anchor']): PointAnchor | null {
 const BACK = -1
 /** 与触发器的间距（与 Menu 一致） */
 const MENU_OFFSET = 4
+/**
+ * 悬停进入子页的「停住」：竖直方向超过这么多（CSS px）就从新位置重新计时。穿过一行 28 px 的竖向移动很快超出，
+ * 手放在触控板上的漂移通常在 3 px 以内；横向不限（移向行尾的「›」是常见的动作）
+ */
+const DWELL_SLOP_Y = 6
+/** 悬停换页之后的防误触：指针离开换页处超过这么多（CSS px）之前，按下与点击都被吞掉 */
+const GUARD_RADIUS = 6
 
 /** 从 from 起按 step 找下一个可选项（返回行算在最前面） */
 function nextEnabled(page: MenuPage, from: number, step: 1 | -1): number {
@@ -171,11 +192,37 @@ export function PagedMenu({
   const shown = useRef<{ key: string; height: number } | null>(null)
   /** 换页的高度过渡进行中 */
   const sizing = useRef(false)
-  /** 旧页淡出结束时菜单是否还开着（onExitComplete 里读） */
+  // ---- 悬停进入子页（见文件头）。文档级的监听只在打开期间挂着，读这些 ref
+  const pageRef = useRef(page)
   const openRef = useRef(open)
   useLayoutEffect(() => {
+    pageRef.current = page
     openRef.current = open
   })
+  /** 进行中的停留计时：哪一页的哪一行、起点的竖直坐标 */
+  const dwell = useRef<{
+    index: number
+    key: string
+    y: number
+    timer: ReturnType<typeof setTimeout>
+  } | null>(null)
+  /** 最近一次指针位置（文档级 pointermove；判断真实移动的基线） */
+  const lastPt = useRef<{ x: number; y: number } | null>(null)
+  /**
+   * 页面出现时压在指针下的那一行：undefined = 页面出现后还没有真实移动（第一次真实移动落在哪一行就是哪一行）；
+   * null = 没有 / 已经离开过；数字 = 行号（返回行为 BACK）
+   */
+  const rest = useRef<number | null | undefined>(undefined)
+  /** 悬停换页之后的防误触：换页处的指针位置；离开超过 GUARD_RADIUS 之前吞掉按下与点击 */
+  const guard = useRef<{ x: number; y: number } | null>(null)
+  /** 停留计时到点、调用了「›」项之后、换页之前：从哪一页、旧页多宽（换页时据此判断是悬停进入） */
+  const hoverEntry = useRef<{ from: string; width: number } | null>(null)
+  /** 悬停进入的子页：菜单本体的最小宽度锁在旧页的宽度 */
+  const [locked, setLocked] = useState<{ key: string; width: number } | null>(null)
+  const cancelDwell = useCallback(() => {
+    if (dwell.current) clearTimeout(dwell.current.timer)
+    dwell.current = null
+  }, [])
   const items = page.items
   const checkable = items.some((e) => isItem(e) && e.checked !== undefined)
   const leading = checkable || !!page.back || items.some((e) => isItem(e) && e.icon !== undefined)
@@ -204,6 +251,7 @@ export function PagedMenu({
   useLayoutEffect(() => {
     if (!open) {
       shown.current = null
+      setLocked(null)
       return
     }
     if (!placed) return
@@ -243,8 +291,24 @@ export function PagedMenu({
     if (!open || !el) return
     const prev = shown.current
     if (prev?.key === page.key) return
-    // 指针打开的第一页不预先高亮（悬停才高亮）；进入子页 / 返回时高亮新页的第一项
-    const start = !prev && initialMode === 'none' ? -2 : initialActive(page)
+    cancelDwell()
+    rest.current = undefined
+    // 悬停进入（停留计时到点后调用了旧页的「›」项）：防误触从换页处开始算，最小宽度锁在旧页的宽度。别的原因换页
+    // （← 返回、调用方因内容变化换回根页）不撤掉进行中的防误触：指针还没离开，换掉的内容同样落在它下面
+    const entry = hoverEntry.current
+    hoverEntry.current = null
+    const lock =
+      prev !== null && entry !== null && entry.from === prev.key
+        ? Math.max(entry.width, minWidth ?? 0)
+        : null
+    const hovered = lock !== null
+    if (hovered && lastPt.current) guard.current = lastPt.current
+    setLocked(lock === null ? null : { key: page.key, width: lock })
+    // 这次测量就按锁定的宽度排版（React 在随后的重渲染里写上同一个值）
+    const width = lock ?? minWidth
+    el.style.minWidth = width !== undefined ? `${width}px` : ''
+    // 指针打开的第一页、悬停进入的子页不预先高亮（悬停才高亮）；键盘与点击进入子页 / 返回时高亮新页的第一项
+    const start = hovered || (!prev && initialMode === 'none') ? -2 : initialActive(page)
     setActive(start)
     // 过渡起点：正在过渡时取当前可见的高度，否则取上一页稳定时的高度
     const from = sizing.current ? el.offsetHeight : (prev?.height ?? 0)
@@ -298,13 +362,19 @@ export function PagedMenu({
     enabled: open,
   })
 
-  // 点外面关闭；窗口失焦关闭
+  // 点外面关闭（主键的这一下只关菜单）；悬停换页的防误触期间按下只被吞掉；窗口失焦关闭
   useEffect(() => {
     if (!open) return
     const onPointer = (e: PointerEvent) => {
+      cancelDwell()
+      if (guard.current) {
+        swallowPress(e)
+        return
+      }
       const target = e.target as Node
       if (floating.ref.current?.contains(target) || anchorElement(anchor)?.contains(target)) return
       close('outside')
+      if (e.button === 0) swallowPress(e)
     }
     const onBlur = () => close('blur')
     document.addEventListener('pointerdown', onPointer, true)
@@ -313,7 +383,83 @@ export function PagedMenu({
       document.removeEventListener('pointerdown', onPointer, true)
       window.removeEventListener('blur', onBlur)
     }
-  }, [open, anchor, close, floating.ref])
+  }, [open, anchor, close, floating.ref, cancelDwell])
+
+  // 悬停进入子页：文档级的指针移动（菜单外的移动、行间的分隔线与分组标题都要看到）与按键；只在打开期间挂着
+  useEffect(() => {
+    if (!open) return
+    /** 指针下是当前页的哪一行（返回行为 BACK）；分隔线、分组标题、菜单外为 null */
+    const rowAt = (target: EventTarget | null): number | null => {
+      const el = target instanceof Element ? target.closest('[role^="menuitem"]') : null
+      if (!el || !box.current?.contains(el)) return null
+      const prefix = `${baseId}-${pageRef.current.key}-`
+      return el.id.startsWith(prefix) ? Number(el.id.slice(prefix.length)) : null
+    }
+    const fire = () => {
+      const d = dwell.current
+      dwell.current = null
+      const pg = pageRef.current
+      if (!d || !openRef.current || pg.key !== d.key) return
+      const it = pg.items[d.index]
+      if (!it || !isItem(it) || !it.submenu || it.disabled) return
+      // 页面马上要在指针下换掉：从这一刻起防误触（换页时再以换页处为准）
+      hoverEntry.current = { from: pg.key, width: box.current?.offsetWidth ?? 0 }
+      guard.current = lastPt.current
+      it.onSelect?.()
+    }
+    const onMove = (e: PointerEvent) => {
+      // 菜单开着时，菜单外的指针移动不交给下面的视图（与原生菜单一样，菜单开着时窗口里的内容不跟随悬停）：剪贴板
+      // 列表的光标跟着指针走，光标一动，菜单作用的那一条与「粘贴为 / 提取」的子页内容也跟着变——悬停换页后子页变矮、
+      // 指针落到菜单外时尤其容易碰到。这里是文档的捕获阶段，早于视图挂在根节点上的监听；本监听自己照常处理
+      if (!(e.target instanceof Node && floating.ref.current?.contains(e.target)))
+        e.stopPropagation()
+      const p = { x: e.clientX, y: e.clientY }
+      const last = lastPt.current
+      lastPt.current = p
+      // 第一次只记基线；坐标没变的是布局变化时引擎合成的移动（见 usePointerIntent）：都不算移动
+      if (!last || (last.x === p.x && last.y === p.y)) return
+      const g = guard.current
+      if (g && Math.hypot(p.x - g.x, p.y - g.y) > GUARD_RADIUS) {
+        guard.current = null
+        hoverEntry.current = null
+      }
+      const row = rowAt(e.target)
+      if (rest.current === undefined) rest.current = row
+      else if (rest.current !== null && row !== rest.current) rest.current = null
+      const it = row !== null && row >= 0 ? pageRef.current.items[row] : undefined
+      const armable =
+        (e.pointerType === 'mouse' || e.pointerType === 'pen') &&
+        row !== rest.current &&
+        it !== undefined &&
+        isItem(it) &&
+        it.submenu === true &&
+        !it.disabled
+      if (!armable || row === null) {
+        cancelDwell()
+        return
+      }
+      const d = dwell.current
+      const key = pageRef.current.key
+      // 同一行、竖直方向还在停住的范围里：接着计时（横向移动不重新计时）
+      if (d && d.index === row && d.key === key && Math.abs(p.y - d.y) <= DWELL_SLOP_Y) return
+      cancelDwell()
+      dwell.current = { index: row, key, y: p.y, timer: setTimeout(fire, ms(timing.submenuDwell)) }
+    }
+    const onKey = () => {
+      cancelDwell()
+      hoverEntry.current = null
+    }
+    document.addEventListener('pointermove', onMove, { capture: true, passive: true })
+    document.addEventListener('keydown', onKey, true)
+    return () => {
+      document.removeEventListener('pointermove', onMove, { capture: true })
+      document.removeEventListener('keydown', onKey, true)
+      cancelDwell()
+      lastPt.current = null
+      guard.current = null
+      hoverEntry.current = null
+    }
+  }, [open, baseId, cancelDwell, floating.ref])
 
   // 高亮项滚进视野（打开时、键盘导航；换页时由换页的 effect 直接滚）：定位完成之后、绘制之前，只滚菜单自己
   useLayoutEffect(() => {
@@ -432,11 +578,15 @@ export function PagedMenu({
               data-checkable={checkable || undefined}
               data-leading={leading || undefined}
               data-testid={page['data-testid']}
-              style={{ minWidth }}
+              style={{ minWidth: locked?.key === page.key ? locked.width : minWidth }}
               animate={sizer}
               initial={false}
               onKeyDown={onKeyDown}
-              onPointerLeave={() => setActive(-2)}
+              onPointerLeave={() => {
+                // 指针离开菜单（含离开窗口：之后不再有移动事件）：取消停留计时
+                cancelDwell()
+                setActive(-2)
+              }}
             >
               <AnimatePresence
                 initial={false}

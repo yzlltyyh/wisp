@@ -759,6 +759,42 @@ describe('重新识别', () => {
     expect(await screen.findByTestId('ocr-model-menu')).toBeInTheDocument()
   })
 
+  it('指针停在「视觉模型 ›」上进入模型页；在原处点击不会用指针下的模型重新识别，离开原处之后照常', async () => {
+    view()
+    await recognize()
+    const before = callsOf('ocr_start').length
+    fireEvent.click(screen.getByTestId('ocr-recognize-menu'))
+    const list = await screen.findByTestId('ocr-recognize-list')
+    const at = (id: string) =>
+      list.querySelector<HTMLElement>(
+        `[data-page]:not([aria-hidden]) [data-testid="${id}"]`,
+      ) as HTMLElement
+    const move = (el: Element, x: number, y: number) =>
+      fireEvent.pointerMove(el, { clientX: x, clientY: y, pointerType: 'mouse' })
+    const press = (el: Element, x: number, y: number) => {
+      const init = { clientX: x, clientY: y, button: 0, pointerType: 'mouse' }
+      fireEvent.pointerDown(el, init)
+      fireEvent.pointerUp(el, init)
+      fireEvent.click(el, init)
+    }
+    // 从菜单外（触发器）移进「视觉模型」：第一次移动只记基线
+    move(screen.getByTestId('ocr-recognize-menu'), 40, 200)
+    move(screen.getByTestId('ocr-recognize-menu'), 40, 190)
+    move(at('ocr-recognize-list-item-models'), 40, 120)
+    await act(() => new Promise<void>((r) => setTimeout(r, 260)))
+    expect(screen.getByTestId('ocr-model-menu')).toBeInTheDocument()
+    press(within(list).getByText('llava'), 40, 120)
+    move(within(list).getByText('llava'), 42, 121)
+    press(within(list).getByText('llava'), 42, 121)
+    expect(callsOf('ocr_start')).toHaveLength(before)
+    expect(screen.getByTestId('ocr-model-menu')).toBeInTheDocument()
+    move(within(list).getByText('llava'), 40, 140)
+    press(within(list).getByText('llava'), 40, 140)
+    expect(callsOf('ocr_start').at(-1)?.[1]).toMatchObject({
+      req: { model_ref: { provider_id: 'ollama', model_id: 'llava' } },
+    })
+  })
+
   it('编辑后 ⌘R：先出确认条（警示语调、按钮带 ⌘R 提示），再按 ⌘R 才重新识别', async () => {
     view()
     await recognize()
@@ -2076,9 +2112,11 @@ describe('拖动', () => {
     expect(activate).not.toHaveBeenCalled()
     down(screen.getByTestId('ocr-text'))
     expect(activate).toHaveBeenCalledTimes(1)
-    down(screen.getByTestId('ocr-layout-caret'))
-    down(screen.getByTestId('ocr-translate-menu'))
-    down(screen.getByTestId('ocr-style-chip'))
+    // 每个 ▾ 都从菜单关着的时候按下：菜单开着时，点外面的那一下只关菜单、不落到下面的控件上
+    for (const id of ['ocr-layout-caret', 'ocr-translate-menu', 'ocr-style-chip']) {
+      down(screen.getByTestId(id))
+      act(() => key('Escape'))
+    }
     expect(activate).toHaveBeenCalledTimes(4)
   })
 

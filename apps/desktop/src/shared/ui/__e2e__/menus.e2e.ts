@@ -3,7 +3,9 @@
  * - 放不下、在菜单里滚动的菜单：滚轮、直接设 scrollTop（等同拖动滚动条）之后不弹回顶部；End 把最后一项滚进视野；
  *   悬停改变高亮不滚动菜单。设置 › OCR 的识别模型下拉（Menu）与面板 OCR「视觉模型 ›」页（PagedMenu）各一条；
  * - 分页菜单换页的过程中与换页之后都不出横向滚动条；
- * - 滚动的是浮层里更深的元素（排除应用的选择器）时同样不受影响。
+ * - 指针停在「›」项上片刻就进入子页（剪贴板「粘贴为」、OCR「视觉模型」），快速经过不进入；悬停进入之后在原处点击、
+ *   抖动几个像素再点击都被吞掉（不粘贴、不重新识别、菜单仍开着），离开原处之后照常选择；
+ * - 菜单开着时，用来关闭菜单的那次点外点击只关菜单，不会同时粘贴下面那一行（分页菜单与 ⋯ 菜单）。
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
 
@@ -32,6 +34,8 @@ async function open(
   return calls
 }
 
+const count = (calls: Call[], ...cmds: string[]) => calls.filter(([c]) => cmds.includes(c)).length
+
 /** 等几帧（rAF）：浮层的重新定位排在滚动之后的下一帧 */
 async function frames(page: Page, n = 3): Promise<void> {
   await page.evaluate(
@@ -43,6 +47,12 @@ async function frames(page: Page, n = 3): Promise<void> {
       }),
     n,
   )
+}
+
+async function center(el: Locator): Promise<{ x: number; y: number }> {
+  const b = await el.boundingBox()
+  if (!b) throw new Error('元素不可见')
+  return { x: b.x + Math.min(40, b.width / 2), y: b.y + b.height / 2 }
 }
 
 /**
@@ -189,4 +199,130 @@ test('设置 › 剪贴板 › 排除应用的选择器（滚动的是浮层里�
   await frames(page)
   await page.waitForTimeout(150)
   expect(await top()).toBe(30)
+})
+
+test.describe('悬停进入子页', () => {
+  /** 右键一条文本，返回菜单与「粘贴为」及其相邻的一项 */
+  async function contextMenu(page: Page) {
+    await page.waitForTimeout(300)
+    const row = page.getByTestId('clip-row').nth(0)
+    const r = await row.boundingBox()
+    if (!r) throw new Error('no row')
+    await page.mouse.click(r.x + 60, r.y + r.height / 2, { button: 'right' })
+    const menu = page.getByTestId('clip-context-menu')
+    await expect(menu).toBeVisible()
+    await page.waitForTimeout(300)
+    const items = menu.locator('[data-page="root"] [role^="menuitem"]')
+    const ids = await items.evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')))
+    const at = ids.indexOf('clip-context-menu-item-paste_as')
+    expect(at).toBeGreaterThan(0)
+    return {
+      menu,
+      before: items.nth(at - 1),
+      target: items.nth(at),
+      after: items.nth(at + 1),
+    }
+  }
+
+  test('剪贴板：指针停在「粘贴为」上进入子页（同一个浮层）；在原处点击、抖动后点击都被吞掉，离开原处后照常粘贴', async ({
+    page,
+  }) => {
+    const calls = await open(page, '/panel.html?scenario=clipboard.list')
+    const { menu, before, target } = await contextMenu(page)
+    const pos = await menu.evaluateHandle((el) => el.parentElement)
+    const from = await center(before)
+    const to = await center(target)
+    await page.mouse.move(from.x, from.y, { steps: 3 })
+    await page.mouse.move(to.x, to.y, { steps: 4 })
+    const sub = page.getByTestId('clip-menu-paste_as')
+    await expect(sub).toBeVisible()
+    // 同一个浮层换页（不是新开一个菜单）
+    expect(await pos.evaluate((el) => (el as HTMLElement).isConnected)).toBe(true)
+    expect(await sub.evaluate((el, p) => el.parentElement === p, pos)).toBe(true)
+    // 悬停进入的子页不预先高亮
+    await expect(sub).not.toHaveAttribute('aria-activedescendant', /./)
+    await page.waitForTimeout(250)
+    // 原处点击：不选择、不关菜单
+    await page.mouse.down()
+    await page.mouse.up()
+    // 抖动 2 px 再点击：同样吞掉
+    await page.mouse.move(to.x + 2, to.y + 1)
+    await page.mouse.down()
+    await page.mouse.up()
+    await page.waitForTimeout(300)
+    expect(count(calls, 'clipboard_paste', 'clipboard_paste_text')).toBe(0)
+    await expect(sub).toBeVisible()
+    // 离开原处之后照常选择：点子页里的第一种变换
+    await sub.locator('[data-page="paste_as"] [role="menuitem"]').nth(1).click()
+    await expect.poll(() => count(calls, 'clipboard_paste')).toBe(1)
+  })
+
+  test('剪贴板：快速经过「粘贴为」不进入子页', async ({ page }) => {
+    await open(page, '/panel.html?scenario=clipboard.list')
+    const { before, after } = await contextMenu(page)
+    const from = await center(before)
+    const to = await center(after)
+    await page.mouse.move(from.x, from.y, { steps: 2 })
+    await page.mouse.move(to.x, to.y, { steps: 3 })
+    await page.waitForTimeout(400)
+    await expect(page.getByTestId('clip-menu-paste_as')).toHaveCount(0)
+    await expect(page.getByTestId('clip-context-menu')).toBeVisible()
+  })
+
+  test('OCR：指针停在「视觉模型」上进入模型页；在原处点击不会用指针下的模型重新识别', async ({
+    page,
+  }) => {
+    const calls = await open(page, '/panel.html?scenario=ocr.done')
+    await page.getByTestId('ocr-recognize-menu').click()
+    await expect(page.getByTestId('ocr-recognize-list')).toBeVisible()
+    await page.waitForTimeout(300)
+    // 从触发器（菜单外）移进「视觉模型」
+    const to = await center(page.getByTestId('ocr-recognize-list-item-models'))
+    await page.mouse.move(to.x, to.y, { steps: 6 })
+    const models = page.getByTestId('ocr-model-menu')
+    await expect(models).toBeVisible()
+    await page.waitForTimeout(250)
+    const before = count(calls, 'ocr_start')
+    await page.mouse.down()
+    await page.mouse.up()
+    await page.waitForTimeout(300)
+    expect(count(calls, 'ocr_start')).toBe(before)
+    await expect(models).toBeVisible()
+  })
+})
+
+test.describe('点外面关闭菜单：只关菜单', () => {
+  test('剪贴板右键菜单开着时点另一行：菜单关闭、不粘贴；再点一次才粘贴', async ({ page }) => {
+    const calls = await open(page, '/panel.html?scenario=clipboard.list')
+    await page.waitForTimeout(300)
+    const rows = page.getByTestId('clip-row')
+    const r1 = await rows.nth(1).boundingBox()
+    const r0 = await rows.nth(0).boundingBox()
+    if (!r1 || !r0) throw new Error('no row')
+    await page.mouse.click(r1.x + 60, r1.y + r1.height / 2, { button: 'right' })
+    await expect(page.getByTestId('clip-context-menu')).toBeVisible()
+    await page.waitForTimeout(300)
+    // 第一条在锚点（第二条上的指针位置）上方，不被菜单盖住
+    await page.mouse.click(r0.x + 60, r0.y + r0.height / 2)
+    await expect(page.getByTestId('clip-context-menu')).toHaveCount(0)
+    await page.waitForTimeout(300)
+    expect(count(calls, 'clipboard_paste')).toBe(0)
+    await page.mouse.click(r0.x + 60, r0.y + r0.height / 2)
+    await expect.poll(() => count(calls, 'clipboard_paste')).toBe(1)
+  })
+
+  test('剪贴板 ⋯ 菜单开着时点一行：菜单关闭、不粘贴', async ({ page }) => {
+    const calls = await open(page, '/panel.html?scenario=clipboard.list')
+    await page.waitForTimeout(300)
+    await page.getByTestId('clip-more').click()
+    await expect(page.getByTestId('clip-more-menu')).toBeVisible()
+    await page.waitForTimeout(300)
+    // ⋯ 菜单靠右展开：点一行的左侧（不被菜单盖住）
+    const row = await page.getByTestId('clip-row').nth(2).boundingBox()
+    if (!row) throw new Error('no row')
+    await page.mouse.click(row.x + 30, row.y + row.height / 2)
+    await expect(page.getByTestId('clip-more-menu')).toHaveCount(0)
+    await page.waitForTimeout(300)
+    expect(count(calls, 'clipboard_paste')).toBe(0)
+  })
 })

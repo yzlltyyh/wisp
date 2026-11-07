@@ -43,6 +43,11 @@ export const timing = {
   tooltipDelay: 0.5,
   /** Popover / HoverPreview 出现前的延迟 */
   hoverDelay: 0.3,
+  /**
+   * 分页菜单：指针停在「›」项上多久进入子页。翻页会替换指针下的整页内容，比侧边子菜单更打断，所以比常见的 100 ms 长；
+   * 「停住」的判定已经滤掉了经过，不必像「进入即计时」那样等到 400 ms
+   */
+  submenuDwell: 0.2,
   /** InlineToast「已复制」的停留 */
   toastHold: 1.5,
   /** 设置 / 引导窗口底部轻提示的停留（一句完整的说明，比「已复制」长；悬停暂停、错误不自动消失） */
