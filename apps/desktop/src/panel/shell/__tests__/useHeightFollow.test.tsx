@@ -204,6 +204,20 @@ describe('useHeightFollow · css', () => {
     expect(resizes()).toEqual([])
   })
 
+  it('收缩途中卡片上限变了：不丢掉等着上报的收缩，也不提前上报', () => {
+    const c = content(200)
+    const hook = renderHook(({ max }) => useHeightFollow(c.ref, 7, true, 'css', max), {
+      initialProps: { max: 400 },
+    })
+    c.set(120)
+    hook.rerender({ max: 500 })
+    act(() => nextFrame())
+    expect(resizes()).toEqual([])
+    expect(hook.result.current.cardHeight).toBe(120)
+    act(() => hook.result.current.onHeightSettled())
+    expect(resizes()).toEqual([120])
+  })
+
   it('新会话不沿用上一次的卡片高度', () => {
     const c = content(150)
     const hook = renderHook(
@@ -213,5 +227,69 @@ describe('useHeightFollow · css', () => {
     expect(hook.result.current.cardHeight).toBe(150)
     hook.rerender({ session: 2, active: false })
     expect(hook.result.current.cardHeight).toBeNull()
+  })
+})
+
+/**
+ * 卡片上限（maxHeight）在会话中途变化（为面板内「展开阅读」预备）：上限用 ref 读取，不重建观察器、不重置卡片高度，
+ * 只按新上限重新量一次
+ */
+describe('useHeightFollow · 卡片上限变化', () => {
+  function followMax(mode: HeightFollowMode, initial: number, initialMax: number) {
+    const c = content(initial)
+    const hook = renderHook(({ max }) => useHeightFollow(c.ref, 7, true, mode, max), {
+      initialProps: { max: initialMax },
+    })
+    return { c, hook }
+  }
+
+  it('不重建观察器', () => {
+    const Base = globalThis.ResizeObserver
+    let created = 0
+    vi.stubGlobal(
+      'ResizeObserver',
+      class extends Base {
+        constructor(cb: ResizeObserverCallback) {
+          super(cb)
+          created += 1
+        }
+      },
+    )
+    try {
+      const { hook } = followMax('native', 300, 400)
+      expect(created).toBe(1)
+      hook.rerender({ max: 600 })
+      hook.rerender({ max: 250 })
+      expect(created).toBe(1)
+    } finally {
+      vi.stubGlobal('ResizeObserver', Base)
+    }
+  })
+
+  it('native：上限变小按新上限重新上报，变大报回内容高度', () => {
+    const { c, hook } = followMax('native', 300, 400)
+    c.set(300)
+    expect(resizes()).toEqual([300])
+    hook.rerender({ max: 250 })
+    act(() => nextFrame())
+    expect(resizes()).toEqual([300, 250])
+    hook.rerender({ max: 600 })
+    act(() => nextFrame())
+    expect(resizes()).toEqual([300, 250, 300])
+  })
+
+  it('css：上限变小时卡片先收缩、结束后再上报；变大时立即上报', () => {
+    const { hook } = followMax('css', 300, 400)
+    expect(hook.result.current.cardHeight).toBe(300)
+    hook.rerender({ max: 250 })
+    act(() => nextFrame())
+    expect(hook.result.current.cardHeight).toBe(250)
+    expect(resizes()).toEqual([])
+    act(() => hook.result.current.onHeightSettled())
+    expect(resizes()).toEqual([250])
+    hook.rerender({ max: 600 })
+    act(() => nextFrame())
+    expect(hook.result.current.cardHeight).toBe(300)
+    expect(resizes()).toEqual([250, 300])
   })
 })

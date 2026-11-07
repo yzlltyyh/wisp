@@ -12,6 +12,9 @@
  * 立即补报：native / opaque 本来就在第一帧上报；css 如果把第一次测量当成「已上报」，窗口会停在 ready 的高度、卡片
  * 被裁掉。
  *
+ * **卡片上限**（`maxHeight`）经 ref 读取：会话中途上限变了（面板内改变阅读布局）不重建观察器——重建会把卡片高度重置为
+ * 当时的测量值、丢掉等着上报的收缩（css 的窗口会先缩、卡片被裁）——只按新上限重新量一次，变高变矮照上面的规则走。
+ *
  * **native 的可见下沿**（`edge`，交给卡片的浮层边界做菜单的下拉帘）：窗口高度前端读不到，按与 Rust 相同的弹簧
  * （spring.gentle，保留速度重定目标；tokens.ts 与 `windows::sizing` 由单测对照）推演——每次上报之后晚一帧开始（Rust
  * 下一帧收到、再下一帧推进，与 translate/reveal.ts 同一口径）；没有订阅者（没有菜单打开）时直接到位、不推演。
@@ -90,16 +93,24 @@ export function useHeightFollow(
   const pendingShrink = useRef<number | null>(null)
   const target = useRef<number | null>(null)
   const flushRef = useRef<(() => void) | null>(null)
+  /** 排一次下一帧的测量（观察器存在时） */
+  const requestRef = useRef<(() => void) | null>(null)
   const sessionRef = useRef(sessionId)
+  const maxRef = useRef(maxHeight)
   useLayoutEffect(() => {
     sessionRef.current = sessionId
   }, [sessionId])
+  useLayoutEffect(() => {
+    if (maxRef.current === maxHeight) return
+    maxRef.current = maxHeight
+    requestRef.current?.()
+  }, [maxHeight])
 
   useEffect(() => {
     const el = ref.current
     if (!el || sessionId === null || !active) return
     // 布局高度（不受进入动画的 scale 影响；getBoundingClientRect 会把 0.96 的缩放算进去）
-    const measure = () => Math.min(maxHeight, el.offsetHeight)
+    const measure = () => Math.min(maxRef.current, el.offsetHeight)
     if (mode === 'css') {
       // 卡片从此刻的内容高度起跳；窗口按 ready 时报的高度显示——两者不同时立即补报（见文件头）
       const h = measure()
@@ -153,16 +164,19 @@ export function useHeightFollow(
       target.current = h
       setCard({ session: sessionId, height: h })
     }
-    const observer = new ResizeObserver(() => {
+    const request = () => {
       if (!frameId) frameId = requestAnimationFrame(onFrame)
-    })
+    }
+    const observer = new ResizeObserver(request)
     observer.observe(el)
+    requestRef.current = request
     flushRef.current = () => {
       if (frameId) cancelAnimationFrame(frameId)
       onFrame()
     }
     return () => {
       flushRef.current = null
+      requestRef.current = null
       observer.disconnect()
       if (frameId) cancelAnimationFrame(frameId)
       if (mirrorFrame) cancelAnimationFrame(mirrorFrame)
@@ -170,7 +184,7 @@ export function useHeightFollow(
       offMirror()
       edge.set(Infinity)
     }
-  }, [ref, sessionId, active, mode, maxHeight, reduced, edge, hint])
+  }, [ref, sessionId, active, mode, reduced, edge, hint])
 
   const flush = useCallback(() => flushRef.current?.(), [])
 
