@@ -10,7 +10,8 @@
 //! 打字时页面调用 `clipboard_float_focus(true)` 临时可聚焦；粘贴前由粘贴管线经 [`WindowManager::float_yield`] 交还。
 //!
 //! **关闭即销毁**（✕ / ⌘W，或系统的关闭）：窗口、WebView 与订阅一起释放，关着时零开销；销毁时把位置与大小写进
-//! state.json。获得焦点或指针移入时顺带触发一次同步拉取（同步层自己节流）。
+//! state.json。打开、获得焦点、指针移入、搜索框聚焦时顺带触发一次同步拉取（同步层自己节流），并告诉实时同步「刚用过
+//! 悬浮窗」（[`touched`]）。
 
 use std::time::Duration;
 
@@ -76,6 +77,13 @@ fn shadow_margin() -> f64 {
     } else {
         0.0
     }
+}
+
+/// 用户与悬浮窗有了交互（打开、获得焦点、指针移入、搜索框聚焦）：实时同步接下来一阵把它当作正在看的剪贴板、按热档
+/// 检查（只是开着的悬浮窗不算，见 `sync_svc::realtime`），并发起一次同步拉取（同步层自己节流）。都是 O(1)
+fn touched(state: &AppState) {
+    state.sync.note_float_use();
+    state.sync.trigger(crate::sync_svc::CycleReason::ClipboardShown);
 }
 
 /// 卡片矩形 → 窗口矩形（本屏逻辑坐标，四周加上阴影边距）
@@ -174,6 +182,9 @@ impl WindowManager {
             // 已经开着：带到前面，面板照常退出（继承的状态不覆盖用户在悬浮窗里的操作）
             let prev = self.panel_prev_app(session);
             native::float_show(&win)?;
+            if let Some(state) = self.app().try_state::<AppState>() {
+                state.sync.note_float_use();
+            }
             self.panel_controller().request_hide_for(session, HideReason::Pin);
             self.hand_focus_back(prev);
             return Ok(());
@@ -277,7 +288,7 @@ impl WindowManager {
         Ok(win)
     }
 
-    /// 生命周期：关闭即销毁（销毁时写下位置与大小）、移动 / 缩放记下外框、获得焦点时同步拉取
+    /// 生命周期：关闭即销毁（销毁时写下位置与大小）、移动 / 缩放记下外框、获得焦点算一次交互（[`touched`]）
     fn watch_float(&self, win: &tauri::WebviewWindow) {
         let window = win.clone();
         let app = self.app().clone();
@@ -310,7 +321,7 @@ impl WindowManager {
                         state.windows.note_own_rect(FLOAT_LABEL, frame);
                     }
                 }
-                WindowEvent::Focused(true) => state.sync.trigger(crate::sync_svc::CycleReason::ClipboardShown),
+                WindowEvent::Focused(true) => touched(&state),
                 _ => {}
             }
         });
@@ -412,7 +423,7 @@ impl WindowManager {
                 *self.float().frame.lock() = Some(rect);
                 self.note_own_rect(FLOAT_LABEL, Some(rect));
                 if let Some(state) = self.app().try_state::<AppState>() {
-                    state.sync.trigger(crate::sync_svc::CycleReason::ClipboardShown);
+                    touched(&state);
                 }
             }
             Err(e) => log::warn!("floating clipboard handoff failed: {}", e.message),
@@ -442,8 +453,8 @@ impl WindowManager {
         Ok(())
     }
 
-    /// 搜索框获得 / 失去焦点（以及 Esc 交还焦点）：临时可聚焦 / 恢复（见 `native::float_set_focusable`）；获得时顺带
-    /// 同步拉取。
+    /// 搜索框获得 / 失去焦点（以及 Esc 交还焦点）：临时可聚焦 / 恢复（见 `native::float_set_focusable`）；获得时算一次
+    /// 交互（[`touched`]）。
     ///
     /// Windows / X11 上恢复不可聚焦只改窗口样式，不会交出前台：悬浮窗仍在前台时之后的键入照样落进它的搜索框。所以
     /// 可聚焦之前记下当时的前台应用，恢复时悬浮窗还在前台就把前台交还给它（macOS 的 `float_set_focusable(false)`
@@ -462,7 +473,7 @@ impl WindowManager {
             }
             native::float_set_focusable(&win, true)?;
             if let Some(state) = state {
-                state.sync.trigger(crate::sync_svc::CycleReason::ClipboardShown);
+                touched(&state);
             }
             return Ok(());
         }
@@ -475,10 +486,10 @@ impl WindowManager {
         Ok(())
     }
 
-    /// 指针移入悬浮窗：同步拉取（同步层自己节流，O(1)）
+    /// 指针移入悬浮窗：算一次交互（[`touched`]，O(1)）
     pub fn float_hover(&self) {
         if let Some(state) = self.app().try_state::<AppState>() {
-            state.sync.trigger(crate::sync_svc::CycleReason::ClipboardShown);
+            touched(&state);
         }
     }
 

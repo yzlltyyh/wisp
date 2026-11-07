@@ -4,8 +4,11 @@
 //! 这是「不引入常驻定时器或轮询」的明确例外，只在用户打开「实时同步」时存在：
 //! - **关闭时零成本**：没有任务、没有计时器、不保留 WebDAV 客户端，其余行为与没有这个功能时完全一样；
 //! - **单个可取消的任务**：节奏全部由 `wisp_sync::realtime::plan` 决定（分档、服务商下限、请求额度、抖动、退避）。
-//!   面板 / 悬浮窗显示、托盘与设置窗口、本机复制、「回到电脑前 / 解锁 / 唤醒」都只是 O(1) 地唤醒它重新规划；
-//!   离开电脑时不联网，有系统事件可等的平台连本机计时器也不设；
+//!   面板 / 悬浮窗显示、与悬浮窗的交互、托盘与设置窗口、本机复制、「回到电脑前 / 解锁 / 唤醒」都只是 O(1) 地唤醒它
+//!   重新规划；离开电脑时不联网，有系统事件可等的平台连本机计时器也不设；
+//! - **热档只给正在看的剪贴板**：剪贴板面板显示着，或者悬浮剪贴板显示着、并且 [`FLOAT_HOT_MS`] 内与它交互过（打开、
+//!   获得焦点、指针移入、搜索框聚焦、从中粘贴）。悬浮窗可以开一整天，只是开着不算：过了这段时间按输入空闲落回活跃 /
+//!   安静档，由规划器下一次计算时自然降档，不另设计时器；
 //! - **安静**：没有变化的探测不发 `sync:status`（只悄悄更新 `checked_ms`，`sync_status` 能读到）；探测失败不碰自动同步
 //!   的退避，连续 3 次才在状态里显示暂时性错误、恢复后清掉；只有服务器限流（429 / 503，遵守 `Retry-After`）和发现变化
 //!   后那一轮的失败进入退避。退避期间本机的改动不安排去抖上传，退避结束后的第一次探测补上（不然要等下一次用户活动）；
@@ -51,6 +54,9 @@ const STOP_WAIT: Duration = Duration::from_secs(5);
 /// 电源状态在任务里缓存这么久（插拔电源、省电模式的通知与唤醒会让它立即作废）：每次规划都读一遍，在 Linux 上是
 /// 读一整个 sysfs 目录
 const POWER_TTL_MS: i64 = 60_000;
+/// 与悬浮剪贴板交互之后，这么久之内把它当作正在看的剪贴板（热档）。只是开着的悬浮窗不算：它可以开一整天，一直按
+/// 热档检查的开销（CPU 与流量）是活跃档的两倍多
+const FLOAT_HOT_MS: i64 = 60_000;
 
 /// 本轮从其他设备拿到的新剪贴板条目（见模块说明）
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +99,8 @@ pub(super) struct Realtime {
     nudge: Arc<Notify>,
     /// [`clock_ms`]；0 = 没有
     last_activity_ms: AtomicI64,
+    /// 最近一次与悬浮剪贴板交互（[`SyncService::note_float_use`]）
+    last_float_ms: AtomicI64,
     last_change_ms: AtomicI64,
     last_push_ms: AtomicI64,
     slow_until_ms: AtomicI64,
@@ -127,6 +135,7 @@ impl Default for Realtime {
             alive: AtomicBool::new(false),
             nudge: Arc::new(Notify::new()),
             last_activity_ms: AtomicI64::new(0),
+            last_float_ms: AtomicI64::new(0),
             last_change_ms: AtomicI64::new(0),
             last_push_ms: AtomicI64::new(0),
             slow_until_ms: AtomicI64::new(0),
@@ -221,6 +230,12 @@ impl Realtime {
 /// 设置页的禁用条件与它一致；「放进本机剪贴板」的子选项也以它为前提（`clipboard_svc::remote_copy`）
 pub(crate) fn wanted_by_settings(s: &SyncSettings) -> bool {
     s.enabled && s.auto && s.realtime && (s.content.clipboard || s.content.ocr_history)
+}
+
+/// 「正在看剪贴板」（规划器的热档条件之一）：剪贴板面板显示着；或者悬浮剪贴板显示着、并且 [`FLOAT_HOT_MS`] 内
+/// 与它交互过。`last_float_ms` 与 `now` 都是 [`clock_ms`]
+fn hot_view_of(clipboard_panel: bool, float_shown: bool, last_float_ms: Option<i64>, now: i64) -> bool {
+    clipboard_panel || (float_shown && last_float_ms.is_some_and(|at| now.saturating_sub(at) < FLOAT_HOT_MS))
 }
 
 /// 取走槽里的值，只在 `Poll` 那一轮交出（[`Realtime::take_listing`]，泛型是为了单测不必构造真的列表）
@@ -406,16 +421,28 @@ impl SyncService {
         });
     }
 
-    /// 剪贴板面板或悬浮剪贴板正显示着
-    fn hot_view(&self) -> bool {
+    /// 用户与悬浮剪贴板有了交互（打开、获得焦点、指针移入、搜索框聚焦、从中粘贴）：接下来的 [`FLOAT_HOT_MS`] 里它算作
+    /// 正在看的剪贴板，实时同步按热档检查。O(1)：记一个时间戳、唤醒任务重新规划（没有任务时只是一次原子写）
+    pub fn note_float_use(&self) {
+        self.realtime.last_float_ms.store(clock_ms(), Ordering::Release);
+        self.realtime.nudge();
+    }
+
+    /// 正在看剪贴板（见 [`hot_view_of`]）
+    fn hot_view(&self, now: i64) -> bool {
         let Some(state) = self.app.as_ref().and_then(|a| a.try_state::<AppState>()) else {
             return false;
         };
-        state
+        let panel = state
             .windows
             .panel_state()
-            .is_some_and(|p| p.view == PanelView::Clipboard)
-            || state.windows.float_ready()
+            .is_some_and(|p| p.view == PanelView::Clipboard);
+        hot_view_of(
+            panel,
+            state.windows.float_ready(),
+            opt(self.realtime.last_float_ms.load(Ordering::Acquire)),
+            now,
+        )
     }
 
     fn platform(&self) -> Option<Arc<wisp_platform::Platform>> {
@@ -492,7 +519,7 @@ impl SyncService {
             input_idle_ms: input_idle.map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
             screen_idle: watch.is_some_and(PresenceWatch::screen_idle),
             last_activity_ms: opt(rt.last_activity_ms.load(Ordering::Acquire)),
-            hot_view: self.hot_view(),
+            hot_view: self.hot_view(now),
             last_change_ms: opt(rt.last_change_ms.load(Ordering::Acquire)),
             last_push_ms: opt(rt.last_push_ms.load(Ordering::Acquire)),
             on_battery: power.on_battery == Some(true),
@@ -1045,6 +1072,76 @@ mod tests {
         svc.running.store(false, Ordering::Release);
         svc.release_remote_if_idle();
         assert!(svc.remote.lock().is_none());
+        svc.deactivate().await;
+    }
+
+    /// 悬浮剪贴板只是开着不算正在看：交互之后 [`FLOAT_HOT_MS`] 内是热档，之后在下一次规划时按输入空闲落回活跃档
+    /// （不另设计时器）；剪贴板面板显示着始终是热档
+    #[test]
+    fn the_floating_clipboard_is_hot_only_shortly_after_use() {
+        let at = 10 * FLOAT_HOT_MS;
+        assert!(hot_view_of(true, false, None, at), "剪贴板面板");
+        assert!(hot_view_of(true, true, Some(1), at), "面板不看交互");
+        assert!(!hot_view_of(false, true, None, at), "开着、没交互过");
+        assert!(hot_view_of(false, true, Some(at), at));
+        assert!(hot_view_of(false, true, Some(at), at + FLOAT_HOT_MS - 1));
+        assert!(!hot_view_of(false, true, Some(at), at + FLOAT_HOT_MS), "60 s 到期");
+        assert!(!hot_view_of(false, false, Some(at), at + 1), "关掉了");
+
+        // 接到规划器上：人在电脑前（1 s 前有输入）、悬浮窗开着
+        let inputs = |now: i64| Inputs {
+            wanted: true,
+            now_ms: now,
+            last_poll_ms: Some(now),
+            input_idle_ms: Some(1_000),
+            screen_idle: false,
+            last_activity_ms: None,
+            hot_view: hot_view_of(false, true, Some(at), now),
+            last_change_ms: None,
+            last_push_ms: None,
+            on_battery: false,
+            low_power: false,
+            metered: false,
+            floor_ms: Provider::Other.floor_ms(2),
+            quota_used: 0,
+            quota_limit: Provider::Other.budget(2),
+            quota_frees_in_ms: 0,
+            failures: 0,
+            retry_after_ms: None,
+            slow_until_ms: None,
+            return_events: true,
+            unlock_events: false,
+            power_events: false,
+            jitter: 0.0,
+        };
+        let soon = inputs(at + 30_000);
+        assert_eq!(plan::tier(&soon), plan::Tier::Hot);
+        assert!(matches!(plan::plan(&soon), Plan::Wait { ms: plan::HOT_MS, .. }));
+        let later = inputs(at + FLOAT_HOT_MS);
+        assert_eq!(plan::tier(&later), plan::Tier::Active);
+        assert!(matches!(
+            plan::plan(&later),
+            Plan::Wait {
+                ms: plan::ACTIVE_MS,
+                ..
+            }
+        ));
+    }
+
+    /// 与悬浮窗的交互记下时间并唤醒在跑的任务重新规划（进热档不必等这一段等待结束）
+    #[tokio::test]
+    async fn using_the_floating_clipboard_wakes_the_planner() {
+        let (_dir, _settings, svc) = service().await;
+        let before = clock_ms();
+        svc.note_float_use();
+        assert!(svc.realtime.last_float_ms.load(Ordering::Acquire) >= before);
+        // 只看唤醒：把「有任务在跑」的标记直接置上，不起真的任务（它会抢走这次唤醒）
+        svc.realtime.alive.store(true, Ordering::Release);
+        svc.note_float_use();
+        tokio::time::timeout(Duration::from_millis(100), svc.realtime.nudge.notified())
+            .await
+            .expect("唤醒了任务");
+        svc.realtime.alive.store(false, Ordering::Release);
         svc.deactivate().await;
     }
 

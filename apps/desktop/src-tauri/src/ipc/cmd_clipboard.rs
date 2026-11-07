@@ -55,10 +55,15 @@ fn check_name(name: Option<&str>) -> Result<Option<String>, IpcError> {
     }
 }
 
-/// 粘贴的宿主：按调用窗口与面板当前的会话、视图推出（面板要正显示能承接 `kind` 的视图，见 `PasteHost::of_window`）
+/// 粘贴的宿主：按调用窗口与面板当前的会话、视图推出（面板要正显示能承接 `kind` 的视图，见 `PasteHost::of_window`）。
+/// 从悬浮剪贴板粘贴也是在用它：告诉实时同步（O(1)，见 `SyncService::note_float_use`）
 fn paste_host(window: &WebviewWindow, app_state: &AppState, kind: PasteKind) -> Result<PasteHost, IpcError> {
     let panel = app_state.windows.panel_state().map(|p| (p.session_id, p.view));
-    PasteHost::of_window(window.label(), panel, kind)
+    let host = PasteHost::of_window(window.label(), panel, kind)?;
+    if host == PasteHost::Floating {
+        app_state.sync.note_float_use();
+    }
+    Ok(host)
 }
 
 async fn paste(
