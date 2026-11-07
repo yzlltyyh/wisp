@@ -351,10 +351,27 @@ function useFocusableScroller(
 /**
  * 「原文 | 译文」两栏按比例同步滚动：任一栏滚动时，另一栏滚到同样的比例（各自的可滚动距离 × 比例）——两栏的文字长度不同，
  * 按比例才大致对得上同一处。滚动事件不冒泡，在两栏的外层用捕获阶段监听（每一代正文都是新的滚动容器，不必重新挂监听）；
- * 程序设置的位置记下来，它引起的那次滚动事件不再同步回去，不会来回弹。流式输出时译文栏跟随到底部、结束后回到开头，原文
- * 栏随之一起走
+ * 程序设置的位置记下来，它引起的那次滚动事件不再同步回去，不会来回弹。
+ *
+ * 译文栏由程序带着走的时候不带动原文栏：
+ * - 流式输出中译文栏自动跟随到底部（StreamView）：这时按比例会把原文栏一路顶到末尾，可译文只翻到中途，两栏对不上——
+ *   原文栏留在原处（刚展开时在开头），用户自己滚动（离开底部）之后才开始同步；
+ * - 流式结束时一路跟随到底部的长结果回到开头（返回的 `returnToTop`）：两栏各自平滑回到开头，期间不互相同步（否则原文栏
+ *   先被拉到末尾再跟着回来）；用户在这期间滚动、或两栏都到了开头之后恢复同步。
+ *
+ * 不在两栏版式时 `returnToTop` 只滚动译文栏。
  */
-function useColumnSync(ref: RefObject<HTMLElement | null>, enabled: boolean): void {
+function useColumnSync(
+  ref: RefObject<HTMLElement | null>,
+  enabled: boolean,
+  streaming: boolean,
+): (result: HTMLElement, behavior: ScrollBehavior) => void {
+  const streamingRef = useRef(streaming)
+  useLayoutEffect(() => {
+    streamingRef.current = streaming
+  }, [streaming])
+  /** 两栏正一起回到开头：期间不互相同步 */
+  const returning = useRef(false)
   useEffect(() => {
     const root = ref.current
     if (!enabled || !root) return
@@ -362,6 +379,10 @@ function useColumnSync(ref: RefObject<HTMLElement | null>, enabled: boolean): vo
     const source = () => root.querySelector<HTMLElement>(':scope > .tv-source-clip > .tv-source')
     const result = () =>
       root.querySelector<HTMLElement>(':scope > .tv-body > .tv-stream:not(.tv-stream-out)')
+    const atBottom = (el: HTMLElement) =>
+      el.scrollTop + el.clientHeight >= el.scrollHeight - FOLLOW_SLACK
+    // 流式输出中、译文栏停在底部：StreamView 正带着它跟随新到的文字（用户往上滚就会离开底部）
+    const following = (el: HTMLElement) => streamingRef.current && atBottom(el)
     const follow = (from: HTMLElement, to: HTMLElement) => {
       const range = from.scrollHeight - from.clientHeight
       const ratio = range > 0 ? from.scrollTop / range : 0
@@ -382,15 +403,45 @@ function useColumnSync(ref: RefObject<HTMLElement | null>, enabled: boolean): vo
         echo.delete(from)
         if (Math.abs(from.scrollTop - expected) < 1) return
       }
+      if (returning.current) {
+        if ((r?.scrollTop ?? 0) <= 0 && (s?.scrollTop ?? 0) <= 0) returning.current = false
+        return
+      }
+      if (from === r && following(r)) return
       follow(from, to)
     }
-    // 刚换成两栏（原文栏是新挂载的、停在开头）：先让原文对齐译文此刻的位置
+    // 用户自己动了（滚轮、触控板、按键、按下滚动条）：回到开头的那段不再拦着同步
+    const onInput = () => {
+      returning.current = false
+    }
+    // 刚换成两栏（原文栏是新挂载的、停在开头）：先让原文对齐译文此刻的位置（译文正跟随流式输出时不对齐，见上）
     const s = source()
     const r = result()
-    if (s && r) follow(r, s)
+    if (s && r && !following(r)) follow(r, s)
     root.addEventListener('scroll', onScroll, true)
-    return () => root.removeEventListener('scroll', onScroll, true)
+    const inputs = ['wheel', 'keydown', 'pointerdown', 'touchstart'] as const
+    for (const type of inputs)
+      root.addEventListener(type, onInput, { capture: true, passive: true })
+    return () => {
+      root.removeEventListener('scroll', onScroll, true)
+      for (const type of inputs) root.removeEventListener(type, onInput, true)
+      returning.current = false
+    }
   }, [ref, enabled])
+  return useCallback(
+    (result: HTMLElement, behavior: ScrollBehavior) => {
+      const s = enabled
+        ? ref.current?.querySelector<HTMLElement>(':scope > .tv-source-clip > .tv-source')
+        : null
+      if (s) {
+        // 原文栏已在开头时也要拦：否则译文栏回去的头几帧按比例把原文栏拉到末尾
+        returning.current = true
+        if (s.scrollTop > 0) s.scrollTo({ top: 0, behavior })
+      }
+      result.scrollTo({ top: 0, behavior })
+    },
+    [ref, enabled],
+  )
 }
 
 export function TranslateView(props: ViewProps<'translate'>) {
@@ -686,8 +737,14 @@ export function TranslateView(props: ViewProps<'translate'>) {
     // oxlint-disable-next-line react/exhaustive-deps
   }, [snap.dimmed, textGen, outgoing])
 
+  useFocusableScroller(bodyScope, textGen, showText && !prewarm)
+
+  // 两栏：按比例同步滚动
+  const columnsRef = useRef<HTMLDivElement>(null)
+  const returnToTop = useColumnSync(columnsRef, columns && !prewarm, busy)
+
   // 流式结束：一路跟随到底部的长结果回到开头（学习风格最重要的「译文」小节在最前面）——面板与固定窗口同一种行为
-  // （停在末尾的话，开头被顶部渐隐盖住）；用户自己往上滚过（不在底部）时不动
+  // （停在末尾的话，开头被顶部渐隐盖住）；用户自己往上滚过（不在底部）时不动。两栏时原文栏一起回到开头
   const wasBusy = useRef(busy)
   useEffect(() => {
     const ended = wasBusy.current && !busy
@@ -696,16 +753,10 @@ export function TranslateView(props: ViewProps<'translate'>) {
     const el = bodyScope.current?.querySelector<HTMLElement>(CURRENT_TEXT)
     if (!el || el.scrollHeight <= el.clientHeight + 1) return
     if (el.scrollTop + el.clientHeight < el.scrollHeight - FOLLOW_SLACK) return
-    el.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' })
+    returnToTop(el, reduced ? 'auto' : 'smooth')
     // 只在流式结束时执行一次
     // oxlint-disable-next-line react/exhaustive-deps
   }, [busy])
-
-  useFocusableScroller(bodyScope, textGen, showText && !prewarm)
-
-  // 两栏：按比例同步滚动
-  const columnsRef = useRef<HTMLDivElement>(null)
-  useColumnSync(columnsRef, columns && !prewarm)
   // 刚展开阅读（面板此刻取得键盘焦点）：焦点放进译文栏，溢出时方向键 / 翻页键直接滚动它；放得下时至少离开展开按钮，
   // 免得空格又把它收起
   const wasReading = useRef(panelReading)
@@ -991,7 +1042,9 @@ export function TranslateView(props: ViewProps<'translate'>) {
         if (host === 'panel') pin(false)
       },
     },
-    // 展开 / 收起阅读（面板宿主、这次显示能展开时）。收起也可以按 Esc（外壳：Esc 先收起、再按一次才关闭）
+    // 展开 / 收起阅读（面板宿主、这次显示能展开时）。收起也可以按 Esc（外壳：Esc 先收起、再按一次才关闭）。与本视图
+    // 其余快捷键一样不带 allowInInput：翻译视图里能输入的只有菜单的搜索框，那里打字不该触发视图快捷键（OCR 视图的正文
+    // 是可编辑的文本框，它的快捷键都在文本框里生效）
     {
       combo: READING_SHORTCUT,
       when: () => toggleReading !== undefined,

@@ -1195,6 +1195,48 @@ describe('展开阅读', () => {
     expect(source.scrollTop).toBe(0)
   })
 
+  it('流式输出中译文栏跟随到底部时不带动原文栏，用户往上滚才同步；结束回到开头时两栏各自回去、不互相拉扯', async () => {
+    await mount(payload(), { toggleReading: vi.fn<() => void>(), reading: 'columns' })
+    ipc.push('rx', start('rx'), delta('一半'))
+    await waitFor(() => expect(bodyText()).toBe('一半'))
+    const source = sized(screen.getByTestId('tv-source'), 1000, 200)
+    const result = sized(screen.getByTestId('tv-stream'), 500, 200)
+    // StreamView 带着译文栏跟随到底部：原文栏留在开头（不被按比例顶到末尾）
+    result.scrollTop = 300
+    fireEvent.scroll(result)
+    expect(source.scrollTop).toBe(0)
+    // 用户往上滚（离开底部）：开始同步
+    result.scrollTop = 150
+    fireEvent.scroll(result)
+    expect(source.scrollTop).toBe(400)
+    // 又滚回底部（StreamView 恢复跟随）：不再带动原文栏
+    result.scrollTop = 300
+    fireEvent.scroll(result)
+    expect(source.scrollTop).toBe(400)
+
+    // 流式结束、一路跟随到底部：两栏都平滑回到开头（jsdom 不滚动，下面逐步模拟平滑滚动的中间位置）
+    const targets: Array<[string, number | undefined]> = []
+    source.scrollTo = ((o: ScrollToOptions) => targets.push(['source', o.top])) as never
+    result.scrollTo = ((o: ScrollToOptions) => targets.push(['result', o.top])) as never
+    ipc.push('rx', done())
+    await waitFor(() => expect(targets).toContainEqual(['result', 0]))
+    expect(targets).toContainEqual(['source', 0])
+    result.scrollTop = 200
+    fireEvent.scroll(result)
+    expect(source.scrollTop).toBe(400)
+    source.scrollTop = 100
+    fireEvent.scroll(source)
+    expect(result.scrollTop).toBe(200)
+    result.scrollTop = 0
+    fireEvent.scroll(result)
+    source.scrollTop = 0
+    fireEvent.scroll(source)
+    // 都到了开头：恢复同步
+    result.scrollTop = 150
+    fireEvent.scroll(result)
+    expect(source.scrollTop).toBe(400)
+  })
+
   it('普通布局（开着原文对照）不同步滚动', async () => {
     await mount(payload(), { toggleReading: vi.fn<() => void>() })
     await finish('rx', '译文')

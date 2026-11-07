@@ -7,7 +7,8 @@ import type { PhysSize, ReadingLayout } from '../shared/ipc/types'
 
 /**
  * 展开 / 收起阅读的快捷键（翻译 / OCR 视图，面板宿主）：⌘⇧E / Ctrl+Shift+E。不用 ⌘E（剪贴板里是「提取」），面板里
- * 其余组合都已占用；Ctrl+Shift+F（微软拼音的简繁切换）、Ctrl+Shift+空格这类中文输入法占用的组合都避开了
+ * 其余组合都已占用；Ctrl+Shift+F（微软拼音的简繁切换）、Ctrl+Shift+空格这类中文输入法占用的组合都避开了。较早的 IBus
+ * （例如 1.5.17）把 Ctrl+Shift+E 用作 emoji 输入，按键可能到不了 WebView——头部的展开按钮始终可用
  */
 export const READING_SHORTCUT = 'Mod+Shift+KeyE'
 
