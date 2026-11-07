@@ -258,4 +258,22 @@ describe('连续粘贴的进度', () => {
     )
     expect(screen.getByTestId('toast-detail').textContent).toBe(t(message, { n }))
   })
+
+  it('粘贴键不对：说明提到前台应用自己的粘贴键，而不是「没检测到输入框」', () => {
+    const props = viewProps<'toast'>(
+      {
+        kind: 'toast',
+        reason: 'copy_only',
+        paste_key: 'Shift+Insert',
+        queue: { active: true, index: 2, total: 5 },
+        queue_note: 'key_mismatch',
+      },
+      { focused: false },
+    )
+    renderIn(<ToastView {...props} />)
+    const detail = screen.getByTestId('toast-detail').textContent
+    expect(detail).toBe(t('clipboard.queue.key_mismatch', { key: 'Shift+Insert', n: 3 }))
+    expect(detail).toContain('Shift+Insert')
+    expect(detail).not.toBe(t('clipboard.queue.kept', { n: 3 }))
+  })
 })

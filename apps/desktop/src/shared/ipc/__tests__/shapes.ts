@@ -276,7 +276,12 @@ const CopiedReason = enumOf<T.CopiedReason>()('CopiedReason', {
   no_permission: 1,
   manual: 1,
 })
-const QueueNote = enumOf<T.QueueNote>()('QueueNote', { kept: 1, back: 1, skipped: 1 })
+const QueueNote = enumOf<T.QueueNote>()('QueueNote', {
+  kept: 1,
+  key_mismatch: 1,
+  back: 1,
+  skipped: 1,
+})
 const HotkeyAction = enumOf<T.HotkeyAction>()('HotkeyAction', {
   translate_selection: 1,
   translate_input: 1,
@@ -791,6 +796,13 @@ export const registry = {
     transforms: arr(TransformId),
   }),
   QueueStatus: obj<T.QueueStatus>()('QueueStatus', { active: bool, index: num, total: num }),
+  QueueChanged: obj<T.QueueChanged>()('QueueChanged', {
+    active: bool,
+    index: num,
+    total: num,
+    note: opt(nul(QueueNote)),
+    paste_key: opt(nul(str)),
+  }),
   ClipDragData: obj<T.ClipDragData>()('ClipDragData', { text: str, html: nul(str), uri: nul(str) }),
   HighlightRange: obj<T.HighlightRange>()('HighlightRange', { start: num, end: num }),
   ClipHit: obj<T.ClipHit>()('ClipHit', {

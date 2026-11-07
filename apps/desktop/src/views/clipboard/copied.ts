@@ -5,13 +5,21 @@ import type { CopiedReason, OsKind, QueueNote, QueueStatus } from '../../shared/
 import type { TFunction } from '../../shared/i18n/useT'
 
 /**
- * 连续粘贴这一次进度的说明（toast 的第二行、退回 / 跳过之后的轻提示）。条目序号从 1 数：留着的、退回到的是下一次要粘贴
- * 的那一条（index + 1）；跳过的是刚越过的那一条（index）
+ * 连续粘贴这一次进度的说明（toast 的第二行、悬浮窗与退回 / 跳过之后的轻提示）。条目序号从 1 数：留着的、退回到的是下一次
+ * 要粘贴的那一条（index + 1）；跳过的是刚越过的那一条（index）。`pasteKey` 是说明里提到的粘贴键（toast / 事件的
+ * `paste_key`），只有「粘贴键不对」用到
  */
-export function queueNoteText(note: QueueNote, q: QueueStatus, t: TFunction): string {
+export function queueNoteText(
+  note: QueueNote,
+  q: QueueStatus,
+  t: TFunction,
+  pasteKey: string = '',
+): string {
   switch (note) {
     case 'kept':
       return t('clipboard.queue.kept', { n: q.index + 1 })
+    case 'key_mismatch':
+      return t('clipboard.queue.key_mismatch', { key: pasteKey, n: q.index + 1 })
     case 'back':
       return t('clipboard.queue.back', { n: q.index + 1 })
     case 'skipped':

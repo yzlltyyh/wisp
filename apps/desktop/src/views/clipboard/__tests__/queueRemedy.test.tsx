@@ -1,8 +1,9 @@
 /**
- * 连续粘贴的补救入口（操作注册表的 queue_back / queue_skip）：
- * - 悬浮窗头部有「退回一条」（点按不抢目标应用的焦点），面板与悬浮窗的 ⋯ 菜单里有「退回一条」「跳过一条」；
+ * 连续粘贴的补救入口（操作注册表的 queue_back / queue_skip）与悬浮窗里的说明：
+ * - 悬浮窗头部有「退回一条」（点按不抢目标应用的焦点），面板头部没有；面板与悬浮窗的 ⋯ 菜单里有「退回一条」「跳过一条」；
  * - 只在队列进行中出现；已经在第一条之前时菜单里不列「退回一条」；
- * - 命令返回新的进度后在窗口里轻提示这一次的说明；Rust 没有改动（返回 null）时什么都不提示。
+ * - 命令返回新的进度后在窗口里轻提示这一次的说明；退回返回 null（已经退到第一条之前）时说一声；命令失败时提示没做成；
+ * - 悬浮剪贴板开着时 Rust 不弹 toast：`clipboard:queue` 带来的说明（留到下一次、粘贴键不对）由悬浮窗轻提示，不进 store。
  */
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -78,17 +79,81 @@ describe('连续粘贴的退回 / 跳过', () => {
     )
   })
 
-  it('Rust 没有改动（粘贴进行中、已在第一条之前）时不提示', async () => {
+  it('已经退到第一条之前（Rust 返回 null）：头部的按钮仍在，点了说一声', async () => {
     ipc.results.clipboard_queue_back = null
     mountFloating()
-    act(() => ipc.emit('clipboard:queue', { active: true, index: 1, total: 3 }))
-    // 进度那一句轻提示先出现
-    const status = await screen.findByTestId('clip-status')
-    const before = status.textContent
-    fireEvent.click(screen.getByTestId('clip-tool-queue_back'))
-    await act(() => Promise.resolve())
+    act(() => ipc.emit('clipboard:queue', { active: true, index: 0, total: 3 }))
+    fireEvent.click(await screen.findByTestId('clip-tool-queue_back'))
     expect(ipc.called('clipboard_queue_back')).toHaveLength(1)
-    expect(screen.getByTestId('clip-status').textContent).toBe(before)
+    await waitFor(() =>
+      expect(screen.getByTestId('clip-status').textContent).toBe(t('clipboard.queue.at_first')),
+    )
+  })
+
+  it('跳过返回 null（粘贴进行中的一瞬间）时不提示；命令失败时提示没做成', async () => {
+    ipc.results.clipboard_queue_skip = null
+    mountPanel()
+    act(() => ipc.emit('clipboard:queue', { active: true, index: 1, total: 3 }))
+    await openMore()
+    fireEvent.click(screen.getByTestId('clip-more-menu-item-queue_skip'))
+    await act(() => Promise.resolve())
+    expect(ipc.called('clipboard_queue_skip')).toHaveLength(1)
+    expect(screen.queryByTestId('clip-status')?.textContent ?? '').toBe('')
+
+    ipc.results.clipboard_queue_skip = () => {
+      throw new Error('boom')
+    }
+    await openMore()
+    fireEvent.click(screen.getByTestId('clip-more-menu-item-queue_skip'))
+    await waitFor(() =>
+      expect(screen.getByTestId('clip-status').textContent).toBe(
+        t('clipboard.status.failed.queue_skip'),
+      ),
+    )
+  })
+
+  it('面板头部没有「退回一条」（⋯ 与 ⌘K 里有），悬浮窗头部有', async () => {
+    mountPanel()
+    act(() => ipc.emit('clipboard:queue', { active: true, index: 1, total: 3 }))
+    await screen.findByTestId('clip-tool-queue_cancel')
+    expect(screen.queryByTestId('clip-tool-queue_back')).toBeNull()
+    expect(screen.queryByTestId('clip-tool-queue_skip')).toBeNull()
+  })
+
+  it('悬浮窗里轻提示事件带来的说明（Rust 此时不弹 toast），进度照常记下、说明不进 store', async () => {
+    mountFloating()
+    act(() => ipc.emit('clipboard:queue', { active: true, index: 1, total: 3 }))
+    await screen.findByTestId('clip-tool-queue_back')
+    // 粘到了 Finder 的文件视图：进度不变，第 2 条留到下一次
+    act(() => ipc.emit('clipboard:queue', { active: true, index: 1, total: 3, note: 'kept' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('clip-status').textContent).toBe(
+        t('clipboard.queue.kept', { n: 2 }),
+      ),
+    )
+    // xterm 里按了 Ctrl+V：说出它自己的粘贴键
+    act(() =>
+      ipc.emit('clipboard:queue', {
+        active: true,
+        index: 1,
+        total: 3,
+        note: 'key_mismatch',
+        paste_key: 'Shift+Insert',
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.getByTestId('clip-status').textContent).toBe(
+        t('clipboard.queue.key_mismatch', { key: 'Shift+Insert', n: 2 }),
+      ),
+    )
+    // 下一次普通的进度：回到进度那一句（说明只出现一次）
+    act(() => ipc.emit('clipboard:queue', { active: true, index: 2, total: 3 }))
+    await waitFor(() =>
+      expect(screen.getByTestId('clip-status').textContent).toBe(
+        t('clipboard.queue.progress', { index: 2, total: 3 }),
+      ),
+    )
+    expect(screen.getByTestId('clip-tool-queue_back')).toBeTruthy()
   })
 
   it('⋯ 菜单里有退回与跳过；跳过之后轻提示跳过了第几条', async () => {

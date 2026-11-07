@@ -516,10 +516,19 @@ export interface QueueStatus {
   total: number
 }
 /**
- * 连续粘贴这一次进度变化的说明（只随这一次的 toast 出现，不进 QueueStatus）：kept = 判断这一下没有粘贴进去、这一条留到
- * 下一次；back = 用户退回了一条；skipped = 用户跳过了一条
+ * 连续粘贴这一次进度变化的说明（只随这一次的 toast / 事件出现，不进 QueueStatus）：kept = 判断这一下没有粘贴进去、这一条
+ * 留到下一次；key_mismatch = 按下的不是前台应用的粘贴键（xterm 里按了 Ctrl+V），这一条留到下一次，说明里提到它自己的
+ * 粘贴键；back = 用户退回了一条；skipped = 用户跳过了一条
  */
-export type QueueNote = 'kept' | 'back' | 'skipped'
+export type QueueNote = 'kept' | 'key_mismatch' | 'back' | 'skipped'
+/**
+ * clipboard:queue 事件载荷：进度（三个键平铺）加上这一次的说明与它提到的粘贴键（与这一次进度 toast 的 queue_note /
+ * paste_key 相同，只随说明出现）。前端只把进度存进 store，说明用完即弃
+ */
+export interface QueueChanged extends QueueStatus {
+  note?: QueueNote | null
+  paste_key?: string | null
+}
 /** 平台读到的原始剪贴板内容（platform → clipboard，不跨 IPC；`Vec<u8>` 序列化为数字数组） */
 export interface RawClipboard {
   change_id: number
@@ -1532,8 +1541,8 @@ export interface EventMap {
   'sync:status': SyncStatus
   /** 术语表在设置窗口之外被改动（同步、手改文件）→ settings：没有未保存的编辑时重新读取 */
   'glossary:changed': null
-  /** 连续粘贴的进度与结束 → panel、悬浮剪贴板 */
-  'clipboard:queue': QueueStatus
+  /** 连续粘贴的进度与结束（附这一次的说明）→ panel、悬浮剪贴板 */
+  'clipboard:queue': QueueChanged
   /** 离线模型的下载进度（节流）、安装 / 删除、加载 / 释放 → 全部 */
   'offline_models:changed': LocalModelsSnapshot
 }

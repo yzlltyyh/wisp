@@ -168,16 +168,28 @@ function pasteTargets(c: ActionCtx, x: ActionEnv, mode: PasteMode): void {
 }
 
 /**
- * 连续粘贴退回 / 跳过一条。进度经 `clipboard:queue` 推送（悬浮窗随之轻提示进度）；命令返回之后再轻提示这一次的说明
- * （「已退回到第 2 条」），盖过进度那一句。没有改动（粘贴进行中、已经退到第一条之前）时什么都不提示
+ * 连续粘贴退回 / 跳过一条。进度与说明经 `clipboard:queue` 推送（悬浮窗随之轻提示说明）；命令返回之后再轻提示一次同样的
+ * 说明（「已退回到第 2 条」）——面板开着时既没有 toast、也不轻提示 `clipboard:queue`，靠这一次。
+ *
+ * 退回返回 null 几乎总是因为已经退到第一条之前：头部的按钮不随序号重新渲染、一直列着，什么都不说的话这一下像没点到。
+ * 另外两种 null（粘贴进行中的那一瞬间、队列刚结束）转瞬即逝，同样这么说也无妨；跳过返回 null 只有这两种，不提示。
+ * 命令本身失败时说明没做成
  */
 function queueRemedy(x: ActionEnv, note: 'back' | 'skipped'): void {
-  const run = note === 'back' ? api.clipboardQueueBack : api.clipboardQueueSkip
+  const back = note === 'back'
+  const run = back ? api.clipboardQueueBack : api.clipboardQueueSkip
   run().then(
     (status) => {
       if (status) x.cmd.showStatus(queueNoteText(note, status, translate), 'info')
+      else if (back) x.cmd.showStatus(translate('clipboard.queue.at_first'), 'info')
     },
-    () => undefined,
+    () =>
+      x.cmd.showStatus(
+        translate(
+          back ? 'clipboard.status.failed.queue_back' : 'clipboard.status.failed.queue_skip',
+        ),
+        'error',
+      ),
   )
 }
 
@@ -558,7 +570,9 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
     run: (_c, x) => x.cmd.openFloat(),
   },
   // 连续粘贴的补救：判断不了的失误（网页里点到正文、点到不接收焦点的地方）由用户退回 / 跳过。悬浮窗的工具栏按钮不抢
-  // 目标应用的键盘焦点，点完直接回去按粘贴键；进度由 Rust 推送，这里只在命令返回后轻提示这一次的说明
+  // 目标应用的键盘焦点，点完直接回去按粘贴键；进度由 Rust 推送，这里只在命令返回后轻提示这一次的说明。
+  // 头部只放「退回一条」（最常用的补救；悬浮窗最窄 320 px，头部已有搜索框、过滤、置顶、关闭、结束与 ⋯），「跳过一条」在
+  // ⋯ 与 ⌘K 里。面板的头部不放：队列进行中面板很少打开，它的 ⋯ 与 ⌘K 里都有
   queue_back: {
     group: 'view',
     arity: 'none',
@@ -566,8 +580,8 @@ const TABLE: { readonly [I in ClipActionId]: ActionDef<ActionArgs[I]> } = {
     label: () => 'clipboard.action.queue_back',
     icon: Undo2,
     surfaces: {
-      // 头部的按钮只随「进行中」重新渲染，不跟着序号变：一直列出，退到第一条之前时 Rust 什么都不做
-      toolbar: {},
+      // 头部的按钮只随「进行中」重新渲染，不跟着序号变：一直列出，退到第一条之前时 Rust 什么都不做、这里说一声
+      toolbar: { when: (c) => c.host === 'pinned' },
       more: { when: (c) => (c.s.queue?.index ?? 0) > 0 },
       command: { when: (c) => (c.s.queue?.index ?? 0) > 0 },
     },

@@ -81,7 +81,8 @@ pub struct ToastPayload {
     /// 普通的粘贴结果省略（TS：`queue?: QueueStatus | null`）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue: Option<QueueStatus>,
-    /// 这一次连续粘贴进度的说明（这一条留到下一次 / 已退回 / 已跳过）；没有时省略（TS：`queue_note?: QueueNote | null`）
+    /// 这一次连续粘贴进度的说明（这一条留到下一次 / 粘贴键不对 / 已退回 / 已跳过）；没有时省略
+    /// （TS：`queue_note?: QueueNote | null`）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue_note: Option<QueueNote>,
 }
@@ -852,7 +853,7 @@ pub mod event {
     pub const SYNC_STATUS: &str = "sync:status";
     /// `()`（null）→ settings：术语表在设置窗口之外被改动（同步、手改文件）。术语编辑器没有未保存的编辑时重新读取
     pub const GLOSSARY_CHANGED: &str = "glossary:changed";
-    /// `QueueStatus` → panel、悬浮剪贴板：连续粘贴的进度与结束
+    /// `QueueChanged` → panel、悬浮剪贴板：连续粘贴的进度与结束（附这一次的说明）
     pub const CLIPBOARD_QUEUE: &str = "clipboard:queue";
     /// `LocalModelsSnapshot` → 全部：离线模型的下载进度（节流）、安装 / 删除、加载 / 释放
     pub const OFFLINE_MODELS_CHANGED: &str = "offline_models:changed";

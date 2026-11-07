@@ -199,7 +199,9 @@
       "search": "Search failed — please try again",
       "load": "Couldn’t load more items",
       "float": "Couldn’t open the floating clipboard",
-      "queue": "Couldn’t start pasting in sequence — please try again"
+      "queue": "Couldn’t start pasting in sequence — please try again",
+      "queue_back": "Couldn’t go back — please try again",
+      "queue_skip": "Couldn’t skip — please try again"
     }
   },
   "toast": {
@@ -224,9 +226,11 @@
     "next": "Press {key} for the next one · Esc to stop",
     "done": "Finished pasting in sequence",
     "stopped": "Stopped pasting in sequence",
-    "kept": "No text field detected — item {n} stays for your next paste",
+    "kept": "No text field — item {n} stays for next paste",
+    "key_mismatch": "This app pastes with {key} — item {n} stays for next paste",
     "back": "Back to item {n}",
-    "skipped": "Skipped item {n}"
+    "skipped": "Skipped item {n}",
+    "at_first": "Already at the first item"
   },
   "float": {
     "unavailable": "The floating clipboard was closed"

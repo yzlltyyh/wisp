@@ -675,6 +675,20 @@ export const QueueStatus = {
   "total": 5
 } satisfies T.QueueStatus
 
+export const QueueChanged = {
+  "active": true,
+  "index": 2,
+  "total": 5
+} satisfies T.QueueChanged
+
+export const QueueChanged__key_mismatch = {
+  "active": true,
+  "index": 2,
+  "total": 5,
+  "note": "key_mismatch",
+  "paste_key": "Shift+Insert"
+} satisfies T.QueueChanged
+
 export const HighlightRange = {
   "start": 4,
   "end": 9

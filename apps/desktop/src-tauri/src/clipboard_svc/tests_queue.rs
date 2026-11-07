@@ -407,6 +407,32 @@ fn progress_replaces_the_previous_progress_toast() {
 }
 
 #[test]
+fn the_queue_event_carries_this_change_s_note_once() {
+    use super::port::queue_event;
+    use wisp_types::{CopiedReason, ToastPayload};
+    let s = status(true, 1, 3);
+    let toast = |note: Option<QueueNote>, key: &str| ToastPayload {
+        reason: CopiedReason::CopyOnly,
+        paste_key: key.into(),
+        queue: Some(s),
+        queue_note: note,
+    };
+    // 只推进度（结束、第一条只复制）与普通的进度：没有说明
+    for t in [None, Some(toast(None, "⌘V"))] {
+        let e = queue_event(&s, t.as_ref());
+        assert_eq!((e.status, e.note, e.paste_key), (s, None, None));
+    }
+    // 悬浮剪贴板开着时 toast 不弹：说明与它提到的粘贴键随事件给悬浮窗的轻提示
+    let e = queue_event(&s, Some(&toast(Some(QueueNote::Kept), "⌘V")));
+    assert_eq!((e.note, e.paste_key.as_deref()), (Some(QueueNote::Kept), Some("⌘V")));
+    let e = queue_event(&s, Some(&toast(Some(QueueNote::KeyMismatch), "Shift+Insert")));
+    assert_eq!(
+        (e.note, e.paste_key.as_deref()),
+        (Some(QueueNote::KeyMismatch), Some("Shift+Insert"))
+    );
+}
+
+#[test]
 fn a_rejected_target_keeps_the_item_for_the_next_paste_key() {
     let r = rig();
     let [a, b, c] = three(&r);
@@ -671,8 +697,12 @@ fn replay_keys_follow_the_front_app() {
         replay_key(ctrl_v, ctrl_v, send("Ctrl+Shift+KeyV")),
         ReplayKey::Mapped(ctrl_shift_v)
     );
-    // xterm 的 Shift+Insert 不含 Ctrl：仍按着的 Ctrl 会让它变成别的组合，不换键、这一条留住
-    assert_eq!(replay_key(ctrl_v, ctrl_v, send("Shift+Insert")), ReplayKey::Mismatch);
+    // xterm 的 Shift+Insert 不含 Ctrl：仍按着的 Ctrl 会让它变成别的组合，不换键、这一条留住（带上它自己的粘贴键，
+    // 说明里要提到）
+    assert_eq!(
+        replay_key(ctrl_v, ctrl_v, send("Shift+Insert")),
+        ReplayKey::Mismatch(shift_insert)
+    );
     // 按下的是映射表里别的应用的粘贴键（浏览器里的 Ctrl+Shift+V 是纯文本粘贴）：原样重放
     assert_eq!(replay_key(ctrl_shift_v, ctrl_v, send("Ctrl+KeyV")), ReplayKey::Pressed);
     assert_eq!(replay_key(shift_insert, ctrl_v, send("Ctrl+KeyV")), ReplayKey::Pressed);
@@ -698,7 +728,7 @@ fn a_paste_key_the_front_app_does_not_use_is_replaced_or_keeps_the_item() {
     assert!(r.port.hooks.press(ctrl_v));
     assert_eq!(r.port.hooks.replayed.lock().last(), Some(&chord("Ctrl+Shift+KeyV")));
     assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
-    // xterm：按键原样交给它，但这一条留住，不读焦点
+    // xterm：按键原样交给它，但这一条留住，不读焦点；说明不是「没检测到输入框」，而是提到它自己的粘贴键
     *r.port.paste.foreground_key.lock() = Some(KeyChoice::Send(Combo::parse("Shift+Insert").expect("combo")));
     r.calls();
     assert!(r.port.hooks.press(ctrl_v));
@@ -706,7 +736,17 @@ fn a_paste_key_the_front_app_does_not_use_is_replaced_or_keeps_the_item() {
     let calls = r.calls();
     assert!(!calls.contains(&Call::Probe), "{calls:?}");
     assert_eq!(r.engine.queue_status(), Some(status(true, 2, 3)));
-    assert_eq!(last_note(&r), Some(QueueNote::Kept));
+    let toast = r.host.queue_toasts.lock().last().cloned().expect("进度 toast");
+    assert_eq!(toast.queue_note, Some(QueueNote::KeyMismatch));
+    assert_eq!(
+        toast.paste_key,
+        crate::hotkeys::display::display("Shift+Insert", OsKind::Linux)
+    );
+    // 之后照常的进度又回到平台默认键的说法
+    *r.port.paste.foreground_key.lock() = Some(KeyChoice::Send(Combo::parse("Ctrl+KeyV").expect("combo")));
+    assert!(r.port.hooks.press(ctrl_v));
+    let toast = r.host.queue_toasts.lock().last().cloned().expect("进度 toast");
+    assert_eq!((toast.queue_note, toast.paste_key.as_str()), (None, "Ctrl+V"));
 
     // 只拦下一种粘贴键时（macOS 默认）不查前台应用
     let r = rig();

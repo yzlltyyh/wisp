@@ -57,8 +57,9 @@ export function ToastView(props: ViewProps<'toast'>) {
   const enter = usePreset('toast')
   const [hovered, setHovered] = useState(false)
   const visible = phase === 'entering' || phase === 'shown'
-  // 连续粘贴的进度：主文案是进度，说明是下一次要按的键（不写只复制的原因）；这一次有说明（留到下一次 / 已退回 /
-  // 已跳过）时换成说明
+  // 连续粘贴的进度：主文案是进度，说明是下一次要按的键（不写只复制的原因）；这一次有说明（留到下一次 / 粘贴键不对 /
+  // 已退回 / 已跳过）时换成说明。说明可能折成两行：它是这一次唯一要紧的信息，不能被省略或截掉
+  // （「粘贴键不对」的 paste_key 是前台应用自己的粘贴键）
   const queue = payload.queue ?? null
   const queueNote = payload.queue_note ?? null
   const copyOnly = payload.reason === 'copy_only' || queue !== null
@@ -66,7 +67,7 @@ export function ToastView(props: ViewProps<'toast'>) {
   const inPlace = focused
   const detail = queue
     ? queueNote
-      ? queueNoteText(queueNote, queue, t)
+      ? queueNoteText(queueNote, queue, t, payload.paste_key)
       : queue.active
         ? t('clipboard.queue.next', { key: payload.paste_key })
         : null

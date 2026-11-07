@@ -1030,6 +1030,32 @@ fn all_samples() -> Samples {
             total: 5,
         },
     );
+    // 事件载荷：普通的进度没有说明
+    x.add(
+        "QueueChanged",
+        QueueChanged {
+            status: QueueStatus {
+                active: true,
+                index: 2,
+                total: 5,
+            },
+            note: None,
+            paste_key: None,
+        },
+    );
+    // xterm 里按了 Ctrl+V：按键原样交给它，第 3 条留到下一次，说明里提到它自己的粘贴键
+    x.add(
+        "QueueChanged.key_mismatch",
+        QueueChanged {
+            status: QueueStatus {
+                active: true,
+                index: 2,
+                total: 5,
+            },
+            note: Some(QueueNote::KeyMismatch),
+            paste_key: Some(s("Shift+Insert")),
+        },
+    );
     x.add("HighlightRange", HighlightRange { start: 4, end: 9 });
     x.add(
         "ClipHit",
@@ -2278,11 +2304,35 @@ fn optional_fields_are_omitted_by_default() {
     // 连续粘贴说明的线上取值
     for (note, wire) in [
         (QueueNote::Kept, "kept"),
+        (QueueNote::KeyMismatch, "key_mismatch"),
         (QueueNote::Back, "back"),
         (QueueNote::Skipped, "skipped"),
     ] {
         assert_eq!(serde_json::to_value(note).expect("json"), wire);
     }
+    // clipboard:queue 的载荷：进度的三个键平铺，没有说明时与 QueueStatus 完全相同（旧的监听方照常解析）
+    let status = QueueStatus {
+        active: true,
+        index: 1,
+        total: 3,
+    };
+    let event = QueueChanged {
+        status,
+        note: None,
+        paste_key: None,
+    };
+    assert_eq!(
+        serde_json::to_value(&event).expect("json"),
+        serde_json::to_value(status).expect("json")
+    );
+    assert_eq!(roundtrip_value(&event), event);
+    let kept: QueueChanged =
+        serde_json::from_value(serde_json::json!({ "active": true, "index": 1, "total": 3, "note": "kept" }))
+            .expect("json");
+    assert_eq!(
+        (kept.status, kept.note, kept.paste_key),
+        (status, Some(QueueNote::Kept), None)
+    );
     assert_eq!(roundtrip_value(&toast_payload()), toast_payload());
     let collapsed = ClipboardPayload {
         favorites_collapsed: true,

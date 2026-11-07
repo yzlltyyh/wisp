@@ -36,7 +36,7 @@ import type {
   OsKind,
   PasteMode,
   PasteOutcome,
-  QueueStatus,
+  QueueChanged,
   TransformId,
 } from '../../shared/ipc/types'
 import type { PanelPhase } from '../../panel/types'
@@ -50,7 +50,7 @@ import {
   orderEntities,
   orderTransforms,
 } from '../../shared/smart/specs'
-import { copiedNotice, queueNotice } from './copied'
+import { copiedNotice, queueNoteText, queueNotice } from './copied'
 import type { ClipHost } from './host'
 import { isTextual } from './kinds'
 import {
@@ -291,7 +291,7 @@ export function awaitClipboardView(): void {
   missedChanges = false
 }
 /** `clipboard:queue`（连续粘贴的进度）同样按当前挂载的视图分发 */
-let queueSink: ((status: QueueStatus) => void) | null = null
+let queueSink: ((change: QueueChanged) => void) | null = null
 /** `settings:changed` 里的识别设置变了：当前挂载的视图丢掉按旧设置算出的检视结果 */
 let smartSink: (() => void) | null = null
 /** 上一次看到的识别设置（序列化后比较；null = 还没看到过） */
@@ -1295,10 +1295,18 @@ export function createClipCommands(
     api.clipboardQueueCancel().catch(() => undefined)
   }
 
-  /** 进度：进行中的记在 store 里（工具栏的「结束连续粘贴」、菜单据此出现）；悬浮窗另在窗口里轻提示 */
-  const onQueue = (status: QueueStatus) => {
+  /**
+   * 进度：进行中的记在 store 里（工具栏的「结束连续粘贴」、菜单据此出现）；悬浮窗另在窗口里轻提示。这一次有说明（留到
+   * 下一次 / 粘贴键不对 / 已退回 / 已跳过）时提示说明：悬浮剪贴板开着时 Rust 不弹 toast，这是用户唯一能知道「这一下
+   * 没算数」的地方。说明只随这一次事件，不进 store
+   */
+  const onQueue = ({ note, paste_key, ...status }: QueueChanged) => {
     set({ queue: status.active ? status : null })
-    if (host().copiedNotice === 'status') showStatus(queueNotice(status, t), 'info')
+    if (host().copiedNotice !== 'status') return
+    showStatus(
+      note ? queueNoteText(note, status, t, paste_key ?? pasteKey()) : queueNotice(status, t),
+      'info',
+    )
   }
 
   // ----- 拖出：按下时取好拖拽数据（每次按下只留一份；拖拽开始的回调里同步读取）
@@ -1451,7 +1459,7 @@ export function createClipCommands(
       installClipboardEvents()
       const sink = (change: ClipboardChanged) => onChanged(change)
       changedSink = sink
-      const onQueueEvent = (status: QueueStatus) => onQueue(status)
+      const onQueueEvent = (change: QueueChanged) => onQueue(change)
       queueSink = onQueueEvent
       // 识别设置变了（例如关掉「证件与银行卡号」）：Rust 的检视缓存已按新设置作废，这里按 id 缓存的结果同样作废，
       // 当前条目重新检视——常驻的悬浮窗里不能一直显示已关闭种类的芯片与「提取」项

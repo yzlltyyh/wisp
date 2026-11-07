@@ -16,7 +16,7 @@
 //! - 重放之后读一次焦点所在之处的类别（`common::paste_target`，只读类别不读内容）：文本条目落在经典按钮、Finder /
 //!   资源管理器的文件视图与桌面、菜单上时，这一条留到下一次粘贴键（提示「留到下一次」）。判断不了一律照常前进；
 //! - 按下的是平台默认的粘贴键、前台应用却映射了别的粘贴键（Linux 终端的 Ctrl+Shift+V）：改发它的粘贴键；改键不安全时
-//!   原样重放、这一条留住；
+//!   原样重放、这一条留住（提示里说出它自己的粘贴键）；
 //! - 这一条还没粘贴出去、期间剪贴板被别的复制改写了：下一次先重新写入它再重放。
 //!
 //! 不论判定如何，拦下的按键都照常重放：误判的最坏结果是下一次粘贴键再粘贴同一条，绝不会卡住。判断不了的失误（网页里
@@ -349,22 +349,25 @@ impl Engine {
     /// 什么都不做，返回 None；否则返回新的进度。**会阻塞**（进度提示要与主线程往返，结束时还要卸载钩子）
     pub(crate) fn queue_skip(&self) -> Option<QueueStatus> {
         let now = self.host.now_ms();
-        let (mut status, done, epoch) = {
+        let (mut status, ended) = {
             let mut g = self.queue.inner.lock();
             let run = g.run.as_mut().filter(|r| !r.busy)?;
             if run.pasted {
-                // 队列没有结束说明 `loaded` 之后还有条目
+                // 队列还在说明 `loaded` 之后还有条目（用完的队列在同一个临界区里就被取走，见下）
                 run.loaded += 1;
                 run.loaded_change = None;
             } else {
                 run.pasted = true;
             }
             run.active_at = now;
-            (run.status(), run.loaded + 1 >= run.ids.len(), run.epoch)
+            let status = run.status();
+            let done = run.loaded + 1 >= run.ids.len();
+            // 用完了就在同一个临界区里取走：放开锁之后再结束的话，中间插进来的退回 / 跳过会作用到一个已经用完的队列上
+            (status, if done { g.run.take() } else { None })
         };
         log::info!("sequential paste: skipped to {}/{}", status.index, status.total);
-        if done {
-            self.end_epoch_noted(epoch, QueueEnd::Done, Some(QueueNote::Skipped));
+        if ended.is_some() {
+            self.finish_run(ended, QueueEnd::Done, Some(QueueNote::Skipped));
             status.active = false;
         } else {
             self.host
@@ -400,10 +403,6 @@ impl Engine {
 
     /// 结束第 `epoch` 代队列（已经结束或换了一代时什么都不做）
     fn end_epoch(&self, epoch: u64, why: QueueEnd) {
-        self.end_epoch_noted(epoch, why, None);
-    }
-
-    fn end_epoch_noted(&self, epoch: u64, why: QueueEnd, note: Option<QueueNote>) {
         let run = {
             let mut g = self.queue.inner.lock();
             if g.run.as_ref().is_some_and(|r| r.epoch == epoch) {
@@ -412,7 +411,7 @@ impl Engine {
                 None
             }
         };
-        self.finish_run(run, why, note);
+        self.finish_run(run, why, None);
     }
 
     /// 钩子信号（在阻塞线程上执行）
@@ -495,15 +494,19 @@ impl Engine {
         };
         let sent = match key {
             ReplayKey::Mapped(mapped) => mapped,
-            ReplayKey::Pressed | ReplayKey::Mismatch => chord,
+            ReplayKey::Pressed | ReplayKey::Mismatch(_) => chord,
         };
         if !self.replay(sent) {
             self.end_epoch(epoch, QueueEnd::Failed);
             return;
         }
-        // 按键原样交给了不认它的应用：已经确定没粘贴进去，不必再读焦点
-        let kept = key == ReplayKey::Mismatch || matches!(self.probe_target(ids[next]), PasteTarget::Rejects(_));
-        let (status, done) = {
+        // 按键原样交给了不认它的应用：已经确定没粘贴进去，不必再读焦点；提示说出它自己的粘贴键，而不是「没检测到输入框」
+        let mismatch = match key {
+            ReplayKey::Mismatch(front) => Some(front),
+            ReplayKey::Pressed | ReplayKey::Mapped(_) => None,
+        };
+        let kept = mismatch.is_some() || matches!(self.probe_target(ids[next]), PasteTarget::Rejects(_));
+        let (status, ended) = {
             let mut g = self.queue.inner.lock();
             let Some(run) = g.run.as_mut().filter(|r| r.epoch == epoch) else {
                 return;
@@ -512,14 +515,25 @@ impl Engine {
             run.loaded_change = Some(change);
             run.pasted = !kept;
             run.busy = false;
-            // 最后一条留着时不结束：钩子还在，下一次粘贴键再粘贴它
-            (run.status(), run.pasted && run.loaded + 1 >= run.ids.len())
+            let status = run.status();
+            // 最后一条留着时不结束：钩子还在，下一次粘贴键再粘贴它。粘贴出去了就在同一个临界区里取走：放开锁之后再结束
+            // 的话，中间插进来的退回 / 跳过会作用到一个已经用完的队列上（序号越过总数、或说「已退回」而队列其实已结束）
+            let done = run.pasted && run.loaded + 1 >= run.ids.len();
+            (status, if done { g.run.take() } else { None })
         };
-        if done {
-            self.end_epoch(epoch, QueueEnd::Done);
+        if ended.is_some() {
+            self.finish_run(ended, QueueEnd::Done, None);
         } else {
-            let note = kept.then_some(QueueNote::Kept);
-            self.host.queue_changed(&status, Some(self.queue_toast(status, note)));
+            let note = if mismatch.is_some() {
+                Some(QueueNote::KeyMismatch)
+            } else {
+                kept.then_some(QueueNote::Kept)
+            };
+            let mut toast = self.queue_toast(status, note);
+            if let Some(front) = mismatch {
+                toast.paste_key = self.chord_label(front);
+            }
+            self.host.queue_changed(&status, Some(toast));
         }
     }
 
@@ -529,6 +543,11 @@ impl Engine {
         if let Some(run) = g.run.as_mut().filter(|r| r.epoch == epoch) {
             run.busy = false;
         }
+    }
+
+    /// 一组键的显示串（与进度提示里的粘贴键同一种写法）
+    fn chord_label(&self, chord: KeyChord) -> String {
+        crate::hotkeys::display::display(&chord.to_combo().to_canonical(), self.os)
     }
 
     /// 前台应用的粘贴键核对（见 [`replay_key`]）。**会阻塞**（X11 要与服务器往返）
@@ -654,7 +673,7 @@ impl Engine {
     }
 
     /// 连续粘贴进度的 toast 载荷（toast 视图显示「连续粘贴 · 2 / 5」与下一次要按的粘贴键；`note` 给出时改为这一次的
-    /// 说明：留到下一次 / 已退回 / 已跳过）
+    /// 说明：留到下一次 / 粘贴键不对 / 已退回 / 已跳过）
     pub(crate) fn queue_toast(&self, status: QueueStatus, note: Option<QueueNote>) -> ToastPayload {
         ToastPayload {
             reason: CopiedReason::CopyOnly,
@@ -672,8 +691,8 @@ pub(crate) enum ReplayKey {
     Pressed,
     /// 改发前台应用映射的粘贴键
     Mapped(KeyChord),
-    /// 前台应用不认这个键、又不能安全地换键：原样重放，但这一条算没有粘贴进去
-    Mismatch,
+    /// 前台应用不认这个键、又不能安全地换键：原样重放，但这一条算没有粘贴进去。带着前台应用自己的粘贴键（提示里说出它）
+    Mismatch(KeyChord),
 }
 
 /// 拦下的粘贴键 `pressed` 在前台应用里是不是它的粘贴键（`front` 是 `Paste::foreground_paste_key` 的结果，`default` 是
@@ -702,7 +721,7 @@ pub(crate) fn replay_key(pressed: KeyChord, default: KeyChord, front: Option<Key
     if covers {
         ReplayKey::Mapped(mapped)
     } else {
-        ReplayKey::Mismatch
+        ReplayKey::Mismatch(mapped)
     }
 }
 

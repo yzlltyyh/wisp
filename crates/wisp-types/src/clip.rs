@@ -288,16 +288,34 @@ pub struct QueueStatus {
     pub total: u32,
 }
 
-/// 连续粘贴这一次进度变化的说明（只随这一次的 toast 出现，不进 [`QueueStatus`]：进度会被前端存下来，说明只该显示一次）
+/// 连续粘贴这一次进度变化的说明（只随这一次的 toast / 事件出现，不进 [`QueueStatus`]：进度会被前端存下来，说明只该
+/// 显示一次）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueueNote {
-    /// 这一下判断为没有粘贴进去（焦点不在能收文本的地方、或按下的不是前台应用的粘贴键）：这一条留到下一次粘贴键
+    /// 这一下判断为没有粘贴进去（焦点不在能收文本的地方）：这一条留到下一次粘贴键
     Kept,
+    /// 按下的不是前台应用的粘贴键、又不能安全地换成它（xterm / mintty 里按了 Ctrl+V）：按键原样交给了应用，这一条留到
+    /// 下一次。说明里提到的粘贴键是前台应用自己的（toast 的 `paste_key`）
+    KeyMismatch,
     /// 用户退回了一条：下一次粘贴键重新粘贴它
     Back,
     /// 用户跳过了一条
     Skipped,
+}
+
+/// `clipboard:queue` 事件载荷：进度，加上这一次变化的说明（与这一次进度 toast 的 `queue_note` / `paste_key` 相同）。
+/// 面板的 toast 不弹时（悬浮剪贴板开着）说明由悬浮窗的轻提示显示；前端只把进度存进 store，说明用完即弃
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueChanged {
+    #[serde(flatten)]
+    pub status: QueueStatus,
+    /// 这一次的说明；没有时省略（TS：`note?: QueueNote | null`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<QueueNote>,
+    /// 说明里提到的粘贴键（显示串，如 "Shift+Insert"），只随说明出现（TS：`paste_key?: string | null`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paste_key: Option<String>,
 }
 
 /// `clipboard:changed` 事件载荷

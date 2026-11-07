@@ -21,8 +21,8 @@ use wisp_platform::{
     AppInfo, ClipboardAccess, FocusTracker, HookError, HookHandle, InputSignal, KeyChord, Paste, PasteKeys, Platform,
 };
 use wisp_types::{
-    AppRef, Capability, ClipboardChanged, HideReason, OcrHistoryChanged, PanelView, QueueStatus, Settings,
-    ToastPayload, event,
+    AppRef, Capability, ClipboardChanged, HideReason, OcrHistoryChanged, PanelView, QueueChanged, QueueStatus,
+    Settings, ToastPayload, event,
 };
 
 use crate::app::perf::PerfMarks;
@@ -165,6 +165,17 @@ pub(crate) fn queue_toast_shown(panel: Option<PanelView>, float_ready: bool) -> 
     panel.is_none_or(|v| v == PanelView::Toast) && !float_ready
 }
 
+/// `clipboard:queue` 的载荷：进度，加上这一次 toast 的说明与它提到的粘贴键。toast 不弹时（悬浮剪贴板开着、面板正显示）
+/// 说明只能经事件送到视图里——悬浮窗据此轻提示「第 n 条留到下一次」，否则用户只看到进度数字没变
+pub(crate) fn queue_event(status: &QueueStatus, toast: Option<&ToastPayload>) -> QueueChanged {
+    let note = toast.and_then(|t| t.queue_note);
+    QueueChanged {
+        status: *status,
+        note,
+        paste_key: toast.filter(|_| note.is_some()).map(|t| t.paste_key.clone()),
+    }
+}
+
 /// 由面板状态（会话 id 与视图）得出剪贴板视图的状态（纯函数，单测覆盖）
 pub(crate) fn clip_view_of(state: Option<(u64, PanelView)>, shown: impl FnOnce(u64) -> bool) -> ClipView {
     match state {
@@ -195,8 +206,9 @@ pub(crate) trait Host: Send + Sync {
     fn float_ready(&self) -> bool;
     /// 向悬浮剪贴板推送 `clipboard:changed`
     fn emit_float(&self, change: &ClipboardChanged);
-    /// 连续粘贴的进度变了：推送 `clipboard:queue`（面板与悬浮剪贴板）、刷新托盘；`toast` 给出时（每粘贴一条）在原面板
-    /// 位置以 toast 视图提示进度——面板正显示着、或悬浮剪贴板开着（它自己显示进度）时不弹。**会阻塞**（toast 要主线程往返）
+    /// 连续粘贴的进度变了：推送 `clipboard:queue`（面板与悬浮剪贴板，附 toast 的说明，见 [`queue_event`]）、刷新托盘；
+    /// `toast` 给出时（每粘贴一条）在原面板位置以 toast 视图提示进度——面板正显示着、或悬浮剪贴板开着（它自己显示进度
+    /// 与说明）时不弹。**会阻塞**（toast 要主线程往返）
     fn queue_changed(&self, status: &QueueStatus, toast: Option<ToastPayload>);
     /// Wisp 自己的某个窗口此刻持有键盘焦点（原子读，在粘贴键路径上调用；生产实现读窗口获焦事件维护的标志，见
     /// `windows::key_focus`）：这时拦下的粘贴键是给 Wisp 自己的，连续粘贴只重放、不前进
@@ -366,8 +378,9 @@ impl Host for AppHost {
     }
 
     fn queue_changed(&self, status: &QueueStatus, toast: Option<ToastPayload>) {
+        let payload = queue_event(status, toast.as_ref());
         for label in [PANEL_LABEL, super::FLOAT_LABEL] {
-            if let Err(e) = self.app.emit_to(label, event::CLIPBOARD_QUEUE, status) {
+            if let Err(e) = self.app.emit_to(label, event::CLIPBOARD_QUEUE, &payload) {
                 log::debug!("emit clipboard:queue failed: {e}");
             }
         }

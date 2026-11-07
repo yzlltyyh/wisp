@@ -19,6 +19,7 @@ import type {
   PasteOutcome,
   PermissionSet,
   Provider,
+  QueueNote,
   QueueStatus,
   SettingsSnapshot,
   Style,
@@ -345,11 +346,12 @@ export function installDefaults(d: DefaultsDeps): void {
       uri: one?.kind === 'link' ? one.preview : null,
     }
   })
-  // 连续粘贴的进度（退回 / 跳过据此改；mock 不拦粘贴键，进度只随这几个命令变化）
+  // 连续粘贴的进度（退回 / 跳过据此改；mock 不拦粘贴键，进度只随这几个命令变化）。事件与 Rust 一样附上这一次的说明，
+  // 记下的进度不带说明
   let queue: QueueStatus | null = null
-  const queueChanged = (next: QueueStatus) => {
+  const queueChanged = (next: QueueStatus, note?: QueueNote) => {
     queue = next.active ? next : null
-    bus.emit('clipboard:queue', next)
+    bus.emit('clipboard:queue', note ? { ...next, note } : next)
     return next
   }
   r.handle('clipboard_queue_start', ({ ids }) => {
@@ -362,12 +364,12 @@ export function installDefaults(d: DefaultsDeps): void {
     bus.emit('clipboard:queue', { active: false, index: 0, total: 0 })
   })
   r.handle('clipboard_queue_back', () =>
-    queue && queue.index > 0 ? queueChanged({ ...queue, index: queue.index - 1 }) : null,
+    queue && queue.index > 0 ? queueChanged({ ...queue, index: queue.index - 1 }, 'back') : null,
   )
   r.handle('clipboard_queue_skip', () => {
     if (!queue) return null
     const index = queue.index + 1
-    return queueChanged({ active: index < queue.total, index, total: queue.total })
+    return queueChanged({ active: index < queue.total, index, total: queue.total }, 'skipped')
   })
   r.handle('clipboard_float_open', () => {
     if (d.panel?.currentSession != null) d.panel.hide(d.panel.currentSession, 'pin')
