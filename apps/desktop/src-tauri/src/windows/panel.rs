@@ -523,6 +523,8 @@ struct ReadingRestore {
     max_height: f64,
     /// 展开时所在屏的工作区高度：期间被拖到另一块屏时，恢复的会话上限按两块屏工作区高度的比例换算
     work_height: f64,
+    /// 展开之前位置就已不按锚点约束（[`Session::loose`]，例如原地替换继承来的）：收起后照旧按整个工作区算上限、照旧推回
+    loose: bool,
     layout: ReadingLayout,
 }
 
@@ -2391,7 +2393,8 @@ impl PanelController {
     /// - Css（带透明边距）：窗口取新旧两张卡片的并集，卡片稳定后随富余区回收；不透明窗口直接改到新宽度。
     ///
     /// 宽度没变时什么都不做——Rust 发起的交叉淡入（`transition = crossfade` 的 prepare）在 ready 时已经按新宽度
-    /// 安排好了，前端在交换时照样调用一次也无妨。只对当前已显示的会话生效
+    /// 安排好了，前端在交换时照样调用一次也无妨。只对当前已显示的会话生效；展开阅读中只记下这个宽度（收起时恢复到它），
+    /// 不改几何与窗口
     pub fn set_width(&self, session_id: u64, width: f64) {
         enum Act {
             Native(WidthSwitch),
@@ -2408,6 +2411,13 @@ impl PanelController {
             else {
                 return;
             };
+            if let Some(reading) = s.reading.as_mut() {
+                // 展开阅读中宽度由阅读布局决定：只记下视图要的新宽度，收起时按它恢复。前端在展开的淡出期间（阅读版式还没
+                // 提交）仍可能因视图内切换调到这里，这时改窗口会替换掉阅读的那次切换，窗口停在普通宽度、卡片却按阅读宽度
+                // 排版，右侧被裁掉
+                reading.width = width;
+                return;
+            }
             let old = s.open.geometry.clone();
             let mut next = old.keep_position(width, old.cap);
             // 视图内切换不换 prepare：前端的高度上限不变（拖动过的面板固定边可能贴近工作区边缘，按位置重算会比前端的小，
@@ -2470,7 +2480,8 @@ impl PanelController {
     ///
     /// - 位置按 [`PanelGeometry::keep_position`] 保持（左边不动、右侧越出工作区时整体左移；固定边不动），只在卡片所在屏的
     ///   工作区内算。展开后按「拖过的面板」处理（[`Session::loose`]）：上限按整个工作区算，卡片长到工作区外时整体推回；
-    ///   收起时 v1 保持当前位置，上限恢复为展开之前的值（不超过固定边以外的空间；拖过的面板按整个工作区）；
+    ///   收起时保持当前位置，上限恢复为展开之前的值（不超过固定边以外的空间；拖过的面板、展开之前就已不按锚点约束的
+    ///   面板——原地替换继承来的——按整个工作区，也照旧推回）；
     /// - 上限变化与宽度切换在同一时刻提交：Native 帧模式的 [`WidthSwitch`] 排在 `timing.crossfade` 之后（与前端淡出完同一
     ///   时刻），同一帧重新固定 WebView；在那之前卡片高度仍按旧上限夹（[`Session::reading_hold`]），不会先缩高、再收宽；
     /// - Css 帧模式（带透明边距）：窗口要取新旧两张卡片的并集（宽度稳定后回收），Above 放置的窗口高度按新上限重算（顶边
@@ -2517,6 +2528,7 @@ impl PanelController {
                     cap: old.cap,
                     max_height: old.max_height,
                     work_height: old.screen.work.height,
+                    loose: s.loose,
                     layout: plan.layout,
                 });
                 s.loose = true;
@@ -2525,7 +2537,9 @@ impl PanelController {
                 next
             } else {
                 let saved = s.reading.take()?;
-                s.loose = false;
+                // 回到展开之前的约束：原地替换继承来的「不按锚点约束」不因展开 / 收起而丢掉（否则收起后上限按固定边以外的
+                // 空间算、变小，也不再推回）
+                s.loose = saved.loose;
                 // 阅读期间被拖到另一块屏：会话上限按两块屏工作区高度的比例换算（与 follow_window 同一规则）
                 let cap = if saved.work_height > 0.0 && (saved.work_height - old.screen.work.height).abs() >= 0.5 {
                     (saved.cap * old.screen.work.height / saved.work_height)
@@ -2535,7 +2549,7 @@ impl PanelController {
                     saved.cap
                 };
                 let mut next = old.keep_position(saved.width, cap);
-                next.max_height = if s.dragged {
+                next.max_height = if s.dragged || saved.loose {
                     next.movable_max_height()
                 } else {
                     saved
@@ -8648,6 +8662,73 @@ mod tests {
         );
         // 新会话照样能展开（从 360 宽）
         assert_eq!(c.set_reading(2, true), Some(expanded(760.0, 684.0)));
+    }
+
+    /// 原地替换继承来的「不按锚点约束」在新会话展开 / 收起之后仍在：收起后上限按整个工作区（不按固定边以外的空间），
+    /// 长到工作区外照样整体推回
+    #[test]
+    fn reading_collapse_keeps_the_inherited_loose_position() {
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        // 选区在 370：下方 422，普通上限 min(483, 422) = 422
+        c.prepare(open(1, PanelView::Translate, Rect::new(300.0, 370.0, 100.0, 18.0)));
+        c.ready(1, 300.0).expect("shown");
+        c.set_reading(1, true).expect("expanded");
+        host.take_timers();
+        host.take();
+        // 原地替换：继承 loose，上限 483
+        c.prepare(open_with(2, anchor_b(), 360.0, PanelTransition::Crossfade));
+        c.ready(2, 150.0).expect("shown in place");
+        switch_done(&c);
+        host.take_timers();
+        host.take();
+        assert_eq!(c.set_reading(2, true), Some(expanded(760.0, 684.0)));
+        // 收起：不按固定边以外的 422 夹，仍是展开之前的 483
+        assert_eq!(c.set_reading(2, false), Some(collapsed(360.0, 483.0)));
+        host.take();
+        c.resize(2, 483.0, ResizeSpring::Gentle);
+        assert!(
+            host.take().iter().any(|c| matches!(c, Call::HeightBound(_))),
+            "收起后仍按不按锚点约束的面板推回"
+        );
+        // 普通会话（没有继承）展开再收起：照旧回到按固定边以外的空间算的上限
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(open(1, PanelView::Translate, Rect::new(300.0, 370.0, 100.0, 18.0)));
+        c.ready(1, 150.0).expect("shown");
+        c.set_reading(1, true).expect("expanded");
+        assert_eq!(c.set_reading(1, false), Some(collapsed(420.0, 422.0)));
+    }
+
+    /// 展开阅读中视图内改宽度（展开的淡出期间前端还按普通布局发起的视图切换）：不改几何与窗口、不替换阅读的那次切换，
+    /// 只记下新宽度，收起时恢复到它
+    #[test]
+    fn set_width_while_reading_only_updates_the_restore_width() {
+        for mode in [FrameMode::Native, FrameMode::Css] {
+            let host = MockHost::existing();
+            let margin = if mode == FrameMode::Css { 24.0 } else { 0.0 };
+            let c = loaded(&host, mode, margin);
+            c.prepare(open(1, PanelView::Translate, anchor_a()));
+            c.ready(1, 300.0).expect("shown");
+            host.take_timers();
+            host.take();
+            assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 684.0)));
+            host.take();
+            c.set_width(1, 520.0);
+            let calls = host.take();
+            assert!(switches(&calls).is_empty(), "{mode:?}: {calls:?}");
+            assert!(set_frames(&calls).is_empty(), "{mode:?}: {calls:?}");
+            assert_eq!(
+                c.snapshot().expect("snapshot").rect.width,
+                760.0,
+                "{mode:?}: 卡片仍按阅读宽度"
+            );
+            assert_eq!(
+                c.set_reading(1, false),
+                Some(collapsed(520.0, 483.0)),
+                "{mode:?}: 收起恢复到视图要的新宽度"
+            );
+        }
     }
 
     /// 150% 缩放与副屏：几何在卡片所在屏的逻辑坐标里算，最后才换成物理像素
