@@ -116,7 +116,10 @@ export interface ClipListProps {
    * 会让它临时可聚焦、抢走目标应用的键盘
    */
   refocusSearch: boolean
-  /** 列表末尾的滚动余量（px）：底部停靠的确认条 / 轻提示压在列表上时，最后一行能停在它们上方（见 model.ts 的 DOCK_INSET） */
+  /**
+   * 列表末尾的滚动余量（px）：底部停靠的确认条 / 轻提示压在列表上时，最后一行能停在它们上方（见 model.ts 的
+   * DOCK_INSET / DOCK_INSET_HINT）
+   */
   endInset: number
 }
 

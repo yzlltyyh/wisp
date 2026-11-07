@@ -104,6 +104,7 @@ import { useClipHost, useHostHeight, type GrowFollow } from './host'
 import {
   BANNER_HEIGHT,
   DOCK_INSET,
+  DOCK_INSET_HINT,
   EMPTY_HEIGHT,
   FILTERS,
   HEADER_HEIGHT,
@@ -793,7 +794,7 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
             listboxId={listboxId}
             showKey={shown ? sessionId : null}
             refocusSearch={host.focusOnShow}
-            endInset={hintBar ? 0 : DOCK_INSET}
+            endInset={hintBar ? DOCK_INSET_HINT : DOCK_INSET}
           />
         )}
         <AnimatePresence>

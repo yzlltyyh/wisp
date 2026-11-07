@@ -2,10 +2,11 @@
  * 剪贴板视图的浏览器级用例：jsdom 不排版、没有真实的指针速度与按键默认行为，这些只能在真实引擎里验证——
  * - 芯片小条：以正常速度（约 1 px / ms）从选中行上横着移过去点芯片，粘贴的是片段；小条出现在静止的指针下时单击
  *   仍是「点这一行」；触屏轻点与读屏 / 键盘的合成点击照样是点芯片；从第 1 行竖直扫到第 4 行，选中跟手、没有页面错误；
+ * - 底部停靠的确认条：有提示条时键盘移到最后一条再删除，确认条停在这一行下面；
  * - Space：正在输入搜索词时是空格，↓ 之后是预览。
  * 运行方式见 apps/desktop/playwright.config.ts。
  */
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 
 test.use({ viewport: { width: 1280, height: 800 } })
 
@@ -60,6 +61,20 @@ async function liveStrip(page: Page) {
     page.locator('.clip-rowchips-slot:not([data-hold]):not([data-exiting])'),
   ).toHaveCount(1)
   return strip
+}
+
+/** 布局停下来之后的位置与尺寸（确认条从下往上展开、列表滚动都有过渡）：连续两次读到的相同才算 */
+async function settledBox(page: Page, locator: Locator) {
+  let prev: Awaited<ReturnType<Locator['boundingBox']>> = null
+  for (let i = 0; i < 40; i++) {
+    // oxlint-disable-next-line no-await-in-loop -- 逐次读取，比较前后两次
+    const box = await locator.boundingBox()
+    if (box && prev && box.y === prev.y && box.height === prev.height) return box
+    prev = box
+    // oxlint-disable-next-line no-await-in-loop -- 同上
+    await page.waitForTimeout(50)
+  }
+  throw new Error('layout did not settle')
 }
 
 test('芯片小条：以正常速度从选中行上横着移过去点芯片，粘贴片段（不是整条）', async ({ page }) => {
@@ -138,6 +153,25 @@ test.describe('触屏', () => {
       .toEqual([expect.objectContaining({ text: '482913', mode: 'normal' })])
     expect(called(calls, 'clipboard_paste')).toEqual([])
   })
+})
+
+test('有提示条时用键盘移到最后一条再删除：确认条停在这一行下面，不压住它', async ({ page }) => {
+  await open(page, 'clipboard.favorites-view')
+  await expect(page.getByTestId('clip-show-favorites')).toHaveCount(0)
+  await expect(page.locator('.clip-hints')).toBeVisible()
+  const search = page.getByTestId('clip-search')
+  await search.click()
+  await page.keyboard.press('Meta+ArrowDown')
+  const id = await search.getAttribute('aria-activedescendant')
+  const last = page.locator(`#${id}`)
+  await expect(last).toHaveAttribute('data-clip-id', /\d+/)
+  await page.keyboard.press('Backspace')
+  const dock = page.getByTestId('clip-confirm-delete')
+  await expect(dock).toBeVisible()
+  const dockAt = await settledBox(page, dock)
+  const rowAt = await settledBox(page, last)
+  // 整行（含选中背景）都在确认条上沿之上：标题不被压住，也不落进确认条上沿的渐隐遮罩
+  expect(dockAt.y).toBeGreaterThanOrEqual(rowAt.y + rowAt.height - 0.5)
 })
 
 test('从第 1 行竖直扫到第 4 行：选中项跟着指针走，没有页面错误', async ({ page }) => {
