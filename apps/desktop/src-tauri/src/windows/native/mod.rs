@@ -17,7 +17,7 @@
 //! | `OVERLAY_FOLLOWS_POINTER` | 多屏截图时按键焦点是否由原生层跟随指针（macOS 的 NSTrackingArea；否则编排器轮询光标作兜底） |
 //! | `PANEL_RECYCLE_AFTER` | 用过的面板隐藏多久之后回收 WebView、重建干净的预热页面（空闲卸载的变体；macOS 45 s，Windows / Linux None：macOS 上空闲零 CPU 优先） |
 //! | `RESTORE_FOCUS_ON_HIDE` | 隐藏取得过焦点的面板后是否要主动把焦点还给原应用（macOS 的非激活面板天然还原） |
-//! | `NOTICE_CORNER` | 连续粘贴的进度提示放在屏幕的哪个角（macOS / Linux 右上，Windows 右下：与各自系统通知的位置一致） |
+//! | `NOTICE_CORNER` | 连续粘贴的进度提示放在屏幕的哪个角（macOS 右上、Windows 右下，与系统通知的位置一致；Linux 各桌面不统一，取右上，离常见的底部面板远） |
 //! | `PINNED_CSS_SHADOW` | Pinned 窗口是否透明并由 CSS 画圆角阴影（只有 Linux；它的 boot 带阴影边距） |
 //! | `set_regular_activation` | macOS ActivationPolicy 切换 |
 //! | `template_overrides` | 模板的平台差异 |

@@ -41,7 +41,8 @@ pub const PANEL_RECYCLE_AFTER: Option<std::time::Duration> = None;
 pub const HAS_WINDOW_CENSUS: bool = false;
 /// 输入 / 剪贴板视图取得了键盘焦点，隐藏后由平台层 `_NET_ACTIVE_WINDOW` 把焦点还给原窗口
 pub const RESTORE_FOCUS_ON_HIDE: bool = true;
-/// 连续粘贴的进度提示放在右上角：GNOME / KDE 等桌面的通知都从顶部出现，任务栏 / 面板在底部时也不与它重叠
+/// 连续粘贴的进度提示放在右上角。各桌面的通知位置并不统一（GNOME 的横幅在顶部居中，KDE Plasma 默认弹在托盘附近），
+/// 这里不去对齐某一家：右上角离常见的底部任务栏 / 面板远，也不在屏幕中部用户正在填写的内容上
 pub const NOTICE_CORNER: ScreenCorner = ScreenCorner::TopRight;
 
 /// Pinned 无装饰：能透明时由 CSS 画圆角与阴影（boot 带阴影边距），不能透明时铺满窗口
