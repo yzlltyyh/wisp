@@ -1471,7 +1471,9 @@ export function TranslateView(props: ViewProps<'translate'>) {
             onCopySource={copySource}
             onModel={pickModel}
             onEditStyle={() => openSettings('translate')}
-            onOpenLarge={canPin ? () => void pin(true) : undefined}
+            // 展开阅读时没有「在大窗中打开」：面板此刻已经比「大窗」（固定窗口展开的宽度）更宽、两栏显示，大窗反而更窄、
+            // 退回单栏；⌘P 固定得到的就是同样大小、继续两栏的窗口
+            onOpenLarge={canPin && !panelReading ? () => void pin(true) : undefined}
             modelMenuRequest={modelMenuRequest}
           />
         )}

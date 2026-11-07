@@ -1152,6 +1152,21 @@ describe('展开阅读', () => {
     expect(args).toMatchObject({ expand: false, state: { show_source: true } })
   })
 
+  it('展开阅读时 ⋯ 里没有「在大窗中打开」（大窗比展开的面板窄、会退回单栏；⌘P 才是同样大小的两栏）；收起后回来', async () => {
+    const { rerender } = await mount(payload(), {
+      toggleReading: vi.fn<() => void>(),
+      reading: 'columns',
+    })
+    await finish('rx', '译文')
+    fireEvent.click(screen.getByTestId('tv-more'))
+    await screen.findByText('复制原文')
+    expect(screen.queryByText('在大窗中打开')).toBeNull()
+    fireEvent.click(screen.getByTestId('tv-more'))
+    rerender({ reading: null })
+    fireEvent.click(screen.getByTestId('tv-more'))
+    expect(await screen.findByText('在大窗中打开')).toBeInTheDocument()
+  })
+
   it('固定窗口宿主给了 columns：开着原文才两栏，关掉原文回到单栏', async () => {
     await mount(payload(), { host: 'pinned', reading: 'columns' })
     await finish('rx', '译文')
