@@ -5,7 +5,7 @@
  * 搜索框有字时 ⌫ 是退格，正在输入时 Space 是空格（↑↓ / 指针移过条目之后是预览，编辑搜索词回到输入；输入法把 Space
  * 报成 229 时由 beforeinput 兜底）；Tab 不会移走焦点；输入法组合中不触发。
  */
-import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { setTransport } from '../../../shared/ipc'
 import { t } from '../../../shared/i18n/i18n'
@@ -279,6 +279,39 @@ describe('预览（Space / ⇧Space）', () => {
     expect(selected()).toBe(rowId(4))
     expect(key('Space').defaultPrevented).toBe(true)
     expect(await screen.findByTestId('clip-preview')).toBeTruthy()
+  })
+
+  it('在操作菜单里移动指针不算浏览意图（菜单不是列表的行）：Esc 关掉菜单之后接着打字，Space 仍是空格', async () => {
+    mount()
+    await typeQuery('a')
+    armPointer()
+    key('KeyK', { meta: true })
+    const menu = await screen.findByTestId('clip-context-menu')
+    const items = within(menu).getAllByRole('menuitem')
+    // 从「粘贴」往下移过几项：竖直移动 ≥ 24 px，按 y 换算会跨过列表里 4 / 6 的行边界（92）
+    fireEvent.pointerMove(items[0] as HTMLElement, {
+      clientX: 40,
+      clientY: 70,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(items[1] as HTMLElement, {
+      clientX: 40,
+      clientY: 98,
+      pointerType: 'mouse',
+    })
+    fireEvent.pointerMove(items[2] as HTMLElement, {
+      clientX: 40,
+      clientY: 126,
+      pointerType: 'mouse',
+    })
+    key('Escape')
+    await waitFor(() => expect(screen.queryByTestId('clip-context-menu')).toBeNull())
+    expect(view().hasAttribute('data-browse')).toBe(false)
+    expect(key('Space').defaultPrevented).toBe(false)
+    expect(screen.queryByTestId('clip-preview')).toBeNull()
+    // 之后指针在列表上真的跨行移动：照常进入浏览意图
+    fireEvent.pointerMove(row(4), { clientX: 40, clientY: 60, pointerType: 'mouse' })
+    expect(key('Space').defaultPrevented).toBe(true)
   })
 
   it('检索结果更新之后指针 1 px 的抖动（哪怕换到了别的行上、跨过了行边界）不进入浏览意图', async () => {

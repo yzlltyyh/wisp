@@ -28,7 +28,8 @@
  * - 选中行右侧的芯片小条（识别出的片段，preview/Chips.tsx）：放在滚动内容里、listbox 之外（VirtualList 的 overlay），
  *   与选中指示器同一个位置；指示器到达选中行之后才给出。指针在小条上时不改选中、不弹卡片；小条上没被芯片处理的单击
  *   （小条刚出现在静止的指针下）与右键按选中行处理；
- * - 浏览意图（Space 是预览）：自上次编辑搜索词以来指针真的跨过了行边界、累计移动 ≥ 24 px（noteBrowse）；
+ * - 浏览意图（Space 是预览）：自上次编辑搜索词以来指针在列表上真的跨过了行边界、累计移动 ≥ 24 px（noteBrowse；
+ *   操作菜单里的移动不算）；
  * - 多选：⌘ / Ctrl 点击切换一条、⇧ 点击从起点选到这一条；已有选择时单击也是切换（不会误粘贴一条、丢掉整个选择）。
  *   标记的序号画在行首（只是行的一个属性，不进行模型的缓存输入）；
  * - 收藏分组的标题是折叠按钮，「查看全部 N 个收藏」行切到收藏视图（都经注册表的操作）；
@@ -919,6 +920,10 @@ export function ClipList({
     p.t = e.timeStamp
     p.x = e.clientX
     p.y = e.clientY
+    // 挂到别处的浮层里的移动（操作菜单 PagedMenu 渲染在列表之外，却是这棵组件树的子节点，事件经 React 冒泡上来）：
+    // 只更新上面的基线（之后回到列表时从这里算起），不算浏览意图——指针在菜单上移动并没有跨过列表的行（rowIndexAtY
+    // 只按 y 换算，会把菜单下面的行算进来）——也不悬停选中、不显示滚动条
+    if (!(e.target instanceof Node && wrapRef.current?.contains(e.target))) return
     noteBrowse(fromY, e.clientY, step)
     // 指针靠近右边缘：显示滚动条
     const wrap = wrapRef.current
