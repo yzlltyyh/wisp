@@ -96,11 +96,11 @@ test('Tab 由外壳接管：两种引擎（含 macOS 默认「键盘导航」关
   const ids = order.map((o) => o.id)
   expect(ids).toContain('tv-langbar-target')
   expect(ids).toContain('tv-more')
-  expect(ids).toContain('tv-expand')
-  // 回绕：最后一个之后回到第一个
+  expect(ids).toContain('tv-reading')
+  // 回绕：最后一个（底栏的 ⇄）之后回到第一个
   const back = ids.indexOf('tv-langbar-source')
   expect(back).toBeGreaterThan(0)
-  expect(ids[back - 1]).toBe('tv-expand')
+  expect(ids[back - 1]).toBe('tv-source-toggle')
   // 焦点从不离开卡片（没有落到 body 或窗口外）
   expect(order.every((o) => o.inCard)).toBe(true)
   // 同一顺序：两圈完全一致
