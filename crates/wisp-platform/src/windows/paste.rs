@@ -8,9 +8,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use ::windows::Win32::UI::WindowsAndMessaging::{IsHungAppWindow, IsIconic, IsWindowVisible};
+use ::windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsHungAppWindow, IsIconic, IsWindowVisible};
 use wisp_types::{AppRef, ClipPayload};
 
+use crate::common::keymap::KeyChoice;
 use crate::error::PlatformError;
 use crate::traits::{Paste, PasteError, WriteOpts};
 
@@ -89,6 +90,20 @@ impl Paste for WinPaste {
             return Err(PasteError::FocusTimeout);
         }
         input::send_combo(combo).map_err(PasteError::Other)
+    }
+
+    fn foreground_paste_key(&self) -> Option<KeyChoice> {
+        // SAFETY: 纯查询
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.0.is_null() {
+            return None;
+        }
+        let (_, pid) = process::window_thread_process(fg);
+        if pid == 0 || pid == self.0.own_pid {
+            return None;
+        }
+        let app = self.0.names.app_for_window(fg);
+        Some(input::paste_choice_for_window(&self.0.keymaps, app.as_ref(), fg))
     }
 }
 

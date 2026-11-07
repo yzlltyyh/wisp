@@ -8,7 +8,7 @@
 
 use std::ptr::NonNull;
 use std::sync::{Arc, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use block2::RcBlock;
 use objc2::rc::Retained;
@@ -23,8 +23,10 @@ use wisp_types::AppRef;
 
 use super::Ctx;
 use super::util::{guarded, pool};
+use crate::common::paste_target;
 use crate::error::PlatformError;
 use crate::traits::FocusTracker;
+use crate::types::{FocusFacts, FocusSurface};
 
 /// 在主线程上完成激活请求的最长等待
 const ACTIVATE_WAIT: Duration = Duration::from_millis(250);
@@ -230,6 +232,33 @@ impl FocusTracker for MacFocus {
     fn is_elevated(&self, _app: &AppRef) -> bool {
         // macOS 没有 UIPI 式的提权隔离
         false
+    }
+
+    fn focus_facts(&self, deadline: Duration) -> Option<FocusFacts> {
+        // 查前台进程（NSWorkspace，负载高时可能要几十毫秒）也算在预算里
+        let started = Instant::now();
+        let (pid, finder) = pool(|| {
+            NSWorkspace::sharedWorkspace().frontmostApplication().map(|a| {
+                let finder = a
+                    .bundleIdentifier()
+                    .is_some_and(|b| b.to_string().eq_ignore_ascii_case(paste_target::FINDER_BUNDLE_ID));
+                (a.processIdentifier(), finder)
+            })
+        })?;
+        if pid == self.ctx.own_pid {
+            return None;
+        }
+        // 只认 Finder 的文件视图 / 桌面：其余应用（包括浏览器、Electron）不发 AX 请求，按「其余」处理
+        if !finder {
+            return Some(FocusFacts {
+                surface: FocusSurface::Other,
+            });
+        }
+        let left = deadline.checked_sub(started.elapsed()).filter(|d| !d.is_zero())?;
+        let (role, in_window) = super::ax::focused_role(pid, left)?;
+        Some(FocusFacts {
+            surface: paste_target::finder_surface(&role, in_window),
+        })
     }
 }
 

@@ -181,15 +181,8 @@ pub(crate) fn reinject_click(button: ExtraButton, down_at: (i32, i32), up_at: (i
 /// 复制键（`copy = true`）或粘贴键：合并表 = 用户条目在前 + 内置默认表在后，按 `common::keymap` 的规则
 /// 逐字段查找（exe 名带不带 `.exe` 都能匹配），没有条目时用平台默认 Ctrl+C / Ctrl+V。返回 None 表示映射表要求不发键
 fn app_keys(user: &RwLock<Vec<AppKeymap>>, app: Option<&AppRef>, copy: bool) -> Option<KeyCombo> {
-    let mut table = user.read().clone();
-    table.extend(keymap::builtin(OsKind::Windows));
-    let choice = if copy {
-        keymap::copy_key(&table, OsKind::Windows, app)
-    } else {
-        keymap::paste_key(&table, OsKind::Windows, app)
-    };
     let fallback = if copy { KeyCombo::CTRL_C } else { KeyCombo::CTRL_V };
-    match choice {
+    match app_choice(user, app, copy) {
         KeyChoice::Skip => None,
         KeyChoice::Send(combo) => Some(to_key_combo(&combo).unwrap_or_else(|| {
             log::warn!(
@@ -199,6 +192,24 @@ fn app_keys(user: &RwLock<Vec<AppKeymap>>, app: Option<&AppRef>, copy: bool) -> 
             fallback
         })),
     }
+}
+
+/// 按映射表取键（规范组合，还没换成虚拟键）：合并表 = 用户条目在前 + 内置默认表在后
+fn app_choice(user: &RwLock<Vec<AppKeymap>>, app: Option<&AppRef>, copy: bool) -> KeyChoice {
+    let mut table = user.read().clone();
+    table.extend(keymap::builtin(OsKind::Windows));
+    if copy {
+        keymap::copy_key(&table, OsKind::Windows, app)
+    } else {
+        keymap::paste_key(&table, OsKind::Windows, app)
+    }
+}
+
+/// 某个前台窗口的粘贴键（规范组合）：与 [`app_keys_for_window`] 同一套查找（控制台窗口另按 conhost.exe 匹配）。
+/// 连续粘贴核对用户按下的是不是这个窗口的粘贴键时用（`Paste::foreground_paste_key`）
+pub(crate) fn paste_choice_for_window(user: &RwLock<Vec<AppKeymap>>, app: Option<&AppRef>, hwnd: HWND) -> KeyChoice {
+    let subject = keys::keymap_subject(app.cloned(), &process::class_name(hwnd));
+    app_choice(user, subject.as_ref(), false)
 }
 
 /// 某个前台窗口应发送的复制键 / 粘贴键：在 [`app_keys`] 之前按窗口类修正查找对象（控制台窗口额外按 conhost.exe

@@ -1,4 +1,5 @@
-//! Accessibility（AX）读取：选中文本、选区矩形、选区长度、光标处是否是链接、Electron 的 AXManualAccessibility。
+//! Accessibility（AX）读取：选中文本、选区矩形、选区长度、光标处是否是链接、焦点元素的角色（连续粘贴）、Electron 的
+//! AXManualAccessibility。
 //!
 //! 约束：
 //! - `kAX*` 常量一律用字符串字面量（部分常量在头文件里是宏，objc2 没有导出）；
@@ -384,6 +385,29 @@ pub(crate) fn link_at(p: CGPoint, deadline: Duration, owner_pid: Option<i32>) ->
         }
     }
     (!budget.expired()).then_some(false)
+}
+
+/// 某个进程焦点元素的角色（`AXRole`）与它是否属于某个窗口（`AXWindow` 属性；None = 没读到）。只读角色与归属，不读值、
+/// 不读标题。只走该进程的应用元素（不经 systemWide：只关心这个进程自己的焦点，超时也能按剩余预算设置）。取不到焦点
+/// 元素、超时、缺权限时为 None
+pub(crate) fn focused_role(pid: i32, deadline: Duration) -> Option<(String, Option<bool>)> {
+    if !trusted() {
+        return None;
+    }
+    let budget = Budget::new(deadline);
+    let el = focused_element(Some(pid), &budget, Route::AppOnly).ok()?;
+    let role = el.within(&budget).ok()?.string("AXRole").ok()?;
+    // 只有分组 / 滚动区要看归属（桌面不在任何窗口里），其余角色省掉这次 AX 调用
+    let in_window = if matches!(role.as_str(), "AXGroup" | "AXScrollArea") {
+        match el.within(&budget).ok()?.attr("AXWindow") {
+            Ok(_) => Some(true),
+            Err(AxFail::Unsupported) => Some(false),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    (!budget.expired()).then_some((role, in_window))
 }
 
 /// 对某个 Electron 应用打开完整的无障碍树（**不**设置 AXEnhancedUserInterface，它会让窗口动画失常）

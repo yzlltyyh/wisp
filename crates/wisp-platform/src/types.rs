@@ -309,6 +309,30 @@ pub enum InputSignal {
     SessionLocked,
 }
 
+/// 键盘焦点所在之处的归一化类别（连续粘贴判断「这一下粘贴有没有落空」用，规则见 `common::paste_target`）。只有类别：
+/// 不含窗口标题、应用名与任何内容，可以原样写进 debug 日志
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FocusSurface {
+    /// 浏览器 / Electron / WebView 的窗口：网页常在文档级接收粘贴（聊天输入框、白板、块编辑器），焦点落在哪里都判断不了
+    Web,
+    /// 文本输入控件（只用于日志：判定与「判断不了」一样照常前进）
+    TextInput,
+    /// 经典控件（按钮、复选框、单选框）
+    Control,
+    /// 文件管理器的文件视图或桌面（Finder、资源管理器）
+    FileView,
+    /// 前台线程处于菜单模式（键盘输入交给菜单）
+    Menu,
+    /// 其余一切（自绘界面、XAML / WPF、终端、远程桌面……）
+    Other,
+}
+
+/// 一次焦点查询的结果（`FocusTracker::focus_facts`）。以后要加的事实（例如网页正文的启发式需要的信号）加在这里
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FocusFacts {
+    pub surface: FocusSurface,
+}
+
 /// 钩子安装失败
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum HookError {

@@ -15,16 +15,18 @@ use ::windows::Win32::Foundation::{HWND, LPARAM};
 use ::windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use ::windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use ::windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_SYSTEM_FOREGROUND, EnumWindows, GW_OWNER, GWL_EXSTYLE, GetForegroundWindow, GetWindow, GetWindowLongW,
-    HWND_TOP, IsHungAppWindow, IsIconic, IsWindow, IsWindowVisible, SW_RESTORE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow, SetWindowPos, ShowWindowAsync, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS, WS_EX_TOOLWINDOW,
+    EVENT_SYSTEM_FOREGROUND, EnumWindows, GA_PARENT, GUI_INMENUMODE, GUITHREADINFO, GW_OWNER, GWL_EXSTYLE, GetAncestor,
+    GetForegroundWindow, GetGUIThreadInfo, GetWindow, GetWindowLongW, HWND_TOP, IsHungAppWindow, IsIconic, IsWindow,
+    IsWindowVisible, SW_RESTORE, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetForegroundWindow,
+    SetWindowPos, ShowWindowAsync, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WS_EX_TOOLWINDOW,
 };
 use ::windows::core::BOOL;
 use parking_lot::Mutex;
 use wisp_types::AppRef;
 
+use crate::common::paste_target;
 use crate::error::PlatformError;
+use crate::types::FocusFacts;
 
 use super::input;
 use super::process::{self, NameCache};
@@ -123,6 +125,42 @@ impl Focus {
             return None;
         }
         self.names.app_for_window(last.hwnd.hwnd())
+    }
+
+    /// 键盘焦点所在之处的类别（连续粘贴，规则见 `common::paste_target::windows_surface`）。只读前台窗口、前台线程的 GUI
+    /// 状态（焦点窗口、菜单模式）与窗口类名：都是不向目标发消息的纯查询（微秒级，目标卡住也不阻塞），不调 UI Automation。
+    /// 前台是 Wisp 自己或读不到时为 None
+    pub(crate) fn focus_facts(&self) -> Option<FocusFacts> {
+        // SAFETY: 纯查询
+        let fg = unsafe { GetForegroundWindow() };
+        if fg.0.is_null() {
+            return None;
+        }
+        let (tid, pid) = process::window_thread_process(fg);
+        if tid == 0 || pid == self.own_pid {
+            return None;
+        }
+        let mut info = GUITHREADINFO {
+            cbSize: u32::try_from(std::mem::size_of::<GUITHREADINFO>()).unwrap_or(0),
+            ..GUITHREADINFO::default()
+        };
+        // SAFETY: 输出参数指向局部变量，cbSize 已设为结构体大小；纯查询
+        unsafe { GetGUIThreadInfo(tid, &mut info) }.ok()?;
+        let focus = (!info.hwndFocus.0.is_null()).then_some(info.hwndFocus);
+        let focus_class = focus.map(process::class_name);
+        let parent_class = focus.and_then(|h| {
+            // SAFETY: 纯查询
+            let parent = unsafe { GetAncestor(h, GA_PARENT) };
+            (!parent.0.is_null()).then(|| process::class_name(parent))
+        });
+        Some(FocusFacts {
+            surface: paste_target::windows_surface(
+                &process::class_name(fg),
+                info.flags.contains(GUI_INMENUMODE),
+                focus_class.as_deref(),
+                parent_class.as_deref(),
+            ),
+        })
     }
 
     /// 当前前台顶层窗口（非 Wisp、非 shell 时）

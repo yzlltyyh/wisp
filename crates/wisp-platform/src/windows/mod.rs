@@ -186,6 +186,11 @@ impl FocusTracker for WinFocus {
     fn is_elevated(&self, app: &AppRef) -> bool {
         self.0.focus.is_elevated(app)
     }
+
+    fn focus_facts(&self, _deadline: Duration) -> Option<crate::types::FocusFacts> {
+        // 全是微秒级的纯查询，用不到预算
+        self.0.focus.focus_facts()
+    }
 }
 
 // ---------------------------------------------------------------- Permissions

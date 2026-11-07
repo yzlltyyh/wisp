@@ -297,6 +297,13 @@ impl Paste for Imp {
             .map_err(|r| PasteError::Unsupported(r.to_owned()))?;
         selection::paste_into(&x, target, &self.0.keymaps)
     }
+
+    fn foreground_paste_key(&self) -> Option<crate::common::keymap::KeyChoice> {
+        use crate::common::keymap::KeyChoice;
+        let x = self.0.x11_for(Feature::Paste).ok()?;
+        let app = x11::focus::frontmost(&x)?;
+        Some(selection::paste_combo(&self.0.keymaps, &app).map_or(KeyChoice::Skip, KeyChoice::Send))
+    }
 }
 
 impl FocusTracker for Imp {

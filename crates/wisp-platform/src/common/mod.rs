@@ -5,6 +5,7 @@ pub mod combo;
 pub mod double_tap;
 pub mod gesture;
 pub mod keymap;
+pub mod paste_target;
 pub mod secrets_markers;
 pub mod suppress;
 pub mod text;

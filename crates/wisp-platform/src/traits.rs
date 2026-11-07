@@ -6,9 +6,10 @@ use std::time::Duration;
 use wisp_types::Rect;
 use wisp_types::{AppRef, ClipPayload, MonitorId, MonitorInfo, PermissionKind, PermissionSet, Point, RawClipboard};
 
+use crate::common::keymap::KeyChoice;
 use crate::error::PlatformError;
 use crate::types::{
-    ClickEvent, ClipSnapshot, HookHandle, LayoutInfo, ReadLimits, Selection, SelectionError, SuppressRange,
+    ClickEvent, ClipSnapshot, FocusFacts, HookHandle, LayoutInfo, ReadLimits, Selection, SelectionError, SuppressRange,
 };
 #[cfg(feature = "mouse-hook")]
 use crate::types::{HookError, HookSpec, InputSignal, KeyChord};
@@ -62,6 +63,13 @@ pub trait Paste: Send + Sync {
         let _ = target;
         Ok(())
     }
+    /// 前台应用此刻在 `paste_into` 里会收到的粘贴键，与 `paste_into` 同一套选键规则（映射表逐字段回落；Windows 控制台
+    /// 窗口另按 conhost.exe 匹配；Linux 映射表外的终端用 Ctrl+Shift+V）。连续粘贴重放用户按下的粘贴键之前核对用：
+    /// 例如在 Linux 终端里按了 Ctrl+V。None = 取不到前台应用（macOS / Windows 上前台是 Wisp 自己时也是 None）；
+    /// `Some(Skip)` = 映射表要求不发粘贴键。只读查询：不激活、不发键（X11 与服务器往返一两次）。默认实现恒为 None
+    fn foreground_paste_key(&self) -> Option<KeyChoice> {
+        None
+    }
 }
 
 /// 写剪贴板选项
@@ -95,6 +103,13 @@ pub trait FocusTracker: Send + Sync {
     fn activate(&self, app: &AppRef) -> Result<(), PlatformError>;
     /// 只有 Windows 有意义
     fn is_elevated(&self, app: &AppRef) -> bool;
+    /// 键盘焦点此刻落在哪一类地方（连续粘贴判断重放的粘贴键有没有落空，规则见 `common::paste_target`）：只读类别，不读
+    /// 内容、不读窗口标题。`deadline` 是总预算（含查前台应用）；取不到、超时、缺权限一律 None（= 判断不了）。浏览器 /
+    /// Electron 在前台时不发 AX / UIA 请求。**阻塞**（macOS 可能发 AX 请求），在工作线程上调用。默认实现（X11）恒为 None
+    fn focus_facts(&self, deadline: Duration) -> Option<FocusFacts> {
+        let _ = deadline;
+        None
+    }
 }
 
 /// 系统权限

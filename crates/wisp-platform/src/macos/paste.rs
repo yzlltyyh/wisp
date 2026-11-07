@@ -15,7 +15,7 @@ use wisp_types::{AppRef, ClipPayload, OsKind};
 
 use super::Ctx;
 use super::ax;
-use super::focus::{activate_app, frontmost_pid, running_app};
+use super::focus::{activate_app, app_ref, frontmost_pid, running_app};
 use super::keyboard;
 use super::pasteboard;
 use super::util::pool;
@@ -86,5 +86,15 @@ impl Paste for MacPaste {
             started.elapsed().as_millis()
         );
         Ok(())
+    }
+
+    fn foreground_paste_key(&self) -> Option<KeyChoice> {
+        let front = pool(|| {
+            objc2_app_kit::NSWorkspace::sharedWorkspace()
+                .frontmostApplication()
+                .filter(|a| a.processIdentifier() != self.ctx.own_pid)
+                .map(|a| app_ref(&a))
+        })?;
+        Some(keymap::paste_key(&self.ctx.keymaps.read(), OsKind::Macos, Some(&front)))
     }
 }
