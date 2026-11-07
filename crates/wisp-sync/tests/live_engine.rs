@@ -26,8 +26,8 @@ use sim::{Device, State, check_converged, noop_progress, settle, tick};
 use wisp_sync::layout::VAULT_FILE;
 use wisp_sync::remote::memory::Op;
 use wisp_sync::{
-    ConnectOutcome, CycleReason, Domain, ErrorKind, MemoryRemote, Remote, Replica, SyncError, WebDav, crypto, probe,
-    reset_remote,
+    ConnectOutcome, CycleReason, Domain, ErrorKind, MemoryRemote, Peek, Remote, Replica, SyncError, WebDav, crypto,
+    probe, reset_remote,
 };
 
 /// 整个场景的时限。服务器每个请求要 0.3–0.6 s、GET 还要经一次重定向，这里留足余量；超时同样会清理
@@ -81,6 +81,7 @@ async fn scenario<R: Remote>(make: impl Fn(&str, u64) -> Device<R>) {
     wrong_passphrase_is_rejected(make("c", 0xc)).await;
     deletes_edits_and_clears_propagate(&mut a, &mut b, &seed, &from_b).await;
     idle_cycle_is_a_single_request(&mut a, &mut b).await;
+    realtime_checks_are_read_only(&mut a, &mut b).await;
     reset_stops_the_other_device(&mut a, &mut b).await;
 }
 
@@ -303,6 +304,88 @@ async fn idle_cycle_is_a_single_request<R: Remote>(a: &mut Device<R>, b: &mut De
         "空闲：实际请求应当只有一次列目录：{ops:?}"
     );
     assert!(!report.pending && !report.again, "空闲：{report:?}");
+}
+
+/// 实时同步的只读探测：没有变化时只列一次目录、不写 sync.db；B 推送后 A 看得出变化，接着的一轮复用这次的列表；
+/// A 自己的推送（服务器回不回 ETag、PUT 与列目录的写法是否一致都一样）不被当成别人的改动
+async fn realtime_checks_are_read_only<R: Remote>(a: &mut Device<R>, b: &mut Device<R>) {
+    // 跨 await 持有的连接要能在线程间共享（场景在多线程运行时里跑），用互斥锁包一层
+    let db = std::sync::Mutex::new(rusqlite::Connection::open(a.db_path()).expect("实时：第二个连接"));
+    let version = || -> i64 {
+        db.lock()
+            .expect("实时：连接")
+            .query_row("PRAGMA data_version", [], |r| r.get(0))
+            .expect("实时：data_version")
+    };
+    let before = version();
+    a.remote.clear_ops();
+    let p = peek_of(a).await;
+    assert!(matches!(p, Peek::Unchanged), "实时：没有改动时应当没有变化：{p:?}");
+    let ops = a.remote.ops();
+    assert!(ops.len() == 1 && ops[0].0 == Op::List, "实时：只列一次目录：{ops:?}");
+    assert_eq!(version(), before, "实时：探测不写 sync.db");
+
+    let text = b.store.copy("e2e realtime from b");
+    step("实时：B 推送", b.sync().await);
+    let Peek::Changed(listing) = peek_of(a).await else {
+        panic!("实时：B 推送之后 A 应当看到变化");
+    };
+    a.remote.clear_ops();
+    let report = step(
+        "实时：A 复用列表同步",
+        a.engine()
+            .sync_cycle_with(
+                &a.remote,
+                &a.store,
+                CycleReason::Poll,
+                &a.options,
+                noop_progress(),
+                Some(listing),
+            )
+            .await,
+    );
+    let ops = a.remote.ops();
+    assert!(ops.iter().all(|(op, _)| *op != Op::List), "实时：不应再列目录：{ops:?}");
+    assert!(
+        report
+            .remote_clips
+            .iter()
+            .any(|c| sim::text_hash("e2e realtime from b") == c.hash),
+        "实时：报告里应当有 B 的新复制：{report:?}"
+    );
+    assert!(a.state().clip.contains_key(&text), "实时：A 缺少 B 的新复制");
+
+    a.store.copy("e2e realtime from a");
+    step("实时：A 推送", a.sync().await);
+    for i in 0..2 {
+        let p = peek_of(a).await;
+        assert!(
+            matches!(p, Peek::Unchanged),
+            "实时：A 自己的推送不算变化（第 {i} 次）：{p:?}"
+        );
+    }
+    let Peek::Changed(listing) = peek_of(b).await else {
+        panic!("实时：A 推送之后 B 应当看到变化");
+    };
+    step(
+        "实时：B 复用列表同步",
+        b.engine()
+            .sync_cycle_with(
+                &b.remote,
+                &b.store,
+                CycleReason::Poll,
+                &b.options,
+                noop_progress(),
+                Some(listing),
+            )
+            .await,
+    );
+    let p = peek_of(b).await;
+    assert!(matches!(p, Peek::Unchanged), "实时：同步之后 B 回到没有变化：{p:?}");
+}
+
+async fn peek_of<R: Remote>(d: &Device<R>) -> Peek {
+    step("实时：探测", d.engine().peek(&d.remote).await)
 }
 
 /// 清除：A 清除服务器上的同步数据；B 的下一轮报「同步数据已被清除」，不写服务器，也不动本机数据
