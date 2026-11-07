@@ -331,6 +331,39 @@ describe('预览（Space / ⇧Space）', () => {
     expect(screen.queryByTestId('clip-preview')).toBeNull()
   })
 
+  it('输入法兜底与键位层一致：预览打开时输入法的空格关闭预览（正在输入搜索词也是），清空确认里切换「保留收藏」', async () => {
+    ipc.results.clipboard_clear = 0
+    mount()
+    await typeQuery('a')
+    const space = () => {
+      const ev = new InputEvent('beforeinput', {
+        inputType: 'insertText',
+        data: ' ',
+        bubbles: true,
+        cancelable: true,
+      })
+      act(() => {
+        search().dispatchEvent(ev)
+      })
+      return ev
+    }
+    // 一边输入一边用 ⇧Space 打开预览：浏览意图没有打开，但预览层里 Space 总是关闭预览
+    key('Space', { shift: true })
+    expect(await screen.findByTestId('clip-preview')).toBeTruthy()
+    expect(space().defaultPrevented).toBe(true)
+    await waitFor(() => expect(screen.queryByTestId('clip-preview')).toBeNull())
+    // 清空确认是模态的：Space 在那里是「保留收藏」，不打进确认条后面的搜索框，也不切换预览
+    act(() => screen.getByTestId('clip-more').click())
+    act(() => screen.getByTestId('clip-more-menu-item-clear').click())
+    expect(await screen.findByTestId('clip-confirm-clear')).toBeTruthy()
+    const keep = () => screen.getByTestId('clip-keep-pinned') as HTMLInputElement
+    expect(keep().checked).toBe(true)
+    expect(space().defaultPrevented).toBe(true)
+    expect(keep().checked).toBe(false)
+    expect(screen.getByTestId('view-clipboard').hasAttribute('data-preview')).toBe(false)
+    expect(search().value).toBe('a')
+  })
+
   it('浏览意图下输入法的 Space（isComposing / keyCode 229）不打开预览', async () => {
     mount()
     await typeQuery('a')

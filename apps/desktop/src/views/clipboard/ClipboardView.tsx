@@ -474,17 +474,31 @@ export function ClipboardView(props: ViewProps<'clipboard'>) {
   const runner = useClipRunner(store, os, { cmd, ui, host })
 
   // ----- 输入法兜底：有的输入法（中文状态、没有组字时）把 Space 报成 keyCode 229，键盘路由按组字放行，空格会直接进
-  // 搜索框。这时在搜索框上看到的是一次 insertText 的空格（半角或全角）：Space 此刻是预览就取消输入、切换预览。用原生
-  // 监听（React 的 onBeforeInput 合成自 textInput / keypress，拿不到 inputType）；组字中的空格（选候选词）不管
+  // 搜索框。这时在搜索框上看到的是一次 insertText 的空格（半角或全角），按键位层里 Space 此刻的含义处理，与普通键盘一致：
+  // 清空确认（模态）里切换「保留收藏」；全文预览打开时关闭预览（预览层的 Space 不看搜索框）；其余时候 Space 是预览就
+  // 取消输入、切换预览，否则照常输入空格。用原生监听（React 的 onBeforeInput 合成自 textInput / keypress，拿不到
+  // inputType）；组字中的空格（选候选词）不管
+  const previewShownRef = useRef(showPreview)
+  useLayoutEffect(() => {
+    previewShownRef.current = showPreview
+  })
   useEffect(() => {
     const input = searchRef.current
     if (!input) return
     const onBeforeInput = (e: InputEvent) => {
       if (e.isComposing || e.inputType !== 'insertText') return
       if (e.data !== ' ' && e.data !== '　') return
-      if (!spaceOpensPreview(store.getState())) return
-      e.preventDefault()
-      runner.run('preview', runner.ctx('key'), 'toggle')
+      const s = store.getState()
+      if (s.confirm?.kind === 'clear') {
+        e.preventDefault()
+        runner.run('keep_pinned', runner.ctx('key'))
+      } else if (previewShownRef.current) {
+        e.preventDefault()
+        runner.run('preview', runner.ctx('key'), 'close')
+      } else if (spaceOpensPreview(s)) {
+        e.preventDefault()
+        runner.run('preview', runner.ctx('key'), 'toggle')
+      }
     }
     input.addEventListener('beforeinput', onBeforeInput)
     return () => input.removeEventListener('beforeinput', onBeforeInput)
