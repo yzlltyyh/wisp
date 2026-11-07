@@ -131,6 +131,11 @@ impl RecentCache {
         self.items.len()
     }
 
+    /// 缓存里的条目，按列表顺序（置顶在前，最近使用在前）
+    pub fn iter(&self) -> impl Iterator<Item = &ClipItemMeta> {
+        self.items.iter()
+    }
+
     /// 缓存是否为空
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()

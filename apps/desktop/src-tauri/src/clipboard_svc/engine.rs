@@ -112,6 +112,11 @@ pub(crate) struct Engine {
     last_change: Mutex<Option<u64>>,
     /// 最近一次**确实记进历史**（inserted / touched）的剪贴板序号（[`Engine::current_content_recorded`]）
     recorded_change: Mutex<Option<u64>>,
+    /// 本机最近一次复制的时刻（记录管线读到的变化，以及 Wisp 自己的复制 / 粘贴）：实时同步不在这之后的一小段时间里
+    /// 替换剪贴板（`remote_copy.rs`）
+    pub(crate) last_local_copy: Mutex<Option<Instant>>,
+    /// 最近一次把其他设备的复制写进剪贴板：写入后的序号与条目 hash（`remote_copy.rs`）
+    remote_written: Mutex<Option<(u64, [u8; 32])>>,
     /// 最近一次应用的剪贴板设置（`apply_settings` 据此判断哪些变了）
     applied: Mutex<Option<ClipboardSettings>>,
     too_new_notified: AtomicBool,
@@ -196,6 +201,8 @@ impl Engine {
             signal: Arc::new(WatchSignal::default()),
             last_change: Mutex::new(None),
             recorded_change: Mutex::new(None),
+            last_local_copy: Mutex::new(None),
+            remote_written: Mutex::new(None),
             applied: Mutex::new(None),
             too_new_notified: AtomicBool::new(false),
             opened: AtomicBool::new(false),
@@ -523,6 +530,29 @@ impl Engine {
         self.cache.read().get(id).cloned()
     }
 
+    /// 缓存里的一条，以及缓存里除它之外最近使用的时间（实时同步判断「它是不是本机最新的一条」）。不在缓存里（不是最近
+    /// 的条目）时为 None。缓存是数据库排序（收藏在前、再按最近使用）的前缀：前缀之外的条目都比缓存里未收藏的旧
+    pub(crate) fn newest_besides(&self, id: i64) -> Option<(ClipItemMeta, Option<i64>)> {
+        let cache = self.cache.read();
+        let meta = cache.get(id)?.clone();
+        let other = cache.iter().filter(|m| m.id != id).map(|m| m.last_used_at).max();
+        Some((meta, other))
+    }
+
+    /// 最近处理过的剪贴板序号
+    pub(crate) fn last_seen_change(&self) -> Option<u64> {
+        *self.last_change.lock()
+    }
+
+    /// 最近一次写进剪贴板的其他设备的复制（序号、hash）
+    pub(crate) fn remote_written(&self) -> Option<(u64, [u8; 32])> {
+        *self.remote_written.lock()
+    }
+
+    pub(crate) fn set_remote_written(&self, change: u64, hash: [u8; 32]) {
+        *self.remote_written.lock() = Some((change, hash));
+    }
+
     /// 进入串行区：之后的「改库 + 改缓存」在离开前不会与别的改动交错。缓存的写锁只在 [`Serial::cache`] 期间持有，
     /// 改库（例如解码一张大图）期间首屏照常可读
     pub(crate) fn serial(&self) -> Serial<'_> {
@@ -570,6 +600,8 @@ impl Engine {
             log::debug!("clipboard change from Wisp skipped change={change}");
             return Capture::Done;
         }
+        // 用户的复制，不论之后被隐私规则跳过还是记进历史：实时同步暂时不替换剪贴板
+        self.note_local_copy();
         if raw.concealed {
             // 隐私标记：不打开数据库、不取图标、不发事件，库中不留任何痕迹
             log::debug!("clipboard change skipped reason=concealed");

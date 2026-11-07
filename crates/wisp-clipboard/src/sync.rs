@@ -463,6 +463,11 @@ impl ClipStore {
         Ok(self.ident_of(id)?.map(|(hash, _)| hash))
     }
 
+    /// hash 对应的条目 id；不存在时为 None。同步层只交出 hash（例如「其他设备刚复制的这一条」），按它找回本机的条目
+    pub fn id_by_hash(&self, hash: &[u8; 32]) -> Result<Option<i64>, StoreError> {
+        self.guard(|| id_of_hash(&self.inner.lock().conn, hash))
+    }
+
     /// 条目是否在记录时被识别为验证码（`meta_json.$.otp`，与是否收藏、是否开启自动删除无关）；不存在时为 false。
     /// 「同步验证码」关闭时验证码条目的内容不发布，收藏之后据此补发
     pub fn is_otp(&self, id: i64) -> Result<bool, StoreError> {

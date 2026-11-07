@@ -175,6 +175,7 @@ pub fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         bus: bus.clone(),
     });
     Arc::clone(&orchestrator).spawn(bus_rx);
+    wire_remote_copies(&sync, &clipboard);
     stage("services");
 
     // 6. 托盘 → 托盘就绪（Linux 没有 AppIndicator 库、或会话里没有 StatusNotifierWatcher 时退化为打开设置窗口 + 通知；
@@ -335,6 +336,26 @@ fn window_lab_mode() -> bool {
     {
         false
     }
+}
+
+/// 实时同步每轮从其他设备拿到的新复制交给剪贴板服务，由它决定要不要放进本机剪贴板（子选项默认关闭，关着时回调里
+/// 只读一次设置）。持弱引用：同步服务不延长剪贴板服务的生命周期
+fn wire_remote_copies(sync: &Arc<SyncService>, clipboard: &Arc<ClipboardService>) {
+    let clipboard = Arc::downgrade(clipboard);
+    sync.set_remote_clip_hook(Some(Arc::new(move |arrival: crate::sync_svc::RemoteClipArrival| {
+        let Some(clipboard) = clipboard.upgrade() else { return };
+        clipboard.offer_remote_copies(
+            arrival
+                .clips
+                .iter()
+                .map(|c| crate::clipboard_svc::RemoteCopy {
+                    hash: c.hash,
+                    recorded_ms: c.recorded_ms,
+                    last_used_ms: c.last_used_ms,
+                })
+                .collect(),
+        );
+    })));
 }
 
 /// 把同步状态的每次变化（状态转换与节流后的进度）转发给设置窗口（`sync:status`）。托盘只在它显示的内容

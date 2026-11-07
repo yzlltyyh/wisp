@@ -302,6 +302,11 @@ impl Default for PasteGate {
 }
 
 impl PasteGate {
+    /// 有一次粘贴正在进行（任何非 Idle 阶段）
+    pub(crate) fn busy(&self) -> bool {
+        self.inner.lock().stage != PasteStage::Idle
+    }
+
     /// 当前阶段（单测用）
     #[cfg(test)]
     pub(crate) fn stage(&self) -> PasteStage {
@@ -733,7 +738,38 @@ impl Engine {
             from_change_id: change,
             ttl: SELF_WRITE_TTL,
         });
+        // 粘贴之后剪贴板里是用户刚选的内容（可能还要再粘贴一次）：实时同步暂时不替换它
+        self.note_local_copy();
         Ok(store)
+    }
+
+    /// 有一次粘贴正在进行
+    pub(crate) fn paste_busy(&self) -> bool {
+        self.paste_gate.busy()
+    }
+
+    /// 不经粘贴流程写一次剪贴板（实时同步把其他设备的复制放进来，`remote_copy.rs`），不发键、不 touch、不进历史。与
+    /// 粘贴共用单飞闸门：粘贴进行中不写（返回 None）；写入期间来的粘贴被拒绝，不会有一次粘贴在「写入」与「发键」之间被
+    /// 换掉内容。照常带 `from_wisp` 与自写抑制，监听方跳过这次变化，不会把它记成新的本机复制再上传。**会阻塞**
+    pub(crate) fn write_quietly(&self, payload: &ClipPayload) -> Result<Option<u64>, PlatformError> {
+        let Ok(mut run) = self.paste_gate.begin(None) else {
+            return Ok(None);
+        };
+        let change = match self.port.paste().write(payload, WriteOpts::default()) {
+            Ok(change) => change,
+            Err(e) => {
+                run.advance(PasteEvent::WriteFailed);
+                return Err(e);
+            }
+        };
+        self.port.clipboard().suppress(SuppressRange {
+            from_change_id: change,
+            ttl: SELF_WRITE_TTL,
+        });
+        // 写完就结束：相当于一次「只复制」的交接
+        run.advance(PasteEvent::Written);
+        run.advance(PasteEvent::CopyOnly);
+        Ok(Some(change))
     }
 
     /// 面板的只复制收尾：隐藏面板；toast 由 [`Engine::paste`] 在闸门放开之后显示
@@ -825,6 +861,8 @@ impl Engine {
             from_change_id: change,
             ttl: SELF_WRITE_TTL,
         });
+        // 复制按钮与 OCR 的自动复制同样是本机的复制：实时同步暂时不替换它
+        self.note_local_copy();
         if !self.recording() {
             return Ok((change, None));
         }

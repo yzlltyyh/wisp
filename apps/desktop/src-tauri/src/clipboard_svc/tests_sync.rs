@@ -1,15 +1,18 @@
 //! 多设备同步的接入点：本机改动按约定通知 sink（粘贴 touch、保留策略、识别历史裁剪不通知）；远端改动的应用不回调 sink、
-//! 不为自己打开数据库，缓存与 `clipboard:changed` 按视图状态推送，结果逐条对应输入。
+//! 不为自己打开数据库，缓存与 `clipboard:changed` 按视图状态推送，结果逐条对应输入；实时同步把其他设备最新的复制放进
+//! 本机剪贴板（每个条件、防乒乓、与粘贴互斥）。
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 use wisp_clipboard::{ClipStore, RemoteItem, RemoteOcr, SyncSource, ocr_key};
-use wisp_types::{ClipKind, ClipboardChanged, OcrHistoryChanged, OcrMode, RawClipboard};
+use wisp_types::{ClipKind, ClipboardChanged, OcrHistoryChanged, OcrMode, PasteMode, RawClipboard};
 
 use super::port::ClipView;
+use super::remote_copy::{LOCAL_QUIET, RemoteCopy, Skip};
 use super::sync::{ClipRemoteChange, ClipRemoteClear, ClipSyncSink, OcrRemoteChange, RemoteOutcome, Superseded};
-use super::tests::{ICON_64, Rig, rig};
+use super::tests::{Call, ICON_64, Rig, app, rig};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SinkCall {
@@ -926,4 +929,239 @@ fn remote_codes_follow_the_local_switch_and_expire_here_too() {
         .engine
         .apply_remote_batch(vec![code("Your verification code is 330021", Some(now + 1))], None);
     assert_eq!(out, vec![RemoteOutcome::Evicted]);
+}
+
+// ---------- 实时同步：把其他设备最新的复制放进本机剪贴板 ----------
+
+/// 开着实时同步与写剪贴板子选项、本机已有一条较早的复制（库已打开）；本机的复制算作 11 s 之前，剪贴板序号与最近处理的
+/// 一致（没有未处理的本机变化）
+fn realtime_rig() -> Rig {
+    let r = rig();
+    r.set_settings(|s| {
+        s.sync.realtime = true;
+        s.sync.realtime_clipboard = true;
+    });
+    r.engine.reconcile_watch().expect("安装监听");
+    r.copy_text(101, "本机较早的复制");
+    settle_local(&r);
+    r
+}
+
+/// 让本机最近一次复制显得已经过去 11 s，并让剪贴板序号与最近处理过的一致
+fn settle_local(r: &Rig) {
+    *r.engine.last_local_copy.lock() = Instant::now().checked_sub(LOCAL_QUIET + Duration::from_secs(1));
+    if let Some(seen) = r.engine.last_seen_change() {
+        r.port.clipboard.change.store(seen, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn now(r: &Rig) -> i64 {
+    r.host.now.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// 其他设备的一条复制经同步写进本机历史，返回同步交给剪贴板服务的那一条
+fn arrive(r: &Rig, item: RemoteItem, recorded_ms: i64) -> RemoteCopy {
+    let copy = RemoteCopy {
+        hash: item.hash,
+        recorded_ms,
+        last_used_ms: item.last_used_at,
+    };
+    let out = r.engine.apply_remote_batch(vec![ClipRemoteChange::Upsert(item)], None);
+    assert_eq!(out, vec![RemoteOutcome::Applied]);
+    copy
+}
+
+fn arrive_text(r: &Rig, text: &str) -> RemoteCopy {
+    let at = now(r);
+    arrive(r, remote_text(text, at, None), at)
+}
+
+fn written_texts(r: &Rig) -> Vec<Option<String>> {
+    r.port.paste.writes.lock().iter().map(|p| p.text.clone()).collect()
+}
+
+#[test]
+fn the_newest_copy_from_another_device_is_placed_without_echoing_back() {
+    let r = realtime_rig();
+    let sink = with_sink(&r);
+    let older = arrive_text(&r, "另一台设备较早的复制");
+    let newest = arrive_text(&r, "另一台设备刚复制的");
+    let before = r.ids();
+    r.log.lock().clear();
+    r.host.events.lock().clear();
+
+    // 交来的顺序无所谓：取最近使用的那一条
+    let change = r.engine.place_remote_copy(&[older, newest]).expect("应当写入");
+    assert_eq!(written_texts(&r), vec![Some("另一台设备刚复制的".to_owned())]);
+    assert_eq!(
+        *r.log.lock(),
+        vec![Call::Write, Call::Suppress(change)],
+        "写入后立即登记自写抑制"
+    );
+    assert_eq!(r.ids(), before, "历史里不多一条、顺序不变（不 touch）");
+
+    // 监听方随后读到这次变化：带 from_wisp 标记，不记录、不通知同步（不会作为本机复制再上传）
+    let echo = RawClipboard {
+        change_id: change,
+        from_wisp: true,
+        text: Some("另一台设备刚复制的".into()),
+        ..RawClipboard::default()
+    };
+    r.copy(change, echo);
+    assert_eq!(r.ids(), before);
+    assert!(sink.take().is_empty(), "不回传给同步");
+    assert!(
+        !r.host
+            .events
+            .lock()
+            .iter()
+            .any(|e| matches!(e, ClipboardChanged::Inserted { .. } | ClipboardChanged::Touched { .. })),
+        "列表不变"
+    );
+    // 自己写进去的不算「本机刚复制过」，同一条再交来一次时什么都不做
+    assert_eq!(r.engine.place_remote_copy(&[newest]), Err(Skip::Current));
+    assert_eq!(written_texts(&r).len(), 1);
+    // 再来一条更新的照常写入
+    let next = arrive_text(&r, "又一条");
+    assert!(r.engine.place_remote_copy(&[next]).is_ok());
+    assert_eq!(written_texts(&r).len(), 2);
+}
+
+#[test]
+fn nothing_is_placed_when_the_option_or_recording_is_off() {
+    let r = realtime_rig();
+    let copy = arrive_text(&r, "另一台设备的复制");
+    r.set_settings(|s| s.sync.realtime_clipboard = false);
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::Off));
+    r.set_settings(|s| {
+        s.sync.realtime_clipboard = true;
+        s.sync.realtime = false;
+    });
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::Off));
+    r.set_settings(|s| s.sync.realtime = true);
+    r.engine.set_paused(true);
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::NotRecording));
+    r.engine.set_paused(false);
+    r.set_settings(|s| s.clipboard.enabled = false);
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::NotRecording));
+    // 监听没装上：看不到本机的复制，不写
+    r.engine.reconcile_watch().expect("卸下监听");
+    assert!(!r.engine.watching());
+    r.set_settings(|s| s.clipboard.enabled = true);
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::NotRecording));
+    r.engine.reconcile_watch().expect("安装监听");
+    assert!(written_texts(&r).is_empty());
+    // 子选项关着时连后台任务都不排
+    r.set_settings(|s| {
+        s.clipboard.enabled = true;
+        s.sync.realtime_clipboard = false;
+    });
+    r.exec.queue(true);
+    r.engine.offer_remote_copies(vec![copy]);
+    assert_eq!(r.exec.pending_jobs(), 0);
+    r.set_settings(|s| s.sync.realtime_clipboard = true);
+    r.engine.offer_remote_copies(vec![copy]);
+    assert_eq!(r.exec.pending_jobs(), 1, "在阻塞线程上判断与写入");
+    r.exec.run_jobs();
+    assert_eq!(written_texts(&r), vec![Some("另一台设备的复制".to_owned())]);
+}
+
+#[test]
+fn an_old_copy_or_a_recent_local_copy_is_left_alone() {
+    let r = realtime_rig();
+    // 在那台设备上产生超过 1 分钟（长时间离开后补拉的）
+    let at = now(&r);
+    let stale = arrive(&r, remote_text("一分多钟前的复制", at, None), at - 61_000);
+    assert_eq!(r.engine.place_remote_copy(&[stale]), Err(Skip::Stale));
+
+    // 本机 10 s 内刚复制过
+    let copy = arrive_text(&r, "另一台设备的复制");
+    r.copy_text(102, "本机刚复制的");
+    settle_local(&r);
+    *r.engine.last_local_copy.lock() = Some(Instant::now());
+    let fresh = arrive_text(&r, "另一台设备又复制了");
+    assert_eq!(r.engine.place_remote_copy(&[fresh]), Err(Skip::LocalCopy));
+    // 剪贴板有还没处理的变化（轮询还没读到的本机复制）
+    settle_local(&r);
+    r.port
+        .clipboard
+        .change
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(r.engine.place_remote_copy(&[fresh]), Err(Skip::LocalCopy));
+    settle_local(&r);
+    // 本机后来又复制过（时间更新）：那一条不是最新的
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::Older));
+    assert!(written_texts(&r).is_empty());
+    assert!(r.engine.place_remote_copy(&[fresh]).is_ok());
+}
+
+#[test]
+fn codes_partial_texts_and_missing_items_are_never_placed() {
+    let r = realtime_rig();
+    let at = now(&r);
+    let code = arrive(
+        &r,
+        remote_text("验证码：7319（10分钟内有效），请勿泄露给他人", at, None),
+        at,
+    );
+    assert_eq!(r.engine.place_remote_copy(&[code]), Err(Skip::Sensitive));
+
+    let at = now(&r);
+    let mut long = remote_text("超长被截断的文字", at, None);
+    long.truncated = true;
+    let long = arrive(&r, long, at);
+    assert_eq!(r.engine.place_remote_copy(&[long]), Err(Skip::Partial));
+
+    let gone = RemoteCopy {
+        hash: [9; 32],
+        recorded_ms: now(&r),
+        last_used_ms: now(&r) + 10,
+    };
+    assert_eq!(r.engine.place_remote_copy(&[gone]), Err(Skip::Missing));
+    assert!(written_texts(&r).is_empty());
+}
+
+#[test]
+fn a_paste_in_progress_is_never_disturbed() {
+    let r = realtime_rig();
+    let id = r.top().id;
+    let copy = arrive_text(&r, "另一台设备的复制");
+    let seen = Arc::new(Mutex::new(None));
+    let engine = Arc::clone(&r.engine);
+    let out = Arc::clone(&seen);
+    // 粘贴正在写剪贴板时同步交来一条：不写，粘贴照常完成
+    *r.port.paste.during_write.lock() = Some(Box::new(move || {
+        *out.lock() = Some(engine.place_remote_copy(&[copy]));
+    }));
+    r.paste(id, PasteMode::Normal, Some(app("com.example.target")))
+        .expect("粘贴");
+    assert_eq!(*seen.lock(), Some(Err(Skip::Pasting)));
+    assert_eq!(
+        written_texts(&r),
+        vec![Some("本机较早的复制".to_owned())],
+        "只有粘贴的那一次写入"
+    );
+    // 刚粘贴过：剪贴板里是用户选的内容，暂时不替换
+    settle_clipboard_only(&r);
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::LocalCopy));
+}
+
+/// 只让剪贴板序号与最近处理过的一致（不改「最近一次本机复制」的时刻）
+fn settle_clipboard_only(r: &Rig) {
+    if let Some(seen) = r.engine.last_seen_change() {
+        r.port.clipboard.change.store(seen, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn a_failed_write_is_reported_and_retried_next_time() {
+    let r = realtime_rig();
+    let copy = arrive_text(&r, "另一台设备的复制");
+    *r.port.paste.write_error.lock() = Some(wisp_platform::PlatformError::Other("busy".into()));
+    assert_eq!(r.engine.place_remote_copy(&[copy]), Err(Skip::WriteFailed));
+    assert!(r.engine.remote_written().is_none());
+    assert!(
+        r.engine.place_remote_copy(&[copy]).is_ok(),
+        "失败不留下「已写入」的记录"
+    );
 }

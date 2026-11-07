@@ -482,6 +482,12 @@ impl ClipboardService {
         self.engine.set_sync_sink(sink);
     }
 
+    /// 实时同步拉来了其他设备的新复制（最新的在前）：「把其他设备最新的复制直接放进本机剪贴板」开着时在后台判断并写入
+    /// （条件见 `remote_copy.rs`）。在同步任务上调用，不阻塞
+    pub fn offer_remote_copies(&self, copies: Vec<super::RemoteCopy>) {
+        self.engine.offer_remote_copies(copies);
+    }
+
     /// 已打开的数据库，供同步只读地导出（`sync_rows` / `sync_export` / `ocr_sync_rows` / `ocr_sync_export*`）。
     /// **不触发打开**：数据库还没打开时为 None，同步应稍后再试，而不是为自己打开数据库
     pub fn sync_store(&self) -> Option<Arc<wisp_clipboard::ClipStore>> {

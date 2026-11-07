@@ -19,6 +19,7 @@
 //! - [`retention`]：空闲清理与按天数过期条目的隐藏；
 //! - [`assets`]：`wisp://` 资源 `img/`、`thumb/`、`icon/`、`ocrimg/`；
 //! - [`sync`]：多设备同步的接入点（本机改动的通知 `ClipSyncSink`、远端改动的应用）；
+//! - [`remote_copy`]：实时同步的子选项——把其他设备最新的复制放进本机剪贴板（条件判断与防乒乓的写入）；
 //! - `texts`：本模块用到的 Rust 侧文案（原生对话框与通知）。
 //!
 //! # 线程与锁
@@ -46,6 +47,7 @@ pub(crate) mod outbox;
 pub mod paste;
 pub(crate) mod port;
 pub(crate) mod queue;
+pub mod remote_copy;
 pub mod retention;
 pub(crate) mod running;
 pub mod service;
@@ -70,6 +72,7 @@ mod tests_smart;
 mod tests_sync;
 
 pub use paste::{CopiedItem, CopyReceipt, FLOAT_LABEL, PasteHost, PasteKind, PasteRequest, PasteSource};
+pub use remote_copy::RemoteCopy;
 pub use service::ClipboardService;
 pub use sync::{
     ClipRemoteChange, ClipRemoteClear, ClipSyncSink, OcrRemoteChange, OcrSuperseded, RemoteOutcome, Superseded,
