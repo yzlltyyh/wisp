@@ -24,7 +24,8 @@ export interface ReadingPlan {
 
 /**
  * `placement::reading_plan` + 「拖过的面板」的上限：翻译工作区够宽时两栏 760；OCR 高截图在工作区够宽时并排 880，
- * 否则上下堆叠（宽度按截图 1:1，不窄于当前宽度、不超过 880）。截图尺寸按 `scale` 从物理像素换算
+ * 否则上下堆叠（宽度按截图 1:1，不窄于当前宽度、不超过 880）。截图尺寸按 `scale` 从物理像素换算。输入视图按翻译算
+ * （提交后在同一会话里换成翻译视图，`placement::reading_subject`）
  */
 export function readingPlan(
   payload: PanelPayload,
@@ -35,7 +36,7 @@ export function readingPlan(
   const fit = (w: number) => Math.round(Math.min(w, work.width - 2 * EDGE_INSET))
   const cap = Math.floor(work.height * READING_HEIGHT_RATIO)
   const maxHeight = Math.floor(Math.min(cap, work.height - 2 * EDGE_INSET))
-  if (payload.kind === 'translate') {
+  if (payload.kind === 'translate' || payload.kind === 'input') {
     return work.width >= READING_TRANSLATE_MIN_WORK
       ? { layout: 'columns', width: fit(READING_TRANSLATE_WIDTH), maxHeight }
       : null

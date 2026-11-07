@@ -483,10 +483,12 @@ pub enum ReadingSubject {
 }
 
 /// 载荷对应的阅读对象：翻译、OCR（截图尺寸按 `scale` 从物理像素换算成逻辑尺寸——面板与截图通常在同一块屏上）；
-/// 其余视图没有阅读布局
+/// 其余视图没有阅读布局。输入视图按翻译算：提交后前端在同一会话里换成翻译视图（`switchView`，Rust 不知道换视图的
+/// 时刻，会话的载荷仍是输入），翻译能否展开要在输入会话的 prepare 里就告诉前端；前端只在当前是翻译 / OCR 视图时才提供
+/// 展开
 pub fn reading_subject(payload: &PanelPayload, scale: f64) -> Option<ReadingSubject> {
     match payload {
-        PanelPayload::Translate(_) => Some(ReadingSubject::Translate),
+        PanelPayload::Translate(_) | PanelPayload::Input(_) => Some(ReadingSubject::Translate),
         PanelPayload::Ocr(o) => {
             let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
             let (w, h) = (f64::from(o.image_size.width), f64::from(o.image_size.height));
@@ -2450,6 +2452,13 @@ mod tests {
             queue: None,
         });
         assert_eq!(reading_subject(&toast, 2.0), None);
+        // 输入视图提交后在同一会话里换成翻译视图：按翻译算
+        let input = PanelPayload::Input(wisp_types::InputPayload {
+            initial_text: String::new(),
+            target_lang: None,
+            hint: None,
+        });
+        assert_eq!(reading_subject(&input, 2.0), Some(ReadingSubject::Translate));
     }
 
     /// 翻译两栏 760、OCR 并排 880 / 堆叠按截图；上限 floor(工作区 × 0.85)；只看卡片所在屏的工作区（150% 与副屏都在逻辑

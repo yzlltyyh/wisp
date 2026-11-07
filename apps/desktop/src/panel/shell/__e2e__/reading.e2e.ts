@@ -1,7 +1,7 @@
 /**
  * 面板内「展开阅读」的浏览器级用例（真实引擎里的两栏排版、滚动、焦点与按键，jsdom 都复现不了）：
  * - 翻译：点头部的展开按钮 → 卡片变宽、「原文 | 译文」左右两栏、两栏各自可以滚动且按比例同步；Esc 先收起、再按一次才
- *   关闭；⌘⇧E 展开 / 收起；减少动效下同样可用；
+ *   关闭；⌘⇧E 展开 / 收起；减少动效下同样可用；从输入框提交的翻译（同一会话里换视图）同样能展开；
  * - OCR：高截图左右并排（截图在左、识别文本在右，截图栏内滚动）；宽截图上下堆叠（截图 1:1 在上、放不下时横向滚动）。
  * 运行方式见 apps/desktop/playwright.config.ts。
  */
@@ -43,6 +43,21 @@ async function moveAway(page: Page): Promise<void> {
 }
 
 test.describe('翻译', () => {
+  test('输入 → 翻译（同一会话里换成翻译视图）之后同样能展开', async ({ page }) => {
+    await open(page, 'translate.input-draft')
+    await expect(page.getByTestId('view-input')).toBeVisible()
+    await expect(page.getByTestId('tv-reading')).toHaveCount(0)
+    await page.keyboard.press('Meta+Enter')
+    const view = page.getByTestId('view-translate')
+    await expect(view).toHaveAttribute('data-status', 'done')
+    await page.getByTestId('tv-reading').click()
+    await moveAway(page)
+    await expect(view).toHaveAttribute('data-reading', 'columns')
+    await expect.poll(() => widthOf(page, 'panel-card')).toBe(760)
+    await page.keyboard.press('Escape')
+    await expect(view).not.toHaveAttribute('data-reading')
+  })
+
   test('点展开：卡片宽 760、原文 | 译文两栏且各自可滚动；Esc 先收起、再按一次关闭', async ({
     page,
   }) => {

@@ -55,7 +55,8 @@ export interface ViewProps<V extends PanelView = PanelView> {
    */
   readonly reading?: ReadingLayout | null
   /**
-   * 展开 / 收起阅读：面板宿主、这次显示能展开（PanelPrepare.reading 不为 null）时才有。外壳负责淡出 → 透明帧换宽度、
+   * 展开 / 收起阅读：面板宿主、这次显示能展开（PanelPrepare.reading 不为 null）而且当前是翻译 / OCR 视图时才有（输入
+   * 会话提交后换成的翻译视图也有）。外壳负责淡出 → 透明帧换宽度、
    * 上限与版式 → 淡入，展开时让面板取得键盘焦点；视图据此显示头部的展开按钮、绑定快捷键
    */
   readonly toggleReading?: () => void

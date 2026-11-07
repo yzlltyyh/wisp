@@ -8774,6 +8774,27 @@ mod tests {
         assert!(switches(&host.take()).is_empty());
     }
 
+    /// 输入视图提交后在同一会话里换成翻译视图（前端 switchView，会话载荷仍是输入）：prepare 就告诉前端翻译能否展开，
+    /// 换过去之后能展开
+    #[test]
+    fn reading_works_after_input_switches_to_translate() {
+        let mut o = open(1, PanelView::Input, anchor_a());
+        o.payload = PanelPayload::Input(wisp_types::InputPayload {
+            initial_text: String::new(),
+            target_lang: None,
+            hint: None,
+        });
+        assert_eq!(
+            PanelController::prepare_payload(&o).reading,
+            Some(ReadingLayout::Columns)
+        );
+        let host = MockHost::existing();
+        let c = loaded(&host, FrameMode::Native, 0.0);
+        c.prepare(o);
+        c.ready(1, 168.0).expect("shown");
+        assert_eq!(c.set_reading(1, true), Some(expanded(760.0, 684.0)));
+    }
+
     /// Css 帧模式：透明帧之前按下头部（拖动开始、没有移动）不算拖过；真的拖动了，几何跟着窗口走，透明帧只换尺寸
     #[test]
     fn reading_css_drag_during_the_hold_follows_the_window() {

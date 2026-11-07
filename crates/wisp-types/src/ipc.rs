@@ -86,7 +86,8 @@ pub struct PanelPrepare {
     /// 侧放时卡片在锚点的哪一侧（`placement` 此时为 Below），进入动效改为水平移向锚点；其余为 None
     pub side: Option<PanelSide>,
     /// 能否「展开阅读」，能的话展开后用哪种版式（按显示时所在屏的工作区预估；实际以 `panel_set_reading` 的返回为准）。
-    /// 翻译 / OCR 之外的视图、工作区放不下阅读布局（翻译要求至少 680 宽）时为 None，前端不显示展开按钮
+    /// 翻译 / OCR 之外的视图、工作区放不下阅读布局（翻译要求至少 680 宽）时为 None，前端不显示展开按钮。输入视图按翻译
+    /// 算：提交后前端在同一会话里换成翻译视图，换过去之后才提供展开
     pub reading: Option<ReadingLayout>,
     /// 显示后是否持有键盘焦点（输入 / 剪贴板视图为 true）
     pub focused: bool,

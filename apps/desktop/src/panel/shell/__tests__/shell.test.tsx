@@ -881,6 +881,25 @@ describe('展开阅读', () => {
     expect(document.querySelector<HTMLElement>('.panel-viewswitch')?.style.opacity).toBe('')
   })
 
+  it('输入 → 翻译（视图内切换，会话不变）：输入视图拿不到 toggleReading，换成翻译之后可以展开', async () => {
+    boot.frame_mode = 'native'
+    contentHeights({ input: 168, translate: 300 })
+    readingReply = (on) => (on ? EXPANDED : COLLAPSED)
+    setViewOverride((p) => <Probe {...p} />)
+    const p = prepare(input, { reading: 'columns', focused: true })
+    act(() => emit('panel:prepare', p))
+    await waitFor(() => expect(usePanelStore.getState().phase).toBe('shown'))
+    expect(screen.getByTestId('view-input')).toBeTruthy()
+    expect(screen.queryByTestId('toggle')).toBeNull()
+    act(() => usePanelStore.getState().switchPayload(translate))
+    await waitFor(() => expect(layerOf('view-translate')?.dataset.state).toBe('shown'))
+    calls = []
+    act(() => screen.getByTestId('toggle').click())
+    expect(calls).toContainEqual(['panel_set_reading', { session_id: p.session_id, on: true }])
+    await waitFor(() => expect(usePanelStore.getState().reading).toBe('columns'))
+    expect(probe().dataset.reading).toBe('columns')
+  })
+
   it('PanelPrepare.reading 为 null（放不下 / 不是翻译与 OCR）：视图拿不到 toggleReading', async () => {
     await open({ reading: null })
     expect(screen.queryByTestId('toggle')).toBeNull()

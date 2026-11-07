@@ -792,7 +792,8 @@ export interface PanelPrepare {
   side: PanelSide | null
   /**
    * 能否「展开阅读」，能的话展开后用哪种版式（按显示时所在屏的工作区预估，实际以 `panel_set_reading` 的返回为准）；
-   * 翻译 / OCR 之外的视图、工作区放不下阅读布局时为 null（不显示展开按钮）
+   * 翻译 / OCR 之外的视图、工作区放不下阅读布局时为 null（不显示展开按钮）。输入视图按翻译算：提交后在同一会话里换成
+   * 翻译视图，换过去之后才提供展开
    */
   reading: ReadingLayout | null
   /** 显示后是否持有键盘焦点（输入 / 剪贴板视图为 true） */

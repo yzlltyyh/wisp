@@ -7,7 +7,8 @@
  * 窗口不能透明（Css 帧模式且 `shadow_margin == 0`，例如 Wayland）时 `<html data-opaque>`：页面底色取
  * `--surface-solid`（base.css），卡片铺满窗口、不做进入 / 退出的透明度与变换（PanelCard），高度变化立即上报。
  *
- * **展开阅读**（翻译 / OCR；PanelPrepare.reading 不为 null 时视图拿到 `toggleReading`）：点下（或按快捷键）的那一刻
+ * **展开阅读**（翻译 / OCR；PanelPrepare.reading 不为 null 时视图拿到 `toggleReading`。输入会话的 prepare 也带着它——
+ * 提交后在同一会话里换成翻译视图，换过去之后才提供）：点下（或按快捷键）的那一刻
  * 调用 `panel_set_reading` 并开始把视图淡出（timing.crossfade、ease.exit；减少动效时 reducedFade）——Rust 立即返回
  * 新的宽度、上限与版式，并把窗口的改变排在同一时刻（Native 帧模式的宽度切换在 timing.crossfade 之后）；内容完全透明、
  * 结果也到了之后，在同一次提交里让新的宽度、上限与版式生效（panelStore.commitReading），立即上报新高度（高度走
@@ -19,7 +20,7 @@ import { animate } from 'motion/react'
 import { useCallback, useEffect, useLayoutEffect, useRef, type ComponentType } from 'react'
 import { flushSync } from 'react-dom'
 import { api, boot } from '../../shared/ipc'
-import type { PanelPayload, PanelReading } from '../../shared/ipc/types'
+import type { PanelPayload, PanelPrepare, PanelReading } from '../../shared/ipc/types'
 import { cycleFocusWithin } from '../../shared/keys/focusLoop'
 import { useKeyScope } from '../../shared/keys/useKeyScope'
 import { FrameMonitorView } from '../../shared/perf/FrameMonitorView'
@@ -40,6 +41,14 @@ import { ViewSwitch } from './ViewSwitch'
 
 /** 开发者模式的延迟 / 帧监视行的高度（逻辑 px）：视图拿到的 maxHeight 扣掉它，内容 + 这一行不超过卡片上限 */
 export const DEV_HUD_HEIGHT = 18
+
+/**
+ * 当前视图能否展开阅读：这次显示能展开（PanelPrepare.reading 不为 null），而且此刻是翻译 / OCR 视图。输入会话的 prepare
+ * 按翻译预估（Rust 不知道前端什么时候换视图）：还在输入视图时不提供，提交后换成翻译视图就有
+ */
+function canRead(prepare: PanelPrepare | null, payload: PanelPayload | null): boolean {
+  return prepare?.reading != null && (payload?.kind === 'translate' || payload?.kind === 'ocr')
+}
 
 /** 进行中的展开 / 收起：淡出完成、`panel_set_reading` 也返回之后提交（结果为 null 时什么都不改，直接淡入） */
 interface ReadingFlight {
@@ -188,7 +197,7 @@ export function PanelShell() {
   const toggleReading = useCallback(() => {
     const store = usePanelStore.getState()
     const session = store.prepare?.session_id
-    if (session === undefined || store.prepare?.reading == null || flight.current) return
+    if (session === undefined || !canRead(store.prepare, store.payload) || flight.current) return
     if (store.phase !== 'entering' && store.phase !== 'shown') return
     const on = store.reading === null
     const f: ReadingFlight = { session, result: undefined, faded: false }
@@ -291,7 +300,7 @@ export function PanelShell() {
           placement={prepare.placement}
           maxHeight={viewMaxHeight}
           reading={reading}
-          toggleReading={prepare.reading !== null ? toggleReading : undefined}
+          toggleReading={canRead(prepare, payload) ? toggleReading : undefined}
           requestHide={requestHide}
           switchView={switchView}
           activate={activate}

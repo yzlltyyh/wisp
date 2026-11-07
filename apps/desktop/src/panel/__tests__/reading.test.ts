@@ -92,8 +92,12 @@ describe('mock 的展开阅读几何（与 placement::reading_plan 一致）', (
     expect(readingPlan(ocr(4000, 200), work(1512, 941), 552, 2)?.width).toBe(880)
     expect(readingPlan(ocr(600, 900), work(790, 600), 440, 1)?.layout).toBe('stacked')
   })
-  it('其余视图没有阅读布局', () => {
+  it('输入视图按翻译算（提交后在同一会话里换成翻译视图）；其余视图没有阅读布局', () => {
     const input: PanelPayload = { kind: 'input', initial_text: '', target_lang: null, hint: null }
-    expect(readingPlan(input, work(1512, 941), 420, 2)).toBeNull()
+    expect(readingPlan(input, work(1512, 941), 420, 2)).toEqual(
+      readingPlan(translate, work(1512, 941), 420, 2),
+    )
+    const toast: PanelPayload = { kind: 'toast', reason: 'copy_only', paste_key: '⌘V', queue: null }
+    expect(readingPlan(toast, work(1512, 941), 260, 2)).toBeNull()
   })
 })
