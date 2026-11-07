@@ -424,11 +424,22 @@ fn on_window_event(app: &tauri::AppHandle, label: &str, event: &tauri::WindowEve
         tauri::WindowEvent::ScaleFactorChanged { .. } => crate::tray::refresh(app),
         _ => {}
     }
-    // 任一 Wisp 窗口持有键盘焦点时，连续粘贴拦下的粘贴键只重放、不前进（见 `windows::key_focus`）
-    match event {
+    // 任一 Wisp 窗口持有键盘焦点时，连续粘贴拦下的粘贴键只重放、不前进，全局 Esc 也交还给那个窗口（见
+    // `windows::key_focus`）
+    let key_focus_changed = match event {
         tauri::WindowEvent::Focused(focused) => KEY_FOCUS.on_focus(label, *focused),
         tauri::WindowEvent::Destroyed => KEY_FOCUS.on_destroyed(label),
-        _ => {}
+        _ => false,
+    };
+    if key_focus_changed {
+        // 注册 / 注销全局 Esc 要与主线程往返，不能在窗口事件回调（主线程）里同步做。没有连续粘贴时只是一次判断、不调用
+        // 插件；几次变化的任务谁先执行都行：每次都按此刻的持有状态重算
+        let app = app.clone();
+        drop(tauri::async_runtime::spawn_blocking(move || {
+            if let Some(state) = app.try_state::<AppState>() {
+                state.hotkeys.key_focus_changed();
+            }
+        }));
     }
     // 获焦 / 失焦 / 销毁是用户活动（Windows 等待空闲安装更新时据此重新计时；没有在等时只是一次原子读）。
     // Moved / Resized 拖动时可达 60–120 Hz，不算

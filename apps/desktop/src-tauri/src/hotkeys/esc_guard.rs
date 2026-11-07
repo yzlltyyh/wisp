@@ -9,7 +9,8 @@
 //! （有截图会话就取消它），没有才按面板处理。
 //!
 //! **连续粘贴进行中同样注册**：用户在别的应用里按 Esc 即结束队列（拦下粘贴键的钩子随之卸载）。按下时截图会话与可见
-//! 的面板优先，都没有才结束队列。
+//! 的面板优先，都没有才结束队列。键盘焦点在 Wisp 自己的窗口里时（悬浮剪贴板的搜索框、设置窗口、固定窗口）队列不要
+//! 全局 Esc：Esc 照常交给那个窗口（清空搜索词、交还焦点、关闭窗口），就像队列不存在——与那里的粘贴键只是普通粘贴一致。
 
 /// 全局 Esc 的规范串
 pub const ESCAPE: &str = "Escape";
@@ -23,6 +24,8 @@ pub struct EscGuard {
     pub overlay: bool,
     /// 连续粘贴进行中，希望有全局 Esc
     pub queue: bool,
+    /// Wisp 自己的某个窗口持有键盘焦点：这期间连续粘贴不要全局 Esc（面板与截图会话的期望不受影响）
+    pub in_wisp: bool,
     /// 当前已注册
     pub registered: bool,
 }
@@ -38,7 +41,7 @@ pub enum EscAction {
 impl EscGuard {
     /// 根据期望、录制状态与快捷键是否可用，决定注册还是注销
     pub fn next(&self, suspended: bool, available: bool) -> EscAction {
-        let want = (self.wanted || self.overlay || self.queue) && !suspended && available;
+        let want = (self.wanted || self.overlay || (self.queue && !self.in_wisp)) && !suspended && available;
         match (want, self.registered) {
             (true, false) => EscAction::Register,
             (false, true) => EscAction::Unregister,
@@ -80,6 +83,28 @@ mod tests {
         g.registered = true;
         g.queue = false;
         assert_eq!(g.next(false, true), EscAction::Unregister, "队列结束即注销");
+    }
+
+    #[test]
+    fn sequential_paste_leaves_escape_to_a_focused_wisp_window() {
+        let mut g = EscGuard {
+            queue: true,
+            in_wisp: true,
+            ..EscGuard::default()
+        };
+        assert_eq!(g.next(false, true), EscAction::Nothing, "键盘在 Wisp 窗口里：不注册");
+        g.in_wisp = false;
+        assert_eq!(g.next(false, true), EscAction::Register, "回到别的应用：注册");
+        g.registered = true;
+        g.in_wisp = true;
+        assert_eq!(g.next(false, true), EscAction::Unregister, "又进了 Wisp 窗口：注销");
+        g.registered = false;
+        // 面板（非 key）与截图会话的全局 Esc 不受影响
+        g.wanted = true;
+        assert_eq!(g.next(false, true), EscAction::Register);
+        g.wanted = false;
+        g.overlay = true;
+        assert_eq!(g.next(false, true), EscAction::Register);
     }
 
     #[test]

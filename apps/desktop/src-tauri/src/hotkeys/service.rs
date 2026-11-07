@@ -44,6 +44,7 @@ use crate::bus::{Bus, Command, TriggerOrigin};
 use crate::error::{IpcError, IpcErrorCode};
 use crate::settings::SettingsService;
 use crate::state::{AppState, Deps};
+use crate::windows::key_focus::KEY_FOCUS;
 use crate::windows::settings_window::{ONBOARDING_LABEL, SETTINGS_LABEL};
 
 /// 录制 / 测试期间的看门狗间隔（只在这两种状态下运行）
@@ -165,6 +166,30 @@ fn native_grab(platform: &wisp_platform::Platform) -> Option<&dyn KeyGrab> {
 /// 也是面板会话，但不是用户打开的面板（文案写着「Esc 结束」）：只关 toast 会让队列继续拦截粘贴键
 fn escape_closes_panel_first(view: Option<PanelView>) -> bool {
     view.is_some_and(|v| v != PanelView::Toast)
+}
+
+/// 全局 Esc（截图之外）的去向
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscapeStep {
+    /// 关掉用户打开的面板（连续粘贴继续）
+    HidePanel,
+    /// 结束连续粘贴（之后进度 toast 一并收起）；没有进行中的队列时关掉面板
+    EndQueue,
+    /// 键盘焦点在 Wisp 自己的窗口里：不结束连续粘贴；没有进行中的队列时关掉面板
+    KeepQueue,
+}
+
+/// 按可见的面板与键盘焦点决定全局 Esc 的去向（见 [`escape_closes_panel_first`]）。键盘焦点在 Wisp 自己的窗口里时
+/// （悬浮剪贴板的搜索框、设置窗口），连续粘贴本来不要全局 Esc（见 `esc_guard`）；焦点刚移进来、注销还没完成的那一下
+/// 按的 Esc 也不结束队列，与那里的粘贴键只是普通粘贴一致
+fn escape_step(view: Option<PanelView>, keyboard_in_wisp: bool) -> EscapeStep {
+    if escape_closes_panel_first(view) {
+        EscapeStep::HidePanel
+    } else if keyboard_in_wisp {
+        EscapeStep::KeepQueue
+    } else {
+        EscapeStep::EndQueue
+    }
 }
 
 /// 快捷键 id（插件按 id 分发）
@@ -752,7 +777,12 @@ impl HotkeyService {
                         return;
                     }
                     let view = state.windows.panel_state().map(|p| p.view);
-                    if escape_closes_panel_first(view) || !state.clipboard.queue_escape() || view.is_some() {
+                    let hide = match escape_step(view, KEY_FOCUS.held()) {
+                        EscapeStep::HidePanel => true,
+                        EscapeStep::EndQueue => !state.clipboard.queue_escape() || view.is_some(),
+                        EscapeStep::KeepQueue => state.clipboard.queue_status().is_none(),
+                    };
+                    if hide {
                         state.windows.panel_request_hide(HideReason::Escape);
                     }
                 });
@@ -818,10 +848,18 @@ impl HotkeyService {
         self.sync_esc();
     }
 
+    /// Wisp 自己的窗口取得 / 失去键盘焦点（[`KEY_FOCUS`] 的持有状态变化之后由窗口事件转交）：连续粘贴的全局 Esc 只在
+    /// 键盘焦点不在 Wisp 窗口里时注册。**阻塞**（插件与主线程往返；没有连续粘贴时不调用插件）
+    pub fn key_focus_changed(&self) {
+        self.sync_esc();
+    }
+
     /// 让 Esc 的注册状态符合期望。注册与注销时都忘掉 Esc 的按住状态：按 Esc 关闭面板时 Esc 往往还没松开就被注销，
-    /// 插件不会再送来 Released；不清掉的话，面板很快再次以非 key 状态出现时第一次按 Esc 会被当成按住重复而忽略
+    /// 插件不会再送来 Released；不清掉的话，面板很快再次以非 key 状态出现时第一次按 Esc 会被当成按住重复而忽略。
+    /// 键盘焦点在锁内读：几次焦点变化的同步谁后拿到锁，谁就按最新的持有状态重算
     fn sync_esc(&self) {
         let mut g = self.esc.lock();
+        g.in_wisp = KEY_FOCUS.held();
         let available = self.availability().is_ok();
         let esc_id = shortcut_id(ESCAPE);
         match g.next(self.suspended.load(Ordering::Acquire), available) {
@@ -1118,5 +1156,20 @@ mod tests {
         // 进度 toast 不算用户打开的面板：先结束连续粘贴
         assert!(!escape_closes_panel_first(Some(PanelView::Toast)));
         assert!(!escape_closes_panel_first(None));
+    }
+
+    #[test]
+    fn escape_in_a_focused_wisp_window_keeps_the_queue() {
+        // 键盘在别的应用里：面板隐藏或只有进度 toast 时结束队列
+        assert_eq!(escape_step(None, false), EscapeStep::EndQueue);
+        assert_eq!(escape_step(Some(PanelView::Toast), false), EscapeStep::EndQueue);
+        // 键盘在 Wisp 自己的窗口里（悬浮剪贴板的搜索框、设置窗口）：面板隐藏时不结束队列
+        assert_eq!(escape_step(None, true), EscapeStep::KeepQueue);
+        assert_eq!(escape_step(Some(PanelView::Toast), true), EscapeStep::KeepQueue);
+        // 用户打开的面板照常先关（不论键盘在哪里）
+        for in_wisp in [false, true] {
+            assert_eq!(escape_step(Some(PanelView::Clipboard), in_wisp), EscapeStep::HidePanel);
+            assert_eq!(escape_step(Some(PanelView::Translate), in_wisp), EscapeStep::HidePanel);
+        }
     }
 }
