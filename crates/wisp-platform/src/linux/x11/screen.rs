@@ -13,6 +13,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use x11rb::NONE;
 use x11rb::protocol::randr;
+use x11rb::protocol::screensaver::ConnectionExt as _;
 use x11rb::protocol::xfixes;
 use x11rb::protocol::xproto::{Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, Window};
 
@@ -311,4 +312,10 @@ pub(crate) fn on_destroy(x: &X11, window: Window) {
         drop(st);
         notify_settings(x);
     }
+}
+
+/// 距最近一次用户输入多久（MIT-SCREEN-SAVER 扩展的 QueryInfo）；服务器没有这个扩展或请求失败时为 None
+pub(crate) fn input_idle(x: &X11) -> Option<std::time::Duration> {
+    let reply = x.conn.screensaver_query_info(x.root).ok()?.reply().ok()?;
+    Some(std::time::Duration::from_millis(u64::from(reply.ms_since_user_input)))
 }

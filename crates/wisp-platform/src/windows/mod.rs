@@ -8,6 +8,7 @@
 //! - `wisp-hooks` + `wisp-hook-dispatch`：低级鼠标 / 键盘钩子与事件分发，只在有订阅（外部点击、扩展触发）
 //!   时存在，订阅全部注销后退出；被系统因回调超时静默卸载后，由重配 / 唤醒 / 解锁 / 前台切换时的检查自动重装；
 //! - `wisp-appearance`：外观变化监听（隐藏顶层窗口收 `WM_SETTINGCHANGE` 等广播），有订阅时存在；
+//! - `wisp-presence`：锁屏 / 解锁、睡眠唤醒、插拔电源（隐藏顶层窗口收会话通知与电源广播），只在实时同步开着时存在；
 //! - `wisp-bobber`：浮标分层窗口，首次显示时创建，浮标功能关闭后销毁。
 //!
 //! 所有可能被其他进程卡住的调用都有硬超时：UIA 100 ms、剪贴板读写在临时线程上执行并限时、
@@ -31,6 +32,7 @@ mod input;
 mod keys;
 mod monitor;
 mod paste;
+mod presence;
 mod process;
 mod selection;
 mod suppress;
@@ -131,6 +133,7 @@ pub(crate) fn create(cfg: PlatformConfig) -> Platform {
         clipboard: Box::new(WinClipboard(Arc::clone(&core))),
         clicks: Box::new(WinClicks(Arc::clone(&core))),
         hotkey_env: Box::new(WinHotkeyEnv),
+        presence: Box::new(presence::WinPresence),
         #[cfg(feature = "mouse-hook")]
         hooks: Box::new(WinHooks(Arc::clone(&core))),
         #[cfg(feature = "mouse-hook")]

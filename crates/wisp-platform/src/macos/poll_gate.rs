@@ -22,9 +22,14 @@
 //!
 //! 用户离开之后的第一次复制本身就是输入事件，最多晚一个慢档周期（1 s / 5 s）记进历史，之后立即回到 4 Hz；没有输入的
 //! 程序化写入（脚本、通用剪贴板）同样最多晚一个周期。
+//!
+//! **「人回来了」事件**：实时同步要在用户回到电脑前、解锁时立即探测服务器。闸门本来就在这些时刻换档（慢档的 tick
+//! 发现有了输入、解锁通知），所以顺带通知订阅者（`Presence::watch`），不为此多一次唤醒。轮询停了（监听结束）时告诉
+//! 订阅者事件来源没了，由它们改为自己复查。
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 
@@ -46,6 +51,7 @@ use super::Ctx;
 use super::focus::WorkspaceObserver;
 use super::notify::DistributedObserver;
 use super::util::guarded;
+use crate::types::{PresenceCallback, PresenceEvent};
 
 /// 屏幕空闲时的周期：只为在漏掉恢复通知时自愈，以及补上空闲期间极少见的程序化变化
 const IDLE_INTERVAL: Duration = Duration::from_secs(30);
@@ -118,6 +124,9 @@ impl Tier {
 pub(crate) struct PollGate {
     active: Cadence,
     inner: Mutex<Inner>,
+    /// 「人回来了」事件的订阅者（实时同步开着时才有）；单独一把锁，回调在锁外执行
+    listeners: Mutex<Vec<(u64, PresenceCallback)>>,
+    next_listener: AtomicU64,
 }
 
 #[derive(Default)]
@@ -145,6 +154,32 @@ impl PollGate {
         Self {
             active,
             inner: Mutex::new(Inner::default()),
+            listeners: Mutex::new(Vec::new()),
+            next_listener: AtomicU64::new(1),
+        }
+    }
+
+    /// 订阅「人回来了」事件；返回订阅号（[`Self::unlisten`] 用）
+    pub(crate) fn listen(&self, cb: PresenceCallback) -> u64 {
+        let id = self.next_listener.fetch_add(1, Ordering::Relaxed);
+        self.listeners.lock().push((id, cb));
+        id
+    }
+
+    pub(crate) fn unlisten(&self, id: u64) {
+        self.listeners.lock().retain(|(i, _)| *i != id);
+    }
+
+    /// 轮询正在运行：空闲分档与锁屏状态都在维护，「回到电脑前」会经事件通知
+    pub(crate) fn has_sources(&self) -> bool {
+        !self.inner.lock().sources.is_empty()
+    }
+
+    /// 通知订阅者（调用方不得持有 `inner`）
+    fn emit(&self, event: PresenceEvent) {
+        let listeners: Vec<PresenceCallback> = self.listeners.lock().iter().map(|(_, cb)| Arc::clone(cb)).collect();
+        for cb in listeners {
+            cb(event);
         }
     }
 
@@ -174,7 +209,15 @@ impl PollGate {
 
     /// 注销（监听结束时）
     pub(crate) fn remove(&self, id: u64) {
-        self.inner.lock().sources.retain(|(i, _)| *i != id);
+        let emptied = {
+            let mut g = self.inner.lock();
+            let before = g.sources.len();
+            g.sources.retain(|(i, _)| *i != id);
+            before > 0 && g.sources.is_empty()
+        };
+        if emptied {
+            self.emit(PresenceEvent::SourceLost);
+        }
     }
 
     /// 是否处于屏幕空闲（慢速）状态
@@ -184,22 +227,29 @@ impl PollGate {
 
     /// 切换状态；变化时立即改写全部定时器的周期（恢复时立即触发一次、回到活跃档）。返回是否变化
     pub(crate) fn set_paused(&self, paused: bool) -> bool {
-        let mut g = self.inner.lock();
-        if g.paused == paused {
-            return false;
-        }
-        g.paused = paused;
-        if !paused {
-            // 解锁 / 会话切回：人回来了
-            g.tier = Tier::Active;
-        }
-        for (_, s) in &g.sources {
-            self.arm(s, paused, g.tier, true);
+        {
+            let mut g = self.inner.lock();
+            if g.paused == paused {
+                return false;
+            }
+            g.paused = paused;
+            if !paused {
+                // 解锁 / 会话切回：人回来了
+                g.tier = Tier::Active;
+            }
+            for (_, s) in &g.sources {
+                self.arm(s, paused, g.tier, true);
+            }
         }
         log::debug!(
             "clipboard polling {}",
             if paused { "slowed: screens idle" } else { "resumed" }
         );
+        self.emit(if paused {
+            PresenceEvent::Locked
+        } else {
+            PresenceEvent::Unlocked
+        });
         true
     }
 
@@ -217,26 +267,33 @@ impl PollGate {
 
     /// [`Self::after_tick`] 的可测部分：`idle` 是距上一次输入事件的时长
     fn retier(&self, changed: bool, now: Instant, idle: Duration) -> Option<Tier> {
-        let mut g = self.inner.lock();
-        if g.paused {
-            return None;
-        }
-        if changed {
-            g.last_activity = Some(now);
-        }
-        let since_activity = g
-            .last_activity
-            .map_or(Duration::MAX, |t| now.saturating_duration_since(t));
-        let next = Tier::for_quiet(idle.min(since_activity));
-        if next == g.tier {
-            return None;
-        }
-        g.tier = next;
-        // 刚读过一次：变慢、变快都从下一个周期起算（变快 = 期间有过输入，4 Hz 下一次在 250 ms 内）
-        for (_, s) in &g.sources {
-            self.arm(s, false, next, false);
-        }
+        let next = {
+            let mut g = self.inner.lock();
+            if g.paused {
+                return None;
+            }
+            if changed {
+                g.last_activity = Some(now);
+            }
+            let since_activity = g
+                .last_activity
+                .map_or(Duration::MAX, |t| now.saturating_duration_since(t));
+            let next = Tier::for_quiet(idle.min(since_activity));
+            if next == g.tier {
+                return None;
+            }
+            g.tier = next;
+            // 刚读过一次：变慢、变快都从下一个周期起算（变快 = 期间有过输入，4 Hz 下一次在 250 ms 内）
+            for (_, s) in &g.sources {
+                self.arm(s, false, next, false);
+            }
+            next
+        };
         log::debug!("clipboard polling tier {next:?}");
+        // 慢档里发现有了输入：人回到了电脑前（只是剪贴板被程序改了不算）
+        if next == Tier::Active && idle < QUIET_AFTER {
+            self.emit(PresenceEvent::Returned);
+        }
         Some(next)
     }
 
@@ -308,14 +365,15 @@ impl PollGate {
 /// 距本会话上一次输入事件（键盘、鼠标、触控板，任何来源）多久。读的是窗口服务器维护的时间戳：不需要辅助功能 /
 /// 输入监控权限，约 0.3 µs；取不到（没有图形会话）时返回 0（按「刚有输入」处理，行为与没有分档时相同）
 fn user_idle() -> Duration {
+    input_idle().unwrap_or(Duration::ZERO)
+}
+
+/// 同 [`user_idle`]，取不到时为 None（`Presence::input_idle`）
+pub(crate) fn input_idle() -> Option<Duration> {
     // kCGAnyInputEventType = ~0
     let secs =
         CGEventSource::seconds_since_last_event_type(CGEventSourceStateID::CombinedSessionState, CGEventType(u32::MAX));
-    if secs.is_finite() && secs > 0.0 {
-        Duration::try_from_secs_f64(secs).unwrap_or(Duration::ZERO)
-    } else {
-        Duration::ZERO
-    }
+    (secs.is_finite() && secs >= 0.0).then(|| Duration::try_from_secs_f64(secs).unwrap_or(Duration::ZERO))
 }
 
 /// 此刻屏幕是否空闲：主显示器睡着了，或者会话锁屏 / 不在控制台（快速用户切换）
@@ -509,6 +567,47 @@ mod tests {
         assert_eq!(gate.cadence(false, Tier::Quiet).interval, s(1));
         assert_eq!(gate.cadence(false, Tier::Away).interval, s(5));
         assert_eq!(gate.cadence(true, Tier::Active).interval, IDLE_INTERVAL);
+    }
+
+    /// 「人回来了」事件：慢档里有了输入、解锁、轮询停了；Wisp 自己的 nudge 与程序改剪贴板不算
+    #[test]
+    fn presence_events_follow_tier_and_screen_changes() {
+        use std::sync::Mutex as StdMutex;
+
+        let gate = PollGate::new(Cadence {
+            interval: Duration::from_millis(250),
+            leeway: Duration::from_millis(50),
+        });
+        let seen: Arc<StdMutex<Vec<PresenceEvent>>> = Arc::new(StdMutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        let id = gate.listen(Arc::new(move |e| sink.lock().expect("lock").push(e)));
+        let take = || std::mem::take(&mut *seen.lock().expect("lock"));
+        let t0 = Instant::now();
+        let s = Duration::from_secs;
+
+        assert_eq!(gate.retier(false, t0, s(31)), Some(Tier::Quiet));
+        assert_eq!(gate.retier(false, t0 + s(1), s(1)), Some(Tier::Active));
+        assert_eq!(take(), [PresenceEvent::Returned]);
+        // 没有输入、只是剪贴板变了：回到活跃档，但不是「人回来了」
+        assert_eq!(gate.retier(false, t0 + s(40), s(40)), Some(Tier::Quiet));
+        assert_eq!(gate.retier(true, t0 + s(41), s(41)), Some(Tier::Active));
+        assert!(take().is_empty());
+        // Wisp 自己的 nudge 不通知（Wisp 已经知道）
+        assert_eq!(gate.retier(false, t0 + s(80), s(80)), Some(Tier::Quiet));
+        gate.nudge_at(t0 + s(81));
+        assert!(take().is_empty());
+        // 锁屏、解锁
+        assert!(gate.set_paused(true));
+        assert!(gate.set_paused(false));
+        assert_eq!(take(), [PresenceEvent::Locked, PresenceEvent::Unlocked]);
+        // 轮询停了：事件来源没了
+        assert!(!gate.has_sources());
+        gate.remove(7);
+        assert!(take().is_empty(), "本来就没有在轮询时不通知");
+        // 注销之后不再收到
+        gate.unlisten(id);
+        assert!(gate.set_paused(true));
+        assert!(take().is_empty());
     }
 
     #[test]

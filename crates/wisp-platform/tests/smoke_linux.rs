@@ -69,6 +69,10 @@ mod hotkey_logic;
 mod keysym;
 #[cfg(unix)]
 #[allow(dead_code)]
+#[path = "../src/linux/power_logic.rs"]
+mod power_logic;
+#[cfg(unix)]
+#[allow(dead_code)]
 #[path = "../src/linux/primary_gate.rs"]
 mod primary_gate;
 #[cfg(unix)]

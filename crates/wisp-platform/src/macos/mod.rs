@@ -21,6 +21,7 @@ mod paste;
 mod pasteboard;
 mod permissions;
 mod poll_gate;
+mod presence;
 mod screen;
 mod selection;
 mod util;
@@ -108,6 +109,7 @@ pub(crate) fn create(cfg: PlatformConfig) -> Platform {
         clipboard: Box::new(pasteboard::MacClipboard::new(ctx.clone())),
         clicks: Box::new(clicks::MacClicks::new(ctx.clone())),
         hotkey_env: Box::new(hotkey_env::MacHotkeyEnv::new(ctx.clone())),
+        presence: Box::new(presence::MacPresence::new(ctx.clone())),
         #[cfg(feature = "mouse-hook")]
         hooks: Box::new(hooks::MacHooks::new(ctx.clone())),
         #[cfg(feature = "mouse-hook")]

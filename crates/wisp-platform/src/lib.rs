@@ -76,6 +76,8 @@ pub struct Platform {
     pub clipboard: Box<dyn ClipboardAccess>,
     pub clicks: Box<dyn OutsideClick>,
     pub hotkey_env: Box<dyn HotkeyEnv>,
+    /// 用户在不在电脑前、电源状态（只在实时同步开着时查询）
+    pub presence: Box<dyn Presence>,
     #[cfg(feature = "mouse-hook")]
     pub hooks: Box<dyn InputHooks>,
     #[cfg(feature = "mouse-hook")]

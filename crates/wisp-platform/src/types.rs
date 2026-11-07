@@ -353,3 +353,41 @@ pub struct LayoutInfo {
     /// X11 的 XKB 选项含 `grp:*alt*shift*` 时；macOS 恒为 false（切换输入源是 ⌃Space / Fn / 大写锁定，⌥⇧ 不切换）
     pub alt_shift_switches: bool,
 }
+
+/// 电源状态（实时同步据此放慢或暂停）。取不到的项为 None，调用方按「不是」处理
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PowerState {
+    /// 正在用电池供电
+    pub on_battery: Option<bool>,
+    /// 省电模式 / 低电量模式 / 节电模式开着
+    pub low_power: Option<bool>,
+}
+
+/// 「人回来了」一类的系统事件（[`crate::Presence::watch`]）。回调只应做 O(1) 的事（例如唤醒一个等待中的任务），
+/// 由调用方重新读取 `input_idle` / `power` 后自己判断
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PresenceEvent {
+    /// 空闲之后又有了输入（回到电脑前）
+    Returned,
+    /// 解锁、显示器醒来、快速用户切换切回本会话
+    Unlocked,
+    /// 系统从睡眠中唤醒
+    Woke,
+    /// 电源状态变了（插拔电源、省电模式开关）
+    PowerChanged,
+    /// 屏幕锁定或显示器睡眠
+    Locked,
+    /// 平台失去了「回到电脑前」的事件来源（例如 macOS 的剪贴板轮询停了）：调用方改用本机复查
+    SourceLost,
+}
+
+/// 「人回来了」事件的回调
+pub type PresenceCallback = std::sync::Arc<dyn Fn(PresenceEvent) + Send + Sync>;
+
+/// 已安装的事件监听；丢弃即注销
+pub trait PresenceWatch: Send + Sync {
+    /// 「回到电脑前」（空闲之后的第一次输入）此刻会不会经回调通知：会的话调用方在用户离开期间不必定时复查输入空闲
+    fn reports_return(&self) -> bool;
+    /// 屏幕此刻是否锁定或显示器睡眠（由系统事件维护；不知道时为 false）
+    fn screen_idle(&self) -> bool;
+}

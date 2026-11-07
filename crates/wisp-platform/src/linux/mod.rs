@@ -6,7 +6,7 @@
 //! - `appearance`：xdg-desktop-portal Settings（自带的最小 D-Bus 客户端，`dbus` / `dbus_wire`）+ XSETTINGS；
 //! - `apps`：`.desktop` 索引、图标主题与窗口图标；
 //! - 纯逻辑模块（`session`、`xsettings`、`appearance_logic`、`dbus_wire`、`desktop_entry`、`edid`、`geometry`、
-//!   `keysym`、`terminal`、`uri`、`bobber_art`、`xfer_logic`、`primary_gate`、`hook_logic`、`fallback_logic`）只依赖
+//!   `keysym`、`terminal`、`uri`、`bobber_art`、`xfer_logic`、`primary_gate`、`hook_logic`、`fallback_logic`、`power_logic`）只依赖
 //!   std / wisp-types / `common/`，`tests/smoke_linux.rs` 用 `#[path]` 引入它们，因此在 macOS 开发机上也能跑单测。
 //!
 //! Wayland 会话：取词、模拟复制 / 粘贴、剪贴板监听、扩展触发、外部点击、截图都返回带原因的
@@ -33,6 +33,7 @@ mod geometry;
 mod hook_logic;
 mod hotkey_logic;
 mod keysym;
+mod power_logic;
 mod primary_gate;
 mod selection;
 mod session;
@@ -162,6 +163,7 @@ pub(crate) fn create(cfg: PlatformConfig) -> Platform {
         clipboard: imp(),
         clicks: imp(),
         hotkey_env: imp(),
+        presence: imp(),
         #[cfg(feature = "mouse-hook")]
         hooks: imp(),
         #[cfg(feature = "mouse-hook")]
@@ -475,6 +477,25 @@ impl OutsideClick for Imp {
                 x11::input::sync(&x);
             }
         }))
+    }
+}
+
+/// 实时同步的分档用：输入空闲只在 X11 会话、并且 X 连接已经建立时读（屏幕保护扩展的 QueryInfo，一次往返）；
+/// Wayland 会话（即使有 XWayland）读不到原生 Wayland 窗口上的输入，返回 None。没有「回到电脑前」的事件来源，
+/// 由调用方低频复查
+impl Presence for Imp {
+    fn input_idle(&self) -> Option<Duration> {
+        let x = self.0.x11_ready()?;
+        x11::screen::input_idle(&x)
+    }
+
+    fn power(&self) -> crate::types::PowerState {
+        crate::types::PowerState {
+            on_battery: power_logic::on_battery(&power_logic::read_supplies(std::path::Path::new(
+                "/sys/class/power_supply",
+            ))),
+            low_power: None,
+        }
     }
 }
 

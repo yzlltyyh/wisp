@@ -9,7 +9,8 @@ use wisp_types::{AppRef, ClipPayload, MonitorId, MonitorInfo, PermissionKind, Pe
 use crate::common::keymap::KeyChoice;
 use crate::error::PlatformError;
 use crate::types::{
-    ClickEvent, ClipSnapshot, FocusFacts, HookHandle, LayoutInfo, ReadLimits, Selection, SelectionError, SuppressRange,
+    ClickEvent, ClipSnapshot, FocusFacts, HookHandle, LayoutInfo, PowerState, PresenceCallback, PresenceWatch,
+    ReadLimits, Selection, SelectionError, SuppressRange,
 };
 #[cfg(feature = "mouse-hook")]
 use crate::types::{HookError, HookSpec, InputSignal, KeyChord};
@@ -184,6 +185,23 @@ pub trait ClipboardAccess: Send + Sync {
     /// 在用户空闲时把 changeCount 轮询放慢到 1 s / 5 s 一次，这里让它立即读一次并回到 4 Hz；有变更时照常经 `watch` 的回调
     /// 上报（不在调用线程上读取）。事件驱动的平台（Windows / X11）什么都不做
     fn poll_now(&self) {}
+}
+
+/// 用户在不在电脑前、电源状态（实时同步的分档用）。查询都是一次本地系统调用，不阻塞、不需要权限
+pub trait Presence: Send + Sync {
+    /// 距本会话最近一次键盘 / 鼠标 / 触控板输入多久。macOS `CGEventSourceSecondsSinceLastEventType`；Windows
+    /// `GetLastInputInfo`；X11 屏幕保护扩展；Wayland 会话（含经 XWayland）与没有图形会话时为 None
+    fn input_idle(&self) -> Option<Duration>;
+
+    /// 电源状态（用不用电池、是否开着省电模式）；取不到的项为 None
+    fn power(&self) -> PowerState;
+
+    /// 订阅「回到电脑前 / 解锁 / 唤醒」等事件；本平台没有事件来源时为 None（调用方低频复查 [`Self::input_idle`]）。
+    /// 回调在平台的通知线程上执行，只做 O(1) 的工作；返回值丢弃即注销
+    fn watch(&self, cb: PresenceCallback) -> Option<Box<dyn PresenceWatch>> {
+        let _ = cb;
+        None
+    }
 }
 
 /// 外部点击监听
