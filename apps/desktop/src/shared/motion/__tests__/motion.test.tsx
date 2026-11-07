@@ -41,6 +41,30 @@ describe('令牌', () => {
     expect(presets.panelEnter('below', 40, 'native').initial).toEqual({ y: 6 })
   })
 
+  it('panelEnter 侧放：水平移向锚点（右侧 x 6→0、左侧 −6→0），没有竖直位移；退出把两个方向都归零', () => {
+    expect(presets.panelEnter('below', 0, 'css', 'right')).toMatchObject({
+      initial: { opacity: 0, scale: 0.96, x: 6, y: 0 },
+      animate: { opacity: 1, scale: 1, x: 0, y: 0 },
+      transformOrigin: '0px top',
+    })
+    expect(presets.panelEnter('below', 552, 'css', 'left')).toMatchObject({
+      initial: { x: -6, y: 0 },
+      transformOrigin: '552px top',
+    })
+    expect(presets.panelEnter('below', 0, 'native', 'right')).toMatchObject({
+      initial: { x: 6, y: 0 },
+      animate: { x: 0, y: 0 },
+    })
+    // 竖直放置与以前逐字段相同（不带 x）
+    expect(presets.panelEnter('below', 40, 'css', null)).toEqual(
+      presets.panelEnter('below', 40, 'css'),
+    )
+    expect(presets.panelExit).toMatchObject({ x: 0, y: 0 })
+    // 减少动效：只淡入
+    const reduced = adaptPreset(presets.panelEnter('below', 0, 'css', 'left'), 'fade', true)
+    expect(JSON.stringify(reduced)).not.toMatch(/"(x|y|scale)":/)
+  })
+
   it('listStagger：最后一行在 84 ms 开始', () => {
     const { staggerChildren, maxItems } = presets.listStagger
     expect(Math.round(staggerChildren * (maxItems - 1) * 1000)).toBe(84)

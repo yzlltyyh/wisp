@@ -89,6 +89,7 @@ function prepare(payload: PanelPayload, extra: Partial<PanelPrepare> = {}): Pane
     max_height: 500,
     placement: 'below',
     origin_x: 40,
+    side: null,
     focused: false,
     transition: 'enter',
     ...extra,
@@ -640,6 +641,30 @@ describe('进入', () => {
     boot.frame_mode = 'native'
     setAppearance({ ...getAppearance(), reduceMotion: false })
     act(() => emit('panel:prepare', prepare(translate)))
+    await waitFor(() => expect(usePanelStore.getState().phase).toBe('shown'), { timeout: 5000 })
+  })
+
+  it('侧放（Css）：从锚点一侧水平移入、没有竖直位移，变换原点贴着锚点；播完到 shown', async () => {
+    boot.frame_mode = 'css'
+    boot.shadow_margin = 24
+    setAppearance({ ...getAppearance(), reduceMotion: false })
+    act(() => emit('panel:prepare', prepare(translate, { side: 'right', origin_x: 0 })))
+    const frame = screen.getByTestId('panel-card-frame')
+    expect(frame.style.transform).toContain('translateX(6px)')
+    expect(frame.style.transform).not.toContain('translateY')
+    expect(frame.style.transformOrigin).toBe('0px top')
+    await waitFor(() => expect(usePanelStore.getState().phase).toBe('shown'), { timeout: 5000 })
+  })
+
+  it('侧放在锚点左边（Native）：内容从左边移入，播完到 shown', async () => {
+    boot.frame_mode = 'native'
+    setAppearance({ ...getAppearance(), reduceMotion: false })
+    act(() => emit('panel:prepare', prepare(translate, { side: 'left', origin_x: 400 })))
+    const content = screen
+      .getByTestId('panel-card')
+      .querySelector<HTMLElement>('[data-panel-content]')
+    expect(content?.style.transform).toContain('translateX(-6px)')
+    expect(content?.style.transform).not.toContain('translateY')
     await waitFor(() => expect(usePanelStore.getState().phase).toBe('shown'), { timeout: 5000 })
   })
 })

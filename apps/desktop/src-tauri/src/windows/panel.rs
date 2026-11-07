@@ -1653,6 +1653,7 @@ impl PanelController {
             max_height: g.max_height,
             placement: g.placement,
             origin_x: g.origin_x,
+            side: g.side,
             focused: open.focused,
             transition: open.transition,
         }
@@ -7666,6 +7667,17 @@ mod tests {
         assert!(host.take().iter().any(|c| matches!(c, Call::Reveal(_))));
         host.run_timers(READY_WATCHDOG);
         assert!(!host.take().contains(&Call::Destroy));
+    }
+
+    /// 侧放的几何把「卡片在锚点哪一侧」随 prepare 交给前端（进入动效水平移向锚点）；竖直放置没有
+    #[test]
+    fn prepare_carries_the_side_placement() {
+        let mut o = open(1, PanelView::Ocr, anchor_a());
+        assert_eq!(PanelController::prepare_payload(&o).side, None);
+        o.geometry.side = Some(wisp_types::PanelSide::Left);
+        let p = PanelController::prepare_payload(&o);
+        assert_eq!(p.side, Some(wisp_types::PanelSide::Left));
+        assert_eq!(p.origin_x, o.geometry.origin_x);
     }
 
     // ---- 连续粘贴的进度提示（角落、点击穿透、不记为上一张卡片）

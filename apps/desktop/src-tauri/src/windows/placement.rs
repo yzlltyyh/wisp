@@ -7,7 +7,7 @@
 //!   （`MonitorInfo.frame` 在这两个平台上只用于排序与命中判断），所以按「显示器物理原点 + 本屏逻辑坐标 × 本屏缩放」换算，
 //!   窗口落在哪块屏上就按哪块屏的缩放比摆放，不会在跨 DPI 的屏幕上偏移或变形。
 
-use wisp_types::{Lang, MonitorId, MonitorInfo, PhysPoint, Placement, Point, Rect, TaskKind};
+use wisp_types::{Lang, MonitorId, MonitorInfo, PanelSide, PhysPoint, Placement, Point, Rect, TaskKind};
 
 /// 面板与锚点的间距（锚点下方 12 px）
 pub const ANCHOR_GAP: f64 = 12.0;
@@ -644,6 +644,8 @@ pub struct PanelGeometry {
     pub cap: f64,
     /// 锚点 x 相对卡片左边的偏移（Css 帧模式 transform-origin 用）
     pub origin_x: f64,
+    /// 侧放时卡片在锚点的哪一侧（前端据此让进入动效水平移向锚点）；竖直放置为 None
+    pub side: Option<PanelSide>,
 }
 
 impl PanelGeometry {
@@ -712,6 +714,7 @@ impl PanelGeometry {
             max_height: 0.0,
             cap,
             origin_x: (anchor_x - x).clamp(0.0, width),
+            side: self.side,
         };
         kept.max_height = cap.min(kept.available_height()).max(MIN_CARD_HEIGHT).floor();
         kept
@@ -799,6 +802,8 @@ struct Spot {
     /// 锚点的 x（变换原点）
     origin: f64,
     width: f64,
+    /// 侧放：在锚点的哪一侧
+    side: Option<PanelSide>,
 }
 
 /// 按锚点放置面板，`Rect` 锚点额外考虑预计内容高度（[`PlaceOpts::expected`]）。先按 [`place_panel`] 的规则（只看初始
@@ -826,6 +831,7 @@ pub fn place_panel_with(screen: &Screen, anchor: PlaceAnchor, opts: PlaceOpts) -
         avail,
         origin,
         width,
+        side: None,
     };
 
     let chosen = match anchor {
@@ -917,6 +923,7 @@ pub fn place_panel_with(screen: &Screen, anchor: PlaceAnchor, opts: PlaceOpts) -
         max_height,
         cap,
         origin_x: (chosen.origin - chosen.x).clamp(0.0, chosen.width),
+        side: chosen.side,
     }
 }
 
@@ -934,10 +941,10 @@ fn side_spot(work: Rect, a: Rect, width: f64, wish: f64) -> Option<Spot> {
     // 向远离锚点的方向取整：取整之后与锚点的间距仍不小于 ANCHOR_GAP
     let right = (a.right() + ANCHOR_GAP).ceil();
     let left = (a.x - ANCHOR_GAP - width).floor();
-    let (x, origin) = if right + width <= work.right() - EDGE_INSET {
-        (right, right)
+    let (x, origin, side) = if right + width <= work.right() - EDGE_INSET {
+        (right, right, PanelSide::Right)
     } else if left >= work.x + EDGE_INSET {
-        (left, left + width)
+        (left, left + width, PanelSide::Left)
     } else {
         return None;
     };
@@ -949,6 +956,7 @@ fn side_spot(work: Rect, a: Rect, width: f64, wish: f64) -> Option<Spot> {
         avail: (bottom_limit - top).max(0.0),
         origin,
         width,
+        side: Some(side),
     })
 }
 
@@ -1874,6 +1882,7 @@ mod tests {
             max_height: cap.min(avail).max(MIN_CARD_HEIGHT).floor(),
             cap,
             origin_x: (a.x - x).clamp(0.0, width),
+            side: None,
         }
     }
 
@@ -1991,17 +2000,22 @@ mod tests {
         assert_eq!(g.max_height, cap);
         assert_eq!(g.width, 552.0);
         assert_eq!(g.origin_x, 0.0, "变换原点贴着框选一侧");
+        assert_eq!(g.side, Some(PanelSide::Right), "进入动效从右边移向框选");
         assert!(!intersects(g.card_rect(g.max_height), a));
         assert_inside_work(&s, &g, "右侧");
+        // 原地替换保留位置，也保留「在哪一侧」
+        assert_eq!(g.keep_position(440.0, cap).side, Some(PanelSide::Right));
         // 不允许侧放（光标锚点）：仍在下方
         let below = place_panel_with(&s, PlaceAnchor::Rect(a), PlaceOpts { side_ok: false, ..opts });
         assert_eq!(below.placement, Placement::Below);
         assert_eq!(below.edge_y, a.bottom() + ANCHOR_GAP);
+        assert_eq!(below.side, None);
         // 右侧放不下：左侧，变换原点在卡片右缘
         let right_side = Rect::new(800.0, 300.0, 520.0, 260.0);
         let g = place_panel_with(&s, PlaceAnchor::Rect(right_side), opts);
         assert_eq!(g.x + g.width, right_side.x - ANCHOR_GAP);
         assert_eq!(g.origin_x, g.width);
+        assert_eq!(g.side, Some(PanelSide::Left));
         assert!(!intersects(g.card_rect(g.max_height), right_side));
         assert_inside_work(&s, &g, "左侧");
         // 框选又高又靠下（下方没有空间、上方 355）：侧放，顶边上移到放得下上限，仍不与框选重叠
@@ -2017,6 +2031,7 @@ mod tests {
         let g = place_panel_with(&s, PlaceAnchor::Rect(wide), PlaceOpts { width: 600.0, ..opts });
         assert_eq!(g.x, wide.x);
         assert_eq!(g.edge_y, wide.bottom() + ANCHOR_GAP);
+        assert_eq!(g.side, None);
     }
 
     #[test]

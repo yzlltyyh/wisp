@@ -650,6 +650,8 @@ export interface PermissionSet {
 // ===== 面板 / 窗口 =====
 export type PanelView = 'translate' | 'ocr' | 'clipboard' | 'input' | 'toast'
 export type Placement = 'below' | 'above' | 'center'
+/** 侧放的面板在锚点的哪一侧：上下都放不下的长结果放到选区 / 框选的左边或右边（顶边对齐，向下长） */
+export type PanelSide = 'left' | 'right'
 export type PanelTransition = 'enter' | 'crossfade'
 /** 面板帧模式：macOS = native（窗口即卡片），Windows / Linux = css（透明窗口 + CSS 卡片） */
 export type FrameMode = 'native' | 'css'
@@ -772,6 +774,8 @@ export interface PanelPrepare {
   placement: Placement
   /** 锚点 x 相对卡片左边的偏移（逻辑 px），CSS 帧模式的 transform-origin 用 */
   origin_x: number
+  /** 侧放时卡片在锚点的哪一侧（`placement` 此时为 below），进入动效改为水平移向锚点；其余为 null */
+  side: PanelSide | null
   /** 显示后是否持有键盘焦点（输入 / 剪贴板视图为 true） */
   focused: boolean
   transition: PanelTransition

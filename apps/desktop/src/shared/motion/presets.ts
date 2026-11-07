@@ -11,7 +11,7 @@
  * 风格切换正文的 2 px 模糊（Linux 与减少动效时去掉）。
  */
 import type { TargetAndTransition, Transition } from 'motion/react'
-import type { FrameMode, Placement } from '../ipc/types'
+import type { FrameMode, PanelSide, Placement } from '../ipc/types'
 import { useReducedMotionPref } from './useReducedMotionPref'
 import { duration, ease, spring, timing } from './tokens'
 
@@ -27,8 +27,8 @@ const fade: Transition = { duration: timing.reducedFade, ease: ease.standard }
 const standard = (seconds: number): Transition => ({ duration: seconds, ease: ease.standard })
 const exiting = (seconds: number): Transition => ({ duration: seconds, ease: ease.exit })
 
-/** 面板进入的位移幅度（y 6→0，在锚点上方时 −6→0） */
-const ENTER_Y = 6
+/** 面板进入时移向锚点的幅度：在锚点下方 y 6→0、上方 −6→0，侧放时右侧 x 6→0、左侧 −6→0 */
+const ENTER_SHIFT = 6
 /** 面板进入的初始缩放 */
 const ENTER_SCALE = 0.96
 /** 次要浮层（菜单 / popover）的初始缩放 */
@@ -44,30 +44,41 @@ const DIMMED = 0.3
 
 export const presets = {
   /**
-   * 面板进入。
-   * - css：卡片 opacity 0→1（base + standard）、scale 0.96→1、y ±6→0（spring.snappy），变换原点在锚点一侧；
-   * - native：窗口 alpha 由 Rust 做，这里只让卡片**内容**做 y（scale 恒为 1）。
-   * transform-origin：Below → `${originX}px top`，Above → `${originX}px bottom`，Center → center。
+   * 面板进入：移向锚点 6 px。
+   * - css：卡片 opacity 0→1（base + standard）、scale 0.96→1、位移 6→0（spring.snappy），变换原点在锚点一侧；
+   * - native：窗口 alpha 由 Rust 做，这里只让卡片**内容**位移（scale 恒为 1）。
+   * 位移：在锚点下方 y 6→0、上方 y −6→0；侧放（`side`，卡片在选区 / 框选的左右两侧、顶边对齐）改为水平移向锚点——
+   * 右侧 x 6→0、左侧 x −6→0，没有竖直位移。
+   * transform-origin：Below → `${originX}px top`（侧放时 originX 就是贴着锚点的那条边），Above → `${originX}px bottom`，
+   * Center → center。
    */
-  panelEnter: (placement: Placement, originX: number, frame: FrameMode) => {
+  panelEnter: (
+    placement: Placement,
+    originX: number,
+    frame: FrameMode,
+    side: PanelSide | null = null,
+  ) => {
     const transformOrigin =
       placement === 'below'
         ? `${originX}px top`
         : placement === 'above'
           ? `${originX}px bottom`
           : 'center'
-    const y = placement === 'above' ? -ENTER_Y : ENTER_Y
+    const shift = side
+      ? { x: side === 'right' ? ENTER_SHIFT : -ENTER_SHIFT, y: 0 }
+      : { y: placement === 'above' ? -ENTER_SHIFT : ENTER_SHIFT }
+    const settled = side ? { x: 0, y: 0 } : { y: 0 }
     if (frame === 'native') {
       return {
-        initial: { y },
-        animate: { y: 0 },
+        initial: shift,
+        animate: settled,
         transition: spring.snappy,
         transformOrigin,
       } as const
     }
     return {
-      initial: { opacity: 0, scale: ENTER_SCALE, y },
-      animate: { opacity: 1, scale: 1, y: 0 },
+      initial: { opacity: 0, scale: ENTER_SCALE, ...shift },
+      animate: { opacity: 1, scale: 1, ...settled },
       transition: { ...spring.snappy, opacity: standard(duration.base) },
       transformOrigin,
     } as const
@@ -83,12 +94,13 @@ export const presets = {
   },
   /**
    * 面板退出：opacity 1→0 + scale 1→0.98，fast + ease.exit，原地不动；Native 帧模式下 opacity 由窗口 alpha
-   * 承担，前端不播。**显式写 y: 0**：Motion 会把 animate 里去掉的键退回 initial（进入时的 y ±6），退出时卡片就会往下沉
-   * 5 px 左右（Chrome / WebKit 逐帧一致）
+   * 承担，前端不播。**显式写 x: 0 / y: 0**：Motion 会把 animate 里去掉的键退回 initial（进入时的位移 ±6），退出时卡片
+   * 就会往下沉（侧放时往旁边滑）5 px 左右（Chrome / WebKit 逐帧一致）
    */
   panelExit: {
     opacity: 0,
     scale: 0.98,
+    x: 0,
     y: 0,
     transition: exiting(duration.fast),
   },

@@ -36,6 +36,14 @@ pub enum Placement {
     Center,
 }
 
+/// 侧放的面板在锚点的哪一侧：上下都放不下的长结果放到选区 / 框选的左边或右边（顶边对齐，向下长）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PanelSide {
+    Left,
+    Right,
+}
+
 /// 视图进入方式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -55,6 +63,8 @@ pub struct PanelPrepare {
     pub placement: Placement,
     /// 锚点 x 相对卡片左边的偏移（逻辑 px），CSS 帧模式的 transform-origin 用
     pub origin_x: f64,
+    /// 侧放时卡片在锚点的哪一侧（`placement` 此时为 Below），进入动效改为水平移向锚点；其余为 None
+    pub side: Option<PanelSide>,
     /// 显示后是否持有键盘焦点（输入 / 剪贴板视图为 true）
     pub focused: bool,
     pub transition: PanelTransition,

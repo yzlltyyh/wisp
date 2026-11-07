@@ -18,6 +18,7 @@
   "max_height": 569.4,
   "placement": "below",
   "origin_x": 24.0,
+  "side": null,
   "focused": false,
   "transition": "enter"
 }

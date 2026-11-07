@@ -3,8 +3,8 @@
  *
  * - **native**（macOS）：窗口即卡片。材质（NSVisualEffectView）、着色（`--surface-tint`）与 0.5 pt 描边都由 Rust 的
  *   原生层画在窗口矩形内（`windows/native/macos.rs`），CSS 卡片背景透明；窗口高度由 Rust 逐帧弹簧驱动，进入 / 退出是
- *   窗口 alpha，CSS 只让**内容**在进入时做 y ±6→0（spring.snappy），退出时内容不动；减少动效时内容没有位移，
- *   进入阶段直接视为播完。WebView 被固定为「卡片上限」高、贴住窗口顶边，
+ *   窗口 alpha，CSS 只让**内容**在进入时移向锚点 6 px（spring.snappy，侧放时水平移动），退出时内容不动；
+ *   减少动效时内容没有位移，进入阶段直接视为播完。WebView 被固定为「卡片上限」高、贴住窗口顶边，
  *   窗口只露出其中卡片那一段，所以卡片按内容**自然高度**排版：不要用 `height: 100%`、不要把元素钉在视口底部；
  *   需要内部滚动的视图用 `maxHeight` 给出显式高度。卡片内的组件不要再铺 `--surface-tint` 背景（会与原生着色叠加）。
  * - **css**（Windows / Linux，macOS 退路）：透明窗口里画纯色卡片 + CSS 阴影，四周留 `--shadow-margin`（Rust 注入，
@@ -38,7 +38,7 @@ import {
   type Ref,
 } from 'react'
 import { getTransport } from '../../shared/ipc'
-import type { FrameMode, Placement } from '../../shared/ipc/types'
+import type { FrameMode, PanelSide, Placement } from '../../shared/ipc/types'
 import { adaptPreset, presets } from '../../shared/motion/presets'
 import { spring } from '../../shared/motion/tokens'
 import { useReducedMotionPref } from '../../shared/motion/useReducedMotionPref'
@@ -61,6 +61,8 @@ export interface PanelCardProps {
   placement: Placement
   /** 锚点 x 相对卡片左边的偏移（Css 帧模式的 transform-origin） */
   originX: number
+  /** 侧放时卡片在锚点的哪一侧（PanelPrepare.side）：进入时水平移向锚点 */
+  side: PanelSide | null
   /** Css 帧模式的阴影边距（Boot.shadow_margin）；0 表示窗口不能透明 */
   shadowMargin: number
   /** Css 帧模式：卡片高度（null = 跟随内容的自然高度，prepare 阶段） */
@@ -187,6 +189,7 @@ function NativeCard({
   phase,
   placement,
   originX,
+  side,
   contentRef,
   onEntered,
   overlay,
@@ -198,7 +201,7 @@ function NativeCard({
   children,
 }: InnerProps) {
   const reduced = useReducedMotionPref()
-  const enter = presets.panelEnter(placement, originX, 'native')
+  const enter = presets.panelEnter(placement, originX, 'native', side)
   // 只有 prepare 阶段停在起始位移；退出只靠窗口 alpha，内容原地不动，避免淡出时往回滑的残影
   const target = phase === 'preparing' && !reduced ? enter.initial : enter.animate
   // 减少动效：内容没有位移动画、Motion 不会回调完成，进入阶段直接视为播完（否则停在 entering、到不了 shown）
@@ -245,6 +248,7 @@ function CssCard({
   width,
   placement,
   originX,
+  side,
   height,
   contentRef,
   onHeightSettled,
@@ -258,7 +262,7 @@ function CssCard({
   children,
 }: InnerProps) {
   const reduced = useReducedMotionPref()
-  const raw = presets.panelEnter(placement, originX, 'css')
+  const raw = presets.panelEnter(placement, originX, 'css', side)
   const enter = adaptPreset(raw, 'fade', reduced)
   // 预留引起的长高（卡片目标就是预留的高度）与释放预留之后紧接着的那一次收缩（内容的 ResizeObserver → 下一帧上报，
   // 通常 1–2 帧之内）：spring.snappy（见文件头）。释放之后内容本来就比预留高、高度没变时，过了这个窗口就不再算

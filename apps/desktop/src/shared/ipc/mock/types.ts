@@ -10,6 +10,7 @@ import type {
   LlmError,
   PanelPayload,
   PanelPrepare,
+  PanelSide,
   Placement,
   StreamEvent,
 } from '../types'
@@ -74,6 +75,8 @@ export interface PrepareOptions {
   maxHeight?: number
   /** 锚点（页面坐标，模拟选区矩形）；默认取假桌面里高亮的选区 */
   anchor?: { x: number; y: number; width: number; height: number }
+  /** 侧放（卡片在锚点的哪一侧）；mock 不自己判断要不要侧放，由场景指定 */
+  side?: PanelSide
 }
 
 export interface MockContext {

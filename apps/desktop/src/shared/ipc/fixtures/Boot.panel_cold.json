@@ -29,6 +29,7 @@
     "max_height": 569.4,
     "placement": "center",
     "origin_x": 210.0,
+    "side": null,
     "focused": true,
     "transition": "enter"
   }

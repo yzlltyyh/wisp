@@ -1076,6 +1076,33 @@ export const PanelPrepare = {
   "max_height": 569.4,
   "placement": "below",
   "origin_x": 24.0,
+  "side": null,
+  "focused": false,
+  "transition": "enter"
+} satisfies T.PanelPrepare
+
+export const PanelPrepare__side = {
+  "session_id": 8,
+  "view": "ocr",
+  "payload": {
+    "kind": "ocr",
+    "capture_id": "c-7",
+    "request_id": "r-2",
+    "mode": "lines",
+    "thumb_url": "http://wisp.localhost/crop%2Fc-7.png",
+    "image_size": {
+      "width": 840,
+      "height": 312
+    },
+    "target_lang": "zh-CN",
+    "not_ready": null,
+    "layout": "remove_blank_lines"
+  },
+  "width": 552.0,
+  "max_height": 569.4,
+  "placement": "below",
+  "origin_x": 0.0,
+  "side": "right",
   "focused": false,
   "transition": "enter"
 } satisfies T.PanelPrepare
@@ -2233,6 +2260,7 @@ export const Boot__panel_cold = {
     "max_height": 569.4,
     "placement": "center",
     "origin_x": 210.0,
+    "side": null,
     "focused": true,
     "transition": "enter"
   }

@@ -151,6 +151,7 @@ export function PanelShell() {
       maxHeight={prepare.max_height}
       placement={prepare.placement}
       originX={prepare.origin_x}
+      side={prepare.side}
       shadowMargin={boot.shadow_margin}
       height={cardHeight}
       windowEdge={windowEdge}

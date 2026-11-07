@@ -350,6 +350,7 @@ const PanelView = enumOf<T.PanelView>()('PanelView', {
   toast: 1,
 })
 const Placement = enumOf<T.Placement>()('Placement', { below: 1, above: 1, center: 1 })
+const PanelSide = enumOf<T.PanelSide>()('PanelSide', { left: 1, right: 1 })
 const PanelTransition = enumOf<T.PanelTransition>()('PanelTransition', { enter: 1, crossfade: 1 })
 const HideReason = enumOf<T.HideReason>()('HideReason', {
   escape: 1,
@@ -936,6 +937,7 @@ export const registry = {
   // ----- 面板 / 窗口
   PanelView,
   Placement,
+  PanelSide,
   PanelTransition,
   LongTextInfo: obj<T.LongTextInfo>()('LongTextInfo', {
     chars: num,
@@ -983,6 +985,7 @@ export const registry = {
     max_height: num,
     placement: Placement,
     origin_x: num,
+    side: nul(PanelSide),
     focused: bool,
     transition: PanelTransition,
   }),

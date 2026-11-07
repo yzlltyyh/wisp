@@ -303,6 +303,7 @@ function buildPrepare(
     max_height: Math.round(options.maxHeight ?? work.height * settings.appearance.max_height_ratio),
     placement,
     origin_x: Math.round(originX),
+    side: options.side ?? null,
     focused: options.focused ?? (view === 'clipboard' || view === 'input'),
     transition: options.transition ?? 'enter',
   }

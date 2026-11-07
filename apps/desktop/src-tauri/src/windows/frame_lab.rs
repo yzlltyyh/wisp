@@ -131,6 +131,7 @@ fn geometry(screen: &Screen, placement: Placement) -> PanelGeometry {
         max_height: 560.0,
         cap: 560.0,
         origin_x: 24.0,
+        side: None,
     }
 }
 
