@@ -319,6 +319,16 @@ describe('芯片（识别出的片段）', () => {
     expect(ipc.called('clipboard_paste_text')).toEqual([])
   })
 
+  it('右键芯片小条：打开选中行的右键菜单', async () => {
+    ipc.results.clipboard_inspect = OTP
+    mount([meta(1, { preview: 'otp' }), meta(2)])
+    await settleInspect()
+    const chip = within(await screen.findByTestId('clip-chips')).getAllByTestId('clip-chip')[0]
+    fireEvent.contextMenu(chip as HTMLElement, { clientX: 300, clientY: 50 })
+    expect(await screen.findByTestId('clip-context-menu')).toBeTruthy()
+    expect(selected()).toBe('clip-row-1')
+  })
+
   it('「+N」打开操作菜单的「提取」子页', async () => {
     ipc.results.clipboard_inspect = MANY
     mount([meta(1, { preview: 'otp' }), meta(2)])
