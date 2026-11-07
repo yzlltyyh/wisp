@@ -104,6 +104,58 @@
   cursor: text;
 }
 
+/*
+ * ---- 原文与正文的外层：普通布局里没有盒子（data-contents → display: contents，原文与正文照常是视图这一列的 flex
+ * 子项）；展开阅读时是「原文 | 译文」两栏（data-reading）。两栏等宽、各自滚动，一起随视图的上限收缩（行高度 =
+ * 收缩之后的高度，两栏在其中撑满）；原文改用正文字号，仍是次要色，与译文区分 ----
+ */
+.tv-columns[data-contents] {
+  display: contents;
+}
+.tv[data-reading] .tv-columns {
+  display: grid;
+  flex: 0 1 auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  column-gap: 24px;
+  min-height: 0;
+}
+.tv[data-fill][data-reading] .tv-columns {
+  flex: 1 1 auto;
+}
+/* 原文栏：伸进栏间距的一半，滚动条（Windows / Linux 的常驻滚动条）落在栏间，分隔线画在栏间正中 */
+.tv[data-reading] .tv-source-clip {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-right: -12px;
+  padding-bottom: 0;
+}
+.tv[data-reading] .tv-source-clip::after {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  width: 1px;
+  height: auto;
+}
+.tv[data-reading] .tv-source {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: none;
+  padding-right: max(0px, calc(12px - var(--tv-sbw, 0px)));
+  font-size: var(--text-body);
+}
+.tv[data-reading] .tv-source:focus-visible {
+  border-radius: var(--r-control);
+  outline: var(--focus-ring-width) solid var(--accent);
+  outline-offset: -2px;
+  mask-image: none;
+}
+.tv[data-reading] .tv-body {
+  min-height: 0;
+}
+
 /* ---- 正文 ---- */
 .tv-body {
   position: relative;
@@ -172,6 +224,11 @@
     var(--mask) calc(100% - 1lh),
     transparent
   );
+}
+/* 聚焦环要压过上面的边缘渐隐（同为属性选择器时后者特异性更高，环的上下两边会被淡掉，只剩左右两条竖线） */
+.tv-body > .ui-stream.ui-scroll[data-fade-top]:focus-visible,
+.tv-body > .ui-stream.ui-scroll[data-fade-bottom]:focus-visible {
+  mask-image: none;
 }
 /* 一次性写入的静态正文（固定窗口里已结束的结果）：避免末行孤字；流式正文以折行稳定为先，不启用 */
 .tv-static .ui-stream-body,

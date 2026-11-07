@@ -3,14 +3,19 @@
  *
  * 结构与视觉稿 `design.translate-*` 一致：
  * - 头部：语言条「EN → 中文 ▾」（自动方向、交换、手动改目标，只对本会话生效）· 风格 chip（菜单含 ⌘1–9）· ⋯（润色 /
- *   校对 / 提升译文 / 复制原文 / 切换模型 / 编辑当前风格）· ✕；润色 / 校对时左侧换成任务标题，chip 换成「返回翻译」；
+ *   校对 / 提升译文 / 复制原文 / 切换模型 / 编辑当前风格 / 在大窗中打开）·（展开阅读 / 收起，⌘⇧E）· ✕；润色 / 校对时
+ *   左侧换成任务标题，chip 换成「返回翻译」；
  * - 原文对照（⇄）；
  * - 正文：骨架 → 流式（plain / mdlite / edit_split，词典式用 mdlite 的词典排版）| 长文本确认 | 未就绪卡片 | 错误卡片 |
  *   思考耗尽的空状态；换新请求时旧正文留在下层与新正文交叉淡入，正文区保持旧正文的高度直到新内容超过它
  *   或流结束（结束时只按最终高度收一次）；卡片 ↔ 骨架 / 正文、骨架 → 第一段正文同样交叉淡入、保持旧高度；
  * - 提示行：截断、参数已调整这类需要读完整的提示（不和指标、按钮挤在一行）；
  * - 底栏：状态行（模型 · 耗时 · tokens，放不下时整段丢弃次要段；思考耗尽等提示）+ 流式中 [停止]、
- *   完成后操作（复制 · 固定 · ⇄ · ⤢）；轻提示（已复制…）临时替换状态行。
+ *   完成后操作（复制 · 固定 · ⇄）；轻提示（已复制…）临时替换状态行。
+ *
+ * 展开阅读（面板外壳在内容完全透明的那一帧提交 `reading`，见 PanelShell）：原文与正文并排成「原文 | 译文」两栏，原文
+ * 总是显示（⇄ 隐藏）、改用正文字号，两栏各自滚动并按比例同步；刚展开时焦点放进译文栏（键盘滚动）。原文与正文外面那层
+ * `.tv-columns` 在普通布局里没有盒子，切换版式时正文不重新挂载。固定窗口够宽（≥ 680）时同样两栏（开着原文时）。
  *
  * 请求与流由 `TranslateRun` 管理（run.ts）；流式文字不经 React，直接由 StreamView 写 DOM。高度：视图按内容自然排版，
  * 整体不超过卡片上限（`maxHeight` − 内边距），超出部分在正文内滚动（StreamView 自动跟随到底部）；卡片 / 窗口
@@ -30,7 +35,6 @@ import {
   History,
   Info,
   Languages,
-  Maximize2,
   Pin,
   RotateCw,
   SlidersHorizontal,
@@ -98,6 +102,8 @@ import {
   Tooltip,
   type StatusLineProps,
 } from '../../shared/ui'
+import { READING_SHORTCUT } from '../../panel/reading'
+import { ReadingButton } from '../../panel/ReadingButton'
 import type { ViewProps } from '../../panel/types'
 import { usePinnedChrome, usePinnedHost, usePinnedReadyHold } from '../../pinned/context'
 import {
@@ -205,9 +211,11 @@ function makeHost(
     guessDict: (p) =>
       p.task === 'translate' && styleOf(styles, p.styleId).dictionary && isDictionaryInput(p.text),
     onWidth: (width, r) => {
-      // 新请求要求改宽度（面板宿主）：经 switchView 在透明帧改宽，新实例接上同一个请求
+      // 新请求要求改宽度（面板宿主）：经 switchView 在透明帧改宽，新实例接上同一个请求。展开阅读时宽度由阅读布局决定，
+      // 不跟随新译文的长度（收起时恢复展开之前的宽度），就在这个实例里接着显示
       const s = r.getSnapshot()
-      if (props.host !== 'panel' || !s.requestId || isLocalRequest(s.requestId)) return
+      if (props.host !== 'panel' || props.reading || !s.requestId || isLocalRequest(s.requestId))
+        return
       r.release()
       putHandoff(s.requestId, {
         target: s.params.target,
@@ -340,10 +348,56 @@ function useFocusableScroller(
   }, [body, gen, enabled])
 }
 
+/**
+ * 「原文 | 译文」两栏按比例同步滚动：任一栏滚动时，另一栏滚到同样的比例（各自的可滚动距离 × 比例）——两栏的文字长度不同，
+ * 按比例才大致对得上同一处。滚动事件不冒泡，在两栏的外层用捕获阶段监听（每一代正文都是新的滚动容器，不必重新挂监听）；
+ * 程序设置的位置记下来，它引起的那次滚动事件不再同步回去，不会来回弹。流式输出时译文栏跟随到底部、结束后回到开头，原文
+ * 栏随之一起走
+ */
+function useColumnSync(ref: RefObject<HTMLElement | null>, enabled: boolean): void {
+  useEffect(() => {
+    const root = ref.current
+    if (!enabled || !root) return
+    const echo = new WeakMap<HTMLElement, number>()
+    const source = () => root.querySelector<HTMLElement>(':scope > .tv-source-clip > .tv-source')
+    const result = () =>
+      root.querySelector<HTMLElement>(':scope > .tv-body > .tv-stream:not(.tv-stream-out)')
+    const follow = (from: HTMLElement, to: HTMLElement) => {
+      const range = from.scrollHeight - from.clientHeight
+      const ratio = range > 0 ? from.scrollTop / range : 0
+      const top = Math.round(ratio * Math.max(0, to.scrollHeight - to.clientHeight))
+      if (Math.abs(to.scrollTop - top) < 1) return
+      echo.set(to, top)
+      to.scrollTop = top
+    }
+    const onScroll = (e: Event) => {
+      const from = e.target
+      if (!(from instanceof HTMLElement)) return
+      const s = source()
+      const r = result()
+      const to = from === s ? r : from === r ? s : null
+      if (!to) return
+      const expected = echo.get(from)
+      if (expected !== undefined) {
+        echo.delete(from)
+        if (Math.abs(from.scrollTop - expected) < 1) return
+      }
+      follow(from, to)
+    }
+    // 刚换成两栏（原文栏是新挂载的、停在开头）：先让原文对齐译文此刻的位置
+    const s = source()
+    const r = result()
+    if (s && r) follow(r, s)
+    root.addEventListener('scroll', onScroll, true)
+    return () => root.removeEventListener('scroll', onScroll, true)
+  }, [ref, enabled])
+}
+
 export function TranslateView(props: ViewProps<'translate'>) {
   // JIT 预热渲染：不发 IPC、不接上 / 发起请求、不拉取设置（见模块注释）
   const prewarm = usePrewarm()
-  const { payload, host, sessionId, phase, focused, maxHeight, frame } = props
+  const { payload, host, sessionId, phase, focused, maxHeight, frame, reading, toggleReading } =
+    props
   const t = useT()
   const pinned = usePinnedHost()
   const pinnedChrome = usePinnedChrome()
@@ -400,6 +454,11 @@ export function TranslateView(props: ViewProps<'translate'>) {
   )
   const configuring = longTextPending
   const blocked = notReady !== null || longTextPending
+  // 展开阅读：「原文 | 译文」两栏（面板里由外壳在内容完全透明的那一帧提交；固定窗口按自己的宽度给出）。面板里展开时总是
+  // 显示原文（⇄ 隐藏）；固定窗口里开着原文才两栏
+  const panelReading = host === 'panel' && reading != null
+  const columns = reading === 'columns' && (panelReading || showSource) && !notReady
+  const sourceWanted = showSource || panelReading
 
   // ---------------------------------------------------------------------------
   // 进入后只启动一次（不以 phase 为依赖）：接上 Rust 已发出的请求、交接来的请求，或自己发起
@@ -644,6 +703,28 @@ export function TranslateView(props: ViewProps<'translate'>) {
 
   useFocusableScroller(bodyScope, textGen, showText && !prewarm)
 
+  // 两栏：按比例同步滚动
+  const columnsRef = useRef<HTMLDivElement>(null)
+  useColumnSync(columnsRef, columns && !prewarm)
+  // 刚展开阅读（面板此刻取得键盘焦点）：焦点放进译文栏，溢出时方向键 / 翻页键直接滚动它；放得下时至少离开展开按钮，
+  // 免得空格又把它收起
+  const wasReading = useRef(panelReading)
+  useLayoutEffect(() => {
+    const was = wasReading.current
+    wasReading.current = panelReading
+    if (!panelReading || was || prewarm) return
+    const stream = bodyScope.current?.querySelector<HTMLElement>(CURRENT_TEXT)
+    if (stream && stream.scrollHeight > stream.clientHeight + 1) {
+      stream.tabIndex = 0
+      stream.focus({ preventScroll: true })
+      return
+    }
+    const active = document.activeElement
+    if (active instanceof HTMLElement && rootRef.current?.contains(active)) active.blur()
+    // 只在刚展开时执行
+    // oxlint-disable-next-line react/exhaustive-deps
+  }, [panelReading])
+
   // ---------------------------------------------------------------------------
   // 长高 / 变矮时底栏贴住卡片可见的下沿（reveal.ts）
 
@@ -700,10 +781,10 @@ export function TranslateView(props: ViewProps<'translate'>) {
     showFlash(ok ? success : t('common.state.copy_failed'), ok ? 'success' : 'warning')
 
   // 原文对照的动画容器第一次用到时才挂载：面板 prepare 的同步首帧里只渲染看得见的东西
-  const [sourceMounted, setSourceMounted] = useState(showSource)
+  const [sourceMounted, setSourceMounted] = useState(sourceWanted)
   // 挂载时就显示的原文不播放展开动画；之后第一次切换出来的照常播放
-  const [sourceAnimateIn] = useState(!showSource)
-  if (showSource && !sourceMounted) setSourceMounted(true)
+  const [sourceAnimateIn] = useState(!sourceWanted)
+  if (sourceWanted && !sourceMounted) setSourceMounted(true)
   const footerRef = useRef<HTMLDivElement>(null)
   const [modelMenuRequest, setModelMenuRequest] = useState(0)
   const openModelMenu = () => setModelMenuRequest((n) => n + 1)
@@ -859,8 +940,8 @@ export function TranslateView(props: ViewProps<'translate'>) {
       capture_id: null,
       ocr_text: null,
       ocr_mode: null,
-      // 展开 ⤢ 默认显示原文对照
-      show_source: expand || showSource,
+      // 在大窗中打开默认显示原文对照；展开阅读里原文本来就显示着（固定窗口够宽时接着两栏）
+      show_source: expand || showSource || panelReading,
       // 纯文本形式（兼容只认 status_line 的读取方）；固定窗口读结构化的 status
       status_line: statusLineText(s, t),
       dict_mode: s.textGen > 0 ? s.textDict : (s.dict ?? false),
@@ -908,6 +989,15 @@ export function TranslateView(props: ViewProps<'translate'>) {
       combo: 'Mod+KeyP',
       run: () => {
         if (host === 'panel') pin(false)
+      },
+    },
+    // 展开 / 收起阅读（面板宿主、这次显示能展开时）。收起也可以按 Esc（外壳：Esc 先收起、再按一次才关闭）
+    {
+      combo: READING_SHORTCUT,
+      when: () => toggleReading !== undefined,
+      run: () => {
+        if (notReady) return false
+        toggleReading?.()
       },
     },
     ...Array.from({ length: STYLE_SHORTCUTS }, (_, i) => ({
@@ -1262,6 +1352,7 @@ export function TranslateView(props: ViewProps<'translate'>) {
       data-host={host}
       data-status={snap.status}
       data-fill={(isPinned && !measuring) || undefined}
+      data-reading={columns ? 'columns' : undefined}
       aria-label={t('translate.a11y.view')}
       aria-busy={busy || undefined}
       style={rootStyle}
@@ -1327,9 +1418,13 @@ export function TranslateView(props: ViewProps<'translate'>) {
             onCopySource={copySource}
             onModel={pickModel}
             onEditStyle={() => openSettings('translate')}
+            onOpenLarge={canPin ? () => void pin(true) : undefined}
             modelMenuRequest={modelMenuRequest}
           />
         )}
+        {toggleReading && !notReady ? (
+          <ReadingButton reading={panelReading} onToggle={toggleReading} data-testid="tv-reading" />
+        ) : null}
         {isPinned ? (
           pinnedChrome
         ) : (
@@ -1343,102 +1438,121 @@ export function TranslateView(props: ViewProps<'translate'>) {
         )}
       </div>
 
-      {sourceMounted ? (
-        <AnimatePresence initial={sourceAnimateIn} mode={reveal ? 'popLayout' : 'sync'}>
-          {showSource && !notReady ? (
-            <m.section
-              key="source"
-              className="tv-source-clip"
-              aria-label={t('translate.a11y.source')}
-              {...sourceMotion}
-            >
-              <ScrollArea className="tv-source ui-selectable" data-testid="tv-source">
-                {params.text}
-              </ScrollArea>
-            </m.section>
-          ) : null}
-        </AnimatePresence>
-      ) : null}
-
-      <section
-        ref={bodyScope}
-        className="tv-body"
-        aria-label={t('translate.a11y.result')}
-        data-dimmed={snap.dimmed || undefined}
-        data-hold={(holdSkeleton && minBody === 0) || undefined}
-        style={
-          {
-            '--tv-hold': skeleton,
-            minHeight: minBody > 0 ? minBody : undefined,
-          } as CSSProperties
-        }
+      {/* 原文与正文的外层：普通布局里没有盒子（display: contents，两者照常是视图的直接排版子元素）；展开阅读时是
+          「原文 | 译文」两栏。正文始终是它的最后一个子元素，切换版式时不重新挂载（流式正文、滚动位置都保留） */}
+      <div
+        ref={columnsRef}
+        className="tv-columns"
+        data-contents={columns ? undefined : ''}
+        data-testid="tv-columns"
       >
-        {/* 正文之前的卡片 / 骨架：换掉时脱离排版、淡出，叠在新内容下层（与旧正文同一种叠层方式） */}
-        <AnimatePresence initial={false} mode="popLayout">
-          {leadKey ? (
-            <m.div
-              key={leadKey}
-              ref={cardRef(leadKey)}
-              className="tv-card"
-              initial={leadKey === 'skeleton' ? presets.pageSwitch.initial : false}
-              animate={fadeIn}
-              exit={fadeOut}
-            >
-              {leadCard}
-            </m.div>
-          ) : null}
-        </AnimatePresence>
-        {/* 旧正文与当前正文放在同一个数组里：key 相同的旧正文换到「淡出层」时 React 保留它的 DOM（文字、滚动位置） */}
-        {textLayers.map((layer) =>
-          layer.gen === snap.textGen ? (
-            <StreamView
-              key={`text-${layer.gen}`}
-              ref={bindStream}
-              format={snap.textFormat}
-              maxHeight={streamMax}
-              className={textClass(layer)}
-              data-testid="tv-stream"
-            />
-          ) : (
-            <StreamView
-              key={`text-${layer.gen}`}
-              format={layer.format}
-              maxHeight={streamMax}
-              className={cx(textClass(layer), 'tv-stream-out')}
-              data-testid="tv-stream-out"
-            />
-          ),
-        )}
-        <AnimatePresence initial={false} mode="popLayout">
-          {errorKey && snap.error ? (
-            <m.div
-              key={errorKey}
-              ref={cardRef(errorKey)}
-              className="tv-card tv-error"
-              initial={false}
-              animate={fadeIn}
-              exit={fadeOut}
-            >
-              <ErrorCard
-                error={snap.error}
-                providerName={provider?.name ?? null}
-                preferServerMessage={isCompatibleEndpoint(provider)}
-                onRetry={retry}
-                onOpenSettings={() =>
-                  openSettings(snap.error?.code === 'local_runtime' ? 'offline' : 'providers')
-                }
-                onSwitchModel={openModelMenu}
-                onOpenUrl={(url) =>
-                  void api
-                    .openUrl(url)
-                    .catch((e: unknown) => console.warn('[translate] open_url', e))
-                }
-                data-testid="tv-error"
+        {sourceMounted ? (
+          // 换版式时整组换掉（key）：不播放原文的展开 / 收起动画——切换发生在内容完全透明的那一帧
+          <AnimatePresence
+            key={columns ? 'columns' : 'flow'}
+            initial={columns ? false : sourceAnimateIn}
+            mode={reveal && !columns ? 'popLayout' : 'sync'}
+          >
+            {sourceWanted && !notReady ? (
+              <m.section
+                key="source"
+                className="tv-source-clip"
+                aria-label={t('translate.a11y.source')}
+                {...(columns ? {} : sourceMotion)}
+              >
+                {/* 两栏时原文栏可以 Tab 聚焦（键盘滚动长原文） */}
+                <ScrollArea
+                  className="tv-source ui-selectable"
+                  tabIndex={columns ? 0 : undefined}
+                  data-testid="tv-source"
+                >
+                  {params.text}
+                </ScrollArea>
+              </m.section>
+            ) : null}
+          </AnimatePresence>
+        ) : null}
+
+        <section
+          ref={bodyScope}
+          className="tv-body"
+          aria-label={t('translate.a11y.result')}
+          data-dimmed={snap.dimmed || undefined}
+          data-hold={(holdSkeleton && minBody === 0) || undefined}
+          style={
+            {
+              '--tv-hold': skeleton,
+              minHeight: minBody > 0 ? minBody : undefined,
+            } as CSSProperties
+          }
+        >
+          {/* 正文之前的卡片 / 骨架：换掉时脱离排版、淡出，叠在新内容下层（与旧正文同一种叠层方式） */}
+          <AnimatePresence initial={false} mode="popLayout">
+            {leadKey ? (
+              <m.div
+                key={leadKey}
+                ref={cardRef(leadKey)}
+                className="tv-card"
+                initial={leadKey === 'skeleton' ? presets.pageSwitch.initial : false}
+                animate={fadeIn}
+                exit={fadeOut}
+              >
+                {leadCard}
+              </m.div>
+            ) : null}
+          </AnimatePresence>
+          {/* 旧正文与当前正文放在同一个数组里：key 相同的旧正文换到「淡出层」时 React 保留它的 DOM（文字、滚动位置） */}
+          {textLayers.map((layer) =>
+            layer.gen === snap.textGen ? (
+              <StreamView
+                key={`text-${layer.gen}`}
+                ref={bindStream}
+                format={snap.textFormat}
+                maxHeight={streamMax}
+                className={textClass(layer)}
+                data-testid="tv-stream"
               />
-            </m.div>
-          ) : null}
-        </AnimatePresence>
-      </section>
+            ) : (
+              <StreamView
+                key={`text-${layer.gen}`}
+                format={layer.format}
+                maxHeight={streamMax}
+                className={cx(textClass(layer), 'tv-stream-out')}
+                data-testid="tv-stream-out"
+              />
+            ),
+          )}
+          <AnimatePresence initial={false} mode="popLayout">
+            {errorKey && snap.error ? (
+              <m.div
+                key={errorKey}
+                ref={cardRef(errorKey)}
+                className="tv-card tv-error"
+                initial={false}
+                animate={fadeIn}
+                exit={fadeOut}
+              >
+                <ErrorCard
+                  error={snap.error}
+                  providerName={provider?.name ?? null}
+                  preferServerMessage={isCompatibleEndpoint(provider)}
+                  onRetry={retry}
+                  onOpenSettings={() =>
+                    openSettings(snap.error?.code === 'local_runtime' ? 'offline' : 'providers')
+                  }
+                  onSwitchModel={openModelMenu}
+                  onOpenUrl={(url) =>
+                    void api
+                      .openUrl(url)
+                      .catch((e: unknown) => console.warn('[translate] open_url', e))
+                  }
+                  data-testid="tv-error"
+                />
+              </m.div>
+            ) : null}
+          </AnimatePresence>
+        </section>
+      </div>
 
       {notice ? (
         <m.output className="tv-notice" data-tone={notice.tone} data-testid="tv-notice" {...cardIn}>
@@ -1520,21 +1634,18 @@ export function TranslateView(props: ViewProps<'translate'>) {
                   data-testid="tv-pin"
                 />
               ) : null}
-              <IconButton
-                icon={ArrowLeftRight}
-                label={showSource ? t('common.action.hide_source') : t('common.action.show_source')}
-                active={showSource}
-                onClick={toggleSource}
-                data-testid="tv-source-toggle"
-              />
-              {canPin ? (
+              {/* 展开阅读时原文总是显示（左栏），没有 ⇄ */}
+              {panelReading ? null : (
                 <IconButton
-                  icon={Maximize2}
-                  label={t('common.action.expand')}
-                  onClick={() => void pin(true)}
-                  data-testid="tv-expand"
+                  icon={ArrowLeftRight}
+                  label={
+                    showSource ? t('common.action.hide_source') : t('common.action.show_source')
+                  }
+                  active={showSource}
+                  onClick={toggleSource}
+                  data-testid="tv-source-toggle"
                 />
-              ) : null}
+              )}
             </m.div>
           )}
         </div>

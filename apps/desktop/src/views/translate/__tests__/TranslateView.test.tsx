@@ -108,8 +108,11 @@ describe('接上请求与流式显示', () => {
     ipc.push('rx', delta('棕色狐狸'), done())
     await waitFor(() => expect(bodyText()).toBe('敏捷的棕色狐狸'))
     expect(screen.queryByTestId('tv-stop')).toBeNull()
-    for (const id of ['tv-copy', 'tv-pin', 'tv-source-toggle', 'tv-expand'])
+    for (const id of ['tv-copy', 'tv-pin', 'tv-source-toggle'])
       expect(screen.getByTestId(id)).toBeInTheDocument()
+    // 「在大窗中打开」在 ⋯ 菜单里，底栏没有 ⤢；没有外壳给的 toggleReading 时头部也没有展开阅读按钮
+    expect(screen.queryByTestId('tv-expand')).toBeNull()
+    expect(screen.queryByTestId('tv-reading')).toBeNull()
     expect(screen.getByTestId('tv-status')).toHaveTextContent(/GPT-5\.4 mini.*1\.2 s.*20 tokens/)
     // 输入 / 输出 token：组件库的 Tooltip（悬停 / 键盘聚焦），不是原生 title；写明哪个是输入、哪个是输出
     const status = document.querySelector('.tv-status-focus') as HTMLElement
@@ -273,10 +276,11 @@ describe('固定与展开', () => {
     expect(ipc.names()).not.toContain('cancel')
   })
 
-  it('完成后 ⤢：展开、默认显示原文对照，不转移请求；结构化状态行与实际模型随 PinState 交接', async () => {
+  it('完成后 ⋯ › 在大窗中打开：展开、默认显示原文对照，不转移请求；结构化状态行与实际模型随 PinState 交接', async () => {
     await mount(payload())
     await finish('rx', '译文')
-    fireEvent.click(screen.getByTestId('tv-expand'))
+    fireEvent.click(screen.getByTestId('tv-more'))
+    fireEvent.click(await screen.findByText('在大窗中打开'))
     await flush()
     const [, args] = ipc.calls.find(([c]) => c === 'panel_pin') ?? []
     expect(args).toMatchObject({
@@ -1066,5 +1070,139 @@ describe('拖动', () => {
     if (!spacer) throw new Error('no spacer')
     down(spacer)
     expect(drags()).toHaveLength(0)
+  })
+})
+
+describe('展开阅读', () => {
+  /** 给 jsdom 里的滚动容器一组尺寸（jsdom 不排版，scrollHeight / clientHeight 恒为 0） */
+  function sized(el: HTMLElement, scrollHeight: number, clientHeight: number): HTMLElement {
+    Object.defineProperty(el, 'scrollHeight', { configurable: true, value: scrollHeight })
+    Object.defineProperty(el, 'clientHeight', { configurable: true, value: clientHeight })
+    return el
+  }
+
+  it('外壳给了 toggleReading：头部 ✕ 左侧有展开按钮，点它与 ⌘⇧E 都交给外壳；没给时都没有', async () => {
+    const toggleReading = vi.fn<() => void>()
+    const { rerender } = await mount(payload(), { toggleReading })
+    await finish('rx', '译文')
+    const button = screen.getByTestId('tv-reading')
+    expect(button).toHaveAccessibleName('展开阅读')
+    // ⋯ 之后、✕ 之前
+    const order = (a: HTMLElement, b: HTMLElement) =>
+      a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING
+    expect(order(screen.getByTestId('tv-more'), button)).toBeTruthy()
+    expect(order(button, screen.getByTestId('tv-close'))).toBeTruthy()
+    fireEvent.click(button)
+    expect(toggleReading).toHaveBeenCalledTimes(1)
+    press('KeyE', { mod: true, shift: true })
+    expect(toggleReading).toHaveBeenCalledTimes(2)
+    // 不带 Shift 的 ⌘E 不是它（剪贴板里 ⌘E 是「提取」）
+    press('KeyE', { mod: true })
+    expect(toggleReading).toHaveBeenCalledTimes(2)
+    rerender({ toggleReading: undefined })
+    expect(screen.queryByTestId('tv-reading')).toBeNull()
+    press('KeyE', { mod: true, shift: true })
+    expect(toggleReading).toHaveBeenCalledTimes(2)
+  })
+
+  it('未就绪卡片上不显示展开按钮、⌘⇧E 不展开', async () => {
+    const toggleReading = vi.fn<() => void>()
+    await mount(payload({ request_id: null, not_ready: { reason: 'no_provider' } }), {
+      toggleReading,
+    })
+    expect(screen.queryByTestId('tv-reading')).toBeNull()
+    press('KeyE', { mod: true, shift: true })
+    expect(toggleReading).not.toHaveBeenCalled()
+  })
+
+  it('面板里展开（reading = columns）：原文 | 译文两栏，原文总是显示、⇄ 隐藏，按钮变成「收起」；收起后回到单栏', async () => {
+    const { rerender } = await mount(payload(), { toggleReading: vi.fn<() => void>() })
+    await finish('rx', '译文')
+    const view = screen.getByTestId('view-translate')
+    const columns = screen.getByTestId('tv-columns')
+    expect(view).not.toHaveAttribute('data-reading')
+    expect(columns).toHaveAttribute('data-contents')
+    expect(screen.queryByTestId('tv-source')).toBeNull()
+    const stream = screen.getByTestId('tv-stream')
+    rerender({ reading: 'columns' })
+    expect(view).toHaveAttribute('data-reading', 'columns')
+    expect(columns).not.toHaveAttribute('data-contents')
+    // 原文是左栏、正文是右栏（同一个正文元素：切换版式不重新挂载）
+    const source = screen.getByTestId('tv-source')
+    expect(columns.firstElementChild).toContainElement(source)
+    expect(columns.lastElementChild).toHaveClass('tv-body')
+    expect(screen.getByTestId('tv-stream')).toBe(stream)
+    expect(source).toHaveAttribute('tabindex', '0')
+    expect(screen.queryByTestId('tv-source-toggle')).toBeNull()
+    expect(screen.getByTestId('tv-reading')).toHaveAccessibleName('收起')
+    rerender({ reading: null })
+    expect(view).not.toHaveAttribute('data-reading')
+    expect(columns).toHaveAttribute('data-contents')
+    expect(screen.queryByTestId('tv-source')).toBeNull()
+    expect(screen.getByTestId('tv-source-toggle')).toBeInTheDocument()
+    expect(screen.getByTestId('tv-stream')).toBe(stream)
+  })
+
+  it('展开阅读时固定：PinState 带上原文（固定窗口够宽时接着两栏）', async () => {
+    await mount(payload(), { toggleReading: vi.fn<() => void>(), reading: 'columns' })
+    await finish('rx', '译文')
+    press('KeyP', { mod: true })
+    await flush()
+    const [, args] = ipc.calls.find(([c]) => c === 'panel_pin') ?? []
+    expect(args).toMatchObject({ expand: false, state: { show_source: true } })
+  })
+
+  it('固定窗口宿主给了 columns：开着原文才两栏，关掉原文回到单栏', async () => {
+    await mount(payload(), { host: 'pinned', reading: 'columns' })
+    await finish('rx', '译文')
+    const view = screen.getByTestId('view-translate')
+    expect(view).not.toHaveAttribute('data-reading')
+    fireEvent.click(screen.getByTestId('tv-source-toggle'))
+    expect(view).toHaveAttribute('data-reading', 'columns')
+    fireEvent.click(screen.getByTestId('tv-source-toggle'))
+    expect(view).not.toHaveAttribute('data-reading')
+  })
+
+  it('展开阅读中新请求要求改宽度（StartAck.width）：不切换视图，宽度留给阅读布局', async () => {
+    const { props } = await mount(payload(), {
+      toggleReading: vi.fn<() => void>(),
+      reading: 'columns',
+    })
+    await finish('rx', '译文')
+    ipc.ackWidth = 520
+    press('KeyR', { mod: true })
+    await flush()
+    expect(ipc.starts.at(-1)).toMatchObject({ bypass_cache: true })
+    expect(props.switchView).not.toHaveBeenCalled()
+  })
+
+  it('两栏按比例同步滚动：任一栏滚动，另一栏滚到同样的比例；程序设置引起的滚动不回弹', async () => {
+    await mount(payload(), { toggleReading: vi.fn<() => void>(), reading: 'columns' })
+    await finish('rx', '译文')
+    const source = sized(screen.getByTestId('tv-source'), 1000, 200)
+    const result = sized(screen.getByTestId('tv-stream'), 500, 200)
+    source.scrollTop = 400
+    fireEvent.scroll(source)
+    expect(result.scrollTop).toBe(150)
+    // 上一步设置引起的滚动事件：不再同步回原文
+    fireEvent.scroll(result)
+    expect(source.scrollTop).toBe(400)
+    result.scrollTop = 300
+    fireEvent.scroll(result)
+    expect(source.scrollTop).toBe(800)
+    result.scrollTop = 0
+    fireEvent.scroll(result)
+    expect(source.scrollTop).toBe(0)
+  })
+
+  it('普通布局（开着原文对照）不同步滚动', async () => {
+    await mount(payload(), { toggleReading: vi.fn<() => void>() })
+    await finish('rx', '译文')
+    fireEvent.click(screen.getByTestId('tv-source-toggle'))
+    const source = sized(screen.getByTestId('tv-source'), 1000, 200)
+    const result = sized(screen.getByTestId('tv-stream'), 500, 200)
+    source.scrollTop = 400
+    fireEvent.scroll(source)
+    expect(result.scrollTop).toBe(0)
   })
 })

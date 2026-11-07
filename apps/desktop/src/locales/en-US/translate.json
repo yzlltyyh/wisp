@@ -39,6 +39,7 @@
     "copy_source": "Copy source text",
     "switch_model": "Switch model",
     "edit_style": "Edit current style",
+    "open_large": "Open in a larger window",
     "back_to_translate": "Back to translation"
   },
   "model": {

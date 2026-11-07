@@ -16,6 +16,8 @@
     "save": "Save",
     "more": "More",
     "expand": "Expand",
+    "reading_view": "Reading view",
+    "exit_reading_view": "Exit reading view",
     "show_source": "Show original",
     "hide_source": "Hide original",
     "stop": "Stop",

@@ -16,6 +16,7 @@
  * 菜单第一次打开时才挂载（面板 prepare 的同步首帧里不渲染）。
  */
 import {
+  AppWindow,
   ChevronLeft,
   Copy,
   Cpu,
@@ -103,6 +104,10 @@ export interface MoreMenuProps {
   onCopySource: () => void
   onModel: (ref: ModelRef | null) => void
   onEditStyle: () => void
+  /**
+   * 「在大窗中打开」：固定成一个较大的窗口（宽 640、在屏幕居中，默认显示原文）。没有可固定的结果时不传（不显示这一项）
+   */
+  onOpenLarge?: () => void
   /** 外部要求打开模型菜单（错误卡片 / 思考耗尽的「切换模型」） */
   modelMenuRequest?: number
 }
@@ -181,6 +186,13 @@ export function MoreMenu(props: MoreMenuProps) {
         onSelect: () => modelOpener.request('keyboard'),
       },
     )
+    if (props.onOpenLarge)
+      list.push({
+        id: 'open-large',
+        label: t('translate.more.open_large'),
+        icon: AppWindow,
+        onSelect: props.onOpenLarge,
+      })
     // 「编辑当前风格」在风格菜单里也有：矮面板里先收起它
     if (level < 1)
       list.push({

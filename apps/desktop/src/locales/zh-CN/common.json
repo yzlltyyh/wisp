@@ -16,6 +16,8 @@
     "save": "保存",
     "more": "更多",
     "expand": "展开",
+    "reading_view": "展开阅读",
+    "exit_reading_view": "收起",
     "show_source": "显示原文",
     "hide_source": "隐藏原文",
     "stop": "停止",

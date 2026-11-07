@@ -62,6 +62,21 @@ function offsetWithin(el: HTMLElement, ancestor: HTMLElement): number {
   return top
 }
 
+/**
+ * 视图根元素下参与排版的「直接子元素」：带 `data-contents` 的包装（`display: contents`，自己没有盒子，例如普通布局里
+ * 原文与正文外面那层 `.tv-columns`）按它的子元素算；展开阅读时那层包装是真正的两栏盒子，整体算一个子元素（两栏一起
+ * 长高、一起被裁）
+ */
+function layoutChildren(root: HTMLElement): HTMLElement[] {
+  const out: HTMLElement[] = []
+  for (const child of root.children) {
+    const c = child as HTMLElement
+    if (c.dataset.contents !== undefined) out.push(...(Array.from(c.children) as HTMLElement[]))
+    else out.push(c)
+  }
+  return out
+}
+
 /** 上一次稳定时一个子元素的排版位置 */
 interface Settled {
   readonly top: number
@@ -93,9 +108,8 @@ export function useRevealEdge(
     let settled = new Map<Element, Settled>()
     const snapshot = () => {
       settled = new Map()
-      for (const child of el.children) {
-        const c = child as HTMLElement
-        settled.set(child, { top: c.offsetTop, height: c.offsetHeight })
+      for (const c of layoutChildren(el)) {
+        settled.set(c, { top: c.offsetTop, height: c.offsetHeight })
       }
     }
     snapshot()
@@ -124,7 +138,7 @@ export function useRevealEdge(
         snapshot()
         return
       }
-      const children = Array.from(el.children) as HTMLElement[]
+      const children = layoutChildren(el)
       if (h < 0) {
         // 变矮：在排版里上移了的元素留在原处、随卡片下沿收上来；正在退场（脱离排版）的元素裁到下一个元素的可见上沿
         const d = -h
@@ -140,15 +154,12 @@ export function useRevealEdge(
             styled.push(c)
           }
         }
-        // 没有任何元素上移（例如只是放开了正文区的最小高度）：正文之后的元素留在卡片下沿
+        // 没有任何元素上移（例如只是放开了正文区的最小高度）：正文（展开阅读时是两栏）之后的元素留在卡片下沿
         if (shift.size === 0) {
-          const body = children.find((c) => c.classList.contains('tv-body')) ?? null
-          for (
-            let n = body?.nextElementSibling ?? children.at(-1) ?? null;
-            n;
-            n = n.nextElementSibling
-          ) {
-            if (!(n instanceof HTMLElement) || outOfFlow(n)) continue
+          const body = children.findIndex((c) => c.matches('.tv-body, .tv-columns'))
+          const from = body >= 0 ? body + 1 : children.length - 1
+          for (const n of children.slice(from)) {
+            if (outOfFlow(n)) continue
             n.style.transform = `translateY(${d}px)`
             styled.push(n)
           }
@@ -172,8 +183,8 @@ export function useRevealEdge(
       if (!grow) return
       grow.style.clipPath = `inset(0 0 ${Math.min(h, grow.offsetHeight)}px 0)`
       styled.push(grow)
-      for (let n = grow.nextElementSibling; n; n = n.nextElementSibling) {
-        if (!(n instanceof HTMLElement) || outOfFlow(n)) continue
+      for (const n of children.slice(children.indexOf(grow) + 1)) {
+        if (outOfFlow(n)) continue
         n.style.transform = `translateY(${-h}px)`
         styled.push(n)
       }
