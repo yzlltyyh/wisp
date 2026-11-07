@@ -15,7 +15,7 @@
  * - 收藏、芯片、多选、「粘贴为…」、命名：`clipboard.favorites-*`、`clipboard.chips`（选中行右侧的芯片小条，浏览器级
  *   用例从这里开始）、`clipboard.chips-otp`（⌘E 展开）、`clipboard.multi-select`、`clipboard.paste-as`、`clipboard.rename`；
  * - 悬浮剪贴板与连续粘贴：`clipboard.float`、`clipboard.float-queue`（clipfloat 入口）、`clipboard.queue-start`、
- *   `clipboard.queue-toast`、`clipboard.queue-kept`。
+ *   `clipboard.queue-toast-first`、`clipboard.queue-toast`、`clipboard.queue-kept`。
  */
 import { matchesFilter, startOfDay } from '../../../../views/clipboard/model'
 import { mockInspect } from '../smart'
@@ -32,6 +32,7 @@ import type {
   PanelPayload,
   PasteMode,
   PasteOutcome,
+  QueueNote,
   SourceApp,
 } from '../../types'
 import { appIcon, thumbnail } from '../fixtures'
@@ -770,14 +771,48 @@ const clip = (
  */
 function showToast(ctx: MockContext, reason: CopiedReason, focused = false): void {
   const pasteKey = ctx.fixtures.os === 'macos' ? '⌘V' : 'Ctrl+V'
-  let units = 26
-  for (const ch of pasteKey) units += /[\u2e80-\uffff]/.test(ch) ? 2 : 1
-  const width = Math.min(360, Math.max(220, 64 + units * 7))
   ctx.preparePanel(
     { kind: 'toast', reason, paste_key: pasteKey },
-    { width, placement: 'below', focused },
+    { width: toastWidth(pasteKey), placement: 'below', focused },
   )
 }
+
+/** placement::toast_width 的镜像：一行提示约 26 个显示单位 + 粘贴键，每单位 7 px，加 64 px 内边距与图标，夹在 220–360 */
+function toastWidth(pasteKey: string): number {
+  let units = 26
+  for (const ch of pasteKey) units += /[\u2e80-\uffff]/.test(ch) ? 2 : 1
+  return Math.min(360, Math.max(220, 64 + units * 7))
+}
+
+/**
+ * 连续粘贴的进度：Rust 放在屏幕角落（macOS / Linux 右上，Windows 右下）、高度上限 88（placement::NOTICE_MAX_HEIGHT）、
+ * 整窗点击穿透。第一条带下一次要按的键与「Esc 结束」，之后只有一行；这一次有说明（留到下一次等）时换成说明
+ */
+const queueToast = (id: string, label: string, index: number, note?: QueueNote): Scenario => ({
+  id: `clipboard.${id}`,
+  label,
+  view: 'toast',
+  manualSettle: true,
+  setup(ctx) {
+    const pasteKey = ctx.fixtures.os === 'macos' ? '⌘V' : 'Ctrl+V'
+    ctx.preparePanel(
+      {
+        kind: 'toast',
+        reason: 'copy_only',
+        paste_key: pasteKey,
+        queue: { active: true, index, total: 5 },
+        ...(note ? { queue_note: note } : {}),
+      },
+      {
+        width: toastWidth(pasteKey),
+        maxHeight: 88,
+        placement: ctx.fixtures.os === 'windows' ? 'above' : 'below',
+        focused: false,
+      },
+    )
+    ctx.after(700, () => ctx.settled())
+  },
+})
 
 const REASONS: readonly CopiedReason[] = [
   'copy_only',
@@ -1223,45 +1258,14 @@ export const scenarios: readonly Scenario[] = [
         [80, () => clickRow(6, { mod: true })],
       ]),
   }),
-  {
-    id: 'clipboard.queue-toast',
-    label: 'toast · 连续粘贴进度（2 / 5）',
-    view: 'toast',
-    manualSettle: true,
-    setup(ctx) {
-      const pasteKey = ctx.fixtures.os === 'macos' ? '⌘V' : 'Ctrl+V'
-      ctx.preparePanel(
-        {
-          kind: 'toast',
-          reason: 'copy_only',
-          paste_key: pasteKey,
-          queue: { active: true, index: 2, total: 5 },
-        },
-        { width: 300, placement: 'below', focused: false },
-      )
-      ctx.after(700, () => ctx.settled())
-    },
-  },
-  {
-    id: 'clipboard.queue-kept',
-    label: 'toast · 连续粘贴判断没粘贴进去（第 3 条留到下一次）',
-    view: 'toast',
-    manualSettle: true,
-    setup(ctx) {
-      const pasteKey = ctx.fixtures.os === 'macos' ? '⌘V' : 'Ctrl+V'
-      ctx.preparePanel(
-        {
-          kind: 'toast',
-          reason: 'copy_only',
-          paste_key: pasteKey,
-          queue: { active: true, index: 2, total: 5 },
-          queue_note: 'kept',
-        },
-        { width: 300, placement: 'below', focused: false },
-      )
-      ctx.after(700, () => ctx.settled())
-    },
-  },
+  queueToast('queue-toast-first', 'toast · 连续粘贴第一条（1 / 5，带下一次的键与 Esc 结束）', 1),
+  queueToast('queue-toast', 'toast · 连续粘贴之后的进度（2 / 5，只有一行）', 2),
+  queueToast(
+    'queue-kept',
+    'toast · 连续粘贴判断没粘贴进去（第 3 条留到下一次，说明不被单行规则去掉）',
+    2,
+    'kept',
+  ),
   clip('filter-menu', '剪贴板 · 类型过滤菜单（⌘F）', {
     act: () => press('f', 'KeyF', { mod: true }),
   }),

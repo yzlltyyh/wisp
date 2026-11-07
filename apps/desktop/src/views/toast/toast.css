@@ -20,6 +20,15 @@
   flex: none;
   padding-top: 0;
 }
+/* 连续粘贴第一条之后的进度只有一行（「连续粘贴 · 2 / 5」）：同样居中 */
+.toast[data-reason='queue'][data-single] {
+  justify-content: center;
+  align-items: center;
+}
+.toast[data-reason='queue'][data-single] .toast-text {
+  flex: none;
+  padding-top: 0;
+}
 .toast-icon {
   display: grid;
   flex: none;

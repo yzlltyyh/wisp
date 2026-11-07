@@ -200,38 +200,71 @@ describe('读屏', () => {
   })
 })
 
+/** 连续粘贴进度的 toast（Rust 不激活地显示在屏幕角落） */
+function mountQueue(index: number, total: number, active = index < total) {
+  const props = viewProps<'toast'>(
+    {
+      kind: 'toast',
+      reason: 'copy_only',
+      paste_key: '⌘V',
+      queue: { active, index, total },
+    },
+    { focused: false },
+  )
+  renderIn(<ToastView {...props} />)
+  return props
+}
+
 describe('连续粘贴的进度', () => {
-  it('显示「连续粘贴 · 2 / 5」与下一次要按的键，不写只复制的原因；粘贴完最后一条时说完成', () => {
-    const props = viewProps<'toast'>(
-      {
-        kind: 'toast',
-        reason: 'copy_only',
-        paste_key: '⌘V',
-        queue: { active: true, index: 2, total: 5 },
-      },
-      { focused: false },
-    )
-    renderIn(<ToastView {...props} />)
+  it('第一条：「连续粘贴 · 1 / 5」+ 下一次要按的键与怎么结束，不写只复制的原因', () => {
+    mountQueue(1, 5)
     expect(screen.getByTestId('toast-title').textContent).toBe(
-      t('clipboard.queue.progress', { index: 2, total: 5 }),
+      t('clipboard.queue.progress', { index: 1, total: 5 }),
     )
     expect(screen.getByTestId('toast-detail').textContent).toBe(
       t('clipboard.queue.next', { key: '⌘V' }),
     )
-    expect(screen.getByTestId('view-toast').getAttribute('data-reason')).toBe('queue')
+    const view = screen.getByTestId('view-toast')
+    expect(view.getAttribute('data-reason')).toBe('queue')
+    expect(view.hasAttribute('data-single')).toBe(false)
+  })
+
+  it('之后的进度只有一行（原地替换，不重复说明），停留 1.6 s', () => {
+    vi.useFakeTimers()
+    const props = mountQueue(2, 5)
+    expect(screen.getByTestId('toast-title').textContent).toBe(
+      t('clipboard.queue.progress', { index: 2, total: 5 }),
+    )
+    expect(screen.queryByTestId('toast-detail')).toBeNull()
+    expect(screen.getByTestId('view-toast').hasAttribute('data-single')).toBe(true)
+    act(() => vi.advanceTimersByTime(ms(timing.toastViewHold) - 10))
+    expect(props.requestHide).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(20))
+    expect(props.requestHide).toHaveBeenCalledWith('other')
+  })
+
+  it('指针停在上面不暂停计时（提示不接收鼠标，指针多半正路过去点下一个输入框）', () => {
+    vi.useFakeTimers()
+    const later = mountQueue(3, 5)
+    fireEvent.pointerEnter(screen.getByTestId('toast-dismiss'))
+    act(() => vi.advanceTimersByTime(ms(timing.toastViewHold) + 10))
+    expect(later.requestHide).toHaveBeenCalledWith('other')
+  })
+
+  it('第一条带说明，按说明的长度停留（约 4–5 s），悬停同样不暂停', () => {
+    vi.useFakeTimers()
+    const props = mountQueue(1, 5)
+    fireEvent.pointerEnter(screen.getByTestId('toast-dismiss'))
+    act(() => vi.advanceTimersByTime(ms(timing.toastViewDetailMin) - 20))
+    expect(props.requestHide).not.toHaveBeenCalled()
+    act(() =>
+      vi.advanceTimersByTime(ms(timing.toastViewDetailMax - timing.toastViewDetailMin) + 40),
+    )
+    expect(props.requestHide).toHaveBeenCalledWith('other')
   })
 
   it('结束时只有一行：完成 / 已结束', () => {
-    const props = viewProps<'toast'>(
-      {
-        kind: 'toast',
-        reason: 'copy_only',
-        paste_key: '⌘V',
-        queue: { active: false, index: 5, total: 5 },
-      },
-      { focused: false },
-    )
-    renderIn(<ToastView {...props} />)
+    mountQueue(5, 5)
     expect(screen.getByTestId('toast-title').textContent).toBe(t('clipboard.queue.done'))
     expect(screen.queryByTestId('toast-detail')).toBeNull()
   })

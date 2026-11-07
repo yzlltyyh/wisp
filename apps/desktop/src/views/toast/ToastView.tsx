@@ -8,6 +8,10 @@
  *
  * - 停留时长：只有「已复制」一行时 `timing.toastViewHold`（约 1.6 s）；带原因说明的按文案长度加长、夹在
  *   `timing.toastViewDetailMin` / `Max`（4–5 s）之间——两三行说明在 1.6 s 里读不完，可点按的也来不及把指针移上去；
+ * - 连续粘贴的进度（Rust 放在屏幕角落、整窗点击穿透）：只有第一条带「按 ⌘V 粘贴下一条 · Esc 结束」的说明，之后的进度
+ *   只有一行、停 1.6 s（每粘一条原地替换一次，不该一直挂在屏幕上）；这一次有说明（留到下一次 / 粘贴键不对 / 已退回 /
+ *   已跳过）时不论第几条都显示说明、按说明的长度停留——那是用户唯一能知道「这一下没算数」的地方；指针停在上面不暂停
+ *   计时（它不接收鼠标，指针多半正路过去点下一个输入框）；
  * - macOS 缺少辅助功能权限：说明下面一行强调色的行动入口「在 … 中允许 Wisp ↗」，悬停有底色，点按直接打开
  *   「辅助功能」设置页；
  * - 面板持有焦点时（KDE Wayland 由剪贴板视图在原位切过来：Wayland 只允许获焦的客户端写剪贴板，只能复制、不能代为
@@ -65,10 +69,12 @@ export function ToastView(props: ViewProps<'toast'>) {
   const copyOnly = payload.reason === 'copy_only' || queue !== null
   // 面板持有焦点：剪贴板视图在原位切过来的前端退路（正常情况下 Rust 不激活地显示 toast，focused 为 false）
   const inPlace = focused
+  // 连续粘贴：这一次的说明优先（单行规则不能把它去掉）；没有说明时只有第一条（粘贴了 0 或 1 条时）提示下一次要按的键
+  // 与怎么结束，之后的进度只有一行
   const detail = queue
     ? queueNote
       ? queueNoteText(queueNote, queue, t, payload.paste_key)
-      : queue.active
+      : queue.active && queue.index <= 1
         ? t('clipboard.queue.next', { key: payload.paste_key })
         : null
     : toastReason(payload.reason, os, t)
@@ -88,12 +94,13 @@ export function ToastView(props: ViewProps<'toast'>) {
   const hold = toastHoldMs(spokenText, detail !== null, inPlace)
 
   // 显示后停留一会儿再淡出；指针停在上面时暂停，移开后重新计时（以 visible 而不是 phase 为依赖：entering → shown
-  // 不会重置计时）
+  // 不会重置计时）。连续粘贴的进度不因悬停暂停（见文件头）
+  const paused = hovered && queue === null
   useEffect(() => {
-    if (!visible || hovered) return
+    if (!visible || paused) return
     const id = setTimeout(() => requestHide('other'), hold)
     return () => clearTimeout(id)
-  }, [visible, hovered, requestHide, hold])
+  }, [visible, paused, requestHide, hold])
 
   // 面板持有焦点（前端退路）：任何按键（包括单按 Ctrl / ⌘）或失焦立即让出焦点
   useEffect(() => {
@@ -122,6 +129,7 @@ export function ToastView(props: ViewProps<'toast'>) {
       data-session={sessionId}
       data-reason={queue ? 'queue' : payload.reason}
       data-actionable={openSettings || undefined}
+      data-single={(detail === null && action === null) || undefined}
     >
       <m.span className="toast-icon" data-tone={copyOnly ? 'success' : 'info'} {...pulse}>
         <Icon icon={queue ? ListOrdered : copyOnly ? CircleCheck : ClipboardCheck} size={18} />
@@ -155,8 +163,8 @@ export function ToastView(props: ViewProps<'toast'>) {
           </span>
         ) : null}
       </m.span>
-      {/* 整张卡片都是关闭按钮（面板不激活、拿不到焦点，所以不进 Tab 顺序）；指针停在上面时暂停计时。
-          macOS 缺少辅助功能权限时点按打开设置页（有可见的行动入口与悬停底色） */}
+      {/* 整张卡片都是关闭按钮（面板不激活、拿不到焦点，所以不进 Tab 顺序）；指针停在上面时暂停计时（连续粘贴的进度
+          除外）。macOS 缺少辅助功能权限时点按打开设置页（有可见的行动入口与悬停底色） */}
       <button
         type="button"
         className="toast-dismiss"
