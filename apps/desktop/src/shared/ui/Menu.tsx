@@ -10,7 +10,8 @@
  * - 焦点：定位完成的那次提交里移进菜单；关闭时（任何原因、包括调用方直接把 open 置 false）焦点还留在正在退场的菜单
  *   里或落到 body 上，就还给触发器——视图不需要自己补焦点；
  * - 指针：悬停高亮、点击选择、点外面关闭——点外面的那一下只关菜单，不再落到下面的元素上（与原生菜单一致：剪贴板里
- *   菜单开着时点另一行不会顺带粘贴它；右键与 macOS 的 Ctrl + 点按照常送达）；
+ *   菜单开着时点另一行不会顺带粘贴它；右键与 macOS 的 Ctrl + 点按照常送达）；窗口失焦关闭，没有焦点的窗口（悬浮
+ *   剪贴板）里指针离开窗口关闭（{@link useDismissOnLeave}）；
  * - 溢出：放不下时内部滚动，上 / 下还有内容的一侧显示一道渐隐阴影（纯 CSS，background-attachment）。打开时与键盘导航
  *   把高亮项滚进视野（只滚菜单自己，见 {@link revealInMenu}）；悬停改变高亮不滚动——否则指针下的内容会跑掉；
  * - 动效：presets.menuIn / menuOut，变换原点在触发器一侧；减少动效时只淡入淡出；
@@ -241,6 +242,8 @@ export function Menu({
       window.removeEventListener('blur', onBlur)
     }
   }, [open, anchor, close, floatingRef])
+  // 没有焦点的窗口（悬浮剪贴板）等不到 blur：指针离开窗口时关闭（见 useDismissOnLeave）
+  useDismissOnLeave(open, () => close('blur'))
 
   // 高亮项滚进视野（打开时、键盘导航）：定位完成（max-height 生效）之后、绘制之前，打开的第一帧就看得见勾选项。
   // 只认 reveal 记下的那一项（见上）
@@ -420,6 +423,47 @@ export function usePointerIntent(): (e: PointerPoint) => boolean {
     last.current = { x: e.clientX, y: e.clientY }
     return p !== null && (p.x !== e.clientX || p.y !== e.clientY)
   }, [])
+}
+
+/**
+ * 菜单开着时，指针离开**没有焦点**的窗口就关闭菜单（Menu 与 PagedMenu 共用）。悬浮剪贴板是非激活面板：点列表不让它
+ * 取得焦点（粘贴键要直接落进目标应用），这时打开的菜单等不到 blur——用户改主意去点别的应用，这个窗口从来没有过焦点，
+ * 菜单就一直开着：回来点一行时那一下只关菜单（点外面的那一下被吞掉），菜单开着期间列表也不跟随悬停。原生菜单在用户点
+ * 别的应用时就已经关了；别的应用里的点击这里收不到，指针离开窗口是能看到的最近的信号。
+ * - 只在文档没有焦点时：有焦点的窗口切到别的应用会收到 blur，照旧由 blur 关闭；
+ * - 只看鼠标：触屏抬起、笔离开感应范围也会派发 relatedTarget 为 null 的离开，那不是去了别处；
+ * - 离开之后等 timing.menuLeaveGrace 再关，期间回到窗口（任何 pointerover）就取消：贴着窗口边缘的菜单，移向边上的
+ *   菜单项时略微冲出窗口又马上回来，不该关掉。计时器是一次性的，只在指针离开窗口期间存在。
+ */
+export function useDismissOnLeave(open: boolean, dismiss: () => void): void {
+  // 调用方的关闭函数每次渲染都可能是新的：经 ref 读取，离开窗口的计时不因为期间的重渲染被重置
+  const dismissRef = useRef(dismiss)
+  useLayoutEffect(() => {
+    dismissRef.current = dismiss
+  })
+  useEffect(() => {
+    if (!open) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const cancel = () => {
+      if (timer !== null) clearTimeout(timer)
+      timer = null
+    }
+    const onOut = (e: PointerEvent) => {
+      if (e.relatedTarget !== null || e.pointerType !== 'mouse' || document.hasFocus()) return
+      cancel()
+      timer = setTimeout(() => {
+        timer = null
+        if (!document.hasFocus()) dismissRef.current()
+      }, ms(timing.menuLeaveGrace))
+    }
+    document.addEventListener('pointerout', onOut, true)
+    document.addEventListener('pointerover', cancel, true)
+    return () => {
+      cancel()
+      document.removeEventListener('pointerout', onOut, true)
+      document.removeEventListener('pointerover', cancel, true)
+    }
+  }, [open])
 }
 
 export function MenuEntryView({

@@ -6,7 +6,8 @@
  * 换页只淡入淡出、高度直接到位。
  *
  * 外观与键盘行为与 Menu 一致（菜单项由同一个 MenuEntryView 渲染；↑↓ 循环跳过禁用项、Home / End、Enter / Space、
- * 首字母跳转、Tab 关闭、Esc 经键盘路由的 overlay 层关闭并把焦点还给触发器、点外面 / 窗口失焦关闭），另外：
+ * 首字母跳转、Tab 关闭、Esc 经键盘路由的 overlay 层关闭并把焦点还给触发器、点外面 / 窗口失焦 / 没有焦点的窗口里
+ * 指针离开窗口关闭），另外：
  * - → 在带「›」的项上进入下一页，← 返回上一页；
  * - 子页顶部的返回行「‹ 视觉模型」：‹ 在前导列里，标题与条目文字左对齐，无障碍名称由调用方给（「返回识别菜单」）；
  * - 打开时在定位完成（浮层可见）之后才把焦点移进菜单；关闭后焦点还在退场的菜单里 / 落到 body 时还给触发器。
@@ -53,6 +54,7 @@ import {
   MenuEntryView,
   MenuLead,
   revealInMenu,
+  useDismissOnLeave,
   usePointerIntent,
   type MenuEntry,
   type MenuItemEntry,
@@ -416,6 +418,8 @@ export function PagedMenu({
       window.removeEventListener('blur', onBlur)
     }
   }, [open, anchor, close, floating.ref, cancelDwell])
+  // 没有焦点的窗口（悬浮剪贴板）等不到 blur：指针离开窗口时关闭（与 Menu 相同，见 useDismissOnLeave）
+  useDismissOnLeave(open, () => close('blur'))
 
   // 悬停进入子页：文档级的指针移动（菜单外的移动、行间的分隔线与分组标题都要看到）与按键；只在打开期间挂着
   useEffect(() => {

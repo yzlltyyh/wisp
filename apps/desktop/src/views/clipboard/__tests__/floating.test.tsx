@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setTransport } from '../../../shared/ipc'
 import type { ClipItemMeta, QueueStatus } from '../../../shared/ipc/types'
 import { t } from '../../../shared/i18n/i18n'
+import { ms, timing } from '../../../shared/motion/tokens'
 import { ClipboardView } from '../ClipboardView'
 import { ClipFloatContext, type ClipFloatShell } from '../host'
 import { resetWebviewClipboardForTest } from '../useClipboard'
@@ -205,6 +206,53 @@ describe('悬浮剪贴板宿主', () => {
     ])
     expect(ipc.called('clipboard_float_focus')).not.toContainEqual({ focused: true })
     expect(document.activeElement).not.toBe(chip)
+  })
+
+  describe('窗口没有焦点（点列表不取得焦点）时菜单开着、用户去点别的应用', () => {
+    /** 一次完整的鼠标点击 */
+    function press(el: Element, x: number, y: number) {
+      const init = { clientX: x, clientY: y, button: 0, pointerType: 'mouse' }
+      fireEvent.pointerDown(el, init)
+      fireEvent.mouseDown(el, init)
+      fireEvent.pointerUp(el, init)
+      fireEvent.mouseUp(el, init)
+      fireEvent.click(el, init)
+    }
+    /** 指针离开窗口（去点别的应用），过了离开的宽限再回来 */
+    async function leaveWindow(from: Element) {
+      fireEvent.pointerOut(from, { relatedTarget: null, pointerType: 'mouse' })
+      await act(() => new Promise((r) => setTimeout(r, ms(timing.menuLeaveGrace) + 30)))
+      fireEvent.pointerOver(row(4), { relatedTarget: null, pointerType: 'mouse' })
+    }
+
+    beforeEach(() => {
+      vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    })
+    afterEach(() => vi.restoreAllMocks())
+
+    it('右键菜单：离开窗口时关闭，回来点一行照常粘贴（不被当作「点外面关菜单」吞掉）', async () => {
+      mountFloating()
+      fireEvent.contextMenu(row(3), { clientX: 40, clientY: 40 })
+      const menu = await screen.findByTestId('clip-context-menu')
+      await leaveWindow(menu)
+      await waitFor(() => expect(screen.queryByTestId('clip-context-menu')).toBeNull())
+      press(row(4), 40, 120)
+      await waitFor(() =>
+        expect(ipc.called('clipboard_paste')).toEqual([{ id: 4, mode: 'normal' }]),
+      )
+    })
+
+    it('⋯ 菜单同样：离开窗口时关闭，回来点一行照常粘贴', async () => {
+      mountFloating()
+      fireEvent.click(screen.getByTestId('clip-more'))
+      const menu = await screen.findByTestId('clip-more-menu')
+      await leaveWindow(menu)
+      expect(screen.getByTestId('clip-more')).toHaveAttribute('aria-expanded', 'false')
+      press(row(4), 40, 120)
+      await waitFor(() =>
+        expect(ipc.called('clipboard_paste')).toEqual([{ id: 4, mode: 'normal' }]),
+      )
+    })
   })
 })
 

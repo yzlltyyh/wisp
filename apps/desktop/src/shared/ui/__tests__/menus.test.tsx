@@ -809,3 +809,78 @@ describe('点外面关闭菜单：只关菜单', () => {
     expect(outside).not.toHaveBeenCalled()
   })
 })
+
+describe('没有焦点的窗口：指针离开窗口时关闭菜单', () => {
+  const GRACE = ms(timing.menuLeaveGrace)
+  /** 指针离开窗口：最后所在的元素收到 relatedTarget 为 null 的 pointerout */
+  const leave = (el: Element = document.body, pointerType = 'mouse') =>
+    fireEvent.pointerOut(el, { relatedTarget: null, pointerType })
+  /** 回到窗口：进入的元素收到 pointerover */
+  const enter = (el: Element = document.body) =>
+    fireEvent.pointerOver(el, { relatedTarget: null, pointerType: 'mouse' })
+
+  function mountBoth(focused: boolean) {
+    vi.useFakeTimers()
+    vi.spyOn(document, 'hasFocus').mockReturnValue(focused)
+    const onClose = vi.fn<() => void>()
+    const trigger = dropdown(
+      items(3),
+      <PagedMenu
+        open
+        onClose={onClose}
+        anchor={{ left: 10, top: 10, width: 0, height: 0 }}
+        page={{ key: 'root', label: '操作', items: items(3), 'data-testid': 'pm' }}
+        direction={1}
+      />,
+    )
+    fireEvent.click(trigger)
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    return { trigger, onClose }
+  }
+
+  afterEach(() => vi.restoreAllMocks())
+
+  it('离开之后等一会儿才关（Menu 与 PagedMenu）；期间回到窗口不关', () => {
+    const { trigger, onClose } = mountBoth(false)
+    leave(screen.getByTestId('pm-item-m1'))
+    act(() => vi.advanceTimersByTime(GRACE - 1))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    // 冲出窗口边缘又马上回来：取消
+    enter(screen.getByTestId('pm-item-m1'))
+    act(() => vi.advanceTimersByTime(GRACE * 2))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    // 真的离开：到时关闭两个菜单
+    leave()
+    act(() => vi.advanceTimersByTime(GRACE))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(trigger.getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('有焦点的窗口离开不关（切到别的应用由 blur 关闭）；触屏抬起、在窗口里换元素都不算离开', () => {
+    const { trigger, onClose } = mountBoth(true)
+    leave()
+    act(() => vi.advanceTimersByTime(GRACE * 2))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    leave(document.body, 'touch')
+    leave(document.body, 'pen')
+    fireEvent.pointerOut(screen.getByTestId('pm-item-m1'), {
+      relatedTarget: screen.getByTestId('pm-item-m2'),
+      pointerType: 'mouse',
+    })
+    act(() => vi.advanceTimersByTime(GRACE * 2))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('离开期间窗口取得了焦点：到时不关', () => {
+    const { onClose } = mountBoth(false)
+    leave()
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => vi.advanceTimersByTime(GRACE))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+})
